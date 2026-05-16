@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import type { ContextBundle } from "./context-compiler";
 import type { AgentKind, JsonObject } from "./domain";
 
 export interface AgentDetectionResult {
@@ -17,6 +18,8 @@ export interface AgentRunInput {
   taskId: string;
   taskTitle: string;
   taskPrompt: string;
+  contextBundle?: ContextBundle;
+  contextMarkdown?: string;
   environment?: Record<string, string>;
 }
 
@@ -40,9 +43,16 @@ export interface AgentAdapter {
   run(input: AgentRunInput): AsyncIterable<AgentRunEvent>;
 }
 
+export interface FakeAgentAdapterOptions {
+  fail?: boolean;
+  failureMessage?: string;
+}
+
 export class FakeAgentAdapter implements AgentAdapter {
   readonly kind = "fake";
   readonly displayName = "Fake Agent";
+
+  constructor(private readonly options: FakeAgentAdapterOptions = {}) {}
 
   async detect(): Promise<AgentDetectionResult> {
     return {
@@ -52,6 +62,13 @@ export class FakeAgentAdapter implements AgentAdapter {
   }
 
   async *run(input: AgentRunInput): AsyncIterable<AgentRunEvent> {
+    if (this.options.fail) {
+      yield* failureEvents(
+        this.options.failureMessage ?? "FakeAgentAdapter configured failure."
+      );
+      return;
+    }
+
     const originalProjectRoot = path.resolve(input.originalProjectRoot);
     const worktreePath = path.resolve(input.worktreePath);
     const taskBriefPath = path.resolve(input.taskBriefPath);
@@ -95,9 +112,17 @@ export class FakeAgentAdapter implements AgentAdapter {
       "",
       `task_id: ${input.taskId}`,
       `title: ${input.taskTitle}`,
+      `context_bundle_id: ${input.contextBundle?.id ?? "none"}`,
+      `context_sections: ${input.contextBundle?.sections.length ?? 0}`,
       `brief_characters: ${taskBrief.length}`,
       "",
-      input.taskPrompt
+      "## Prompt",
+      "",
+      input.taskPrompt,
+      "",
+      "## Context",
+      "",
+      input.contextMarkdown?.trim() ?? "No context payload was provided."
     ].join("\n");
 
     await fs.writeFile(outputPath, `${output}\n`, "utf8");
@@ -110,7 +135,7 @@ export class FakeAgentAdapter implements AgentAdapter {
       type: "exit",
       message: "fake agent completed",
       exitCode: 0,
-      metadata: { outputPath }
+      metadata: { outputPath, output }
     };
   }
 }

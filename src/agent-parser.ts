@@ -1,4 +1,4 @@
-import { parseAgentKind, type AgentKind } from "./domain";
+import { DomainValidationError, parseAgentKind, type AgentKind } from "./domain";
 
 export interface ParsedAgentPrompt {
   agentKind: AgentKind;
@@ -36,7 +36,15 @@ export function parseAgentPrompt(
     throw new AgentPromptParseError("invalid @agent prompt");
   }
 
-  const agentKind = parseAgentKind(match[1]);
+  let agentKind: AgentKind;
+  try {
+    agentKind = parseAgentKind(match[1]);
+  } catch (error) {
+    if (error instanceof DomainValidationError) {
+      throw new AgentPromptParseError(`unknown agent ${match[1]}`);
+    }
+    throw error;
+  }
   const prompt = match[2]?.trim() ?? "";
   if (prompt.length === 0) {
     throw new AgentPromptParseError("task prompt is required after @agent");
@@ -48,4 +56,3 @@ export function parseAgentPrompt(
     explicitAgent: true
   };
 }
-

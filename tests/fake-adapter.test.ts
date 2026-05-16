@@ -1,8 +1,8 @@
 import fs from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { FakeAgentAdapter, type AgentRunEvent } from "../src/agent-adapters";
+import { createTestDirectory } from "./helpers";
 
 describe("FakeAgentAdapter", () => {
   it("detects as available", async () => {
@@ -12,8 +12,8 @@ describe("FakeAgentAdapter", () => {
   });
 
   it("reads the task brief, writes output inside the worktree, and emits exit", async () => {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), "agent-hub-fake-root-"));
-    const worktree = await fs.mkdtemp(path.join(os.tmpdir(), "agent-hub-fake-worktree-"));
+    const root = await createTestDirectory("fake-root");
+    const worktree = await createTestDirectory("fake-worktree");
     const briefPath = path.join(worktree, ".agent-hub", "tasks", "task_1", "brief.md");
     await fs.mkdir(path.dirname(briefPath), { recursive: true });
     await fs.writeFile(briefPath, "# Brief\n", "utf8");
@@ -36,7 +36,7 @@ describe("FakeAgentAdapter", () => {
   });
 
   it("refuses to run in the original project root", async () => {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), "agent-hub-fake-root-"));
+    const root = await createTestDirectory("fake-root");
     const briefPath = path.join(root, "brief.md");
     await fs.writeFile(briefPath, "# Brief\n", "utf8");
 
@@ -65,8 +65,8 @@ describe("FakeAgentAdapter", () => {
   });
 
   it("refuses task briefs outside the worktree", async () => {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), "agent-hub-fake-root-"));
-    const worktree = await fs.mkdtemp(path.join(os.tmpdir(), "agent-hub-fake-worktree-"));
+    const root = await createTestDirectory("fake-root");
+    const worktree = await createTestDirectory("fake-worktree");
     const briefPath = path.join(root, "brief.md");
     await fs.writeFile(briefPath, "# Brief\n", "utf8");
 
@@ -85,8 +85,8 @@ describe("FakeAgentAdapter", () => {
   });
 
   it("emits an error and non-zero exit for a missing task brief", async () => {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), "agent-hub-fake-root-"));
-    const worktree = await fs.mkdtemp(path.join(os.tmpdir(), "agent-hub-fake-worktree-"));
+    const root = await createTestDirectory("fake-root");
+    const worktree = await createTestDirectory("fake-worktree");
 
     const events = await collect(
       new FakeAgentAdapter().run({
@@ -101,6 +101,29 @@ describe("FakeAgentAdapter", () => {
 
     expect(events.map((event) => event.type)).toEqual(["error", "exit"]);
     expect(events.at(-1)).toMatchObject({ type: "exit", exitCode: 1 });
+  });
+
+  it("can be configured to fail for runner tests", async () => {
+    const root = await createTestDirectory("fake-root");
+    const worktree = await createTestDirectory("fake-worktree");
+    const briefPath = path.join(worktree, "brief.md");
+    await fs.writeFile(briefPath, "# Brief\n", "utf8");
+
+    const events = await collect(
+      new FakeAgentAdapter({ fail: true, failureMessage: "forced failure" }).run({
+        originalProjectRoot: root,
+        worktreePath: worktree,
+        taskBriefPath: briefPath,
+        taskId: "task_1",
+        taskTitle: "Test task",
+        taskPrompt: "Write a fake output"
+      })
+    );
+
+    expect(events).toEqual([
+      expect.objectContaining({ type: "error", message: "forced failure" }),
+      expect.objectContaining({ type: "exit", exitCode: 1 })
+    ]);
   });
 });
 
