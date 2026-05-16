@@ -6,9 +6,12 @@ agents on a developer machine.
 The current verified rebuild slice supports registered projects, registered
 tasks, Agent Hub-owned context stores, context artifact build/export,
 deterministic fake-agent runs, process-backed Codex and Claude Code runs, and
-cross-process SQLite-backed run inspection:
+cross-process SQLite-backed run inspection. Running `agent-hub` with no
+subcommand starts an interactive shell over the same local core services:
 
 ```sh
+agent-hub [--project <path>] [--agent fake|codex|claude-code]
+agent-hub [--debug] run ...
 agent-hub [--db <path>] project add --name <name> --root <path>
 agent-hub [--db <path>] project list
 agent-hub [--db <path>] task create --project-id <project-id> --title <title> [--description <text>]
@@ -30,6 +33,12 @@ agent-hub [--db <path>] memory approve --memory-id <memory-id>
 agent-hub [--db <path>] memory reject --memory-id <memory-id>
 agent-hub [--db <path>] compare --task-id <task-id> --baseline <run-id> --candidate <run-id>
 ```
+
+Interactive mode accepts natural language prompts plus `@fake`, `@codex`, and
+`@claude-code` prompt prefixes. It supports `/help`, `/agents`, `/use`,
+`/context`, `/context init`, `/clear`, `/exit`, and `/quit`. Interactive task
+execution calls the same task runner and repositories as command mode, so it
+does not duplicate orchestration logic or create a separate execution path.
 
 The context commands initialize and inspect a project context store, build a
 task-specific context pack and task brief, and explicitly export managed
@@ -65,6 +74,12 @@ receive the task brief/context through stdin-driven runtime injection and do
 not require repository-level `AGENTS.md` or `CLAUDE.md`. `worktree_overlay` is
 opt-in and writes generated `AGENTS.md`, `CLAUDE.md`, and skill copies only
 inside the isolated worktree, never the original checkout.
+
+`--debug` is opt-in and does not change run behavior. For supported run
+commands it appends run boundary details, context artifact paths, verification
+stdout/stderr, changed-file summaries, and a truncated diff preview to the
+normal summary. `AGENT_HUB_DEBUG=1` or `AGENT_HUB_DEBUG=true` enables the same
+debug rendering for local troubleshooting.
 
 The process-backed adapters use direct executable-plus-args spawning:
 
@@ -147,4 +162,5 @@ automatic pushes.
 
 Deferred product capabilities include richer Codex/Claude structured event
 mapping, automatic memory proposal generation from completed runs, richer
-comparison scoring, and the desktop shell.
+comparison scoring, a physical monorepo package split after shared contracts
+are extracted, and the desktop shell.

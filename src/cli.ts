@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import path from "node:path";
+import { createInterface } from "node:readline/promises";
 import { parseAgentPrompt } from "./agent-parser";
 import {
   appendApprovedMemory,
@@ -12,6 +13,7 @@ import {
 import {
   createId,
   nowIso,
+  agentKinds,
   memoryCategories,
   parseAgentKind,
   validateComparisonReport,
@@ -20,10 +22,12 @@ import {
   validateTask,
   type ContextDeliveryMode,
   type ContextStoreMode,
+  type AgentKind,
   type MemoryCategory,
   type VerificationResult
 } from "./domain";
 import { TaskRunner, type RunTaskInput, type TaskRunnerDependencies } from "./task-runner";
+import { formatShellCommand } from "./shell-executor";
 import { createSqliteRepositories } from "./sqlite-storage";
 import {
   InMemoryAgentProfileRepository,
@@ -55,6 +59,7 @@ import {
 } from "./storage";
 
 export interface CliIO {
+  stdin?: NodeJS.ReadableStream;
   stdout: Pick<NodeJS.WriteStream, "write">;
   stderr: Pick<NodeJS.WriteStream, "write">;
 }
@@ -218,8 +223,20 @@ export async function main(
       ? createCliRuntime({ sqliteDatabasePath: global.databasePath })
       : getDefaultRuntime());
   const [command, ...rest] = global.args;
+  const debug = global.debug || isEnvironmentDebugEnabled();
 
-  if (!command || command === "--help" || command === "-h") {
+  if (!command) {
+    return runInteractive({
+      io,
+      cwd,
+      runtime: activeRuntime,
+      projectRoot: global.projectRoot ?? cwd,
+      selectedAgent: global.agentKind ?? "fake",
+      debug
+    });
+  }
+
+  if (command === "--help" || command === "-h") {
     io.stdout.write(helpText());
     return 0;
   }
@@ -261,7 +278,7 @@ export async function main(
   }
 
   if (command === "run") {
-    return runCommand(rest, io, cwd, activeRuntime);
+    return runCommand(rest, io, cwd, activeRuntime, debug);
   }
 
   if (command === "tasks" && rest[0] === "list") {
@@ -309,6 +326,8 @@ export function helpText(): string {
     "agent-hub",
     "",
     "Usage:",
+    "  agent-hub [--project <path>] [--agent fake|codex|claude-code]",
+    "  agent-hub [--debug] run ...",
     "  agent-hub [--db <path>] project add --name <name> --root <path>",
     "  agent-hub [--db <path>] project list",
     "  agent-hub [--db <path>] task create --project-id <project-id> --title <title> [--description <text>]",
@@ -330,6 +349,219 @@ export function helpText(): string {
     "  agent-hub compare --task-id <task-id> --baseline <run-id> --candidate <run-id>",
     ""
   ].join("\n");
+}
+
+export interface InteractiveOptions {
+  io?: CliIO;
+  cwd?: string;
+  runtime?: CliRuntime;
+  projectRoot?: string;
+  selectedAgent?: AgentKind;
+  debug?: boolean;
+  input?: AsyncIterable<string>;
+}
+
+interface InteractiveState {
+  projectRoot: string;
+  selectedAgent: AgentKind;
+  debug: boolean;
+}
+
+export async function runInteractive(
+  options: InteractiveOptions = {}
+): Promise<number> {
+  const io = options.io ?? {
+    stdin: process.stdin,
+    stdout: process.stdout,
+    stderr: process.stderr
+  };
+  const cwd = options.cwd ?? process.cwd();
+  const runtime = options.runtime ?? getDefaultRuntime();
+  const state: InteractiveState = {
+    projectRoot: path.resolve(cwd, options.projectRoot ?? cwd),
+    selectedAgent: options.selectedAgent ?? "fake",
+    debug: options.debug ?? false
+  };
+  const input = options.input ?? readInteractiveLines(io.stdin ?? process.stdin);
+
+  io.stdout.write(renderInteractiveBanner(state));
+  io.stdout.write(interactivePrompt(state));
+  for await (const rawLine of input) {
+    const line = rawLine.trim();
+    if (!line) {
+      io.stdout.write(interactivePrompt(state));
+      continue;
+    }
+    if (line.startsWith("/")) {
+      const action = await handleInteractiveSlash(line, io, cwd, runtime, state);
+      if (action === "exit") {
+        return 0;
+      }
+      io.stdout.write(interactivePrompt(state));
+      continue;
+    }
+
+    io.stdout.write(`run: ${line}\n`);
+    const runArgs = line.startsWith("@")
+      ? ["--repo", state.projectRoot, line]
+      : ["--repo", state.projectRoot, "--agent", state.selectedAgent, "--prompt", line];
+    const exitCode = await runCommand(runArgs, io, cwd, runtime, state.debug);
+    if (exitCode !== 0) {
+      io.stderr.write(`interactive run failed with exit code ${exitCode}\n`);
+    }
+    io.stdout.write(interactivePrompt(state));
+  }
+  return 0;
+}
+
+async function* readInteractiveLines(
+  input: NodeJS.ReadableStream
+): AsyncIterable<string> {
+  const reader = createInterface({ input, crlfDelay: Infinity });
+  try {
+    for await (const line of reader) {
+      yield line;
+    }
+  } finally {
+    reader.close();
+  }
+}
+
+function renderInteractiveBanner(state: InteractiveState): string {
+  return [
+    "Agent Hub interactive",
+    `project: ${state.projectRoot}`,
+    `agent: ${state.selectedAgent}`,
+    "type /help for commands",
+    ""
+  ].join("\n");
+}
+
+function interactivePrompt(state: InteractiveState): string {
+  return `agent-hub[${state.selectedAgent}]> `;
+}
+
+function interactiveHelpText(): string {
+  return [
+    "Interactive commands:",
+    "  /help",
+    "  /agents",
+    "  /use <agent>",
+    "  /context",
+    "  /context init",
+    "  /clear",
+    "  /exit",
+    "  /quit",
+    "",
+    "Prompts:",
+    "  describe the task in natural language",
+    "  @fake simulate the task",
+    "  @codex implement the task",
+    "  @claude-code review the task",
+    ""
+  ].join("\n");
+}
+
+async function handleInteractiveSlash(
+  line: string,
+  io: CliIO,
+  cwd: string,
+  runtime: CliRuntime,
+  state: InteractiveState
+): Promise<"continue" | "exit"> {
+  const [command, ...rest] = line.split(/\s+/);
+  if (command === "/help") {
+    io.stdout.write(interactiveHelpText());
+    return "continue";
+  }
+  if (command === "/agents") {
+    io.stdout.write(renderInteractiveAgents(state.selectedAgent));
+    return "continue";
+  }
+  if (command === "/use") {
+    const agent = rest[0];
+    if (!agent) {
+      io.stderr.write("error: /use requires an agent\n");
+      return "continue";
+    }
+    try {
+      state.selectedAgent = parseInteractiveAgent(agent);
+      io.stdout.write(`using agent: ${state.selectedAgent}\n`);
+    } catch (error) {
+      io.stderr.write(`error: ${error instanceof Error ? error.message : String(error)}\n`);
+    }
+    return "continue";
+  }
+  if (command === "/context") {
+    await renderInteractiveContext(rest, io, cwd, runtime, state);
+    return "continue";
+  }
+  if (command === "/clear") {
+    io.stdout.write("\x1b[2J\x1b[H");
+    return "continue";
+  }
+  if (command === "/exit" || command === "/quit") {
+    io.stdout.write("Exiting Agent Hub.\n");
+    return "exit";
+  }
+  io.stderr.write(`error: unknown interactive command ${command}\n`);
+  return "continue";
+}
+
+function renderInteractiveAgents(selectedAgent: AgentKind): string {
+  return [
+    "agents:",
+    ...agentKinds.map((agent) => `${agent === selectedAgent ? "*" : " "} ${agent}`),
+    ""
+  ].join("\n");
+}
+
+function parseInteractiveAgent(value: string): AgentKind {
+  return parseAgentKind(value.replace(/^@/, ""));
+}
+
+async function renderInteractiveContext(
+  args: string[],
+  io: CliIO,
+  cwd: string,
+  runtime: CliRuntime,
+  state: InteractiveState
+): Promise<void> {
+  try {
+    const projectId = await resolveInteractiveProjectId(runtime, state.projectRoot);
+    const input = {
+      projectRoot: state.projectRoot,
+      projectId
+    };
+    const result =
+      args[0] === "init"
+        ? await initContextStore(input)
+        : await showContextStore(input);
+    io.stdout.write(
+      [
+        args[0] === "init" ? "Initialized context store" : "Context store",
+        `project_root: ${result.projectRoot}`,
+        `project_id: ${result.projectId}`,
+        `mode: ${result.mode}`,
+        `store_root: ${result.storeRoot}`,
+        "files:",
+        ...(result.files.length === 0
+          ? ["  - none"]
+          : result.files.map((file) => `  - ${file}`)),
+        ""
+      ].join("\n")
+    );
+  } catch (error) {
+    io.stderr.write(`error: ${error instanceof Error ? error.message : String(error)}\n`);
+  }
+}
+
+async function resolveInteractiveProjectId(
+  runtime: CliRuntime,
+  projectRoot: string
+): Promise<string> {
+  const project = await runtime.projectRepository.getByRootPath(path.resolve(projectRoot));
+  return project?.id ?? "adhoc_project";
 }
 
 async function addProject(
@@ -525,7 +757,8 @@ async function runCommand(
   args: string[],
   io: CliIO,
   cwd: string,
-  runtime: CliRuntime
+  runtime: CliRuntime,
+  inheritedDebug = false
 ): Promise<number> {
   try {
     const options = parseRunArgs(args, cwd);
@@ -542,6 +775,9 @@ async function runCommand(
     });
 
     io.stdout.write(renderRunSummary(result));
+    if (inheritedDebug || options.debug) {
+      io.stdout.write(renderRunDebug(result, runInput));
+    }
     return result.ok ? 0 : 1;
   } catch (error) {
     io.stderr.write(`error: ${error instanceof Error ? error.message : String(error)}\n`);
@@ -1076,6 +1312,91 @@ function renderRunSummary(result: Awaited<ReturnType<TaskRunner["run"]>>): strin
   ].join("\n");
 }
 
+function renderRunDebug(
+  result: Awaited<ReturnType<TaskRunner["run"]>>,
+  input: RunTaskInput
+): string {
+  const lines = [
+    "debug:",
+    "run_boundary:",
+    `- project_root: ${input.projectRoot}`,
+    `- task_id: ${result.task.id}`,
+    `- run_id: ${result.run.id}`,
+    `- agent: ${result.run.agentKind}`,
+    `- status: ${result.status}`,
+    `- worktree_path: ${result.worktreePath ?? "none"}`,
+    `- task_brief_path: ${result.taskBriefPath ?? "none"}`,
+    `- context_pack: ${result.contextBundle.id}`,
+    `- prompt_chars: ${input.taskPrompt?.length ?? input.rawPrompt?.length ?? 0}`,
+    "verification_output:"
+  ];
+
+  if (!result.verification || result.verification.results.length === 0) {
+    lines.push("- none");
+  } else {
+    for (const verification of result.verification.results) {
+      lines.push(
+        `- command: ${formatShellCommand(verification.command)}`,
+        `  status: ${verification.status}`,
+        `  exit_code: ${verification.exitCode ?? "none"}`,
+        "  stdout:",
+        indentBlock(truncateText(verification.stdout) || "(empty)", 4),
+        "  stderr:",
+        indentBlock(truncateText(verification.stderr) || "(empty)", 4)
+      );
+    }
+  }
+
+  lines.push("diff_summary:");
+  if (!result.diff) {
+    lines.push("- none");
+  } else {
+    lines.push(
+      `- ok: ${result.diff.ok}`,
+      `- files_changed: ${result.diff.stat.filesChanged}`,
+      `- insertions: ${result.diff.stat.insertions}`,
+      `- deletions: ${result.diff.stat.deletions}`,
+      "  files:",
+      ...(result.diff.changedFiles.length === 0
+        ? ["    - none"]
+        : result.diff.changedFiles.map((file) =>
+            `    - ${file.path} ${file.status}${file.binary ? " binary" : ""}${
+              file.sizeBytes === undefined ? "" : ` ${file.sizeBytes} bytes`
+            }`
+          )),
+      "  file_summaries:",
+      ...(result.diff.fileSummaries.length === 0
+        ? ["    - none"]
+        : result.diff.fileSummaries.map((summary) => `    - ${summary}`)),
+      "  diff_preview:",
+      indentBlock(truncateText(result.diff.diff) || "(empty)", 4)
+    );
+  }
+
+  lines.push("");
+  return lines.join("\n");
+}
+
+function truncateText(value: string, maxLength = 2_000): string {
+  if (value.length <= maxLength) {
+    return value;
+  }
+  return `${value.slice(0, maxLength)}\n... truncated ${value.length - maxLength} chars`;
+}
+
+function indentBlock(value: string, spaces: number): string {
+  const prefix = " ".repeat(spaces);
+  return value
+    .split(/\r?\n/)
+    .map((line) => `${prefix}${line}`)
+    .join("\n");
+}
+
+function isEnvironmentDebugEnabled(): boolean {
+  const value = process.env.AGENT_HUB_DEBUG;
+  return value === "1" || value?.toLowerCase() === "true";
+}
+
 interface ParsedRunArgs {
   rawPrompt: string;
   projectRoot: string;
@@ -1090,6 +1411,7 @@ interface ParsedRunArgs {
   contextStoreRoot?: string;
   retainOnFailure: boolean;
   dryRun: boolean;
+  debug: boolean;
   verificationCommands: Array<{ id: string; command: string; args: string[] }>;
 }
 
@@ -1160,6 +1482,7 @@ function parseRunArgs(args: string[], cwd: string): ParsedRunArgs {
   let contextStoreRoot: string | undefined;
   let retainOnFailure = false;
   let dryRun = false;
+  let debug = false;
   const verificationCommands: Array<{ id: string; command: string; args: string[] }> = [];
   let parsingFlags = true;
 
@@ -1275,6 +1598,10 @@ function parseRunArgs(args: string[], cwd: string): ParsedRunArgs {
       dryRun = true;
       continue;
     }
+    if (parsingFlags && arg === "--debug") {
+      debug = true;
+      continue;
+    }
     promptParts.push(arg);
   }
 
@@ -1292,6 +1619,7 @@ function parseRunArgs(args: string[], cwd: string): ParsedRunArgs {
     contextStoreRoot,
     retainOnFailure,
     dryRun,
+    debug,
     verificationCommands
   };
 }
@@ -1299,11 +1627,18 @@ function parseRunArgs(args: string[], cwd: string): ParsedRunArgs {
 interface ParsedGlobalArgs {
   args: string[];
   databasePath?: string;
+  debug: boolean;
+  projectRoot?: string;
+  agentKind?: AgentKind;
 }
 
 function parseGlobalArgs(argv: string[], cwd: string): ParsedGlobalArgs {
   const args: string[] = [];
   let databasePath: string | undefined;
+  let debug = false;
+  let projectRoot: string | undefined;
+  let agentKind: AgentKind | undefined;
+  let commandSeen = false;
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
     if (arg === "--db") {
@@ -1315,9 +1650,34 @@ function parseGlobalArgs(argv: string[], cwd: string): ParsedGlobalArgs {
       index += 1;
       continue;
     }
+    if (!commandSeen && arg === "--debug") {
+      debug = true;
+      continue;
+    }
+    if (!commandSeen && arg === "--project") {
+      const value = argv[index + 1];
+      if (!value) {
+        throw new Error("--project requires a path");
+      }
+      projectRoot = path.resolve(cwd, value);
+      index += 1;
+      continue;
+    }
+    if (!commandSeen && arg === "--agent") {
+      const value = argv[index + 1];
+      if (!value) {
+        throw new Error("--agent requires an agent kind");
+      }
+      agentKind = parseInteractiveAgent(value);
+      index += 1;
+      continue;
+    }
     args.push(arg);
+    if (!commandSeen && !arg.startsWith("-")) {
+      commandSeen = true;
+    }
   }
-  return { args, databasePath };
+  return { args, databasePath, debug, projectRoot, agentKind };
 }
 
 function requiredFlag(args: string[], flag: string): string {
