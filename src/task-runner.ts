@@ -7,6 +7,9 @@ import { parseAgentPrompt } from "./agent-parser";
 import {
   DefaultContextCompiler,
   MarkdownContextFormatter,
+  createTaskBrief as createContextTaskBrief,
+  materializeWorktreeOverlay,
+  type GeneratedFileBaseline,
   type ContextBundle,
   type ContextCompiler,
   type ContextCompilerInput,
@@ -21,9 +24,10 @@ import {
   validateRunEvent,
   validateVerificationResult,
   validateTask,
-  validateTaskBrief,
   validateTaskRun,
   type AgentKind,
+  type ContextDeliveryMode,
+  type ContextPack,
   type JsonObject,
   type RiskReport,
   type RunEvent,
@@ -78,6 +82,8 @@ export interface RunTaskInput {
   taskId?: string;
   projectId?: string;
   title?: string;
+  deliveryMode?: ContextDeliveryMode;
+  contextStoreRoot?: string;
   runRoot?: string;
   workspaceBasePath?: string;
   workspaceCleanupPolicy?: WorkspaceCleanupPolicy;
@@ -247,6 +253,13 @@ export class TaskRunner {
       executionHints: input.executionHints
     });
     const contextMarkdown = this.contextFormatter.format(contextBundle);
+    const contextPack = createRuntimeContextPack(
+      contextBundle,
+      task.id,
+      task.title,
+      parsed.taskPrompt,
+      input.deliveryMode ?? "runtime_injection"
+    );
 
     const run = validateTaskRun({
       id: this.idGenerator.nextId("run"),
@@ -312,7 +325,7 @@ export class TaskRunner {
         taskId: task.id,
         runId: run.id,
         agentKind: parsed.agentKind,
-        cleanupPolicy: input.workspaceCleanupPolicy ?? "always",
+        cleanupPolicy: input.workspaceCleanupPolicy ?? "never",
         dryRun: input.dryRun
       });
     } catch (error) {
@@ -361,6 +374,7 @@ export class TaskRunner {
     let taskBriefPath: string | undefined;
     const runtimeDirectory = path.join(worktreePath, ".agent-hub", "tasks", task.id);
     const events: AgentRunEvent[] = [];
+    let generatedFileBaselines: GeneratedFileBaseline[] = [];
 
     await this.taskRunRepository.updateStatus(run.id, "running", this.clock.now());
 
@@ -375,13 +389,30 @@ export class TaskRunner {
         exitCode: 0
       });
     } else {
-      await fs.mkdir(runtimeDirectory, { recursive: true });
-      const taskBrief = createTaskBrief(
-        { ...task, status: "running" },
+      const taskBrief = createContextTaskBrief({
+        taskId: task.id,
+        title: task.title,
+        prompt: parsed.taskPrompt,
+        contextPackId: contextPack.id,
         contextMarkdown
-      );
+      });
       taskBriefPath = path.join(runtimeDirectory, "brief.md");
-      await fs.writeFile(taskBriefPath, taskBrief.renderedContent, "utf8");
+      const overlay = await materializeWorktreeOverlay({
+        worktreePath,
+        taskId: task.id,
+        contextPack,
+        taskBrief,
+        contextMarkdown,
+        includeAgentFiles: input.deliveryMode === "worktree_overlay",
+        storeRoot:
+          input.deliveryMode === "worktree_overlay" ? input.contextStoreRoot : undefined
+      });
+      generatedFileBaselines = overlay.baselines;
+      if (input.deliveryMode !== "worktree_overlay") {
+        generatedFileBaselines = overlay.baselines.filter((baseline) =>
+          baseline.path.startsWith(".agent-hub/")
+        );
+      }
 
       try {
         for await (const event of adapter.run({
@@ -408,6 +439,7 @@ export class TaskRunner {
     const diff = await this.diffCollector.collect({
       workspacePath: worktreePath,
       excludePathPrefixes: [".agent-hub/"],
+      generatedFileBaselines,
       dryRun: input.dryRun
     });
     const verification = await this.verificationRunner.run({
@@ -539,30 +571,14 @@ export async function runTask(input: RunTaskInput): Promise<RunResult> {
   return new TaskRunner().run(input);
 }
 
-export function createTaskBrief(task: Task, contextMarkdown = ""): TaskBrief {
-  const createdAt = nowIso();
-  const renderedContent = [
-    "# Agent Hub Task Brief",
-    "",
-    `Task ID: ${task.id}`,
-    `Title: ${task.title}`,
-    "",
-    "## Prompt",
-    "",
-    task.description ?? task.title,
-    "",
-    "## Context",
-    "",
-    contextMarkdown || "No project context is available."
-  ].join("\n");
-
-  return validateTaskBrief({
+export function createTaskBriefFromTask(task: Task, contextMarkdown = ""): TaskBrief {
+  return createContextTaskBrief({
     taskId: task.id,
-    taskTitle: task.title,
-    taskPrompt: task.description,
-    renderedContent,
+    title: task.title,
+    prompt: task.description,
     contextPackId: "context_bundle",
-    createdAt
+    contextMarkdown,
+    createdAt: nowIso()
   });
 }
 
@@ -587,6 +603,31 @@ function toPersistedRunEvents(
       createdAt: clock.now()
     });
   });
+}
+
+function createRuntimeContextPack(
+  bundle: ContextBundle,
+  taskId: string,
+  title: string,
+  prompt: string,
+  deliveryMode: ContextDeliveryMode
+): ContextPack {
+  return {
+    id: bundle.id,
+    projectId: bundle.targetRepository.id,
+    taskId,
+    taskTitle: title,
+    taskPrompt: prompt,
+    deliveryMode,
+    contextSections: bundle.sections.map((entry) => `${entry.title}\n\n${entry.body}`),
+    approvedMemorySections: bundle.sections
+      .filter((entry) => entry.source.kind === "memory")
+      .map((entry) => entry.body),
+    skillReferences: bundle.sections
+      .filter((entry) => entry.source.kind === "skill")
+      .map((entry) => entry.source.id),
+    createdAt: nowIso()
+  };
 }
 
 function createDiffArtifact(

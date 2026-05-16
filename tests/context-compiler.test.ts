@@ -7,6 +7,12 @@ import {
   InMemorySkillProvider,
   MarkdownContextFormatter,
   StaticProjectContextProvider,
+  buildContextArtifacts,
+  exportContextToRepository,
+  initContextStore,
+  materializeWorktreeOverlay,
+  replaceManagedBlock,
+  safeWriteFile,
   type MemoryProvider
 } from "../src/context-compiler";
 import { createTestDirectory } from "./helpers";
@@ -151,5 +157,236 @@ describe("ContextCompiler", () => {
     expect(bundle.warnings).toEqual([
       "memory provider failed: memory backend unavailable"
     ]);
+  });
+
+  it("initializes and builds an external Agent Hub-owned context store", async () => {
+    const projectRoot = await createTestDirectory("context-project");
+    const agentHubHome = await createTestDirectory("context-home");
+
+    const initialized = await initContextStore({
+      projectRoot,
+      projectId: "project_1",
+      agentHubHome
+    });
+    await fs.writeFile(
+      path.join(initialized.storeRoot, "context", "project.md"),
+      "Agent Hub rebuild notes.\n",
+      "utf8"
+    );
+    await fs.mkdir(path.join(initialized.storeRoot, "skills", "review"), {
+      recursive: true
+    });
+    await fs.writeFile(
+      path.join(initialized.storeRoot, "skills", "review", "SKILL.md"),
+      "Review carefully.\n",
+      "utf8"
+    );
+
+    const built = await buildContextArtifacts({
+      projectRoot,
+      projectId: "project_1",
+      taskId: "task_1",
+      title: "Build context",
+      prompt: "Compile task context",
+      selectedAgentId: "fake",
+      agentHubHome
+    });
+
+    expect(initialized.storeRoot.startsWith(projectRoot)).toBe(false);
+    await expect(fs.readFile(built.contextPackPath, "utf8")).resolves.toContain(
+      "Agent Hub rebuild notes"
+    );
+    await expect(fs.readFile(built.taskBriefPath, "utf8")).resolves.toContain(
+      "Compile task context"
+    );
+    expect(built.contextPack.skillReferences).toEqual(["review"]);
+  });
+
+  it("warns when optional context store files are missing", async () => {
+    const projectRoot = await createTestDirectory("context-missing-project");
+    const agentHubHome = await createTestDirectory("context-missing-home");
+    const initialized = await initContextStore({
+      projectRoot,
+      projectId: "project_1",
+      agentHubHome
+    });
+    await fs.rm(path.join(initialized.storeRoot, "context", "security.md"));
+
+    const built = await buildContextArtifacts({
+      projectRoot,
+      projectId: "project_1",
+      taskId: "task_1",
+      title: "Build context",
+      prompt: "Compile task context",
+      selectedAgentId: "fake",
+      agentHubHome
+    });
+
+    expect(built.warnings).toContain("context file missing: context/security.md");
+  });
+
+  it("exports managed blocks while preserving user content and fenced examples", async () => {
+    const projectRoot = await createTestDirectory("context-export-project");
+    const agentHubHome = await createTestDirectory("context-export-home");
+    const initialized = await initContextStore({
+      projectRoot,
+      projectId: "project_1",
+      agentHubHome
+    });
+    await fs.writeFile(
+      path.join(initialized.storeRoot, "context", "project.md"),
+      "Exported project context.\n",
+      "utf8"
+    );
+    await fs.writeFile(
+      path.join(projectRoot, "AGENTS.md"),
+      [
+        "# User Notes",
+        "",
+        "```html",
+        "<!-- agent-hub:start -->",
+        "example only",
+        "<!-- agent-hub:end -->",
+        "```",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    const preview = await exportContextToRepository({
+      projectRoot,
+      projectId: "project_1",
+      agentHubHome,
+      dryRun: true
+    });
+    expect(preview.changedFiles).toContain("AGENTS.md");
+    await expect(fs.readFile(path.join(projectRoot, "AGENTS.md"), "utf8"))
+      .resolves.toContain("example only");
+
+    await exportContextToRepository({
+      projectRoot,
+      projectId: "project_1",
+      agentHubHome,
+      write: true,
+      dryRun: false
+    });
+    const exported = await fs.readFile(path.join(projectRoot, "AGENTS.md"), "utf8");
+    expect(exported).toContain("# User Notes");
+    expect(exported).toContain("Exported project context.");
+    expect(exported.match(/agent-hub:start/g)).toHaveLength(2);
+
+    const replaced = replaceManagedBlock(exported, [
+      "<!-- agent-hub:start -->",
+      "replacement",
+      "<!-- agent-hub:end -->",
+      ""
+    ].join("\n"));
+    expect(replaced).toContain("example only");
+    expect(replaced).toContain("replacement");
+  });
+
+  it("materializes worktree overlay only in the worktree and records baselines", async () => {
+    const worktreePath = await createTestDirectory("context-overlay-worktree");
+    const originalPath = await createTestDirectory("context-overlay-original");
+    const agentHubHome = await createTestDirectory("context-overlay-home");
+    const initialized = await initContextStore({
+      projectRoot: originalPath,
+      projectId: "project_1",
+      agentHubHome
+    });
+    const built = await buildContextArtifacts({
+      projectRoot: originalPath,
+      projectId: "project_1",
+      taskId: "task_1",
+      title: "Overlay",
+      prompt: "Write overlay",
+      selectedAgentId: "fake",
+      deliveryMode: "worktree_overlay",
+      agentHubHome
+    });
+
+    const overlay = await materializeWorktreeOverlay({
+      worktreePath,
+      taskId: "task_1",
+      contextPack: built.contextPack,
+      taskBrief: built.taskBrief,
+      contextMarkdown: new MarkdownContextFormatter().format(built.bundle),
+      includeAgentFiles: true,
+      storeRoot: initialized.storeRoot
+    });
+
+    expect(overlay.writtenFiles).toContain("AGENTS.md");
+    expect(overlay.baselines.some((entry) => entry.path === "AGENTS.md")).toBe(true);
+    await expect(fs.access(path.join(worktreePath, "AGENTS.md"))).resolves.toBeUndefined();
+    await expect(fs.access(path.join(originalPath, "AGENTS.md"))).rejects.toThrow();
+  });
+
+  it("warns and preserves existing non-empty worktree skill files", async () => {
+    const worktreePath = await createTestDirectory("context-overlay-skill-worktree");
+    const originalPath = await createTestDirectory("context-overlay-skill-original");
+    const agentHubHome = await createTestDirectory("context-overlay-skill-home");
+    const initialized = await initContextStore({
+      projectRoot: originalPath,
+      projectId: "project_1",
+      agentHubHome
+    });
+    await fs.mkdir(path.join(initialized.storeRoot, "skills", "review"), {
+      recursive: true
+    });
+    await fs.writeFile(
+      path.join(initialized.storeRoot, "skills", "review", "SKILL.md"),
+      "Generated skill.\n",
+      "utf8"
+    );
+    const existingSkillPath = path.join(
+      worktreePath,
+      ".claude",
+      "skills",
+      "review",
+      "SKILL.md"
+    );
+    await fs.mkdir(path.dirname(existingSkillPath), { recursive: true });
+    await fs.writeFile(existingSkillPath, "User skill.\n", "utf8");
+    const built = await buildContextArtifacts({
+      projectRoot: originalPath,
+      projectId: "project_1",
+      taskId: "task_1",
+      title: "Overlay",
+      prompt: "Write overlay",
+      selectedAgentId: "fake",
+      deliveryMode: "worktree_overlay",
+      agentHubHome
+    });
+
+    const overlay = await materializeWorktreeOverlay({
+      worktreePath,
+      taskId: "task_1",
+      contextPack: built.contextPack,
+      taskBrief: built.taskBrief,
+      contextMarkdown: new MarkdownContextFormatter().format(built.bundle),
+      includeAgentFiles: true,
+      storeRoot: initialized.storeRoot
+    });
+
+    expect(overlay.warnings).toContain(
+      ".claude/skills/review/SKILL.md already exists and was not overwritten"
+    );
+    await expect(fs.readFile(existingSkillPath, "utf8")).resolves.toBe("User skill.\n");
+    await expect(
+      fs.readFile(
+        path.join(worktreePath, ".agents", "skills", "review", "SKILL.md"),
+        "utf8"
+      )
+    ).resolves.toBe("Generated skill.\n");
+  });
+
+  it("rejects symlink paths for runtime artifacts", async () => {
+    const root = await createTestDirectory("context-safe-root");
+    const outside = await createTestDirectory("context-safe-outside");
+    await fs.symlink(outside, path.join(root, "link"));
+
+    await expect(
+      safeWriteFile(path.join(root, "link", "escape.md"), "bad\n", root)
+    ).rejects.toThrow("symlink");
   });
 });

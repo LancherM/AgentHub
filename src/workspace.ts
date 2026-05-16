@@ -33,6 +33,7 @@ export interface Workspace {
   agentKind: AgentKind;
   dryRun: boolean;
   sourceRepositoryDirty: boolean;
+  cleanupPolicy: WorkspaceCleanupPolicy;
 }
 
 export interface WorkspaceCleanupInput {
@@ -119,7 +120,8 @@ export class GitWorktreeWorkspaceManager implements WorkspaceManager {
       runId: normalized.runId,
       agentKind: normalized.agentKind,
       dryRun: normalized.dryRun,
-      sourceRepositoryDirty
+      sourceRepositoryDirty,
+      cleanupPolicy: normalized.cleanupPolicy
     };
 
     return new GitWorktreeWorkspaceSession(
@@ -220,7 +222,7 @@ function normalizeWorkspaceConfig(config: WorkspaceConfig): NormalizedWorkspaceC
     ...config,
     sourceRepositoryPath,
     workspaceBasePath,
-    cleanupPolicy: config.cleanupPolicy ?? "always",
+    cleanupPolicy: config.cleanupPolicy ?? "never",
     dryRun: config.dryRun ?? false
   };
 }

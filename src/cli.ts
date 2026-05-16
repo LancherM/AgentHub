@@ -2,11 +2,20 @@
 import path from "node:path";
 import { parseAgentPrompt } from "./agent-parser";
 import {
+  buildContextArtifacts,
+  exportContextToRepository,
+  initContextStore,
+  showContextStore,
+  type ContextBuildResult
+} from "./context-compiler";
+import {
   createId,
   nowIso,
   parseAgentKind,
   validateProject,
   validateTask,
+  type ContextDeliveryMode,
+  type ContextStoreMode,
   type VerificationResult
 } from "./domain";
 import { TaskRunner, type RunTaskInput, type TaskRunnerDependencies } from "./task-runner";
@@ -230,6 +239,22 @@ export async function main(
     return taskHistory(rest.slice(1), io, activeRuntime);
   }
 
+  if (command === "context" && rest[0] === "init") {
+    return contextInit(rest.slice(1), io, cwd);
+  }
+
+  if (command === "context" && rest[0] === "show") {
+    return contextShow(rest.slice(1), io, cwd);
+  }
+
+  if (command === "context" && rest[0] === "build") {
+    return contextBuild(rest.slice(1), io, cwd);
+  }
+
+  if (command === "context" && rest[0] === "export") {
+    return contextExport(rest.slice(1), io, cwd);
+  }
+
   if (command === "run") {
     return runCommand(rest, io, cwd, activeRuntime);
   }
@@ -264,6 +289,10 @@ export function helpText(): string {
     "  agent-hub [--db <path>] task create --project-id <project-id> --title <title> [--description <text>]",
     "  agent-hub [--db <path>] task list [--project-id <project-id>]",
     "  agent-hub [--db <path>] task history --task-id <task-id>",
+    "  agent-hub context init --project-root <path> --project-id <project-id>",
+    "  agent-hub context show --project-root <path> --project-id <project-id>",
+    "  agent-hub context build --project-root <path> --project-id <project-id> --task-id <task-id> --title <title> --prompt <prompt>",
+    "  agent-hub context export --project-root <path> --project-id <project-id> --dry-run|--write",
     "  agent-hub [--db <path>] run --task <task-id> --agent fake [--workspace-base <path>]",
     "  agent-hub [--db <path>] run [--repo <path>] [--workspace-base <path>] [--retain-on-failure] \"@fake <task>\"",
     "  agent-hub runs list",
@@ -362,6 +391,106 @@ async function createTask(
   }
 }
 
+async function contextInit(args: string[], io: CliIO, cwd: string): Promise<number> {
+  try {
+    const result = await initContextStore(parseContextStoreArgs(args, cwd));
+    io.stdout.write(
+      [
+        "Initialized context store",
+        `project_root: ${result.projectRoot}`,
+        `project_id: ${result.projectId}`,
+        `mode: ${result.mode}`,
+        `store_root: ${result.storeRoot}`,
+        ""
+      ].join("\n")
+    );
+    return 0;
+  } catch (error) {
+    io.stderr.write(`error: ${error instanceof Error ? error.message : String(error)}\n`);
+    return 1;
+  }
+}
+
+async function contextShow(args: string[], io: CliIO, cwd: string): Promise<number> {
+  try {
+    const result = await showContextStore(parseContextStoreArgs(args, cwd));
+    io.stdout.write(
+      [
+        "Context store",
+        `project_root: ${result.projectRoot}`,
+        `project_id: ${result.projectId}`,
+        `mode: ${result.mode}`,
+        `store_root: ${result.storeRoot}`,
+        "files:",
+        ...(result.files.length === 0
+          ? ["  - none"]
+          : result.files.map((file) => `  - ${file}`)),
+        ""
+      ].join("\n")
+    );
+    return 0;
+  } catch (error) {
+    io.stderr.write(`error: ${error instanceof Error ? error.message : String(error)}\n`);
+    return 1;
+  }
+}
+
+async function contextBuild(args: string[], io: CliIO, cwd: string): Promise<number> {
+  try {
+    const store = parseContextStoreArgs(args, cwd);
+    const result = await buildContextArtifacts({
+      ...store,
+      taskId: requiredFlag(args, "--task-id"),
+      title: requiredFlag(args, "--title"),
+      prompt: requiredFlag(args, "--prompt"),
+      selectedAgentId: parseAgentKind(optionalFlag(args, "--agent") ?? "fake"),
+      deliveryMode: parseDeliveryMode(optionalFlag(args, "--delivery-mode"))
+    });
+    io.stdout.write(renderContextBuildResult(result));
+    return 0;
+  } catch (error) {
+    io.stderr.write(`error: ${error instanceof Error ? error.message : String(error)}\n`);
+    return 1;
+  }
+}
+
+async function contextExport(args: string[], io: CliIO, cwd: string): Promise<number> {
+  try {
+    const store = parseContextStoreArgs(args, cwd);
+    const result = await exportContextToRepository({
+      ...store,
+      includeAgentsMd: args.includes("--include-agents-md") || !args.includes("--include-claude-md"),
+      includeClaudeMd: args.includes("--include-claude-md"),
+      includeSkills: args.includes("--include-skills"),
+      includeApprovedMemory: args.includes("--include-approved-memory"),
+      dryRun: args.includes("--dry-run") || !args.includes("--write"),
+      write: args.includes("--write")
+    });
+    io.stdout.write(
+      [
+        `${result.dryRun ? "Previewed" : "Wrote"} repo context export`,
+        `project_root: ${result.config.projectRoot}`,
+        `project_id: ${result.config.projectId}`,
+        "target: repo",
+        `dry_run: ${result.dryRun}`,
+        "changed_files:",
+        ...(result.changedFiles.length === 0
+          ? ["  - none"]
+          : result.changedFiles.map((file) => `  - ${file}`)),
+        "warnings:",
+        ...(result.warnings.length === 0
+          ? ["  - none"]
+          : result.warnings.map((warning) => `  - ${warning}`)),
+        ""
+      ].join("\n")
+    );
+    return 0;
+  } catch (error) {
+    io.stderr.write(`error: ${error instanceof Error ? error.message : String(error)}\n`);
+    return 1;
+  }
+}
+
 async function runCommand(
   args: string[],
   io: CliIO,
@@ -379,9 +508,11 @@ async function runCommand(
     const result = await runtime.taskRunner.run({
       ...runInput,
       workspaceBasePath: options.workspaceBasePath,
-      workspaceCleanupPolicy: options.retainOnFailure ? "retain_on_failure" : "always",
+      workspaceCleanupPolicy: options.retainOnFailure ? "retain_on_failure" : undefined,
       dryRun: options.dryRun,
-      verificationCommands: options.verificationCommands
+      verificationCommands: options.verificationCommands,
+      deliveryMode: options.deliveryMode,
+      contextStoreRoot: options.contextStoreRoot
     });
 
     io.stdout.write(renderRunSummary(result));
@@ -585,6 +716,8 @@ interface ParsedRunArgs {
   title?: string;
   prompt?: string;
   workspaceBasePath?: string;
+  deliveryMode?: ContextDeliveryMode;
+  contextStoreRoot?: string;
   retainOnFailure: boolean;
   dryRun: boolean;
   verificationCommands: Array<{ id: string; command: string; args: string[] }>;
@@ -653,6 +786,8 @@ function parseRunArgs(args: string[], cwd: string): ParsedRunArgs {
   let title: string | undefined;
   let prompt: string | undefined;
   let workspaceBasePath: string | undefined;
+  let deliveryMode: ContextDeliveryMode | undefined;
+  let contextStoreRoot: string | undefined;
   let retainOnFailure = false;
   let dryRun = false;
   const verificationCommands: Array<{ id: string; command: string; args: string[] }> = [];
@@ -748,6 +883,20 @@ function parseRunArgs(args: string[], cwd: string): ParsedRunArgs {
       index += 1;
       continue;
     }
+    if (parsingFlags && arg === "--delivery-mode") {
+      deliveryMode = parseDeliveryMode(args[index + 1]);
+      index += 1;
+      continue;
+    }
+    if (parsingFlags && arg === "--context-store-root") {
+      const value = args[index + 1];
+      if (!value) {
+        throw new Error("--context-store-root requires a path");
+      }
+      contextStoreRoot = path.resolve(cwd, value);
+      index += 1;
+      continue;
+    }
     if (parsingFlags && arg === "--retain-on-failure") {
       retainOnFailure = true;
       continue;
@@ -769,6 +918,8 @@ function parseRunArgs(args: string[], cwd: string): ParsedRunArgs {
     title,
     prompt,
     workspaceBasePath,
+    deliveryMode,
+    contextStoreRoot,
     retainOnFailure,
     dryRun,
     verificationCommands
@@ -831,6 +982,60 @@ function parseVerificationCommand(
     throw new Error("--verify requires a command");
   }
   return { id: `verify_${index + 1}`, command, args };
+}
+
+function parseContextStoreArgs(args: string[], cwd: string): {
+  projectRoot: string;
+  projectId: string;
+  mode?: ContextStoreMode;
+  agentHubHome?: string;
+} {
+  return {
+    projectRoot: path.resolve(cwd, requiredFlag(args, "--project-root")),
+    projectId: requiredFlag(args, "--project-id"),
+    mode: parseContextStoreMode(optionalFlag(args, "--mode")),
+    agentHubHome: optionalFlag(args, "--agent-hub-home")
+      ? path.resolve(cwd, requiredFlag(args, "--agent-hub-home"))
+      : undefined
+  };
+}
+
+function parseContextStoreMode(value: string | undefined): ContextStoreMode | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (value === "external" || value === "repo_local") {
+    return value;
+  }
+  throw new Error("--mode must be external or repo_local");
+}
+
+function parseDeliveryMode(value: string | undefined): ContextDeliveryMode | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (
+    value === "runtime_injection" ||
+    value === "worktree_overlay" ||
+    value === "repo_export"
+  ) {
+    return value;
+  }
+  throw new Error("--delivery-mode must be runtime_injection, worktree_overlay, or repo_export");
+}
+
+function renderContextBuildResult(result: ContextBuildResult): string {
+  return [
+    "Built context artifacts",
+    `project_root: ${result.config.projectRoot}`,
+    `project_id: ${result.config.projectId}`,
+    `task_id: ${result.contextPack.taskId}`,
+    `delivery_mode: ${result.contextPack.deliveryMode}`,
+    `context_pack_path: ${result.contextPackPath}`,
+    `task_brief_path: ${result.taskBriefPath}`,
+    `warnings: ${result.warnings.length === 0 ? "none" : result.warnings.join(", ")}`,
+    ""
+  ].join("\n");
 }
 
 function summarizeVerificationResults(results: VerificationResult[]): string {

@@ -271,7 +271,8 @@ class TestWorkspaceManager implements WorkspaceManager {
         runId: config.runId,
         agentKind: config.agentKind,
         dryRun: config.dryRun ?? false,
-        sourceRepositoryDirty: false
+        sourceRepositoryDirty: false,
+        cleanupPolicy: config.cleanupPolicy ?? "never"
       },
       creationCommands: [],
       cleanup: async ({ successful }) => {

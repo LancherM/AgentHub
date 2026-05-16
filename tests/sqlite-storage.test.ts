@@ -270,7 +270,8 @@ function workspace(baseDirectory: string): Workspace {
     runId: "run_1",
     agentKind: "fake",
     dryRun: false,
-    sourceRepositoryDirty: false
+    sourceRepositoryDirty: false,
+    cleanupPolicy: "never"
   };
 }
 

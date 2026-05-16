@@ -88,6 +88,50 @@ describe("GitWorktreeWorkspaceManager", () => {
     expect(shell.calls).toHaveLength(3);
   });
 
+  it("defaults to retaining workspaces instead of automatic cleanup", async () => {
+    const sourceRepositoryPath = await createTestDirectory("workspace-source");
+    const workspaceBasePath = await createTestDirectory("workspace-base");
+    const shell = new MockShellExecutor();
+    const manager = new GitWorktreeWorkspaceManager(shell);
+    const session = await manager.createSession({
+      sourceRepositoryPath,
+      workspaceBasePath,
+      taskId: "task_1",
+      runId: "run_1",
+      agentKind: "fake"
+    });
+
+    const cleanup = await session.cleanup({ successful: true });
+
+    expect(session.workspace.cleanupPolicy).toBe("never");
+    expect(cleanup.retained).toBe(true);
+    expect(cleanup.cleaned).toBe(false);
+    expect(shell.calls).toHaveLength(3);
+  });
+
+  it("uses on-success cleanup only when explicitly requested", async () => {
+    const sourceRepositoryPath = await createTestDirectory("workspace-source");
+    const workspaceBasePath = await createTestDirectory("workspace-base");
+    const shell = new MockShellExecutor();
+    const manager = new GitWorktreeWorkspaceManager(shell);
+    const session = await manager.createSession({
+      sourceRepositoryPath,
+      workspaceBasePath,
+      taskId: "task_1",
+      runId: "run_1",
+      agentKind: "fake",
+      cleanupPolicy: "on_success"
+    });
+
+    const cleanup = await session.cleanup({ successful: true });
+
+    expect(cleanup.cleaned).toBe(true);
+    expect(shell.calls.at(-1)?.command.args?.slice(0, 2)).toEqual([
+      "worktree",
+      "remove"
+    ]);
+  });
+
   it("supports dry-run mode without cleanup commands", async () => {
     const sourceRepositoryPath = await createTestDirectory("workspace-source");
     const workspaceBasePath = await createTestDirectory("workspace-base");

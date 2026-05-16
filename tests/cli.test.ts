@@ -193,6 +193,80 @@ describe("CLI", () => {
     expect(queryOutput.join("")).toContain("events: 2");
   });
 
+  it("supports context init, show, build, and export dry-run commands", async () => {
+    const projectRoot = await createTestDirectory("cli-context-project");
+    const agentHubHome = await createTestDirectory("cli-context-home");
+    const output: string[] = [];
+    const errors: string[] = [];
+    const io = {
+      stdout: { write: (chunk: string) => { output.push(chunk); return true; } },
+      stderr: { write: (chunk: string) => { errors.push(chunk); return true; } }
+    };
+
+    await expect(
+      main([
+        "context",
+        "init",
+        "--project-root",
+        projectRoot,
+        "--project-id",
+        "project_1",
+        "--agent-hub-home",
+        agentHubHome
+      ], io, projectRoot)
+    ).resolves.toBe(0);
+    await expect(
+      main([
+        "context",
+        "show",
+        "--project-root",
+        projectRoot,
+        "--project-id",
+        "project_1",
+        "--agent-hub-home",
+        agentHubHome
+      ], io, projectRoot)
+    ).resolves.toBe(0);
+    await expect(
+      main([
+        "context",
+        "build",
+        "--project-root",
+        projectRoot,
+        "--project-id",
+        "project_1",
+        "--task-id",
+        "task_1",
+        "--title",
+        "Build context",
+        "--prompt",
+        "Compile context",
+        "--agent-hub-home",
+        agentHubHome
+      ], io, projectRoot)
+    ).resolves.toBe(0);
+    await expect(
+      main([
+        "context",
+        "export",
+        "--project-root",
+        projectRoot,
+        "--project-id",
+        "project_1",
+        "--agent-hub-home",
+        agentHubHome,
+        "--dry-run"
+      ], io, projectRoot)
+    ).resolves.toBe(0);
+
+    expect(errors.join("")).toBe("");
+    expect(output.join("")).toContain("Initialized context store");
+    expect(output.join("")).toContain("  - context/project.md");
+    expect(output.join("")).toContain("Built context artifacts");
+    expect(output.join("")).toContain("Previewed repo context export");
+    await expect(fs.access(path.join(projectRoot, "AGENTS.md"))).rejects.toThrow();
+  });
+
   it("rejects unknown agent clearly", async () => {
     const projectRoot = await createTestDirectory("cli-project");
     const output: string[] = [];
@@ -233,7 +307,8 @@ class TestWorkspaceManager implements WorkspaceManager {
         runId: config.runId,
         agentKind: config.agentKind,
         dryRun: config.dryRun ?? false,
-        sourceRepositoryDirty: false
+        sourceRepositoryDirty: false,
+        cleanupPolicy: config.cleanupPolicy ?? "never"
       },
       creationCommands: [],
       cleanup: async () => ({
