@@ -128,3 +128,21 @@ This is not yet a real git worktree runner. Real worktree creation is deferred
 to the next runner phase because this slice explicitly avoids real shell
 execution.
 
+## Night 2 Phase Boundary
+
+Night 2 adds Phase 3 and Phase 4 behavior under the direct instruction to keep
+git worktrees and real shell execution deferred.
+
+Phase 3 implements a non-invasive `ContextCompiler`. It creates a generated
+`ContextBundle` and markdown payload from task, agent, repository, project,
+memory, skill, constraint, and hint inputs. It does not write to the target
+repository and does not modify `AGENTS.md`, `CLAUDE.md`, `README.md`, or other
+project files.
+
+Phase 4 implements a fake-agent task runner pipeline with in-memory task and
+task-run repositories. The runner compiles context, selects an adapter through
+an agent registry, passes the compiled context to `FakeAgentAdapter`, records
+status transitions, and returns a structured result.
+
+Storage is intentionally in-memory for this phase. SQLite remains deferred.
+The run directory is still an isolated directory, not a git worktree.

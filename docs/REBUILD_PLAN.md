@@ -67,9 +67,55 @@ Out of scope:
 - ClaudeCodeAdapter
 - desktop UI
 
+## Phase 3: Non-Invasive Context Compiler
+
+Status: complete in Night 2.
+
+Goal: build generated context payloads without writing into the target
+repository.
+
+Deliverables:
+
+- `ContextCompiler`
+- `ContextBundle`
+- `ContextSection`
+- `ContextSource`
+- `MemoryProvider`
+- `SkillProvider`
+- `ProjectContextProvider`
+- `ContextFormatter`
+- in-memory/static provider implementations
+- markdown formatter
+- tests for task-only bundles, project summary, memories, skills, empty
+  providers, deterministic ordering, markdown formatting, provider failures,
+  and target-repository non-modification
+
+## Phase 4: Fake Task Runner With Storage Abstractions
+
+Status: complete in Night 2, without git worktrees by direct scope.
+
+Goal: coordinate a fake-agent run through context compilation, adapter
+selection, in-memory task/run persistence, status transitions, and concise CLI
+output.
+
+Deliverables:
+
+- `TaskRunner`
+- `TaskRepository`
+- `TaskRunRepository`
+- `AgentRegistry`
+- `RunResult`
+- in-memory repositories
+- default fake-only agent registry
+- `agent-hub run "@fake <task>"`
+- `agent-hub tasks list`
+- `agent-hub runs list`
+- tests for successful fake runs, failed fake runs, missing agents, context
+  handoff, task persistence, run persistence, status transitions, and CLI
+  parsing/errors
+
 ## Recommended Next Phase
 
-After this slice is green, implement real git worktree task isolation before
-adding persistence or real agent adapters. That keeps the central safety
-invariant testable before external commands are introduced.
-
+Night 3 should implement real git worktree task isolation before adding SQLite
+or real agent adapters. That keeps the central safety invariant testable before
+external commands are introduced.
