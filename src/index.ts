@@ -3,6 +3,7 @@ export * from "./agent-parser";
 export * from "./context-compiler";
 export * from "./diff-collector";
 export * from "./domain";
+export * from "./process-runner";
 export * from "./risk-report";
 export * from "./shell-executor";
 export * from "./sqlite-storage";

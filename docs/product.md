@@ -5,7 +5,8 @@ agents on a developer machine.
 
 The current verified rebuild slice supports registered projects, registered
 tasks, Agent Hub-owned context stores, context artifact build/export,
-deterministic fake-agent runs, and cross-process SQLite-backed run inspection:
+deterministic fake-agent runs, process-backed Codex and Claude Code runs, and
+cross-process SQLite-backed run inspection:
 
 ```sh
 agent-hub [--db <path>] project add --name <name> --root <path>
@@ -17,8 +18,8 @@ agent-hub context init --project-root <path> --project-id <project-id>
 agent-hub context show --project-root <path> --project-id <project-id>
 agent-hub context build --project-root <path> --project-id <project-id> --task-id <task-id> --title <title> --prompt <prompt>
 agent-hub context export --project-root <path> --project-id <project-id> --dry-run|--write
-agent-hub [--db <path>] run --task <task-id> --agent fake
-agent-hub run [--repo <path>] [--workspace-base <path>] [--retain-on-failure] "@fake <task>"
+agent-hub [--db <path>] run --task <task-id> --agent fake|codex|claude-code
+agent-hub run [--repo <path>] [--workspace-base <path>] [--retain-on-failure] "@fake|@codex|@claude-code <task>"
 agent-hub tasks list
 agent-hub runs list
 agent-hub runs show <run-id>
@@ -48,15 +49,31 @@ Agent Hub-owned artifacts or inside isolated worktrees; default context build
 does not write repository-level agent files.
 
 The run command validates the task input, compiles non-invasive context, routes
-to the fake adapter, creates an isolated git worktree outside the original
+to the selected adapter, creates an isolated git worktree outside the original
 project checkout, materializes runtime task brief/context-pack files inside
-that workspace, runs the fake adapter with the context payload, collects git
-diff metadata, runs explicitly configured verification commands, generates a
+that workspace, runs the adapter with the context payload, collects git diff
+metadata, runs explicitly configured verification commands, generates a
 structured risk report, captures events, applies the workspace cleanup policy,
 and prints a concise summary. `runtime_injection` remains the default delivery
-mode. `worktree_overlay` is opt-in and writes generated `AGENTS.md`,
+mode. Codex and Claude Code receive the task brief/context through stdin-driven
+runtime injection and do not require repository-level `AGENTS.md` or
+`CLAUDE.md`. `worktree_overlay` is opt-in and writes generated `AGENTS.md`,
 `CLAUDE.md`, and skill copies only inside the isolated worktree, never the
 original checkout.
+
+The process-backed adapters use direct executable-plus-args spawning:
+
+- Codex runs `codex exec --json -` in the isolated worktree.
+- Claude Code runs `claude --print --output-format stream-json` in the isolated
+  worktree.
+- Detection calls lightweight version commands and reports missing CLI or setup
+  failures as unavailable reasons instead of crashing.
+- stdout and stderr are captured as run events; structured JSONL output is
+  parsed into message/status/error events when possible, while raw output is
+  preserved.
+- non-zero process exits and signal exits make the run fail, but the task run,
+  events, artifacts, verification rows, and risk report remain inspectable.
+- unsafe permission-bypass flags are not used.
 
 The list/show/history commands read from local SQLite storage by default, so
 projects, tasks, runs, run details, and risk reports remain visible across CLI
@@ -99,5 +116,6 @@ The product remains local-only. This rebuild does not add cloud sync, accounts,
 team features, hosted dashboards, automatic pull requests, automatic merges, or
 automatic pushes.
 
-Deferred product capabilities include Claude Code adapter work, real comparison
-generation, memory approval workflows, and the desktop shell.
+Deferred product capabilities include richer Codex/Claude structured event
+mapping, real comparison generation, memory approval workflows, and the desktop
+shell.

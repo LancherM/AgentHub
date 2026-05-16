@@ -10,7 +10,7 @@ import type {
   WorkspaceManager,
   WorkspaceSession
 } from "../src/workspace";
-import { createTestDirectory, MockShellExecutor } from "./helpers";
+import { createTestDirectory, MockProcessRunner, MockShellExecutor } from "./helpers";
 
 describe("CLI", () => {
   it("runs fake tasks and lists in-memory tasks and runs", async () => {
@@ -52,6 +52,53 @@ describe("CLI", () => {
     expect(output.join("")).toContain("task_0001\tcompleted\tadhoc_project\tcompile context");
     expect(output.join("")).toContain("run_0002\tsucceeded\tfake\ttask_0001");
     expect(output.join("")).toContain("acceptance:");
+  });
+
+  it("routes @codex and --agent claude-code runs through process-backed adapters", async () => {
+    const projectRoot = await createTestDirectory("cli-process-project");
+    const runRoot = path.join(await createTestDirectory("cli-process-runs"), "runs");
+    const runtime = createCliRuntime({
+      storageMode: "memory",
+      defaultRunRoot: runRoot,
+      workspaceManager: new TestWorkspaceManager(runRoot),
+      diffCollector: new StaticDiffCollector(),
+      verificationRunner: new VerificationRunner(new MockShellExecutor()),
+      processRunner: new MockProcessRunner([
+        [
+          { type: "stdout", data: "{\"type\":\"agent_message\",\"message\":\"codex ok\"}\n" },
+          { type: "exit", exitCode: 0, signal: null }
+        ],
+        [
+          { type: "stdout", data: "{\"type\":\"result\",\"result\":\"claude ok\"}\n" },
+          { type: "exit", exitCode: 0, signal: null }
+        ]
+      ]),
+      idGenerator: new SequenceIdGenerator(),
+      clock: new FixedClock("2026-01-01T00:00:00.000Z")
+    });
+    const output: string[] = [];
+    const errors: string[] = [];
+    const io = {
+      stdout: { write: (chunk: string) => { output.push(chunk); return true; } },
+      stderr: { write: (chunk: string) => { errors.push(chunk); return true; } }
+    };
+
+    await expect(
+      main(["run", "@codex", "compile context"], io, projectRoot, runtime)
+    ).resolves.toBe(0);
+    await expect(
+      main([
+        "run",
+        "--agent",
+        "claude-code",
+        "--prompt",
+        "review context"
+      ], io, projectRoot, runtime)
+    ).resolves.toBe(0);
+
+    expect(errors.join("")).toBe("");
+    expect(output.join("")).toContain("agent: codex");
+    expect(output.join("")).toContain("agent: claude-code");
   });
 
   it("persists CLI task, run, and risk views through SQLite runtimes", async () => {

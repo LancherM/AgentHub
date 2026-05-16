@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { FakeAgentAdapter } from "../src/agent-adapters";
+import { CodexAdapter, FakeAgentAdapter } from "../src/agent-adapters";
 import {
   DefaultContextCompiler,
   InMemoryMemoryProvider,
@@ -29,7 +29,7 @@ import type {
   WorkspaceManager,
   WorkspaceSession
 } from "../src/workspace";
-import { createTestDirectory, MockShellExecutor } from "./helpers";
+import { createTestDirectory, MockProcessRunner, MockShellExecutor } from "./helpers";
 
 describe("task runner", () => {
   it("runs the fake adapter in an isolated directory without modifying the project root", async () => {
@@ -78,9 +78,16 @@ describe("task runner", () => {
 
   it("rejects unimplemented agents", async () => {
     const projectRoot = await createTestDirectory("agent-hub-project");
+    const runRoot = await createTestDirectory("agent-hub-runs");
 
     await expect(
-      createTestRunner(await createTestDirectory("agent-hub-runs")).run({
+      new TaskRunner({
+        defaultRunRoot: runRoot,
+        workspaceManager: new TestWorkspaceManager(runRoot),
+        diffCollector: new StaticDiffCollector(),
+        verificationRunner: new VerificationRunner(new MockShellExecutor()),
+        agentRegistry: new DefaultAgentRegistry([new FakeAgentAdapter()])
+      }).run({
         projectRoot,
         taskPrompt: "Run codex",
         agentKind: "codex"
@@ -211,6 +218,47 @@ describe("task runner", () => {
       "queued",
       "running",
       "failed"
+    ]);
+  });
+
+  it("persists failed Codex process exits as inspectable failed runs", async () => {
+    const projectRoot = await createTestDirectory("agent-hub-project");
+    const runRoot = await createTestDirectory("agent-hub-runs");
+    const runEventRepository = new InMemoryRunEventRepository();
+    const runner = new TaskRunner({
+      defaultRunRoot: runRoot,
+      workspaceManager: new TestWorkspaceManager(runRoot),
+      diffCollector: new StaticDiffCollector(),
+      verificationRunner: new VerificationRunner(new MockShellExecutor()),
+      runEventRepository,
+      agentRegistry: new DefaultAgentRegistry([
+        new CodexAdapter({
+          processRunner: new MockProcessRunner([
+            [
+              { type: "stderr", data: "codex failed\n" },
+              { type: "exit", exitCode: 2, signal: null }
+            ]
+          ])
+        })
+      ]),
+      idGenerator: new SequenceIdGenerator(),
+      clock: new FixedClock("2026-01-01T00:00:00.000Z")
+    });
+
+    const result = await runner.run({
+      projectRoot,
+      rawPrompt: "@codex fail this run"
+    });
+
+    expect(result.status).toBe("failed");
+    expect(result.run.status).toBe("failed");
+    await expect(runEventRepository.listByRunId(result.run.id)).resolves.toEqual([
+      expect.objectContaining({ type: "status", message: "starting Codex" }),
+      expect.objectContaining({ type: "stderr", message: "codex failed\n" }),
+      expect.objectContaining({
+        type: "exit",
+        metadata: expect.objectContaining({ exitCode: 2, signal: null })
+      })
     ]);
   });
 

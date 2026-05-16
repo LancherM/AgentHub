@@ -2,7 +2,12 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import type { AgentRunEvent } from "./agent-adapters";
-import { FakeAgentAdapter, isPathInside } from "./agent-adapters";
+import {
+  ClaudeCodeAdapter,
+  CodexAdapter,
+  FakeAgentAdapter,
+  isPathInside
+} from "./agent-adapters";
 import { parseAgentPrompt } from "./agent-parser";
 import {
   DefaultContextCompiler,
@@ -37,6 +42,7 @@ import {
   type VerificationResult
 } from "./domain";
 import { RiskReportGenerator } from "./risk-report";
+import { NodeProcessRunner, type ProcessRunner } from "./process-runner";
 import { formatShellCommand, NodeShellExecutor, type ShellExecutor } from "./shell-executor";
 import {
   DefaultAgentRegistry,
@@ -129,6 +135,7 @@ export interface TaskRunnerDependencies {
   runMetadataRepository?: RunMetadataRepository;
   agentRegistry?: AgentRegistry;
   shellExecutor?: ShellExecutor;
+  processRunner?: ProcessRunner;
   workspaceManager?: WorkspaceManager;
   diffCollector?: DiffCollectorService;
   verificationRunner?: VerificationRunner;
@@ -196,6 +203,7 @@ export class TaskRunner {
 
   constructor(dependencies: TaskRunnerDependencies = {}) {
     const shellExecutor = dependencies.shellExecutor ?? new NodeShellExecutor();
+    const processRunner = dependencies.processRunner ?? new NodeProcessRunner();
     this.contextCompiler = dependencies.contextCompiler ?? new DefaultContextCompiler();
     this.contextFormatter = dependencies.contextFormatter ?? new MarkdownContextFormatter();
     this.taskRepository =
@@ -215,7 +223,11 @@ export class TaskRunner {
       dependencies.runMetadataRepository ?? new InMemoryRunMetadataRepository();
     this.agentRegistry =
       dependencies.agentRegistry ??
-      new DefaultAgentRegistry([new FakeAgentAdapter()]);
+      new DefaultAgentRegistry([
+        new FakeAgentAdapter(),
+        new CodexAdapter({ processRunner }),
+        new ClaudeCodeAdapter({ processRunner })
+      ]);
     this.workspaceManager =
       dependencies.workspaceManager ?? new GitWorktreeWorkspaceManager(shellExecutor);
     this.diffCollector = dependencies.diffCollector ?? new DiffCollector(shellExecutor);
@@ -419,6 +431,7 @@ export class TaskRunner {
           originalProjectRoot: projectRoot,
           worktreePath,
           taskBriefPath,
+          contextPackPath: path.join(runtimeDirectory, "context-pack.json"),
           contextBundle,
           contextMarkdown,
           runtimeDirectory,
@@ -592,6 +605,9 @@ function toPersistedRunEvents(
     const metadata: JsonObject = { ...(event.metadata ?? {}) };
     if (event.type === "exit") {
       metadata.exitCode = event.exitCode;
+      if (event.signal !== undefined) {
+        metadata.signal = event.signal;
+      }
     }
     return validateRunEvent({
       id: idGenerator.nextId("event"),

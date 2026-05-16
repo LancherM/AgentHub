@@ -6,10 +6,13 @@ starting from a minimal root TypeScript package.
 Current module boundaries under `src/`:
 
 - `domain`: validated domain entities, enums, and value objects
-- `agent-adapters`: common adapter contract and `FakeAgentAdapter`
+- `agent-adapters`: common adapter contract, `FakeAgentAdapter`,
+  `CodexAdapter`, and `ClaudeCodeAdapter`
 - `context-compiler`: Agent Hub-owned context store init/show/build/export,
   context pack and task brief generation, managed block handling, and optional
   worktree overlay materialization
+- `process-runner`: direct child-process spawning with stdin, streaming
+  stdout/stderr, exit code and signal capture, and CLI detection helpers
 - `shell-executor`: explicit shell command boundary with cwd, stdout/stderr,
   exit code, duration, timeout, dry-run, and dangerous-command checks
 - `workspace`: workspace abstractions and safe git worktree session management
@@ -25,7 +28,7 @@ Current module boundaries under `src/`:
   run metadata, and agent registry
 - `sqlite-storage`: SQLite migration/init logic and local repository
   implementations for the MVP persistence tables
-- `task-runner`: fake-agent orchestration with context compilation and
+- `task-runner`: adapter orchestration with context compilation and
   repository-backed persistence
 - `cli`: command parsing and output rendering
 - `agent-parser`: `@agent` prompt parsing
@@ -39,6 +42,24 @@ generates a risk report, persists run metadata and structured run records
 through repository interfaces, records run status transitions, and applies
 workspace cleanup policy. The default cleanup policy is `never`, so worktrees
 are retained unless a caller explicitly selects cleanup behavior.
+
+The default agent registry includes fake, Codex, and Claude Code adapters.
+Real adapters run only inside the isolated worktree cwd. They use
+`ProcessRunner` to spawn executables with argument arrays and stdin; no shell
+interpolation is used. Runtime injection remains the default: task brief and
+context are sent through stdin, while the generated worktree-local
+`.agent-hub/tasks/<task-id>/` files are available for inspection. The adapters
+do not use permission-bypass flags, do not push, do not merge, and do not delete
+branches.
+
+Process detection is non-fatal. `CodexAdapter.detect()` runs `codex --version`
+and `ClaudeCodeAdapter.detect()` runs `claude --version`; missing commands,
+non-zero exits, or setup/authentication failures return `available: false` with
+a reason. During runs, stdout and stderr become `RunEvent` rows. Valid JSONL
+stdout lines are additionally mapped to message/status/error events, malformed
+structured output remains preserved as raw stdout, and exit events record both
+exit code and signal metadata. A non-zero exit marks the run failed, and the
+failed run is still persisted through the same repositories as successful runs.
 
 The context compiler owns the boundary for generated context artifacts. It can
 initialize and inspect context stores, read external context from Agent
@@ -99,9 +120,10 @@ payloads to `run_artifacts`, verification command rows to
 legacy aggregate `run_metadata` remains for compatibility with existing show
 paths and is no longer the only persisted source for run inspection.
 
-The fake adapter runs against an isolated worktree and refuses to run when that
+All adapters run against an isolated worktree and refuse to run when that
 directory is the original project root or when the generated task brief is
-outside the isolated directory.
+outside the isolated directory. Codex is invoked as `codex exec --json -`.
+Claude Code is invoked as `claude --print --output-format stream-json`.
 
 The diff collector first reads git status, then filters generated files against
 the baselines returned by context overlay materialization. Generated files are
@@ -111,9 +133,9 @@ commands are scoped to the filtered tracked paths, and untracked text files get
 synthetic patch content. Binary files are represented with metadata such as
 binary status and byte size.
 
-Shell usage is limited to `ShellExecutor` implementations. Git worktree, git
-diff, and verification commands use executable-plus-args calls with explicit
-cwd; task prompts are never interpreted as shell commands.
+Shell usage is limited to `ShellExecutor` and `ProcessRunner` implementations.
+Git worktree, git diff, verification commands, and real agent processes use
+executable-plus-args calls with explicit cwd; task prompts are never
+interpreted as shell commands.
 
-No real external agent process, API server, desktop shell, Codex adapter, or
-Claude Code adapter is present in this slice.
+No API server or desktop shell is present in this slice.

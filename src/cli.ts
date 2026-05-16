@@ -293,8 +293,8 @@ export function helpText(): string {
     "  agent-hub context show --project-root <path> --project-id <project-id>",
     "  agent-hub context build --project-root <path> --project-id <project-id> --task-id <task-id> --title <title> --prompt <prompt>",
     "  agent-hub context export --project-root <path> --project-id <project-id> --dry-run|--write",
-    "  agent-hub [--db <path>] run --task <task-id> --agent fake [--workspace-base <path>]",
-    "  agent-hub [--db <path>] run [--repo <path>] [--workspace-base <path>] [--retain-on-failure] \"@fake <task>\"",
+    "  agent-hub [--db <path>] run --task <task-id> --agent fake|codex|claude-code [--workspace-base <path>]",
+    "  agent-hub [--db <path>] run [--repo <path>] [--workspace-base <path>] [--retain-on-failure] \"@fake|@codex|@claude-code <task>\"",
     "  agent-hub runs list",
     "  agent-hub runs show <run-id>",
     "  agent-hub risks show <run-id>",
@@ -500,10 +500,6 @@ async function runCommand(
   try {
     const options = parseRunArgs(args, cwd);
     const runInput = await resolveRunInput(options, runtime);
-    if (runInput.agentKind !== "fake") {
-      io.stderr.write(`error: agent ${runInput.agentKind} is not implemented yet\n`);
-      return 1;
-    }
 
     const result = await runtime.taskRunner.run({
       ...runInput,

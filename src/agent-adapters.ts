@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import type { ContextBundle } from "./context-compiler";
 import type { AgentKind, JsonObject } from "./domain";
+import { NodeProcessRunner, type ProcessRunner } from "./process-runner";
 
 export interface AgentDetectionResult {
   available: boolean;
@@ -33,6 +34,7 @@ export type AgentRunEvent =
       type: "exit";
       message: string;
       exitCode: number;
+      signal?: NodeJS.Signals | string | null;
       metadata?: JsonObject;
     };
 
@@ -46,6 +48,15 @@ export interface AgentAdapter {
 export interface FakeAgentAdapterOptions {
   fail?: boolean;
   failureMessage?: string;
+}
+
+export interface ProcessAgentAdapterOptions {
+  executable?: string;
+  detectArgs?: string[];
+  runArgs?: string[];
+  processRunner?: ProcessRunner;
+  detectTimeoutMs?: number;
+  runTimeoutMs?: number;
 }
 
 export class FakeAgentAdapter implements AgentAdapter {
@@ -140,6 +151,92 @@ export class FakeAgentAdapter implements AgentAdapter {
   }
 }
 
+export class CodexAdapter implements AgentAdapter {
+  readonly kind = "codex";
+  readonly displayName = "Codex";
+  private readonly executable: string;
+  private readonly detectArgs: string[];
+  private readonly runArgs: string[];
+  private readonly processRunner: ProcessRunner;
+  private readonly detectTimeoutMs: number;
+  private readonly runTimeoutMs: number | undefined;
+
+  constructor(options: ProcessAgentAdapterOptions = {}) {
+    this.executable = options.executable ?? "codex";
+    this.detectArgs = options.detectArgs ?? ["--version"];
+    this.runArgs = options.runArgs ?? ["exec", "--json", "-"];
+    assertSafeAdapterArgs(this.kind, this.runArgs);
+    this.processRunner = options.processRunner ?? new NodeProcessRunner();
+    this.detectTimeoutMs = options.detectTimeoutMs ?? 5_000;
+    this.runTimeoutMs = options.runTimeoutMs;
+  }
+
+  async detect(): Promise<AgentDetectionResult> {
+    return detectProcessAgent({
+      displayName: this.displayName,
+      executable: this.executable,
+      args: this.detectArgs,
+      processRunner: this.processRunner,
+      timeoutMs: this.detectTimeoutMs
+    });
+  }
+
+  run(input: AgentRunInput): AsyncIterable<AgentRunEvent> {
+    return runProcessAgent({
+      adapterKind: this.kind,
+      displayName: this.displayName,
+      executable: this.executable,
+      args: this.runArgs,
+      processRunner: this.processRunner,
+      input,
+      timeoutMs: this.runTimeoutMs
+    });
+  }
+}
+
+export class ClaudeCodeAdapter implements AgentAdapter {
+  readonly kind = "claude-code";
+  readonly displayName = "Claude Code";
+  private readonly executable: string;
+  private readonly detectArgs: string[];
+  private readonly runArgs: string[];
+  private readonly processRunner: ProcessRunner;
+  private readonly detectTimeoutMs: number;
+  private readonly runTimeoutMs: number | undefined;
+
+  constructor(options: ProcessAgentAdapterOptions = {}) {
+    this.executable = options.executable ?? "claude";
+    this.detectArgs = options.detectArgs ?? ["--version"];
+    this.runArgs = options.runArgs ?? ["--print", "--output-format", "stream-json"];
+    assertSafeAdapterArgs(this.kind, this.runArgs);
+    this.processRunner = options.processRunner ?? new NodeProcessRunner();
+    this.detectTimeoutMs = options.detectTimeoutMs ?? 5_000;
+    this.runTimeoutMs = options.runTimeoutMs;
+  }
+
+  async detect(): Promise<AgentDetectionResult> {
+    return detectProcessAgent({
+      displayName: this.displayName,
+      executable: this.executable,
+      args: this.detectArgs,
+      processRunner: this.processRunner,
+      timeoutMs: this.detectTimeoutMs
+    });
+  }
+
+  run(input: AgentRunInput): AsyncIterable<AgentRunEvent> {
+    return runProcessAgent({
+      adapterKind: this.kind,
+      displayName: this.displayName,
+      executable: this.executable,
+      args: this.runArgs,
+      processRunner: this.processRunner,
+      input,
+      timeoutMs: this.runTimeoutMs
+    });
+  }
+}
+
 export function isPathInside(candidatePath: string, parentPath: string): boolean {
   const relative = path.relative(path.resolve(parentPath), path.resolve(candidatePath));
   return relative === "" || (!!relative && !relative.startsWith("..") && !path.isAbsolute(relative));
@@ -149,16 +246,275 @@ function samePath(left: string, right: string): boolean {
   return path.resolve(left) === path.resolve(right);
 }
 
-function* failureEvents(message: string): Iterable<AgentRunEvent> {
+function* failureEvents(
+  message: string,
+  metadata: JsonObject = { error: message }
+): Iterable<AgentRunEvent> {
   yield {
     type: "error",
     message,
-    metadata: { error: message }
+    metadata
   };
   yield {
     type: "exit",
     message,
     exitCode: 1,
-    metadata: { error: message }
+    metadata
   };
+}
+
+async function detectProcessAgent(input: {
+  displayName: string;
+  executable: string;
+  args: string[];
+  processRunner: ProcessRunner;
+  timeoutMs: number;
+}): Promise<AgentDetectionResult> {
+  try {
+    const result = await input.processRunner.detect({
+      executable: input.executable,
+      args: input.args,
+      cwd: process.cwd(),
+      timeoutMs: input.timeoutMs
+    });
+    if (result.available) {
+      return {
+        available: true,
+        version: result.version
+      };
+    }
+    return {
+      available: false,
+      reason: `${input.displayName} CLI unavailable: ${result.reason ?? "not found or not authenticated"}`
+    };
+  } catch (error) {
+    return {
+      available: false,
+      reason: `${input.displayName} CLI detection failed: ${
+        error instanceof Error ? error.message : String(error)
+      }`
+    };
+  }
+}
+
+async function* runProcessAgent(input: {
+  adapterKind: AgentKind;
+  displayName: string;
+  executable: string;
+  args: string[];
+  processRunner: ProcessRunner;
+  input: AgentRunInput;
+  timeoutMs?: number;
+}): AsyncIterable<AgentRunEvent> {
+  const validation = await validateProcessAgentInput(input.input);
+  if (!validation.ok) {
+    yield* failureEvents(validation.message);
+    return;
+  }
+
+  const parser = new StructuredOutputParser(input.displayName);
+  const stdin = buildRuntimeStdin(input.input, validation.taskBrief);
+  yield {
+    type: "status",
+    message: `starting ${input.displayName}`,
+    metadata: {
+      executable: input.executable,
+      args: input.args,
+      cwd: path.resolve(input.input.worktreePath)
+    }
+  };
+
+  try {
+    for await (const event of input.processRunner.run({
+      executable: input.executable,
+      args: input.args,
+      cwd: path.resolve(input.input.worktreePath),
+      stdin,
+      env: input.input.environment,
+      timeoutMs: input.timeoutMs
+    })) {
+      if (event.type === "stdout") {
+        yield { type: "stdout", message: event.data };
+        for (const parsedEvent of parser.push(event.data)) {
+          yield parsedEvent;
+        }
+        continue;
+      }
+      if (event.type === "stderr") {
+        yield { type: "stderr", message: event.data };
+        continue;
+      }
+      if (event.type === "error") {
+        yield {
+          type: "error",
+          message: event.error.message,
+          metadata: { error: event.error.message }
+        };
+        continue;
+      }
+      for (const parsedEvent of parser.flush()) {
+        yield parsedEvent;
+      }
+      const exitCode = event.exitCode ?? 1;
+      yield {
+        type: "exit",
+        message:
+          event.signal !== null && event.signal !== undefined
+            ? `${input.displayName} exited by signal ${event.signal}`
+            : `${input.displayName} exited with code ${exitCode}`,
+        exitCode,
+        signal: event.signal,
+        metadata: {
+          exitCode,
+          signal: event.signal ?? null,
+          adapter: input.adapterKind
+        }
+      };
+    }
+  } catch (error) {
+    yield* failureEvents(
+      `${input.displayName} process failed: ${
+        error instanceof Error ? error.message : String(error)
+      }`
+    );
+  }
+}
+
+async function validateProcessAgentInput(
+  input: AgentRunInput
+): Promise<{ ok: true; taskBrief: string } | { ok: false; message: string }> {
+  const originalProjectRoot = path.resolve(input.originalProjectRoot);
+  const worktreePath = path.resolve(input.worktreePath);
+  const taskBriefPath = path.resolve(input.taskBriefPath);
+
+  if (samePath(originalProjectRoot, worktreePath)) {
+    return { ok: false, message: "adapter refused to run in the original project root." };
+  }
+
+  if (!isPathInside(taskBriefPath, worktreePath)) {
+    return {
+      ok: false,
+      message: "adapter refused a task brief outside the isolated run directory."
+    };
+  }
+
+  try {
+    const worktreeStat = await fs.stat(worktreePath);
+    if (!worktreeStat.isDirectory()) {
+      return { ok: false, message: "adapter worktree path is not a directory." };
+    }
+  } catch {
+    return { ok: false, message: "adapter worktree path does not exist." };
+  }
+
+  try {
+    return { ok: true, taskBrief: await fs.readFile(taskBriefPath, "utf8") };
+  } catch {
+    return { ok: false, message: "adapter task brief is missing or unreadable." };
+  }
+}
+
+function buildRuntimeStdin(input: AgentRunInput, taskBrief: string): string {
+  return [
+    "# Agent Hub Runtime Injection",
+    "",
+    "Run inside the current isolated worktree. Do not push, merge, or delete branches.",
+    "",
+    "## Task Brief",
+    "",
+    taskBrief.trim(),
+    "",
+    "## Context",
+    "",
+    input.contextMarkdown?.trim() ?? "No context payload was provided."
+  ].join("\n");
+}
+
+class StructuredOutputParser {
+  private buffer = "";
+
+  constructor(private readonly displayName: string) {}
+
+  push(chunk: string): AgentRunEvent[] {
+    this.buffer += chunk;
+    const lines = this.buffer.split(/\r?\n/);
+    this.buffer = lines.pop() ?? "";
+    return lines.flatMap((line) => this.parseLine(line));
+  }
+
+  flush(): AgentRunEvent[] {
+    if (this.buffer.trim().length === 0) {
+      this.buffer = "";
+      return [];
+    }
+    const line = this.buffer;
+    this.buffer = "";
+    return this.parseLine(line);
+  }
+
+  private parseLine(line: string): AgentRunEvent[] {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith("{") || !trimmed.endsWith("}")) {
+      return [];
+    }
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(trimmed);
+    } catch {
+      return [];
+    }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return [];
+    }
+
+    const adapterEvent = parsed as JsonObject;
+    const type = String(
+      adapterEvent.type ?? adapterEvent.event ?? adapterEvent.kind ?? "event"
+    );
+    const message = structuredMessage(adapterEvent) ?? `${this.displayName} ${type}`;
+    const metadata = { adapterEvent };
+
+    if (/error|failed|failure/i.test(type)) {
+      return [{ type: "error", message, metadata }];
+    }
+    if (/message|assistant|agent|result/i.test(type)) {
+      return [{ type: "message", message, metadata }];
+    }
+    return [{ type: "status", message, metadata }];
+  }
+}
+
+function structuredMessage(event: JsonObject): string | undefined {
+  for (const key of ["message", "content", "text", "summary", "result"]) {
+    const value = event[key];
+    if (typeof value === "string" && value.trim().length > 0) {
+      return value;
+    }
+    if (value && typeof value === "object" && !Array.isArray(value)) {
+      const nested = value as JsonObject;
+      for (const nestedKey of ["content", "text", "message"]) {
+        const nestedValue = nested[nestedKey];
+        if (typeof nestedValue === "string" && nestedValue.trim().length > 0) {
+          return nestedValue;
+        }
+      }
+    }
+  }
+  return undefined;
+}
+
+function assertSafeAdapterArgs(adapterKind: AgentKind, args: string[]): void {
+  const normalized = args.join(" ").toLowerCase();
+  const dangerousFlags = [
+    "--dangerously-bypass-approvals-and-sandbox",
+    "--dangerously-skip-permissions",
+    "--ignore-rules"
+  ];
+  if (
+    dangerousFlags.some((flag) => normalized.includes(flag)) ||
+    normalized.includes("--sandbox danger-full-access")
+  ) {
+    throw new Error(`${adapterKind} adapter configuration contains unsafe permission flags`);
+  }
 }
