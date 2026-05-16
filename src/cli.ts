@@ -2,6 +2,7 @@
 import path from "node:path";
 import { parseAgentPrompt } from "./agent-parser";
 import {
+  appendApprovedMemory,
   buildContextArtifacts,
   exportContextToRepository,
   initContextStore,
@@ -11,11 +12,15 @@ import {
 import {
   createId,
   nowIso,
+  memoryCategories,
   parseAgentKind,
+  validateComparisonReport,
+  validateMemoryItem,
   validateProject,
   validateTask,
   type ContextDeliveryMode,
   type ContextStoreMode,
+  type MemoryCategory,
   type VerificationResult
 } from "./domain";
 import { TaskRunner, type RunTaskInput, type TaskRunnerDependencies } from "./task-runner";
@@ -275,6 +280,26 @@ export async function main(
     return showRisk(rest.slice(1), io, activeRuntime);
   }
 
+  if (command === "memory" && rest[0] === "list") {
+    return listMemory(rest.slice(1), io, activeRuntime);
+  }
+
+  if (command === "memory" && rest[0] === "propose") {
+    return proposeMemory(rest.slice(1), io, activeRuntime);
+  }
+
+  if (command === "memory" && rest[0] === "approve") {
+    return approveMemory(rest.slice(1), io, cwd, activeRuntime);
+  }
+
+  if (command === "memory" && rest[0] === "reject") {
+    return rejectMemory(rest.slice(1), io, activeRuntime);
+  }
+
+  if (command === "compare") {
+    return compareRuns(rest, io, activeRuntime);
+  }
+
   io.stderr.write(`error: unknown command ${[command, ...rest].join(" ")}\n`);
   return 1;
 }
@@ -298,6 +323,11 @@ export function helpText(): string {
     "  agent-hub runs list",
     "  agent-hub runs show <run-id>",
     "  agent-hub risks show <run-id>",
+    "  agent-hub memory list --project-id <project-id>",
+    "  agent-hub memory propose --project-id <project-id> --category <category> --content <text>",
+    "  agent-hub memory approve --memory-id <memory-id>",
+    "  agent-hub memory reject --memory-id <memory-id>",
+    "  agent-hub compare --task-id <task-id> --baseline <run-id> --candidate <run-id>",
     ""
   ].join("\n");
 }
@@ -680,6 +710,350 @@ async function showRisk(
   return 0;
 }
 
+async function listMemory(
+  args: string[],
+  io: CliIO,
+  runtime: CliRuntime
+): Promise<number> {
+  try {
+    const projectId = requiredFlag(args, "--project-id");
+    const items = await runtime.memoryItemRepository.listByProjectId(projectId);
+    if (items.length === 0) {
+      io.stdout.write("No memory items found.\n");
+      return 0;
+    }
+    for (const item of items) {
+      io.stdout.write(
+        `${item.id}\t${item.status}\t${item.category}\t${firstLine(item.content)}\n`
+      );
+    }
+    return 0;
+  } catch (error) {
+    io.stderr.write(`error: ${error instanceof Error ? error.message : String(error)}\n`);
+    return 1;
+  }
+}
+
+async function proposeMemory(
+  args: string[],
+  io: CliIO,
+  runtime: CliRuntime
+): Promise<number> {
+  try {
+    const projectId = requiredFlag(args, "--project-id");
+    const project = await runtime.projectRepository.get(projectId);
+    if (!project) {
+      throw new Error(`project ${projectId} not found`);
+    }
+    const category = parseMemoryCategory(requiredFlag(args, "--category"));
+    const content = requiredFlag(args, "--content").trim();
+    if (!content) {
+      throw new Error("--content must not be empty");
+    }
+    const now = nowIso();
+    const item = await runtime.memoryItemRepository.create(
+      validateMemoryItem({
+        id: createId("memory"),
+        projectId,
+        taskId: optionalFlag(args, "--task-id"),
+        category,
+        status: "proposed",
+        content,
+        createdAt: now,
+        updatedAt: now
+      })
+    );
+    io.stdout.write(
+      [
+        "Proposed memory",
+        `id: ${item.id}`,
+        `project_id: ${item.projectId}`,
+        `status: ${item.status}`,
+        `category: ${item.category}`,
+        ""
+      ].join("\n")
+    );
+    return 0;
+  } catch (error) {
+    io.stderr.write(`error: ${error instanceof Error ? error.message : String(error)}\n`);
+    return 1;
+  }
+}
+
+async function approveMemory(
+  args: string[],
+  io: CliIO,
+  cwd: string,
+  runtime: CliRuntime
+): Promise<number> {
+  try {
+    const memoryId = requiredFlag(args, "--memory-id");
+    const existing = await runtime.memoryItemRepository.get(memoryId);
+    if (!existing) {
+      throw new Error(`memory item ${memoryId} not found`);
+    }
+    const project = await runtime.projectRepository.get(existing.projectId);
+    if (!project) {
+      throw new Error(`project ${existing.projectId} not found`);
+    }
+    const approvedAt = nowIso();
+    const item = await runtime.memoryItemRepository.updateStatus(
+      memoryId,
+      "approved",
+      approvedAt
+    );
+    const writeback = await appendApprovedMemory({
+      projectRoot: project.rootPath,
+      projectId: project.id,
+      memoryId: item.id,
+      content: item.content,
+      approvedAt,
+      agentHubHome: optionalFlag(args, "--agent-hub-home")
+        ? path.resolve(cwd, requiredFlag(args, "--agent-hub-home"))
+        : undefined
+    });
+    io.stdout.write(
+      [
+        "Approved memory",
+        `id: ${item.id}`,
+        `status: ${item.status}`,
+        `approved_memory_path: ${writeback.path}`,
+        `writeback: ${writeback.written ? "written" : "already_present"}`,
+        ""
+      ].join("\n")
+    );
+    return 0;
+  } catch (error) {
+    io.stderr.write(`error: ${error instanceof Error ? error.message : String(error)}\n`);
+    return 1;
+  }
+}
+
+async function rejectMemory(
+  args: string[],
+  io: CliIO,
+  runtime: CliRuntime
+): Promise<number> {
+  try {
+    const memoryId = requiredFlag(args, "--memory-id");
+    const item = await runtime.memoryItemRepository.updateStatus(
+      memoryId,
+      "rejected",
+      nowIso()
+    );
+    io.stdout.write(
+      [
+        "Rejected memory",
+        `id: ${item.id}`,
+        `status: ${item.status}`,
+        ""
+      ].join("\n")
+    );
+    return 0;
+  } catch (error) {
+    io.stderr.write(`error: ${error instanceof Error ? error.message : String(error)}\n`);
+    return 1;
+  }
+}
+
+async function compareRuns(
+  args: string[],
+  io: CliIO,
+  runtime: CliRuntime
+): Promise<number> {
+  try {
+    const taskId = requiredFlag(args, "--task-id");
+    const baselineRunId = requiredFlag(args, "--baseline");
+    const candidateRunId = requiredFlag(args, "--candidate");
+    const task = await runtime.taskRepository.get(taskId);
+    if (!task) {
+      throw new Error(`task ${taskId} not found`);
+    }
+    const baseline = await loadComparisonRun(runtime, baselineRunId);
+    const candidate = await loadComparisonRun(runtime, candidateRunId);
+    if (baseline.taskId !== taskId) {
+      throw new Error(`baseline run ${baselineRunId} does not belong to task ${taskId}`);
+    }
+    if (candidate.taskId !== taskId) {
+      throw new Error(`candidate run ${candidateRunId} does not belong to task ${taskId}`);
+    }
+    const summary = renderComparisonSummary(taskId, baseline, candidate);
+    const report = await runtime.comparisonReportRepository.create(
+      validateComparisonReport({
+        id: createId("comparison"),
+        taskId,
+        baselineRunId,
+        candidateRunId,
+        summary,
+        createdAt: nowIso()
+      })
+    );
+    io.stdout.write(
+      [
+        "Created comparison report",
+        `id: ${report.id}`,
+        report.summary,
+        ""
+      ].join("\n")
+    );
+    return 0;
+  } catch (error) {
+    io.stderr.write(`error: ${error instanceof Error ? error.message : String(error)}\n`);
+    return 1;
+  }
+}
+
+interface ComparisonRunSnapshot {
+  runId: string;
+  taskId: string;
+  agent: string;
+  status: string;
+  changedFiles: string[];
+  stat: { filesChanged: number; insertions: number; deletions: number };
+  verification: string;
+  risk: string;
+  riskFactors: string[];
+  failedChecks: string[];
+}
+
+async function loadComparisonRun(
+  runtime: CliRuntime,
+  runId: string
+): Promise<ComparisonRunSnapshot> {
+  const run = await runtime.taskRunRepository.get(runId);
+  if (!run) {
+    throw new Error(`run ${runId} not found`);
+  }
+  const metadata = await runtime.runMetadataRepository.get(runId);
+  const diffArtifact = await runtime.runArtifactRepository.getLatestByRunIdAndKind(
+    runId,
+    "git_diff"
+  );
+  const artifactMetadata = diffArtifact?.metadata ?? {};
+  const verificationRows = await runtime.verificationResultRepository.listByRunId(runId);
+  const risk = await runtime.riskReportRepository.getLatestByRunId(runId);
+  const riskReport = risk ?? metadata?.riskReport;
+  const changedFiles =
+    metadata?.diff?.changedFiles.map((file) => file.path) ??
+    changedFilePaths(artifactMetadata.changedFiles);
+  const stat =
+    metadata?.diff?.stat ??
+    diffStat(artifactMetadata.stat, changedFiles.length);
+  const failedChecks =
+    verificationRows.length > 0
+      ? verificationRows
+          .filter((result) => result.status === "failed")
+          .map((result) => result.command)
+      : metadata?.verification?.failedCommands.map((result) => result.label) ?? [];
+
+  return {
+    runId: run.id,
+    taskId: run.taskId,
+    agent: run.agentKind,
+    status: run.status,
+    changedFiles,
+    stat: {
+      filesChanged: stat.filesChanged,
+      insertions: stat.insertions,
+      deletions: stat.deletions
+    },
+    verification:
+      verificationRows.length > 0
+        ? summarizeVerificationResults(verificationRows)
+        : metadata?.verification?.summary ?? "not available",
+    risk: riskReport?.level ?? "not available",
+    riskFactors: riskReport?.riskFactors ?? [],
+    failedChecks
+  };
+}
+
+function renderComparisonSummary(
+  taskId: string,
+  baseline: ComparisonRunSnapshot,
+  candidate: ComparisonRunSnapshot
+): string {
+  const baselineOnly = difference(baseline.changedFiles, candidate.changedFiles);
+  const candidateOnly = difference(candidate.changedFiles, baseline.changedFiles);
+  const shared = intersection(baseline.changedFiles, candidate.changedFiles);
+  return [
+    `task_id: ${taskId}`,
+    `baseline: ${formatComparisonRun(baseline)}`,
+    `candidate: ${formatComparisonRun(candidate)}`,
+    `baseline_only_files: ${formatList(baselineOnly)}`,
+    `candidate_only_files: ${formatList(candidateOnly)}`,
+    `shared_files: ${formatList(shared)}`,
+    `baseline_risk_factors: ${formatList(baseline.riskFactors)}`,
+    `candidate_risk_factors: ${formatList(candidate.riskFactors)}`,
+    `baseline_failed_checks: ${formatList(baseline.failedChecks)}`,
+    `candidate_failed_checks: ${formatList(candidate.failedChecks)}`
+  ].join("\n");
+}
+
+function formatComparisonRun(run: ComparisonRunSnapshot): string {
+  return [
+    run.runId,
+    `agent=${run.agent}`,
+    `status=${run.status}`,
+    `changed_files=${run.changedFiles.length}`,
+    `stat=+${run.stat.insertions}/-${run.stat.deletions}`,
+    `verification=${run.verification}`,
+    `risk=${run.risk}`
+  ].join(" ");
+}
+
+function changedFilePaths(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.flatMap((entry) => {
+    if (typeof entry === "string") {
+      return [entry];
+    }
+    if (entry && typeof entry === "object" && "path" in entry) {
+      const filePath = (entry as { path?: unknown }).path;
+      return typeof filePath === "string" ? [filePath] : [];
+    }
+    return [];
+  });
+}
+
+function diffStat(
+  value: unknown,
+  fallbackFilesChanged: number
+): { filesChanged: number; insertions: number; deletions: number } {
+  if (!value || typeof value !== "object") {
+    return { filesChanged: fallbackFilesChanged, insertions: 0, deletions: 0 };
+  }
+  const stat = value as Record<string, unknown>;
+  return {
+    filesChanged: numeric(stat.filesChanged) ?? fallbackFilesChanged,
+    insertions: numeric(stat.insertions) ?? 0,
+    deletions: numeric(stat.deletions) ?? 0
+  };
+}
+
+function difference(left: string[], right: string[]): string[] {
+  const rightSet = new Set(right);
+  return [...new Set(left.filter((entry) => !rightSet.has(entry)))].sort();
+}
+
+function intersection(left: string[], right: string[]): string[] {
+  const rightSet = new Set(right);
+  return [...new Set(left.filter((entry) => rightSet.has(entry)))].sort();
+}
+
+function formatList(values: string[]): string {
+  return values.length === 0 ? "none" : values.join(", ");
+}
+
+function firstLine(value: string): string {
+  return value.split(/\r?\n/).find((line) => line.trim().length > 0)?.trim() ?? "";
+}
+
+function numeric(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
 function renderRunSummary(result: Awaited<ReturnType<TaskRunner["run"]>>): string {
   return [
     "Task run completed",
@@ -1004,6 +1378,13 @@ function parseContextStoreMode(value: string | undefined): ContextStoreMode | un
     return value;
   }
   throw new Error("--mode must be external or repo_local");
+}
+
+function parseMemoryCategory(value: string): MemoryCategory {
+  if ((memoryCategories as readonly string[]).includes(value)) {
+    return value as MemoryCategory;
+  }
+  throw new Error(`--category must be one of ${memoryCategories.join(", ")}`);
 }
 
 function parseDeliveryMode(value: string | undefined): ContextDeliveryMode | undefined {

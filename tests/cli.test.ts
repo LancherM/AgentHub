@@ -3,6 +3,8 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { createCliRuntime, main } from "../src/cli";
 import type { DiffCollectionResult, DiffCollectorService } from "../src/diff-collector";
+import type { RiskReport } from "../src/domain";
+import { createSqliteRepositories } from "../src/sqlite-storage";
 import { SequenceIdGenerator, FixedClock } from "../src/task-runner";
 import { VerificationRunner } from "../src/verification";
 import type {
@@ -314,6 +316,273 @@ describe("CLI", () => {
     await expect(fs.access(path.join(projectRoot, "AGENTS.md"))).rejects.toThrow();
   });
 
+  it("supports memory propose, list, approve, and reject without injecting rejected memory", async () => {
+    const projectRoot = await createTestDirectory("cli-memory-project");
+    const databasePath = path.join(
+      await createTestDirectory("cli-memory-db"),
+      "agent-hub.sqlite"
+    );
+    const agentHubHome = await createTestDirectory("cli-memory-home");
+    const output: string[] = [];
+    const errors: string[] = [];
+    const io = {
+      stdout: { write: (chunk: string) => { output.push(chunk); return true; } },
+      stderr: { write: (chunk: string) => { errors.push(chunk); return true; } }
+    };
+
+    await expect(
+      main([
+        "--db",
+        databasePath,
+        "project",
+        "add",
+        "--name",
+        "memory-project",
+        "--root",
+        projectRoot
+      ], io, projectRoot)
+    ).resolves.toBe(0);
+    const projectId = extractLineValue(output.join(""), "id");
+
+    await expect(
+      main([
+        "--db",
+        databasePath,
+        "memory",
+        "propose",
+        "--project-id",
+        projectId,
+        "--category",
+        "workflow_rule",
+        "--content",
+        "Use isolated worktrees for review."
+      ], io, projectRoot)
+    ).resolves.toBe(0);
+    const approvedMemoryId = extractLastId(output.join(""), "memory");
+
+    await expect(
+      main([
+        "--db",
+        databasePath,
+        "memory",
+        "propose",
+        "--project-id",
+        projectId,
+        "--category",
+        "temporary_note",
+        "--content",
+        "Rejected memory should stay out."
+      ], io, projectRoot)
+    ).resolves.toBe(0);
+    const rejectedMemoryId = extractLastId(output.join(""), "memory");
+
+    await expect(
+      main([
+        "--db",
+        databasePath,
+        "memory",
+        "approve",
+        "--memory-id",
+        approvedMemoryId,
+        "--agent-hub-home",
+        agentHubHome
+      ], io, projectRoot)
+    ).resolves.toBe(0);
+    await expect(
+      main([
+        "--db",
+        databasePath,
+        "memory",
+        "reject",
+        "--memory-id",
+        rejectedMemoryId
+      ], io, projectRoot)
+    ).resolves.toBe(0);
+    await expect(
+      main([
+        "--db",
+        databasePath,
+        "memory",
+        "list",
+        "--project-id",
+        projectId
+      ], io, projectRoot)
+    ).resolves.toBe(0);
+    await expect(
+      main([
+        "context",
+        "build",
+        "--project-root",
+        projectRoot,
+        "--project-id",
+        projectId,
+        "--task-id",
+        "task_memory",
+        "--title",
+        "Use memory",
+        "--prompt",
+        "Build context with approved memory",
+        "--agent-hub-home",
+        agentHubHome
+      ], io, projectRoot)
+    ).resolves.toBe(0);
+
+    const approvedPath = path.join(
+      agentHubHome,
+      "context-stores",
+      projectId,
+      "memory",
+      "approved.md"
+    );
+    const approvedMemory = await fs.readFile(approvedPath, "utf8");
+    const contextPackPath = extractLineValue(output.join(""), "context_pack_path");
+    const contextPack = JSON.parse(await fs.readFile(contextPackPath, "utf8")) as {
+      approvedMemorySections: string[];
+    };
+
+    expect(errors.join("")).toBe("");
+    expect(output.join("")).toContain(`${approvedMemoryId}\tapproved\tworkflow_rule`);
+    expect(output.join("")).toContain(`${rejectedMemoryId}\trejected\ttemporary_note`);
+    expect(approvedMemory).toContain("Use isolated worktrees for review.");
+    expect(approvedMemory).not.toContain("Rejected memory should stay out.");
+    expect(contextPack.approvedMemorySections.join("\n")).toContain(
+      "Use isolated worktrees for review."
+    );
+    expect(contextPack.approvedMemorySections.join("\n")).not.toContain(
+      "Rejected memory should stay out."
+    );
+  });
+
+  it("creates and persists comparison reports from SQLite run records", async () => {
+    const projectRoot = await createTestDirectory("cli-compare-project");
+    const databasePath = path.join(
+      await createTestDirectory("cli-compare-db"),
+      "agent-hub.sqlite"
+    );
+    const repositories = createSqliteRepositories({ databasePath });
+    await repositories.projectRepository.create({
+      id: "project_compare",
+      name: "Compare Project",
+      rootPath: projectRoot,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z"
+    });
+    await repositories.taskRepository.create({
+      id: "task_compare",
+      projectId: "project_compare",
+      title: "Compare runs",
+      status: "open",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z"
+    });
+    await repositories.taskRunRepository.create({
+      id: "run_baseline",
+      taskId: "task_compare",
+      agentKind: "fake",
+      status: "succeeded",
+      createdAt: "2026-01-01T00:00:01.000Z",
+      updatedAt: "2026-01-01T00:00:01.000Z"
+    });
+    await repositories.taskRunRepository.create({
+      id: "run_candidate",
+      taskId: "task_compare",
+      agentKind: "codex",
+      status: "failed",
+      createdAt: "2026-01-01T00:00:02.000Z",
+      updatedAt: "2026-01-01T00:00:02.000Z"
+    });
+    await repositories.runArtifactRepository.create({
+      id: "artifact_baseline_diff",
+      taskRunId: "run_baseline",
+      kind: "git_diff",
+      content: "diff --git a/a.ts b/a.ts\n",
+      metadata: {
+        changedFiles: [{ path: "src/a.ts", status: "modified" }],
+        stat: { filesChanged: 1, insertions: 3, deletions: 1 }
+      },
+      createdAt: "2026-01-01T00:00:03.000Z"
+    });
+    await repositories.runArtifactRepository.create({
+      id: "artifact_candidate_diff",
+      taskRunId: "run_candidate",
+      kind: "git_diff",
+      content: "diff --git a/b.ts b/b.ts\n",
+      metadata: {
+        changedFiles: [
+          { path: "src/a.ts", status: "modified" },
+          { path: "src/b.ts", status: "added" }
+        ],
+        stat: { filesChanged: 2, insertions: 12, deletions: 0 }
+      },
+      createdAt: "2026-01-01T00:00:04.000Z"
+    });
+    await repositories.verificationResultRepository.create({
+      id: "verification_baseline",
+      taskRunId: "run_baseline",
+      command: "pnpm test",
+      status: "passed",
+      exitCode: 0,
+      createdAt: "2026-01-01T00:00:05.000Z"
+    });
+    await repositories.verificationResultRepository.create({
+      id: "verification_candidate",
+      taskRunId: "run_candidate",
+      command: "pnpm lint",
+      status: "failed",
+      exitCode: 1,
+      createdAt: "2026-01-01T00:00:06.000Z"
+    });
+    await repositories.riskReportRepository.create(
+      riskReportForRun("risk_baseline", "run_baseline", "low")
+    );
+    await repositories.riskReportRepository.create(
+      riskReportForRun("risk_candidate", "run_candidate", "blocking", [
+        "Sensitive file path changed. .env"
+      ])
+    );
+
+    const output: string[] = [];
+    const errors: string[] = [];
+    const io = {
+      stdout: { write: (chunk: string) => { output.push(chunk); return true; } },
+      stderr: { write: (chunk: string) => { errors.push(chunk); return true; } }
+    };
+
+    await expect(
+      main([
+        "--db",
+        databasePath,
+        "compare",
+        "--task-id",
+        "task_compare",
+        "--baseline",
+        "run_baseline",
+        "--candidate",
+        "run_candidate"
+      ], io, projectRoot)
+    ).resolves.toBe(0);
+
+    const second = createSqliteRepositories({ databasePath });
+    await expect(
+      second.comparisonReportRepository.listByTaskId("task_compare")
+    ).resolves.toEqual([
+      expect.objectContaining({
+        taskId: "task_compare",
+        baselineRunId: "run_baseline",
+        candidateRunId: "run_candidate",
+        summary: expect.stringContaining("candidate_failed_checks: pnpm lint")
+      })
+    ]);
+    expect(errors.join("")).toBe("");
+    expect(output.join("")).toContain("Created comparison report");
+    expect(output.join("")).toContain("candidate_only_files: src/b.ts");
+    expect(output.join("")).toContain("verification=0 passed, 1 failed, 0 skipped");
+    expect(output.join("")).toContain("risk=blocking");
+    expect(output.join("")).toContain(
+      "candidate_risk_factors: Sensitive file path changed. .env"
+    );
+  });
+
   it("rejects unknown agent clearly", async () => {
     const projectRoot = await createTestDirectory("cli-project");
     const output: string[] = [];
@@ -336,6 +605,34 @@ function extractLineValue(output: string, label: string): string {
   const match = output.match(new RegExp(`^${label}: (.+)$`, "m"));
   expect(match?.[1]).toBeTruthy();
   return match?.[1] ?? "";
+}
+
+function extractLastId(output: string, prefix: string): string {
+  const matches = [...output.matchAll(new RegExp(`id: (${prefix}_[^\\n]+)`, "g"))];
+  expect(matches.at(-1)?.[1]).toBeTruthy();
+  return matches.at(-1)?.[1] ?? "";
+}
+
+function riskReportForRun(
+  id: string,
+  taskRunId: string,
+  level: RiskReport["level"],
+  riskFactors: string[] = []
+): RiskReport {
+  return {
+    id,
+    taskRunId,
+    level,
+    summary: `Risk is ${level}.`,
+    changedFiles: [],
+    verificationSummary: "not available",
+    failedChecks: [],
+    riskFactors,
+    manualReviewChecklist: ["Review changed files."],
+    acceptanceRecommendation: "Review before accepting.",
+    findings: [],
+    createdAt: "2026-01-01T00:00:07.000Z"
+  };
 }
 
 class TestWorkspaceManager implements WorkspaceManager {

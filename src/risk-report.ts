@@ -5,6 +5,8 @@ import {
   type RiskReport
 } from "./domain";
 import type { DiffCollectionResult } from "./diff-collector";
+import { formatShellCommand } from "./shell-executor";
+import { SafetyScanner, aggregateRiskLevel, type SafetyFinding } from "./safety";
 import type { VerificationSuiteResult } from "./verification";
 
 export interface RiskReportInput {
@@ -17,10 +19,18 @@ export interface RiskReportInput {
 }
 
 export class RiskReportGenerator {
+  constructor(private readonly safetyScanner = new SafetyScanner()) {}
+
   generate(input: RiskReportInput): RiskReport {
     const findings: RiskFinding[] = [];
     const riskFactors: string[] = [];
     const changedFiles = input.diff.changedFiles.map((file) => file.path);
+    const safety = this.safetyScanner.scan({
+      diff: input.diff,
+      commands: input.verification.results.map((result) =>
+        formatShellCommand(result.command)
+      )
+    });
 
     if (!input.diff.ok) {
       addFinding(
@@ -34,6 +44,10 @@ export class RiskReportGenerator {
 
     if (input.diff.isClean) {
       addFinding(findings, riskFactors, "low", "No changed files were collected.");
+    }
+
+    for (const finding of safety.findings) {
+      addSafetyFinding(findings, riskFactors, finding);
     }
 
     if (input.verification.status === "failed") {
@@ -62,39 +76,6 @@ export class RiskReportGenerator {
       );
     }
 
-    const riskyFiles = changedFiles.filter(isRiskyFile);
-    if (riskyFiles.length > 0) {
-      addFinding(
-        findings,
-        riskFactors,
-        "high",
-        "Potentially sensitive or high-risk files changed.",
-        riskyFiles.join(", ")
-      );
-    }
-
-    const configFiles = changedFiles.filter(isConfigOrLockfile);
-    if (configFiles.length > 0) {
-      addFinding(
-        findings,
-        riskFactors,
-        "medium",
-        "Configuration or lockfile changes need extra review.",
-        configFiles.join(", ")
-      );
-    }
-
-    const totalLineChanges = input.diff.stat.insertions + input.diff.stat.deletions;
-    if (input.diff.stat.filesChanged >= 25 || totalLineChanges >= 1000) {
-      addFinding(
-        findings,
-        riskFactors,
-        "high",
-        "Large diff size increases review risk.",
-        `${input.diff.stat.filesChanged} files, ${input.diff.stat.insertions} insertions, ${input.diff.stat.deletions} deletions`
-      );
-    }
-
     for (const note of input.manualReviewNotes ?? []) {
       addFinding(findings, riskFactors, "medium", "Manual review note.", note);
     }
@@ -117,6 +98,17 @@ export class RiskReportGenerator {
   }
 }
 
+function addSafetyFinding(
+  findings: RiskFinding[],
+  riskFactors: string[],
+  finding: SafetyFinding
+): void {
+  findings.push(finding);
+  riskFactors.push(
+    finding.details ? `${finding.summary} ${finding.details}` : finding.summary
+  );
+}
+
 function addFinding(
   findings: RiskFinding[],
   riskFactors: string[],
@@ -129,13 +121,7 @@ function addFinding(
 }
 
 function classifyRisk(findings: RiskFinding[]): RiskLevel {
-  if (findings.some((finding) => finding.level === "high" || finding.level === "blocking")) {
-    return "high";
-  }
-  if (findings.some((finding) => finding.level === "medium")) {
-    return "medium";
-  }
-  return "low";
+  return aggregateRiskLevel(findings);
 }
 
 function summaryFor(
@@ -172,33 +158,4 @@ function checklistFor(level: RiskLevel, changedFileCount: number): string[] {
     checklist.push("Inspect each risk factor before accepting the run.");
   }
   return checklist;
-}
-
-function isConfigOrLockfile(filePath: string): boolean {
-  const lower = filePath.toLowerCase();
-  return (
-    lower.endsWith("package.json") ||
-    lower.endsWith("pnpm-lock.yaml") ||
-    lower.endsWith("package-lock.json") ||
-    lower.endsWith("yarn.lock") ||
-    lower.endsWith("tsconfig.json") ||
-    lower.endsWith("vite.config.ts") ||
-    lower.endsWith("vitest.config.ts") ||
-    lower.includes("/.github/")
-  );
-}
-
-function isRiskyFile(filePath: string): boolean {
-  const lower = filePath.toLowerCase();
-  return [
-    ".env",
-    ".env.",
-    ".pem",
-    ".key",
-    "id_rsa",
-    "id_ed25519",
-    "secrets.",
-    "credentials.",
-    "token."
-  ].some((pattern) => lower.includes(pattern));
 }

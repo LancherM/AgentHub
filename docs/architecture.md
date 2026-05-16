@@ -20,8 +20,10 @@ Current module boundaries under `src/`:
   collection from an isolated workspace
 - `verification`: configured verification command execution inside the
   workspace
-- `risk-report`: structured risk report generation from diff and verification
-  results
+- `safety`: standalone scanners for sensitive paths, dangerous commands,
+  risky diffs, large deletions, binary files, and risk level aggregation
+- `risk-report`: structured risk report generation from safety scanner output,
+  diff metadata, and verification results
 - `storage`: repository abstractions and in-memory implementations for
   projects, agent profiles, tasks, runs, events, artifacts, verification
   results, risk reports, memory items, comparison reports, skills, settings,
@@ -42,6 +44,14 @@ generates a risk report, persists run metadata and structured run records
 through repository interfaces, records run status transitions, and applies
 workspace cleanup policy. The default cleanup policy is `never`, so worktrees
 are retained unless a caller explicitly selects cleanup behavior.
+
+Safety review is separated from report rendering. `SafetyScanner` scans the
+collected diff, changed-file metadata, and verification command text and returns
+structured findings. Sensitive path changes and dangerous command findings use
+`level: blocking`; aggregation preserves that level instead of coercing it to
+high. `RiskReportGenerator` adds verification and manual-review context around
+those scanner findings and the task runner persists the resulting report to
+`risk_reports` for both successful and failed runs.
 
 The default agent registry includes fake, Codex, and Claude Code adapters.
 Real adapters run only inside the isolated worktree cwd. They use
@@ -119,6 +129,24 @@ payloads to `run_artifacts`, verification command rows to
 `verification_results`, and generated risk reports to `risk_reports`. The
 legacy aggregate `run_metadata` remains for compatibility with existing show
 paths and is no longer the only persisted source for run inspection.
+
+Memory items remain SQLite domain records until the user explicitly acts.
+`memory propose` creates a `proposed` row, `memory reject` moves it to
+`rejected`, and `memory approve` moves it to `approved` and appends the memory
+content to the Agent Hub-owned context store under `memory/approved.md`.
+Approved-memory writeback uses the same context store path resolution as
+context init/build, so the default destination is app data rather than the
+project repository. The context compiler reads approved memory only from that
+file provider; proposed and rejected database rows are not injected into context
+packs.
+
+Comparison reports are generated from persisted run data rather than process
+memory or UI state. The CLI loads each selected run, diff artifacts or legacy
+metadata, verification rows, and latest risk reports, then writes a textual
+summary to `comparison_reports`. The summary includes changed-file overlap,
+per-run diff stats, verification summaries, failed checks, risk levels, and
+risk factors. Comparison is review-only and performs no accept, merge, branch
+delete, or push action.
 
 All adapters run against an isolated worktree and refuse to run when that
 directory is the original project root or when the generated task brief is

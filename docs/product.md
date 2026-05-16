@@ -24,6 +24,11 @@ agent-hub tasks list
 agent-hub runs list
 agent-hub runs show <run-id>
 agent-hub risks show <run-id>
+agent-hub [--db <path>] memory list --project-id <project-id>
+agent-hub [--db <path>] memory propose --project-id <project-id> --category <category> --content <text>
+agent-hub [--db <path>] memory approve --memory-id <memory-id>
+agent-hub [--db <path>] memory reject --memory-id <memory-id>
+agent-hub [--db <path>] compare --task-id <task-id> --baseline <run-id> --candidate <run-id>
 ```
 
 The context commands initialize and inspect a project context store, build a
@@ -53,13 +58,13 @@ to the selected adapter, creates an isolated git worktree outside the original
 project checkout, materializes runtime task brief/context-pack files inside
 that workspace, runs the adapter with the context payload, collects git diff
 metadata, runs explicitly configured verification commands, generates a
-structured risk report, captures events, applies the workspace cleanup policy,
-and prints a concise summary. `runtime_injection` remains the default delivery
-mode. Codex and Claude Code receive the task brief/context through stdin-driven
-runtime injection and do not require repository-level `AGENTS.md` or
-`CLAUDE.md`. `worktree_overlay` is opt-in and writes generated `AGENTS.md`,
-`CLAUDE.md`, and skill copies only inside the isolated worktree, never the
-original checkout.
+structured risk report from safety scanner findings, captures events, applies
+the workspace cleanup policy, and prints a concise summary.
+`runtime_injection` remains the default delivery mode. Codex and Claude Code
+receive the task brief/context through stdin-driven runtime injection and do
+not require repository-level `AGENTS.md` or `CLAUDE.md`. `worktree_overlay` is
+opt-in and writes generated `AGENTS.md`, `CLAUDE.md`, and skill copies only
+inside the isolated worktree, never the original checkout.
 
 The process-backed adapters use direct executable-plus-args spawning:
 
@@ -78,6 +83,28 @@ The process-backed adapters use direct executable-plus-args spawning:
 The list/show/history commands read from local SQLite storage by default, so
 projects, tasks, runs, run details, and risk reports remain visible across CLI
 processes. Ad hoc fake runs remain supported for the older vertical slice.
+
+Risk reports are backed by a standalone safety scanner. It checks sensitive
+paths, dangerous commands in generated diffs or configured verification
+commands, risky diff shape, large deletion volume, and binary file changes.
+Blocking findings remain `blocking` in the aggregated risk level and are
+surfaced in `risks show`; they are not downgraded to high. Agent Hub still does
+not automatically accept, merge, or push any run output.
+
+The memory workflow is explicit and user-approved. `memory propose` creates a
+SQLite memory item in `proposed` state, `memory list` shows project memory
+items, `memory approve` marks an item approved and appends it to the Agent
+Hub-owned context store at `memory/approved.md`, and `memory reject` marks it
+rejected. Context builds read approved memory only from the context store, so
+proposed and rejected SQLite memory items are not injected into future task
+briefs.
+
+The compare workflow generates a persisted comparison report for two runs of a
+task. `compare --task-id ... --baseline ... --candidate ...` compares changed
+files, diff stats, verification summaries, failed checks, risk levels, and risk
+factors from persisted run artifacts and reports, then stores the summary in
+`comparison_reports`. It is a review aid only; it does not accept, merge, or
+push changes.
 
 SQLite is stored in Agent Hub-owned application data by default, not in the
 target project repository. `AGENT_HUB_HOME` can point Agent Hub at an alternate
@@ -106,6 +133,8 @@ Structured run data is now also persisted in first-class SQLite tables:
 - git diff artifacts in `run_artifacts`
 - verification command rows in `verification_results`
 - risk reports in `risk_reports`
+- memory proposals and decisions in `memory_items`
+- run comparison summaries in `comparison_reports`
 
 The initialized SQLite schema covers the imported MVP table set: projects,
 agent profiles, tasks, task runs, run events, run artifacts, verification
@@ -117,5 +146,5 @@ team features, hosted dashboards, automatic pull requests, automatic merges, or
 automatic pushes.
 
 Deferred product capabilities include richer Codex/Claude structured event
-mapping, real comparison generation, memory approval workflows, and the desktop
-shell.
+mapping, automatic memory proposal generation from completed runs, richer
+comparison scoring, and the desktop shell.
