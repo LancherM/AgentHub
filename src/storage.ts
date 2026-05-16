@@ -202,7 +202,7 @@ function isTerminalRunStatus(status: RunStatus): boolean {
   return status === "succeeded" || status === "failed" || status === "cancelled";
 }
 
-function cloneRunMetadata(metadata: RunMetadata): RunMetadata {
+export function cloneRunMetadata(metadata: RunMetadata): RunMetadata {
   return {
     ...metadata,
     workspace: metadata.workspace ? { ...metadata.workspace } : undefined,

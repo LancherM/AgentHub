@@ -17,6 +17,7 @@ describe("CLI", () => {
     const projectRoot = await createTestDirectory("cli-project");
     const runRoot = path.join(await createTestDirectory("cli-runs"), "runs");
     const runtime = createCliRuntime({
+      storageMode: "memory",
       defaultRunRoot: runRoot,
       workspaceManager: new TestWorkspaceManager(runRoot),
       diffCollector: new StaticDiffCollector(),
@@ -51,6 +52,62 @@ describe("CLI", () => {
     expect(output.join("")).toContain("task_0001\tcompleted\tcompile context");
     expect(output.join("")).toContain("run_0002\tsucceeded\tfake\ttask_0001");
     expect(output.join("")).toContain("acceptance:");
+  });
+
+  it("persists CLI task, run, and risk views through SQLite runtimes", async () => {
+    const projectRoot = await createTestDirectory("cli-sqlite-project");
+    const runRoot = path.join(await createTestDirectory("cli-sqlite-runs"), "runs");
+    const databasePath = path.join(
+      await createTestDirectory("cli-sqlite-db"),
+      "agent-hub.sqlite"
+    );
+    const firstRuntime = createCliRuntime({
+      sqliteDatabasePath: databasePath,
+      defaultRunRoot: runRoot,
+      workspaceManager: new TestWorkspaceManager(runRoot),
+      diffCollector: new StaticDiffCollector(),
+      verificationRunner: new VerificationRunner(new MockShellExecutor()),
+      idGenerator: new SequenceIdGenerator(),
+      clock: new FixedClock("2026-01-01T00:00:00.000Z")
+    });
+    const runOutput: string[] = [];
+    const queryOutput: string[] = [];
+    const errors: string[] = [];
+    const runIo = {
+      stdout: { write: (chunk: string) => { runOutput.push(chunk); return true; } },
+      stderr: { write: (chunk: string) => { errors.push(chunk); return true; } }
+    };
+    const queryIo = {
+      stdout: { write: (chunk: string) => { queryOutput.push(chunk); return true; } },
+      stderr: { write: (chunk: string) => { errors.push(chunk); return true; } }
+    };
+
+    await expect(
+      main(["run", "@fake", "persist sqlite views"], runIo, projectRoot, firstRuntime)
+    ).resolves.toBe(0);
+
+    const secondRuntime = createCliRuntime({ sqliteDatabasePath: databasePath });
+    await expect(
+      main(["tasks", "list"], queryIo, projectRoot, secondRuntime)
+    ).resolves.toBe(0);
+    await expect(
+      main(["runs", "list"], queryIo, projectRoot, secondRuntime)
+    ).resolves.toBe(0);
+    await expect(
+      main(["runs", "show", "run_0002"], queryIo, projectRoot, secondRuntime)
+    ).resolves.toBe(0);
+    await expect(
+      main(["risks", "show", "run_0002"], queryIo, projectRoot, secondRuntime)
+    ).resolves.toBe(0);
+
+    expect(errors.join("")).toBe("");
+    expect(queryOutput.join("")).toContain(
+      "task_0001\tcompleted\tpersist sqlite views"
+    );
+    expect(queryOutput.join("")).toContain("run_0002\tsucceeded\tfake\ttask_0001");
+    expect(queryOutput.join("")).toContain("changed_files: 1");
+    expect(queryOutput.join("")).toContain("risk: medium");
+    expect(queryOutput.join("")).toContain("acceptance:");
   });
 
   it("rejects unknown agent clearly", async () => {

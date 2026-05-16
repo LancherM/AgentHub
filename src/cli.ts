@@ -2,6 +2,7 @@
 import path from "node:path";
 import { parseAgentPrompt } from "./agent-parser";
 import { TaskRunner, type TaskRunnerDependencies } from "./task-runner";
+import { createSqliteRepositories } from "./sqlite-storage";
 import {
   InMemoryRunMetadataRepository,
   InMemoryTaskRepository,
@@ -23,14 +24,37 @@ export interface CliRuntime {
   taskRunner: TaskRunner;
 }
 
+export interface CliRuntimeDependencies extends TaskRunnerDependencies {
+  sqliteDatabasePath?: string;
+  storageMode?: "sqlite" | "memory";
+}
+
 export function createCliRuntime(
-  dependencies: TaskRunnerDependencies = {}
+  dependencies: CliRuntimeDependencies = {}
 ): CliRuntime {
-  const taskRepository = dependencies.taskRepository ?? new InMemoryTaskRepository();
+  const hasInjectedStorage =
+    dependencies.taskRepository !== undefined ||
+    dependencies.taskRunRepository !== undefined ||
+    dependencies.runMetadataRepository !== undefined;
+  const shouldUseSqlite =
+    dependencies.storageMode === "sqlite" ||
+    (dependencies.storageMode !== "memory" && !hasInjectedStorage);
+  const sqliteRepositories =
+    shouldUseSqlite
+      ? createSqliteRepositories({ databasePath: dependencies.sqliteDatabasePath })
+      : undefined;
+  const taskRepository =
+    dependencies.taskRepository ??
+    sqliteRepositories?.taskRepository ??
+    new InMemoryTaskRepository();
   const taskRunRepository =
-    dependencies.taskRunRepository ?? new InMemoryTaskRunRepository();
+    dependencies.taskRunRepository ??
+    sqliteRepositories?.taskRunRepository ??
+    new InMemoryTaskRunRepository();
   const runMetadataRepository =
-    dependencies.runMetadataRepository ?? new InMemoryRunMetadataRepository();
+    dependencies.runMetadataRepository ??
+    sqliteRepositories?.runMetadataRepository ??
+    new InMemoryRunMetadataRepository();
   const taskRunner = new TaskRunner({
     ...dependencies,
     taskRepository,
@@ -41,14 +65,20 @@ export function createCliRuntime(
   return { taskRepository, taskRunRepository, runMetadataRepository, taskRunner };
 }
 
-const defaultRuntime = createCliRuntime();
+let defaultRuntime: CliRuntime | undefined;
+
+function getDefaultRuntime(): CliRuntime {
+  defaultRuntime ??= createCliRuntime();
+  return defaultRuntime;
+}
 
 export async function main(
   argv = process.argv.slice(2),
   io: CliIO = { stdout: process.stdout, stderr: process.stderr },
   cwd = process.cwd(),
-  runtime: CliRuntime = defaultRuntime
+  runtime?: CliRuntime
 ): Promise<number> {
+  const activeRuntime = runtime ?? getDefaultRuntime();
   const [command, ...rest] = argv;
 
   if (!command || command === "--help" || command === "-h") {
@@ -57,23 +87,23 @@ export async function main(
   }
 
   if (command === "run") {
-    return runCommand(rest, io, cwd, runtime);
+    return runCommand(rest, io, cwd, activeRuntime);
   }
 
   if (command === "tasks" && rest[0] === "list") {
-    return listTasks(io, runtime);
+    return listTasks(io, activeRuntime);
   }
 
   if (command === "runs" && rest[0] === "list") {
-    return listRuns(io, runtime);
+    return listRuns(io, activeRuntime);
   }
 
   if (command === "runs" && rest[0] === "show") {
-    return showRun(rest.slice(1), io, runtime);
+    return showRun(rest.slice(1), io, activeRuntime);
   }
 
   if (command === "risks" && rest[0] === "show") {
-    return showRisk(rest.slice(1), io, runtime);
+    return showRisk(rest.slice(1), io, activeRuntime);
   }
 
   io.stderr.write(`error: unknown command ${[command, ...rest].join(" ")}\n`);

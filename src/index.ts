@@ -5,6 +5,7 @@ export * from "./diff-collector";
 export * from "./domain";
 export * from "./risk-report";
 export * from "./shell-executor";
+export * from "./sqlite-storage";
 export * from "./storage";
 export * from "./task-runner";
 export * from "./verification";
