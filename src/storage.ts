@@ -1,5 +1,9 @@
 import type { AgentAdapter } from "./agent-adapters";
+import type { DiffCollectionResult } from "./diff-collector";
 import type { AgentKind, Task, TaskRun, TaskRunStatus, TaskStatus } from "./domain";
+import type { RiskReport } from "./domain";
+import type { VerificationSuiteResult } from "./verification";
+import type { WorkspaceCleanupResult, Workspace } from "./workspace";
 
 export type RunStatus = TaskRunStatus;
 
@@ -28,6 +32,20 @@ export interface TaskRunRepository {
   list(): Promise<TaskRun[]>;
   listByTaskId(taskId: string): Promise<TaskRun[]>;
   getStatusTransitions(runId: string): Promise<RunStatusTransition[]>;
+}
+
+export interface RunMetadata {
+  runId: string;
+  workspace?: Workspace;
+  workspaceCleanup?: WorkspaceCleanupResult;
+  diff?: DiffCollectionResult;
+  verification?: VerificationSuiteResult;
+  riskReport?: RiskReport;
+}
+
+export interface RunMetadataRepository {
+  save(metadata: RunMetadata): Promise<RunMetadata>;
+  get(runId: string): Promise<RunMetadata | undefined>;
 }
 
 export class InMemoryTaskRepository implements TaskRepository {
@@ -139,6 +157,22 @@ export class InMemoryTaskRunRepository implements TaskRunRepository {
   }
 }
 
+export class InMemoryRunMetadataRepository implements RunMetadataRepository {
+  private readonly metadata = new Map<string, RunMetadata>();
+
+  async save(metadata: RunMetadata): Promise<RunMetadata> {
+    const existing = this.metadata.get(metadata.runId);
+    const updated = { ...existing, ...metadata };
+    this.metadata.set(metadata.runId, cloneRunMetadata(updated));
+    return cloneRunMetadata(updated);
+  }
+
+  async get(runId: string): Promise<RunMetadata | undefined> {
+    const metadata = this.metadata.get(runId);
+    return metadata ? cloneRunMetadata(metadata) : undefined;
+  }
+}
+
 export interface AgentRegistry {
   get(agentKind: AgentKind): AgentAdapter | undefined;
   list(): AgentAdapter[];
@@ -166,4 +200,45 @@ export class DefaultAgentRegistry implements AgentRegistry {
 
 function isTerminalRunStatus(status: RunStatus): boolean {
   return status === "succeeded" || status === "failed" || status === "cancelled";
+}
+
+function cloneRunMetadata(metadata: RunMetadata): RunMetadata {
+  return {
+    ...metadata,
+    workspace: metadata.workspace ? { ...metadata.workspace } : undefined,
+    workspaceCleanup: metadata.workspaceCleanup
+      ? {
+          ...metadata.workspaceCleanup,
+          commands: metadata.workspaceCleanup.commands.map((command) => ({ ...command }))
+        }
+      : undefined,
+    diff: metadata.diff
+      ? {
+          ...metadata.diff,
+          changedFiles: metadata.diff.changedFiles.map((file) => ({ ...file })),
+          stat: { ...metadata.diff.stat },
+          fileSummaries: [...metadata.diff.fileSummaries],
+          commands: metadata.diff.commands.map((command) => ({ ...command }))
+        }
+      : undefined,
+    verification: metadata.verification
+      ? {
+          ...metadata.verification,
+          results: metadata.verification.results.map((result) => ({ ...result })),
+          failedCommands: metadata.verification.failedCommands.map((result) => ({
+            ...result
+          }))
+        }
+      : undefined,
+    riskReport: metadata.riskReport
+      ? {
+          ...metadata.riskReport,
+          changedFiles: [...metadata.riskReport.changedFiles],
+          failedChecks: [...metadata.riskReport.failedChecks],
+          riskFactors: [...metadata.riskReport.riskFactors],
+          manualReviewChecklist: [...metadata.riskReport.manualReviewChecklist],
+          findings: metadata.riskReport.findings.map((finding) => ({ ...finding }))
+        }
+      : undefined
+  };
 }

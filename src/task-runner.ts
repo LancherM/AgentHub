@@ -13,6 +13,7 @@ import {
   type ContextFormatter,
   type TargetRepositoryMetadata
 } from "./context-compiler";
+import { DiffCollector, type DiffCollectionResult, type DiffCollectorService } from "./diff-collector";
 import {
   createId,
   nowIso,
@@ -20,20 +21,32 @@ import {
   validateTaskBrief,
   validateTaskRun,
   type AgentKind,
+  type RiskReport,
   type Task,
   type TaskBrief,
   type TaskRun
 } from "./domain";
+import { RiskReportGenerator } from "./risk-report";
+import { NodeShellExecutor, type ShellExecutor } from "./shell-executor";
 import {
   DefaultAgentRegistry,
+  InMemoryRunMetadataRepository,
   InMemoryTaskRepository,
   InMemoryTaskRunRepository,
   type AgentRegistry,
+  type RunMetadataRepository,
   type RunStatus,
   type RunStatusTransition,
   type TaskRepository,
   type TaskRunRepository
 } from "./storage";
+import { VerificationRunner, type VerificationCommand, type VerificationSuiteResult } from "./verification";
+import {
+  GitWorktreeWorkspaceManager,
+  type WorkspaceCleanupPolicy,
+  type WorkspaceCleanupResult,
+  type WorkspaceManager
+} from "./workspace";
 
 export interface IdGenerator {
   nextId(prefix: string): string;
@@ -52,6 +65,11 @@ export interface RunTaskInput {
   projectId?: string;
   title?: string;
   runRoot?: string;
+  workspaceBasePath?: string;
+  workspaceCleanupPolicy?: WorkspaceCleanupPolicy;
+  dryRun?: boolean;
+  verificationCommands?: VerificationCommand[];
+  stopOnVerificationFailure?: boolean;
   targetRepository?: Partial<TargetRepositoryMetadata>;
   userConstraints?: string[];
   executionHints?: string[];
@@ -68,6 +86,10 @@ export interface RunResult {
   worktreePath?: string;
   taskBriefPath?: string;
   fakeOutput?: string;
+  diff?: DiffCollectionResult;
+  verification?: VerificationSuiteResult;
+  riskReport?: RiskReport;
+  workspaceCleanup?: WorkspaceCleanupResult;
   warnings: string[];
   error?: string;
   statusTransitions: RunStatusTransition[];
@@ -80,7 +102,13 @@ export interface TaskRunnerDependencies {
   contextFormatter?: ContextFormatter;
   taskRepository?: TaskRepository;
   taskRunRepository?: TaskRunRepository;
+  runMetadataRepository?: RunMetadataRepository;
   agentRegistry?: AgentRegistry;
+  shellExecutor?: ShellExecutor;
+  workspaceManager?: WorkspaceManager;
+  diffCollector?: DiffCollectorService;
+  verificationRunner?: VerificationRunner;
+  riskReportGenerator?: RiskReportGenerator;
   idGenerator?: IdGenerator;
   clock?: Clock;
   defaultRunRoot?: string;
@@ -126,23 +154,38 @@ export class FixedClock implements Clock {
 export class TaskRunner {
   readonly taskRepository: TaskRepository;
   readonly taskRunRepository: TaskRunRepository;
+  readonly runMetadataRepository: RunMetadataRepository;
   private readonly contextCompiler: ContextCompiler;
   private readonly contextFormatter: ContextFormatter;
   private readonly agentRegistry: AgentRegistry;
+  private readonly workspaceManager: WorkspaceManager;
+  private readonly diffCollector: DiffCollectorService;
+  private readonly verificationRunner: VerificationRunner;
+  private readonly riskReportGenerator: RiskReportGenerator;
   private readonly idGenerator: IdGenerator;
   private readonly clock: Clock;
   private readonly defaultRunRoot: string;
 
   constructor(dependencies: TaskRunnerDependencies = {}) {
+    const shellExecutor = dependencies.shellExecutor ?? new NodeShellExecutor();
     this.contextCompiler = dependencies.contextCompiler ?? new DefaultContextCompiler();
     this.contextFormatter = dependencies.contextFormatter ?? new MarkdownContextFormatter();
     this.taskRepository =
       dependencies.taskRepository ?? new InMemoryTaskRepository();
     this.taskRunRepository =
       dependencies.taskRunRepository ?? new InMemoryTaskRunRepository();
+    this.runMetadataRepository =
+      dependencies.runMetadataRepository ?? new InMemoryRunMetadataRepository();
     this.agentRegistry =
       dependencies.agentRegistry ??
       new DefaultAgentRegistry([new FakeAgentAdapter()]);
+    this.workspaceManager =
+      dependencies.workspaceManager ?? new GitWorktreeWorkspaceManager(shellExecutor);
+    this.diffCollector = dependencies.diffCollector ?? new DiffCollector(shellExecutor);
+    this.verificationRunner =
+      dependencies.verificationRunner ?? new VerificationRunner(shellExecutor);
+    this.riskReportGenerator =
+      dependencies.riskReportGenerator ?? new RiskReportGenerator();
     this.idGenerator = dependencies.idGenerator ?? new DefaultIdGenerator();
     this.clock = dependencies.clock ?? new SystemClock();
     this.defaultRunRoot =
@@ -210,62 +253,148 @@ export class TaskRunner {
       });
     }
 
-    const runRoot = path.resolve(input.runRoot ?? this.defaultRunRoot);
-    if (samePath(projectRoot, runRoot) || isPathInside(runRoot, projectRoot)) {
-      throw new TaskRunnerError("run root must be outside the original project root");
+    const workspaceBasePath = path.resolve(
+      input.workspaceBasePath ?? input.runRoot ?? this.defaultRunRoot
+    );
+    if (
+      samePath(projectRoot, workspaceBasePath) ||
+      isPathInside(workspaceBasePath, projectRoot)
+    ) {
+      throw new TaskRunnerError(
+        "workspace base path must be outside the original project root"
+      );
     }
 
-    const worktreePath = await createRunDirectory(
-      runRoot,
-      task.id,
-      parsed.agentKind,
-      this.idGenerator
-    );
-    await this.taskRunRepository.updateExecutionPaths(
-      run.id,
-      { worktreePath },
-      this.clock.now()
-    );
-    const runtimeDirectory = path.join(worktreePath, ".agent-hub", "tasks", task.id);
-    await fs.mkdir(runtimeDirectory, { recursive: true });
+    let workspaceSession:
+      | Awaited<ReturnType<WorkspaceManager["createSession"]>>
+      | undefined;
+    let workspaceCleanup: WorkspaceCleanupResult | undefined;
 
-    const taskBrief = createTaskBrief(
-      { ...task, status: "running" },
-      contextMarkdown
-    );
-    const taskBriefPath = path.join(runtimeDirectory, "brief.md");
-    await fs.writeFile(taskBriefPath, taskBrief.renderedContent, "utf8");
-
-    await this.taskRunRepository.updateStatus(run.id, "running", this.clock.now());
-
-    const events: AgentRunEvent[] = [];
     try {
-      for await (const event of adapter.run({
-        originalProjectRoot: projectRoot,
-        worktreePath,
-        taskBriefPath,
+      workspaceSession = await this.workspaceManager.createSession({
+        sourceRepositoryPath: projectRoot,
+        workspaceBasePath,
+        taskId: task.id,
+        runId: run.id,
+        agentKind: parsed.agentKind,
+        cleanupPolicy: input.workspaceCleanupPolicy ?? "always",
+        dryRun: input.dryRun
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const failedRun = await this.taskRunRepository.updateStatus(
+        run.id,
+        "failed",
+        this.clock.now()
+      );
+      const failedTask = await this.taskRepository.updateStatus(
+        task.id,
+        "open",
+        this.clock.now()
+      );
+      return this.result({
+        ok: false,
+        task: failedTask,
+        run: failedRun,
+        events: [{ type: "error", message }],
+        status: "failed",
         contextBundle,
         contextMarkdown,
-        runtimeDirectory,
-        taskId: task.id,
-        taskTitle: task.title,
-        taskPrompt: parsed.taskPrompt
-      })) {
-        events.push(event);
-      }
-    } catch (error) {
-      events.push({
-        type: "error",
-        message: error instanceof Error ? error.message : String(error)
+        warnings: [...contextBundle.warnings],
+        error: message
       });
     }
 
+    const worktreePath = workspaceSession.workspace.path;
+    const updatedRunWithPaths = await this.taskRunRepository.updateExecutionPaths(
+      run.id,
+      {
+        worktreePath,
+        branchName: workspaceSession.workspace.branchName
+      },
+      this.clock.now()
+    );
+    await this.runMetadataRepository.save({
+      runId: run.id,
+      workspace: workspaceSession.workspace
+    });
+
+    let taskBriefPath: string | undefined;
+    const runtimeDirectory = path.join(worktreePath, ".agent-hub", "tasks", task.id);
+    const events: AgentRunEvent[] = [];
+
+    await this.taskRunRepository.updateStatus(run.id, "running", this.clock.now());
+
+    if (input.dryRun) {
+      events.push({
+        type: "status",
+        message: "dry-run mode skipped fake adapter execution"
+      });
+      events.push({
+        type: "exit",
+        message: "dry-run completed",
+        exitCode: 0
+      });
+    } else {
+      await fs.mkdir(runtimeDirectory, { recursive: true });
+      const taskBrief = createTaskBrief(
+        { ...task, status: "running" },
+        contextMarkdown
+      );
+      taskBriefPath = path.join(runtimeDirectory, "brief.md");
+      await fs.writeFile(taskBriefPath, taskBrief.renderedContent, "utf8");
+
+      try {
+        for await (const event of adapter.run({
+          originalProjectRoot: projectRoot,
+          worktreePath,
+          taskBriefPath,
+          contextBundle,
+          contextMarkdown,
+          runtimeDirectory,
+          taskId: task.id,
+          taskTitle: task.title,
+          taskPrompt: parsed.taskPrompt
+        })) {
+          events.push(event);
+        }
+      } catch (error) {
+        events.push({
+          type: "error",
+          message: error instanceof Error ? error.message : String(error)
+        });
+      }
+    }
+
+    const diff = await this.diffCollector.collect({
+      workspacePath: worktreePath,
+      excludePathPrefixes: [".agent-hub/"],
+      dryRun: input.dryRun
+    });
+    const verification = await this.verificationRunner.run({
+      cwd: worktreePath,
+      commands: input.verificationCommands,
+      stopOnFailure: input.stopOnVerificationFailure,
+      dryRun: input.dryRun
+    });
+    const riskReport = this.riskReportGenerator.generate({
+      id: this.idGenerator.nextId("risk"),
+      taskRunId: run.id,
+      diff,
+      verification,
+      createdAt: this.clock.now()
+    });
+
     const exitEvent = findLastExitEvent(events);
+    const adapterSucceeded =
+      exitEvent?.type === "exit" && exitEvent.exitCode === 0;
     const status: RunStatus =
-      exitEvent?.type === "exit" && exitEvent.exitCode === 0 ? "succeeded" : "failed";
+      adapterSucceeded && diff.ok && verification.status !== "failed"
+        ? "succeeded"
+        : "failed";
     const completedAt = this.clock.now();
     const updatedRun = await this.taskRunRepository.updateStatus(
-      run.id,
+      updatedRunWithPaths.id,
       status,
       completedAt
     );
@@ -274,6 +403,31 @@ export class TaskRunner {
       status === "succeeded" ? "completed" : "open",
       completedAt
     );
+
+    try {
+      workspaceCleanup = await workspaceSession.cleanup({
+        successful: status === "succeeded"
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      events.push({ type: "error", message: `workspace cleanup failed: ${message}` });
+      workspaceCleanup = {
+        cleaned: false,
+        retained: true,
+        reason: `workspace cleanup failed: ${message}`,
+        commands: []
+      };
+    }
+
+    await this.runMetadataRepository.save({
+      runId: run.id,
+      workspace: workspaceSession.workspace,
+      workspaceCleanup,
+      diff,
+      verification,
+      riskReport
+    });
+
     const fakeOutput = extractFakeOutput(events);
     const errorEvent = events.find((event) => event.type === "error");
 
@@ -288,8 +442,18 @@ export class TaskRunner {
       worktreePath,
       taskBriefPath,
       fakeOutput,
+      diff,
+      verification,
+      riskReport,
+      workspaceCleanup,
       warnings: [...contextBundle.warnings],
-      error: status === "failed" ? errorEvent?.message ?? "adapter failed" : undefined
+      error:
+        status === "failed"
+          ? errorEvent?.message ??
+            diff.error ??
+            verification.failedCommands[0]?.stderr ??
+            "run failed"
+          : undefined
     });
   }
 

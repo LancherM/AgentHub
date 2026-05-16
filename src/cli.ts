@@ -1,9 +1,12 @@
 #!/usr/bin/env node
+import path from "node:path";
 import { parseAgentPrompt } from "./agent-parser";
 import { TaskRunner, type TaskRunnerDependencies } from "./task-runner";
 import {
+  InMemoryRunMetadataRepository,
   InMemoryTaskRepository,
   InMemoryTaskRunRepository,
+  type RunMetadataRepository,
   type TaskRepository,
   type TaskRunRepository
 } from "./storage";
@@ -16,6 +19,7 @@ export interface CliIO {
 export interface CliRuntime {
   taskRepository: TaskRepository;
   taskRunRepository: TaskRunRepository;
+  runMetadataRepository: RunMetadataRepository;
   taskRunner: TaskRunner;
 }
 
@@ -25,13 +29,16 @@ export function createCliRuntime(
   const taskRepository = dependencies.taskRepository ?? new InMemoryTaskRepository();
   const taskRunRepository =
     dependencies.taskRunRepository ?? new InMemoryTaskRunRepository();
+  const runMetadataRepository =
+    dependencies.runMetadataRepository ?? new InMemoryRunMetadataRepository();
   const taskRunner = new TaskRunner({
     ...dependencies,
     taskRepository,
-    taskRunRepository
+    taskRunRepository,
+    runMetadataRepository
   });
 
-  return { taskRepository, taskRunRepository, taskRunner };
+  return { taskRepository, taskRunRepository, runMetadataRepository, taskRunner };
 }
 
 const defaultRuntime = createCliRuntime();
@@ -61,6 +68,14 @@ export async function main(
     return listRuns(io, runtime);
   }
 
+  if (command === "runs" && rest[0] === "show") {
+    return showRun(rest.slice(1), io, runtime);
+  }
+
+  if (command === "risks" && rest[0] === "show") {
+    return showRisk(rest.slice(1), io, runtime);
+  }
+
   io.stderr.write(`error: unknown command ${[command, ...rest].join(" ")}\n`);
   return 1;
 }
@@ -70,9 +85,11 @@ export function helpText(): string {
     "agent-hub",
     "",
     "Usage:",
-    "  agent-hub run \"@fake <task>\"",
+    "  agent-hub run [--repo <path>] [--workspace-base <path>] [--retain-on-failure] \"@fake <task>\"",
     "  agent-hub tasks list",
     "  agent-hub runs list",
+    "  agent-hub runs show <run-id>",
+    "  agent-hub risks show <run-id>",
     ""
   ].join("\n");
 }
@@ -83,8 +100,9 @@ async function runCommand(
   cwd: string,
   runtime: CliRuntime
 ): Promise<number> {
-  const rawPrompt = args.join(" ");
   try {
+    const options = parseRunArgs(args, cwd);
+    const rawPrompt = options.rawPrompt;
     const parsed = parseAgentPrompt(rawPrompt);
     if (parsed.agentKind !== "fake") {
       io.stderr.write(`error: agent ${parsed.agentKind} is not implemented yet\n`);
@@ -92,8 +110,11 @@ async function runCommand(
     }
 
     const result = await runtime.taskRunner.run({
-      projectRoot: cwd,
-      rawPrompt
+      projectRoot: options.projectRoot,
+      rawPrompt,
+      workspaceBasePath: options.workspaceBasePath,
+      workspaceCleanupPolicy: options.retainOnFailure ? "retain_on_failure" : "always",
+      dryRun: options.dryRun
     });
 
     io.stdout.write(renderRunSummary(result));
@@ -130,6 +151,78 @@ async function listRuns(io: CliIO, runtime: CliRuntime): Promise<number> {
   return 0;
 }
 
+async function showRun(
+  args: string[],
+  io: CliIO,
+  runtime: CliRuntime
+): Promise<number> {
+  const runId = args[0];
+  if (!runId) {
+    io.stderr.write("error: run id is required\n");
+    return 1;
+  }
+
+  const run = await runtime.taskRunRepository.get(runId);
+  if (!run) {
+    io.stderr.write(`error: run ${runId} not found\n`);
+    return 1;
+  }
+  const metadata = await runtime.runMetadataRepository.get(runId);
+  io.stdout.write(
+    [
+      `run_id: ${run.id}`,
+      `task_id: ${run.taskId}`,
+      `agent: ${run.agentKind}`,
+      `status: ${run.status}`,
+      `branch: ${run.branchName ?? "none"}`,
+      `worktree_path: ${run.worktreePath ?? "none"}`,
+      `changed_files: ${metadata?.diff?.changedFiles.length ?? 0}`,
+      `verification: ${metadata?.verification?.summary ?? "not available"}`,
+      `risk: ${metadata?.riskReport?.level ?? "not available"}`,
+      `retained_workspace: ${metadata?.workspaceCleanup?.retained ? run.worktreePath ?? "unknown" : "none"}`,
+      ""
+    ].join("\n")
+  );
+  return 0;
+}
+
+async function showRisk(
+  args: string[],
+  io: CliIO,
+  runtime: CliRuntime
+): Promise<number> {
+  const runId = args[0];
+  if (!runId) {
+    io.stderr.write("error: run id is required\n");
+    return 1;
+  }
+  const metadata = await runtime.runMetadataRepository.get(runId);
+  if (!metadata?.riskReport) {
+    io.stderr.write(`error: risk report for run ${runId} not found\n`);
+    return 1;
+  }
+  const report = metadata.riskReport;
+  io.stdout.write(
+    [
+      `run_id: ${runId}`,
+      `risk: ${report.level}`,
+      `summary: ${report.summary}`,
+      `changed_files: ${report.changedFiles.length}`,
+      `verification: ${report.verificationSummary}`,
+      `failed_checks: ${report.failedChecks.length === 0 ? "none" : report.failedChecks.join(", ")}`,
+      "risk_factors:",
+      ...(report.riskFactors.length === 0
+        ? ["- none"]
+        : report.riskFactors.map((factor) => `- ${factor}`)),
+      "manual_review:",
+      ...report.manualReviewChecklist.map((item) => `- ${item}`),
+      `acceptance: ${report.acceptanceRecommendation}`,
+      ""
+    ].join("\n")
+  );
+  return 0;
+}
+
 function renderRunSummary(result: Awaited<ReturnType<TaskRunner["run"]>>): string {
   return [
     "Task run completed",
@@ -138,7 +231,12 @@ function renderRunSummary(result: Awaited<ReturnType<TaskRunner["run"]>>): strin
     `agent: ${result.run.agentKind}`,
     `status: ${result.status}`,
     `worktree_path: ${result.worktreePath ?? "none"}`,
+    `branch: ${result.run.branchName ?? "none"}`,
     `task_brief_path: ${result.taskBriefPath ?? "none"}`,
+    `changed_files: ${result.diff?.changedFiles.length ?? 0}`,
+    `verification: ${result.verification?.summary ?? "not available"}`,
+    `risk: ${result.riskReport?.level ?? "not available"}`,
+    `retained_workspace: ${result.workspaceCleanup?.retained ? result.worktreePath ?? "unknown" : "none"}`,
     `events: ${result.events.length}`,
     `warnings: ${result.warnings.length === 0 ? "none" : result.warnings.join(", ")}`,
     "fake_output:",
@@ -147,9 +245,68 @@ function renderRunSummary(result: Awaited<ReturnType<TaskRunner["run"]>>): strin
   ].join("\n");
 }
 
+interface ParsedRunArgs {
+  rawPrompt: string;
+  projectRoot: string;
+  workspaceBasePath?: string;
+  retainOnFailure: boolean;
+  dryRun: boolean;
+}
+
+function parseRunArgs(args: string[], cwd: string): ParsedRunArgs {
+  const promptParts: string[] = [];
+  let projectRoot = cwd;
+  let workspaceBasePath: string | undefined;
+  let retainOnFailure = false;
+  let dryRun = false;
+  let parsingFlags = true;
+
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if (parsingFlags && arg === "--") {
+      parsingFlags = false;
+      continue;
+    }
+    if (parsingFlags && arg === "--repo") {
+      const value = args[index + 1];
+      if (!value) {
+        throw new Error("--repo requires a path");
+      }
+      projectRoot = path.resolve(cwd, value);
+      index += 1;
+      continue;
+    }
+    if (parsingFlags && arg === "--workspace-base") {
+      const value = args[index + 1];
+      if (!value) {
+        throw new Error("--workspace-base requires a path");
+      }
+      workspaceBasePath = path.resolve(cwd, value);
+      index += 1;
+      continue;
+    }
+    if (parsingFlags && arg === "--retain-on-failure") {
+      retainOnFailure = true;
+      continue;
+    }
+    if (parsingFlags && arg === "--dry-run") {
+      dryRun = true;
+      continue;
+    }
+    promptParts.push(arg);
+  }
+
+  return {
+    rawPrompt: promptParts.join(" "),
+    projectRoot,
+    workspaceBasePath,
+    retainOnFailure,
+    dryRun
+  };
+}
+
 if (require.main === module) {
   void main().then((exitCode) => {
     process.exitCode = exitCode;
   });
 }
-

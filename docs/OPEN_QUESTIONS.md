@@ -31,9 +31,10 @@ and `repo_export`.
 The full product requires git worktrees for agent runs, but this rebuild slice
 also says not to implement real shell execution yet.
 
-Current decision: the fake run creates an isolated temporary run directory
-outside the original checkout. Real git worktree creation is the recommended
-next phase.
+Current decision: Night 3 uses `GitWorktreeWorkspaceManager` for the default
+fake-agent run path. Runtime files are written inside the isolated worktree, not
+the original checkout. The original checkout is checked with git commands but is
+not modified by task runtime files.
 
 ## Package Layout Timing
 
@@ -44,4 +45,3 @@ Current decision: keep one root TypeScript package for the first verified
 vertical slice, with clear module boundaries under `src/`. Split into packages
 when persistence, context compilation, or real adapters need package-level
 boundaries.
-

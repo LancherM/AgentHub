@@ -160,6 +160,12 @@ export interface RiskReport {
   taskRunId: string;
   level: RiskLevel;
   summary: string;
+  changedFiles: string[];
+  verificationSummary: string;
+  failedChecks: string[];
+  riskFactors: string[];
+  manualReviewChecklist: string[];
+  acceptanceRecommendation: string;
   findings: RiskFinding[];
   createdAt: string;
 }
@@ -350,6 +356,16 @@ export function validateRiskReport(input: RiskReport): RiskReport {
   required(input.taskRunId, "riskReport.taskRunId", issues);
   enumValue(input.level, riskLevels, "riskReport.level", issues);
   required(input.summary, "riskReport.summary", issues);
+  stringArray(input.changedFiles, "riskReport.changedFiles", issues);
+  required(input.verificationSummary, "riskReport.verificationSummary", issues);
+  stringArray(input.failedChecks, "riskReport.failedChecks", issues);
+  stringArray(input.riskFactors, "riskReport.riskFactors", issues);
+  stringArray(input.manualReviewChecklist, "riskReport.manualReviewChecklist", issues);
+  required(
+    input.acceptanceRecommendation,
+    "riskReport.acceptanceRecommendation",
+    issues
+  );
   if (!Array.isArray(input.findings)) {
     issues.push("riskReport.findings must be an array");
   } else {
@@ -477,4 +493,3 @@ function finish<T>(input: T, issues: string[]): T {
 
   return input;
 }
-

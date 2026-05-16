@@ -96,15 +96,21 @@ For this repository state:
 - Phase 1 is TypeScript, Node.js, pnpm, Vitest, and CLI skeleton setup.
 - Phase 2 is the minimal local fake-agent vertical slice.
 
-SQLite persistence, real git worktrees, real shell verification, CodexAdapter,
-ClaudeCodeAdapter, safety scanning, comparison reports, memory workflows, and
-desktop UI are deferred.
+SQLite persistence, CodexAdapter, ClaudeCodeAdapter, comparison reports, memory
+workflows, and desktop UI are deferred.
+
+Night 3 introduces safe shell execution boundaries, git worktree workspace
+management, diff collection, verification command execution, and structured
+risk report generation. These capabilities are wired only through the fake
+adapter run path.
 
 ## Hard Constraints For This Slice
 
 - Do not implement `CodexAdapter`.
 - Do not implement `ClaudeCodeAdapter`.
-- Do not implement real shell execution.
+- Do not run shell commands outside the `ShellExecutor` abstraction.
+- Do not execute shell commands derived directly from task prompts.
+- Keep real agent execution deferred.
 - Do not push to a remote.
 - Do not delete files outside this repository.
 - Do not modify files outside this repository.
@@ -119,14 +125,14 @@ The implemented CLI command is:
 agent-hub run "@fake <task>"
 ```
 
-It parses the `@fake` route, creates an isolated temporary run directory outside
-the original project checkout, writes a generated task brief there, runs the
-deterministic fake adapter, captures adapter events, and prints a concise run
-summary.
+It parses the `@fake` route, creates an isolated git worktree under the
+configured workspace base, writes generated runtime files only inside that
+worktree, runs the deterministic fake adapter, collects git diff metadata, runs
+configured verification commands, generates a structured risk report, captures
+adapter events, cleans up according to the workspace cleanup policy, and prints
+a concise run summary.
 
-This is not yet a real git worktree runner. Real worktree creation is deferred
-to the next runner phase because this slice explicitly avoids real shell
-execution.
+Codex and Claude Code remain unsupported by the runner in this rebuild slice.
 
 ## Night 2 Phase Boundary
 
@@ -145,4 +151,21 @@ an agent registry, passes the compiled context to `FakeAgentAdapter`, records
 status transitions, and returns a structured result.
 
 Storage is intentionally in-memory for this phase. SQLite remains deferred.
-The run directory is still an isolated directory, not a git worktree.
+Night 3 replaces the isolated temporary run directory with a safe
+`GitWorktreeWorkspaceManager` for the default runner path.
+
+## Night 3 Phase Boundary
+
+Night 3 adds Phase 5 and Phase 6 behavior without introducing real Codex or
+Claude Code execution.
+
+Phase 5 implements `ShellExecutor`, `GitWorktreeWorkspaceManager`, and
+`DiffCollector`. Git worktree and diff commands run through the shell
+abstraction with explicit `cwd`, captured stdout/stderr/exit code/duration, path
+validation, dry-run support, and cleanup policies.
+
+Phase 6 implements `VerificationRunner` and `RiskReportGenerator`. Verification
+commands are configured explicitly, run inside the workspace cwd, and are never
+derived from task prompts. Risk reports summarize changed files, verification,
+failed checks, risk factors, manual review checklist, and acceptance
+recommendation.

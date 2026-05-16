@@ -114,8 +114,45 @@ Deliverables:
   handoff, task persistence, run persistence, status transitions, and CLI
   parsing/errors
 
+## Phase 5: Workspace / Git Worktree / Diff
+
+Status: complete in Night 3.
+
+Goal: create isolated task workspaces through safe git worktree management and
+collect reviewable diff metadata after a fake-agent run.
+
+Deliverables:
+
+- `ShellExecutor` abstraction and Node implementation
+- `WorkspaceManager`, `Workspace`, `WorkspaceSession`, `WorkspaceConfig`, and
+  `WorkspaceCleanupPolicy`
+- `GitWorktreeWorkspaceManager` with safe path validation, dry-run support, and
+  cleanup policies
+- `DiffCollector` for changed files, diff stat, raw diff, clean worktrees, and
+  git failure reporting
+- mocked-shell tests for workspace and diff behavior
+
+## Phase 6: Verification + Risk Report
+
+Status: complete in Night 3.
+
+Goal: run configured verification commands inside the isolated workspace and
+produce a structured risk report for the run.
+
+Deliverables:
+
+- `VerificationCommand`, `VerificationResult`-style command results,
+  `VerificationSuiteResult`, and `VerificationStatus`
+- `VerificationRunner` with success, failure, mixed, missing-config, and dry-run
+  handling
+- `RiskReportGenerator` with changed files, verification summary, failed checks,
+  risk factors, manual review checklist, and acceptance recommendation
+- Task runner integration for fake-agent runs only
+- CLI summaries plus `runs show` and `risks show`
+
 ## Recommended Next Phase
 
-Night 3 should implement real git worktree task isolation before adding SQLite
-or real agent adapters. That keeps the central safety invariant testable before
-external commands are introduced.
+Night 4 should add durable local persistence for runs, run metadata, verification
+results, diffs, and risk reports before adding real Codex or Claude Code
+adapters. SQLite should be introduced behind repository abstractions while
+keeping the current fake-agent worktree pipeline as the regression contract.

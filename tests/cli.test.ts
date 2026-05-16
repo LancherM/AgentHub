@@ -1,8 +1,16 @@
+import fs from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { createCliRuntime, main } from "../src/cli";
+import type { DiffCollectionResult, DiffCollectorService } from "../src/diff-collector";
 import { SequenceIdGenerator, FixedClock } from "../src/task-runner";
-import { createTestDirectory } from "./helpers";
+import { VerificationRunner } from "../src/verification";
+import type {
+  WorkspaceConfig,
+  WorkspaceManager,
+  WorkspaceSession
+} from "../src/workspace";
+import { createTestDirectory, MockShellExecutor } from "./helpers";
 
 describe("CLI", () => {
   it("runs fake tasks and lists in-memory tasks and runs", async () => {
@@ -10,6 +18,9 @@ describe("CLI", () => {
     const runRoot = path.join(await createTestDirectory("cli-runs"), "runs");
     const runtime = createCliRuntime({
       defaultRunRoot: runRoot,
+      workspaceManager: new TestWorkspaceManager(runRoot),
+      diffCollector: new StaticDiffCollector(),
+      verificationRunner: new VerificationRunner(new MockShellExecutor()),
       idGenerator: new SequenceIdGenerator(),
       clock: new FixedClock("2026-01-01T00:00:00.000Z")
     });
@@ -25,12 +36,21 @@ describe("CLI", () => {
     ).resolves.toBe(0);
     await expect(main(["tasks", "list"], io, projectRoot, runtime)).resolves.toBe(0);
     await expect(main(["runs", "list"], io, projectRoot, runtime)).resolves.toBe(0);
+    await expect(
+      main(["runs", "show", "run_0002"], io, projectRoot, runtime)
+    ).resolves.toBe(0);
+    await expect(
+      main(["risks", "show", "run_0002"], io, projectRoot, runtime)
+    ).resolves.toBe(0);
 
     expect(errors.join("")).toBe("");
     expect(output.join("")).toContain("Task run completed");
     expect(output.join("")).toContain("fake_output:");
+    expect(output.join("")).toContain("changed_files: 1");
+    expect(output.join("")).toContain("risk: medium");
     expect(output.join("")).toContain("task_0001\tcompleted\tcompile context");
     expect(output.join("")).toContain("run_0002\tsucceeded\tfake\ttask_0001");
+    expect(output.join("")).toContain("acceptance:");
   });
 
   it("rejects unknown agent clearly", async () => {
@@ -50,3 +70,52 @@ describe("CLI", () => {
     expect(errors.join("")).toContain("unknown agent unknown");
   });
 });
+
+class TestWorkspaceManager implements WorkspaceManager {
+  constructor(private readonly runRoot: string) {}
+
+  async createSession(config: WorkspaceConfig): Promise<WorkspaceSession> {
+    const workspacePath = path.join(this.runRoot, `${config.taskId}-${config.agentKind}`);
+    await fs.mkdir(workspacePath, { recursive: true });
+    return {
+      workspace: {
+        path: workspacePath,
+        branchName: `agent-hub/${config.taskId}/${config.agentKind}`,
+        sourceRepositoryPath: config.sourceRepositoryPath,
+        workspaceBasePath: this.runRoot,
+        taskId: config.taskId,
+        runId: config.runId,
+        agentKind: config.agentKind,
+        dryRun: config.dryRun ?? false,
+        sourceRepositoryDirty: false
+      },
+      creationCommands: [],
+      cleanup: async () => ({
+        cleaned: true,
+        retained: false,
+        reason: "test cleanup",
+        commands: []
+      })
+    };
+  }
+}
+
+class StaticDiffCollector implements DiffCollectorService {
+  async collect(input: { workspacePath: string }): Promise<DiffCollectionResult> {
+    return {
+      ok: true,
+      workspacePath: input.workspacePath,
+      isClean: false,
+      changedFiles: [{ path: "fake-agent-output.md", status: "untracked" }],
+      stat: {
+        filesChanged: 1,
+        insertions: 1,
+        deletions: 0,
+        text: "1 file changed, 1 insertion(+)"
+      },
+      diff: "",
+      fileSummaries: ["fake-agent-output.md: untracked"],
+      commands: []
+    };
+  }
+}
