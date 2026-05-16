@@ -49,7 +49,7 @@ describe("CLI", () => {
     expect(output.join("")).toContain("fake_output:");
     expect(output.join("")).toContain("changed_files: 1");
     expect(output.join("")).toContain("risk: medium");
-    expect(output.join("")).toContain("task_0001\tcompleted\tcompile context");
+    expect(output.join("")).toContain("task_0001\tcompleted\tadhoc_project\tcompile context");
     expect(output.join("")).toContain("run_0002\tsucceeded\tfake\ttask_0001");
     expect(output.join("")).toContain("acceptance:");
   });
@@ -102,12 +102,95 @@ describe("CLI", () => {
 
     expect(errors.join("")).toBe("");
     expect(queryOutput.join("")).toContain(
-      "task_0001\tcompleted\tpersist sqlite views"
+      "task_0001\tcompleted\tadhoc_project\tpersist sqlite views"
     );
     expect(queryOutput.join("")).toContain("run_0002\tsucceeded\tfake\ttask_0001");
     expect(queryOutput.join("")).toContain("changed_files: 1");
     expect(queryOutput.join("")).toContain("risk: medium");
     expect(queryOutput.join("")).toContain("acceptance:");
+  });
+
+  it("supports --db project, task, and registered fake run commands across runtimes", async () => {
+    const projectRoot = await createTestDirectory("cli-registered-project");
+    const runRoot = path.join(await createTestDirectory("cli-registered-runs"), "runs");
+    const databasePath = path.join(
+      await createTestDirectory("cli-registered-db"),
+      "agent-hub.sqlite"
+    );
+    const output: string[] = [];
+    const errors: string[] = [];
+    const io = {
+      stdout: { write: (chunk: string) => { output.push(chunk); return true; } },
+      stderr: { write: (chunk: string) => { errors.push(chunk); return true; } }
+    };
+
+    await expect(
+      main([
+        "--db",
+        databasePath,
+        "project",
+        "add",
+        "--name",
+        "registered",
+        "--root",
+        projectRoot
+      ], io, projectRoot)
+    ).resolves.toBe(0);
+    const projectId = extractLineValue(output.join(""), "id");
+
+    await expect(
+      main([
+        "--db",
+        databasePath,
+        "task",
+        "create",
+        "--project-id",
+        projectId,
+        "--title",
+        "Registered fake task",
+        "--description",
+        "Run the registered fake task"
+      ], io, projectRoot)
+    ).resolves.toBe(0);
+    const taskId = output.join("").match(/id: (task_[^\n]+)/)?.[1] ?? "";
+    expect(taskId).toMatch(/^task_/);
+
+    await expect(
+      main([
+        "--db",
+        databasePath,
+        "run",
+        "--task",
+        taskId,
+        "--agent",
+        "fake",
+        "--workspace-base",
+        runRoot,
+        "--dry-run"
+      ], io, projectRoot)
+    ).resolves.toBe(0);
+
+    const queryOutput: string[] = [];
+    const queryIo = {
+      stdout: { write: (chunk: string) => { queryOutput.push(chunk); return true; } },
+      stderr: { write: (chunk: string) => { errors.push(chunk); return true; } }
+    };
+    await expect(
+      main(["--db", databasePath, "project", "list"], queryIo, projectRoot)
+    ).resolves.toBe(0);
+    await expect(
+      main(["--db", databasePath, "task", "list", "--project-id", projectId], queryIo, projectRoot)
+    ).resolves.toBe(0);
+    await expect(
+      main(["--db", databasePath, "task", "history", "--task-id", taskId], queryIo, projectRoot)
+    ).resolves.toBe(0);
+
+    expect(errors.join("")).toBe("");
+    expect(queryOutput.join("")).toContain(`${projectId}\tregistered\t${projectRoot}`);
+    expect(queryOutput.join("")).toContain(`${taskId}\tcompleted\t${projectId}\tRegistered fake task`);
+    expect(queryOutput.join("")).toContain(`Task ${taskId}`);
+    expect(queryOutput.join("")).toContain("runs: 1");
+    expect(queryOutput.join("")).toContain("events: 2");
   });
 
   it("rejects unknown agent clearly", async () => {
@@ -127,6 +210,12 @@ describe("CLI", () => {
     expect(errors.join("")).toContain("unknown agent unknown");
   });
 });
+
+function extractLineValue(output: string, label: string): string {
+  const match = output.match(new RegExp(`^${label}: (.+)$`, "m"));
+  expect(match?.[1]).toBeTruthy();
+  return match?.[1] ?? "";
+}
 
 class TestWorkspaceManager implements WorkspaceManager {
   constructor(private readonly runRoot: string) {}

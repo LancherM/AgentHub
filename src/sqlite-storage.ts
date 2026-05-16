@@ -3,20 +3,54 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import {
+  validateAgentProfile,
+  validateComparisonReport,
+  validateMemoryItem,
+  validateProject,
+  validateRiskReport,
+  validateRunArtifact,
+  validateRunEvent,
+  validateSetting,
+  validateSkill,
   validateTask,
   validateTaskRun,
+  validateVerificationResult,
+  type AgentKind,
+  type AgentProfile,
+  type ComparisonReport,
+  type MemoryItem,
+  type Project,
+  type RiskReport,
+  type RiskLevel,
+  type RunArtifact,
+  type RunEvent,
+  type RunEventType,
+  type Setting,
+  type Skill,
   type Task,
   type TaskRun,
   type TaskRunStatus,
-  type TaskStatus
+  type TaskStatus,
+  type VerificationResult,
+  type VerificationStatus
 } from "./domain";
 import {
   cloneRunMetadata,
+  type AgentProfileRepository,
+  type ComparisonReportRepository,
+  type MemoryItemRepository,
+  type ProjectRepository,
+  type RiskReportRepository,
+  type RunArtifactRepository,
+  type RunEventRepository,
   type RunMetadata,
   type RunMetadataRepository,
   type RunStatusTransition,
+  type SettingsRepository,
+  type SkillRepository,
   type TaskRepository,
-  type TaskRunRepository
+  type TaskRunRepository,
+  type VerificationResultRepository
 } from "./storage";
 
 export interface SqliteStorageOptions {
@@ -25,9 +59,19 @@ export interface SqliteStorageOptions {
 
 export interface SqliteRepositories {
   database: SqliteDatabase;
+  projectRepository: ProjectRepository;
+  agentProfileRepository: AgentProfileRepository;
   taskRepository: TaskRepository;
   taskRunRepository: TaskRunRepository;
+  runEventRepository: RunEventRepository;
+  runArtifactRepository: RunArtifactRepository;
+  verificationResultRepository: VerificationResultRepository;
+  riskReportRepository: RiskReportRepository;
   runMetadataRepository: RunMetadataRepository;
+  memoryItemRepository: MemoryItemRepository;
+  comparisonReportRepository: ComparisonReportRepository;
+  skillRepository: SkillRepository;
+  settingsRepository: SettingsRepository;
 }
 
 export const SQLITE_MIGRATIONS: Array<{ version: number; sql: string }> = [
@@ -83,6 +127,159 @@ CREATE TABLE IF NOT EXISTS status_transitions (
 CREATE INDEX IF NOT EXISTS idx_status_transitions_run_id
   ON status_transitions(run_id, id);
 `
+  },
+  {
+    version: 2,
+    sql: `
+CREATE TABLE IF NOT EXISTS projects (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  root_path TEXT NOT NULL UNIQUE,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_projects_root_path
+  ON projects(root_path);
+
+CREATE TABLE IF NOT EXISTS agent_profiles (
+  id TEXT PRIMARY KEY,
+  kind TEXT NOT NULL CHECK (kind IN ('fake', 'codex', 'claude-code')),
+  display_name TEXT NOT NULL,
+  command TEXT,
+  enabled INTEGER NOT NULL CHECK (enabled IN (0, 1)),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_agent_profiles_kind ON agent_profiles(kind);
+CREATE INDEX IF NOT EXISTS idx_agent_profiles_enabled ON agent_profiles(enabled);
+CREATE INDEX IF NOT EXISTS idx_tasks_project_id ON tasks(project_id);
+CREATE INDEX IF NOT EXISTS idx_tasks_project_status ON tasks(project_id, status);
+CREATE INDEX IF NOT EXISTS idx_task_runs_task_agent ON task_runs(task_id, agent_kind);
+CREATE INDEX IF NOT EXISTS idx_task_runs_status ON task_runs(status);
+
+CREATE TABLE IF NOT EXISTS run_events (
+  id TEXT PRIMARY KEY,
+  task_run_id TEXT NOT NULL,
+  sequence INTEGER NOT NULL CHECK (sequence >= 0),
+  type TEXT NOT NULL CHECK (type IN ('stdout', 'stderr', 'message', 'status', 'error', 'exit')),
+  message TEXT NOT NULL,
+  metadata_json TEXT NOT NULL CHECK (json_valid(metadata_json)),
+  created_at TEXT NOT NULL,
+  FOREIGN KEY (task_run_id) REFERENCES task_runs(id) ON DELETE CASCADE,
+  UNIQUE (task_run_id, sequence)
+);
+
+CREATE INDEX IF NOT EXISTS idx_run_events_run_sequence
+  ON run_events(task_run_id, sequence);
+
+CREATE TABLE IF NOT EXISTS run_artifacts (
+  id TEXT PRIMARY KEY,
+  task_run_id TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  content TEXT NOT NULL,
+  metadata_json TEXT NOT NULL CHECK (json_valid(metadata_json)),
+  created_at TEXT NOT NULL,
+  FOREIGN KEY (task_run_id) REFERENCES task_runs(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_run_artifacts_run_created
+  ON run_artifacts(task_run_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_run_artifacts_kind ON run_artifacts(kind);
+
+CREATE TABLE IF NOT EXISTS verification_results (
+  id TEXT PRIMARY KEY,
+  task_run_id TEXT NOT NULL,
+  command TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('passed', 'failed', 'skipped')),
+  exit_code INTEGER,
+  stdout TEXT,
+  stderr TEXT,
+  started_at TEXT,
+  completed_at TEXT,
+  created_at TEXT NOT NULL,
+  FOREIGN KEY (task_run_id) REFERENCES task_runs(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_verification_results_run
+  ON verification_results(task_run_id);
+CREATE INDEX IF NOT EXISTS idx_verification_results_run_status
+  ON verification_results(task_run_id, status);
+
+CREATE TABLE IF NOT EXISTS risk_reports (
+  id TEXT PRIMARY KEY,
+  task_run_id TEXT NOT NULL,
+  level TEXT NOT NULL CHECK (level IN ('low', 'medium', 'high', 'blocking')),
+  summary TEXT NOT NULL,
+  findings_json TEXT NOT NULL CHECK (json_valid(findings_json)),
+  changed_files_json TEXT NOT NULL CHECK (json_valid(changed_files_json)),
+  verification_summary TEXT NOT NULL,
+  failed_checks_json TEXT NOT NULL CHECK (json_valid(failed_checks_json)),
+  risk_factors_json TEXT NOT NULL CHECK (json_valid(risk_factors_json)),
+  manual_review_checklist_json TEXT NOT NULL CHECK (json_valid(manual_review_checklist_json)),
+  acceptance_recommendation TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  FOREIGN KEY (task_run_id) REFERENCES task_runs(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_risk_reports_run ON risk_reports(task_run_id);
+CREATE INDEX IF NOT EXISTS idx_risk_reports_level ON risk_reports(level);
+
+CREATE TABLE IF NOT EXISTS comparison_reports (
+  id TEXT PRIMARY KEY,
+  task_id TEXT NOT NULL,
+  baseline_run_id TEXT,
+  candidate_run_id TEXT,
+  summary TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE,
+  FOREIGN KEY (baseline_run_id) REFERENCES task_runs(id) ON DELETE SET NULL,
+  FOREIGN KEY (candidate_run_id) REFERENCES task_runs(id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_comparison_reports_task
+  ON comparison_reports(task_id);
+
+CREATE TABLE IF NOT EXISTS memory_items (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL,
+  task_id TEXT,
+  category TEXT NOT NULL CHECK (category IN ('project_fact', 'workflow_rule', 'user_preference', 'temporary_note')),
+  status TEXT NOT NULL CHECK (status IN ('proposed', 'approved', 'rejected')),
+  content TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+  FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_memory_items_project ON memory_items(project_id);
+CREATE INDEX IF NOT EXISTS idx_memory_items_status ON memory_items(status);
+CREATE INDEX IF NOT EXISTS idx_memory_items_project_status
+  ON memory_items(project_id, status);
+
+CREATE TABLE IF NOT EXISTS skills (
+  id TEXT PRIMARY KEY,
+  project_id TEXT,
+  name TEXT NOT NULL,
+  description TEXT NOT NULL,
+  path TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_skills_project ON skills(project_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_skills_project_name
+  ON skills(project_id, name);
+
+CREATE TABLE IF NOT EXISTS settings (
+  key TEXT PRIMARY KEY,
+  value_json TEXT NOT NULL CHECK (json_valid(value_json)),
+  updated_at TEXT NOT NULL
+);
+`
   }
 ];
 
@@ -94,9 +291,19 @@ export function createSqliteRepositories(
   );
   return {
     database,
+    projectRepository: new SQLiteProjectRepository(database),
+    agentProfileRepository: new SQLiteAgentProfileRepository(database),
     taskRepository: new SQLiteTaskRepository(database),
     taskRunRepository: new SQLiteTaskRunRepository(database),
-    runMetadataRepository: new SQLiteRunMetadataRepository(database)
+    runEventRepository: new SQLiteRunEventRepository(database),
+    runArtifactRepository: new SQLiteRunArtifactRepository(database),
+    verificationResultRepository: new SQLiteVerificationResultRepository(database),
+    riskReportRepository: new SQLiteRiskReportRepository(database),
+    runMetadataRepository: new SQLiteRunMetadataRepository(database),
+    memoryItemRepository: new SQLiteMemoryItemRepository(database),
+    comparisonReportRepository: new SQLiteComparisonReportRepository(database),
+    skillRepository: new SQLiteSkillRepository(database),
+    settingsRepository: new SQLiteSettingsRepository(database)
   };
 }
 
@@ -130,8 +337,17 @@ function defaultAppDataDirectory(): string {
 
 export class SqliteDatabase {
   private initializePromise: Promise<void> | undefined;
+  private closed = false;
 
   constructor(readonly databasePath: string) {}
+
+  async open(): Promise<void> {
+    await this.ensureInitialized();
+  }
+
+  async close(): Promise<void> {
+    this.closed = true;
+  }
 
   async execute(sql: string): Promise<void> {
     await this.ensureInitialized();
@@ -152,6 +368,9 @@ export class SqliteDatabase {
   }
 
   async ensureInitialized(): Promise<void> {
+    if (this.closed) {
+      throw new Error("sqlite database is closed");
+    }
     this.initializePromise ??= this.initialize();
     await this.initializePromise;
   }
@@ -198,6 +417,139 @@ COMMIT;
     );
     const trimmed = output.trim();
     return trimmed.length === 0 ? [] : JSON.parse(trimmed) as T[];
+  }
+}
+
+export class SQLiteProjectRepository implements ProjectRepository {
+  constructor(private readonly database: SqliteDatabase) {}
+
+  async create(project: Project): Promise<Project> {
+    const validProject = validateProject(project);
+    await this.database.execute(`
+INSERT INTO projects (id, name, root_path, created_at, updated_at)
+VALUES (
+  ${sqlString(validProject.id)},
+  ${sqlString(validProject.name)},
+  ${sqlString(validProject.rootPath)},
+  ${sqlString(validProject.createdAt)},
+  ${sqlString(validProject.updatedAt)}
+)
+ON CONFLICT(id) DO UPDATE SET
+  name = excluded.name,
+  root_path = excluded.root_path,
+  created_at = excluded.created_at,
+  updated_at = excluded.updated_at;
+`);
+    return { ...validProject };
+  }
+
+  async get(projectId: string): Promise<Project | undefined> {
+    const rows = await this.database.query<ProjectRow>(`
+SELECT
+  id,
+  name,
+  root_path AS rootPath,
+  created_at AS createdAt,
+  updated_at AS updatedAt
+FROM projects
+WHERE id = ${sqlString(projectId)}
+LIMIT 1;
+`);
+    const row = rows[0];
+    return row ? projectFromRow(row) : undefined;
+  }
+
+  async getByRootPath(rootPath: string): Promise<Project | undefined> {
+    const rows = await this.database.query<ProjectRow>(`
+SELECT
+  id,
+  name,
+  root_path AS rootPath,
+  created_at AS createdAt,
+  updated_at AS updatedAt
+FROM projects
+WHERE root_path = ${sqlString(path.resolve(rootPath))}
+LIMIT 1;
+`);
+    const row = rows[0];
+    return row ? projectFromRow(row) : undefined;
+  }
+
+  async list(): Promise<Project[]> {
+    const rows = await this.database.query<ProjectRow>(`
+SELECT
+  id,
+  name,
+  root_path AS rootPath,
+  created_at AS createdAt,
+  updated_at AS updatedAt
+FROM projects
+ORDER BY created_at ASC, id ASC;
+`);
+    return rows.map(projectFromRow);
+  }
+}
+
+export class SQLiteAgentProfileRepository implements AgentProfileRepository {
+  constructor(private readonly database: SqliteDatabase) {}
+
+  async create(profile: AgentProfile): Promise<AgentProfile> {
+    const validProfile = validateAgentProfile(profile);
+    await this.database.execute(`
+INSERT INTO agent_profiles (
+  id, kind, display_name, command, enabled, created_at, updated_at
+) VALUES (
+  ${sqlString(validProfile.id)},
+  ${sqlString(validProfile.kind)},
+  ${sqlString(validProfile.displayName)},
+  ${sqlNullableString(validProfile.command)},
+  ${validProfile.enabled ? 1 : 0},
+  ${sqlString(validProfile.createdAt)},
+  ${sqlString(validProfile.updatedAt)}
+)
+ON CONFLICT(id) DO UPDATE SET
+  kind = excluded.kind,
+  display_name = excluded.display_name,
+  command = excluded.command,
+  enabled = excluded.enabled,
+  created_at = excluded.created_at,
+  updated_at = excluded.updated_at;
+`);
+    return { ...validProfile };
+  }
+
+  async get(profileId: string): Promise<AgentProfile | undefined> {
+    const rows = await this.database.query<AgentProfileRow>(`
+SELECT
+  id,
+  kind,
+  display_name AS displayName,
+  command,
+  enabled,
+  created_at AS createdAt,
+  updated_at AS updatedAt
+FROM agent_profiles
+WHERE id = ${sqlString(profileId)}
+LIMIT 1;
+`);
+    const row = rows[0];
+    return row ? agentProfileFromRow(row) : undefined;
+  }
+
+  async list(): Promise<AgentProfile[]> {
+    const rows = await this.database.query<AgentProfileRow>(`
+SELECT
+  id,
+  kind,
+  display_name AS displayName,
+  command,
+  enabled,
+  created_at AS createdAt,
+  updated_at AS updatedAt
+FROM agent_profiles
+ORDER BY created_at ASC, id ASC;
+`);
+    return rows.map(agentProfileFromRow);
   }
 }
 
@@ -275,6 +627,23 @@ SELECT
   created_at AS createdAt,
   updated_at AS updatedAt
 FROM tasks
+ORDER BY created_at ASC, id ASC;
+`);
+    return rows.map(taskFromRow);
+  }
+
+  async listByProjectId(projectId: string): Promise<Task[]> {
+    const rows = await this.database.query<TaskRow>(`
+SELECT
+  id,
+  project_id AS projectId,
+  title,
+  description,
+  status,
+  created_at AS createdAt,
+  updated_at AS updatedAt
+FROM tasks
+WHERE project_id = ${sqlString(projectId)}
 ORDER BY created_at ASC, id ASC;
 `);
     return rows.map(taskFromRow);
@@ -367,6 +736,11 @@ UPDATE task_runs
 SET
   status = ${sqlString(status)},
   updated_at = ${sqlString(updatedAt)},
+  started_at = CASE
+    WHEN ${sqlString(status)} = 'running' AND started_at IS NULL
+      THEN ${sqlString(updatedAt)}
+    ELSE started_at
+  END,
   completed_at = CASE
     WHEN ${sqlString(status)} IN ('succeeded', 'failed', 'cancelled')
       THEN ${sqlString(updatedAt)}
@@ -519,6 +893,516 @@ LIMIT 1;
   }
 }
 
+export class SQLiteRunEventRepository implements RunEventRepository {
+  constructor(private readonly database: SqliteDatabase) {}
+
+  async create(event: RunEvent): Promise<RunEvent> {
+    const validEvent = validateRunEvent(event);
+    await this.database.execute(`
+INSERT INTO run_events (
+  id, task_run_id, sequence, type, message, metadata_json, created_at
+) VALUES (
+  ${sqlString(validEvent.id)},
+  ${sqlString(validEvent.taskRunId)},
+  ${validEvent.sequence},
+  ${sqlString(validEvent.type)},
+  ${sqlString(validEvent.message)},
+  ${sqlJson(validEvent.metadata)},
+  ${sqlString(validEvent.createdAt)}
+);
+`);
+    return cloneRunEvent(validEvent);
+  }
+
+  async createMany(events: RunEvent[]): Promise<RunEvent[]> {
+    if (events.length === 0) {
+      return [];
+    }
+    const values = events.map((event) => {
+      const validEvent = validateRunEvent(event);
+      return `(
+  ${sqlString(validEvent.id)},
+  ${sqlString(validEvent.taskRunId)},
+  ${validEvent.sequence},
+  ${sqlString(validEvent.type)},
+  ${sqlString(validEvent.message)},
+  ${sqlJson(validEvent.metadata)},
+  ${sqlString(validEvent.createdAt)}
+)`;
+    });
+    await this.database.execute(`
+INSERT INTO run_events (
+  id, task_run_id, sequence, type, message, metadata_json, created_at
+) VALUES
+${values.join(",\n")};
+`);
+    return events.map((event) => cloneRunEvent(validateRunEvent(event)));
+  }
+
+  async listByRunId(runId: string): Promise<RunEvent[]> {
+    const rows = await this.database.query<RunEventRow>(`
+SELECT
+  id,
+  task_run_id AS taskRunId,
+  sequence,
+  type,
+  message,
+  metadata_json AS metadataJson,
+  created_at AS createdAt
+FROM run_events
+WHERE task_run_id = ${sqlString(runId)}
+ORDER BY sequence ASC;
+`);
+    return rows.map(runEventFromRow);
+  }
+
+  async countByRunId(runId: string): Promise<number> {
+    const rows = await this.database.query<{ count: number }>(`
+SELECT COUNT(*) AS count
+FROM run_events
+WHERE task_run_id = ${sqlString(runId)};
+`);
+    return rows[0]?.count ?? 0;
+  }
+}
+
+export class SQLiteRunArtifactRepository implements RunArtifactRepository {
+  constructor(private readonly database: SqliteDatabase) {}
+
+  async create(artifact: RunArtifact): Promise<RunArtifact> {
+    const validArtifact = validateRunArtifact(artifact);
+    await this.database.execute(`
+INSERT INTO run_artifacts (
+  id, task_run_id, kind, content, metadata_json, created_at
+) VALUES (
+  ${sqlString(validArtifact.id)},
+  ${sqlString(validArtifact.taskRunId)},
+  ${sqlString(validArtifact.kind)},
+  ${sqlString(validArtifact.content)},
+  ${sqlJson(validArtifact.metadata)},
+  ${sqlString(validArtifact.createdAt)}
+);
+`);
+    return cloneRunArtifact(validArtifact);
+  }
+
+  async listByRunId(runId: string): Promise<RunArtifact[]> {
+    const rows = await this.database.query<RunArtifactRow>(`
+SELECT
+  id,
+  task_run_id AS taskRunId,
+  kind,
+  content,
+  metadata_json AS metadataJson,
+  created_at AS createdAt
+FROM run_artifacts
+WHERE task_run_id = ${sqlString(runId)}
+ORDER BY created_at ASC, id ASC;
+`);
+    return rows.map(runArtifactFromRow);
+  }
+
+  async getLatestByRunIdAndKind(
+    runId: string,
+    kind: string
+  ): Promise<RunArtifact | undefined> {
+    const rows = await this.database.query<RunArtifactRow>(`
+SELECT
+  id,
+  task_run_id AS taskRunId,
+  kind,
+  content,
+  metadata_json AS metadataJson,
+  created_at AS createdAt
+FROM run_artifacts
+WHERE task_run_id = ${sqlString(runId)}
+  AND kind = ${sqlString(kind)}
+ORDER BY created_at DESC, id DESC
+LIMIT 1;
+`);
+    const row = rows[0];
+    return row ? runArtifactFromRow(row) : undefined;
+  }
+}
+
+export class SQLiteVerificationResultRepository
+  implements VerificationResultRepository
+{
+  constructor(private readonly database: SqliteDatabase) {}
+
+  async create(result: VerificationResult): Promise<VerificationResult> {
+    const validResult = validateVerificationResult(result);
+    await this.database.execute(verificationInsertSql(validResult));
+    return { ...validResult };
+  }
+
+  async createMany(results: VerificationResult[]): Promise<VerificationResult[]> {
+    if (results.length === 0) {
+      return [];
+    }
+    await this.database.execute(results.map(verificationInsertSql).join("\n"));
+    return results.map((result) => ({ ...validateVerificationResult(result) }));
+  }
+
+  async listByRunId(runId: string): Promise<VerificationResult[]> {
+    const rows = await this.database.query<VerificationResultRow>(`
+SELECT
+  id,
+  task_run_id AS taskRunId,
+  command,
+  status,
+  exit_code AS exitCode,
+  stdout,
+  stderr,
+  started_at AS startedAt,
+  completed_at AS completedAt,
+  created_at AS createdAt
+FROM verification_results
+WHERE task_run_id = ${sqlString(runId)}
+ORDER BY created_at ASC, id ASC;
+`);
+    return rows.map(verificationResultFromRow);
+  }
+}
+
+export class SQLiteRiskReportRepository implements RiskReportRepository {
+  constructor(private readonly database: SqliteDatabase) {}
+
+  async create(report: RiskReport): Promise<RiskReport> {
+    const validReport = validateRiskReport(report);
+    await this.database.execute(`
+INSERT INTO risk_reports (
+  id,
+  task_run_id,
+  level,
+  summary,
+  findings_json,
+  changed_files_json,
+  verification_summary,
+  failed_checks_json,
+  risk_factors_json,
+  manual_review_checklist_json,
+  acceptance_recommendation,
+  created_at
+) VALUES (
+  ${sqlString(validReport.id)},
+  ${sqlString(validReport.taskRunId)},
+  ${sqlString(validReport.level)},
+  ${sqlString(validReport.summary)},
+  ${sqlJson(validReport.findings)},
+  ${sqlJson(validReport.changedFiles)},
+  ${sqlString(validReport.verificationSummary)},
+  ${sqlJson(validReport.failedChecks)},
+  ${sqlJson(validReport.riskFactors)},
+  ${sqlJson(validReport.manualReviewChecklist)},
+  ${sqlString(validReport.acceptanceRecommendation)},
+  ${sqlString(validReport.createdAt)}
+)
+ON CONFLICT(id) DO UPDATE SET
+  task_run_id = excluded.task_run_id,
+  level = excluded.level,
+  summary = excluded.summary,
+  findings_json = excluded.findings_json,
+  changed_files_json = excluded.changed_files_json,
+  verification_summary = excluded.verification_summary,
+  failed_checks_json = excluded.failed_checks_json,
+  risk_factors_json = excluded.risk_factors_json,
+  manual_review_checklist_json = excluded.manual_review_checklist_json,
+  acceptance_recommendation = excluded.acceptance_recommendation,
+  created_at = excluded.created_at;
+`);
+    return cloneRiskReport(validReport);
+  }
+
+  async listByRunId(runId: string): Promise<RiskReport[]> {
+    const rows = await this.database.query<RiskReportRow>(`
+SELECT
+  id,
+  task_run_id AS taskRunId,
+  level,
+  summary,
+  findings_json AS findingsJson,
+  changed_files_json AS changedFilesJson,
+  verification_summary AS verificationSummary,
+  failed_checks_json AS failedChecksJson,
+  risk_factors_json AS riskFactorsJson,
+  manual_review_checklist_json AS manualReviewChecklistJson,
+  acceptance_recommendation AS acceptanceRecommendation,
+  created_at AS createdAt
+FROM risk_reports
+WHERE task_run_id = ${sqlString(runId)}
+ORDER BY created_at ASC, id ASC;
+`);
+    return rows.map(riskReportFromRow);
+  }
+
+  async getLatestByRunId(runId: string): Promise<RiskReport | undefined> {
+    const rows = await this.database.query<RiskReportRow>(`
+SELECT
+  id,
+  task_run_id AS taskRunId,
+  level,
+  summary,
+  findings_json AS findingsJson,
+  changed_files_json AS changedFilesJson,
+  verification_summary AS verificationSummary,
+  failed_checks_json AS failedChecksJson,
+  risk_factors_json AS riskFactorsJson,
+  manual_review_checklist_json AS manualReviewChecklistJson,
+  acceptance_recommendation AS acceptanceRecommendation,
+  created_at AS createdAt
+FROM risk_reports
+WHERE task_run_id = ${sqlString(runId)}
+ORDER BY created_at DESC, id DESC
+LIMIT 1;
+`);
+    const row = rows[0];
+    return row ? riskReportFromRow(row) : undefined;
+  }
+}
+
+export class SQLiteMemoryItemRepository implements MemoryItemRepository {
+  constructor(private readonly database: SqliteDatabase) {}
+
+  async create(item: MemoryItem): Promise<MemoryItem> {
+    const validItem = validateMemoryItem(item);
+    await this.database.execute(`
+INSERT INTO memory_items (
+  id, project_id, task_id, category, status, content, created_at, updated_at
+) VALUES (
+  ${sqlString(validItem.id)},
+  ${sqlString(validItem.projectId)},
+  ${sqlNullableString(validItem.taskId)},
+  ${sqlString(validItem.category)},
+  ${sqlString(validItem.status)},
+  ${sqlString(validItem.content)},
+  ${sqlString(validItem.createdAt)},
+  ${sqlString(validItem.updatedAt)}
+)
+ON CONFLICT(id) DO UPDATE SET
+  project_id = excluded.project_id,
+  task_id = excluded.task_id,
+  category = excluded.category,
+  status = excluded.status,
+  content = excluded.content,
+  created_at = excluded.created_at,
+  updated_at = excluded.updated_at;
+`);
+    return { ...validItem };
+  }
+
+  async updateStatus(
+    memoryId: string,
+    status: MemoryItem["status"],
+    updatedAt: string
+  ): Promise<MemoryItem> {
+    await this.database.execute(`
+UPDATE memory_items
+SET status = ${sqlString(status)}, updated_at = ${sqlString(updatedAt)}
+WHERE id = ${sqlString(memoryId)};
+`);
+    const item = await this.get(memoryId);
+    if (!item) {
+      throw new Error(`memory item ${memoryId} not found`);
+    }
+    return item;
+  }
+
+  async get(memoryId: string): Promise<MemoryItem | undefined> {
+    const rows = await this.database.query<MemoryItemRow>(`
+SELECT
+  id,
+  project_id AS projectId,
+  task_id AS taskId,
+  category,
+  status,
+  content,
+  created_at AS createdAt,
+  updated_at AS updatedAt
+FROM memory_items
+WHERE id = ${sqlString(memoryId)}
+LIMIT 1;
+`);
+    const row = rows[0];
+    return row ? memoryItemFromRow(row) : undefined;
+  }
+
+  async listByProjectId(projectId: string): Promise<MemoryItem[]> {
+    const rows = await this.database.query<MemoryItemRow>(`
+SELECT
+  id,
+  project_id AS projectId,
+  task_id AS taskId,
+  category,
+  status,
+  content,
+  created_at AS createdAt,
+  updated_at AS updatedAt
+FROM memory_items
+WHERE project_id = ${sqlString(projectId)}
+ORDER BY created_at ASC, id ASC;
+`);
+    return rows.map(memoryItemFromRow);
+  }
+}
+
+export class SQLiteComparisonReportRepository
+  implements ComparisonReportRepository
+{
+  constructor(private readonly database: SqliteDatabase) {}
+
+  async create(report: ComparisonReport): Promise<ComparisonReport> {
+    const validReport = validateComparisonReport(report);
+    await this.database.execute(`
+INSERT INTO comparison_reports (
+  id, task_id, baseline_run_id, candidate_run_id, summary, created_at
+) VALUES (
+  ${sqlString(validReport.id)},
+  ${sqlString(validReport.taskId)},
+  ${sqlNullableString(validReport.baselineRunId)},
+  ${sqlNullableString(validReport.candidateRunId)},
+  ${sqlString(validReport.summary)},
+  ${sqlString(validReport.createdAt)}
+)
+ON CONFLICT(id) DO UPDATE SET
+  task_id = excluded.task_id,
+  baseline_run_id = excluded.baseline_run_id,
+  candidate_run_id = excluded.candidate_run_id,
+  summary = excluded.summary,
+  created_at = excluded.created_at;
+`);
+    return { ...validReport };
+  }
+
+  async listByTaskId(taskId: string): Promise<ComparisonReport[]> {
+    const rows = await this.database.query<ComparisonReportRow>(`
+SELECT
+  id,
+  task_id AS taskId,
+  baseline_run_id AS baselineRunId,
+  candidate_run_id AS candidateRunId,
+  summary,
+  created_at AS createdAt
+FROM comparison_reports
+WHERE task_id = ${sqlString(taskId)}
+ORDER BY created_at ASC, id ASC;
+`);
+    return rows.map(comparisonReportFromRow);
+  }
+}
+
+export class SQLiteSkillRepository implements SkillRepository {
+  constructor(private readonly database: SqliteDatabase) {}
+
+  async create(skill: Skill): Promise<Skill> {
+    const validSkill = validateSkill(skill);
+    await this.database.execute(`
+INSERT INTO skills (
+  id, project_id, name, description, path, created_at, updated_at
+) VALUES (
+  ${sqlString(validSkill.id)},
+  ${sqlNullableString(validSkill.projectId)},
+  ${sqlString(validSkill.name)},
+  ${sqlString(validSkill.description)},
+  ${sqlString(validSkill.path)},
+  ${sqlString(validSkill.createdAt)},
+  ${sqlString(validSkill.updatedAt)}
+)
+ON CONFLICT(id) DO UPDATE SET
+  project_id = excluded.project_id,
+  name = excluded.name,
+  description = excluded.description,
+  path = excluded.path,
+  created_at = excluded.created_at,
+  updated_at = excluded.updated_at;
+`);
+    return { ...validSkill };
+  }
+
+  async list(projectId?: string): Promise<Skill[]> {
+    const whereClause =
+      projectId === undefined ? "" : `WHERE project_id = ${sqlString(projectId)}`;
+    const rows = await this.database.query<SkillRow>(`
+SELECT
+  id,
+  project_id AS projectId,
+  name,
+  description,
+  path,
+  created_at AS createdAt,
+  updated_at AS updatedAt
+FROM skills
+${whereClause}
+ORDER BY created_at ASC, id ASC;
+`);
+    return rows.map(skillFromRow);
+  }
+}
+
+export class SQLiteSettingsRepository implements SettingsRepository {
+  constructor(private readonly database: SqliteDatabase) {}
+
+  async set(setting: Setting): Promise<Setting> {
+    const validSetting = validateSetting(setting);
+    await this.database.execute(`
+INSERT INTO settings (key, value_json, updated_at)
+VALUES (
+  ${sqlString(validSetting.key)},
+  ${sqlJson(validSetting.value)},
+  ${sqlString(validSetting.updatedAt)}
+)
+ON CONFLICT(key) DO UPDATE SET
+  value_json = excluded.value_json,
+  updated_at = excluded.updated_at;
+`);
+    return cloneSetting(validSetting);
+  }
+
+  async get(key: string): Promise<Setting | undefined> {
+    const rows = await this.database.query<SettingRow>(`
+SELECT
+  key,
+  value_json AS valueJson,
+  updated_at AS updatedAt
+FROM settings
+WHERE key = ${sqlString(key)}
+LIMIT 1;
+`);
+    const row = rows[0];
+    return row ? settingFromRow(row) : undefined;
+  }
+
+  async list(): Promise<Setting[]> {
+    const rows = await this.database.query<SettingRow>(`
+SELECT
+  key,
+  value_json AS valueJson,
+  updated_at AS updatedAt
+FROM settings
+ORDER BY key ASC;
+`);
+    return rows.map(settingFromRow);
+  }
+}
+
+interface ProjectRow extends Record<string, unknown> {
+  id: string;
+  name: string;
+  rootPath: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface AgentProfileRow extends Record<string, unknown> {
+  id: string;
+  kind: string;
+  displayName: string;
+  command: string | null;
+  enabled: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
 interface TaskRow extends Record<string, unknown> {
   id: string;
   projectId: string;
@@ -556,6 +1440,111 @@ interface RunMetadataRow extends Record<string, unknown> {
   diffJson: string | null;
   verificationJson: string | null;
   riskReportJson: string | null;
+}
+
+interface RunEventRow extends Record<string, unknown> {
+  id: string;
+  taskRunId: string;
+  sequence: number;
+  type: string;
+  message: string;
+  metadataJson: string;
+  createdAt: string;
+}
+
+interface RunArtifactRow extends Record<string, unknown> {
+  id: string;
+  taskRunId: string;
+  kind: string;
+  content: string;
+  metadataJson: string;
+  createdAt: string;
+}
+
+interface VerificationResultRow extends Record<string, unknown> {
+  id: string;
+  taskRunId: string;
+  command: string;
+  status: string;
+  exitCode: number | null;
+  stdout: string | null;
+  stderr: string | null;
+  startedAt: string | null;
+  completedAt: string | null;
+  createdAt: string;
+}
+
+interface RiskReportRow extends Record<string, unknown> {
+  id: string;
+  taskRunId: string;
+  level: string;
+  summary: string;
+  findingsJson: string;
+  changedFilesJson: string;
+  verificationSummary: string;
+  failedChecksJson: string;
+  riskFactorsJson: string;
+  manualReviewChecklistJson: string;
+  acceptanceRecommendation: string;
+  createdAt: string;
+}
+
+interface MemoryItemRow extends Record<string, unknown> {
+  id: string;
+  projectId: string;
+  taskId: string | null;
+  category: string;
+  status: string;
+  content: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface ComparisonReportRow extends Record<string, unknown> {
+  id: string;
+  taskId: string;
+  baselineRunId: string | null;
+  candidateRunId: string | null;
+  summary: string;
+  createdAt: string;
+}
+
+interface SkillRow extends Record<string, unknown> {
+  id: string;
+  projectId: string | null;
+  name: string;
+  description: string;
+  path: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface SettingRow extends Record<string, unknown> {
+  key: string;
+  valueJson: string;
+  updatedAt: string;
+}
+
+function projectFromRow(row: ProjectRow): Project {
+  return validateProject({
+    id: row.id,
+    name: row.name,
+    rootPath: row.rootPath,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt
+  });
+}
+
+function agentProfileFromRow(row: AgentProfileRow): AgentProfile {
+  return validateAgentProfile({
+    id: row.id,
+    kind: row.kind as AgentKind,
+    displayName: row.displayName,
+    command: nullToUndefined(row.command),
+    enabled: row.enabled === 1,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt
+  });
 }
 
 function taskFromRow(row: TaskRow): Task {
@@ -597,6 +1586,173 @@ function metadataFromRow(row: RunMetadataRow): RunMetadata {
   };
 }
 
+function runEventFromRow(row: RunEventRow): RunEvent {
+  return validateRunEvent({
+    id: row.id,
+    taskRunId: row.taskRunId,
+    sequence: row.sequence,
+    type: row.type as RunEventType,
+    message: row.message,
+    metadata: parseJson(row.metadataJson) ?? {},
+    createdAt: row.createdAt
+  });
+}
+
+function runArtifactFromRow(row: RunArtifactRow): RunArtifact {
+  return validateRunArtifact({
+    id: row.id,
+    taskRunId: row.taskRunId,
+    kind: row.kind,
+    content: row.content,
+    metadata: parseJson(row.metadataJson) ?? {},
+    createdAt: row.createdAt
+  });
+}
+
+function verificationResultFromRow(row: VerificationResultRow): VerificationResult {
+  return validateVerificationResult({
+    id: row.id,
+    taskRunId: row.taskRunId,
+    command: row.command,
+    status: row.status as VerificationStatus,
+    exitCode: nullToUndefined(row.exitCode),
+    stdout: nullToUndefined(row.stdout),
+    stderr: nullToUndefined(row.stderr),
+    startedAt: nullToUndefined(row.startedAt),
+    completedAt: nullToUndefined(row.completedAt),
+    createdAt: row.createdAt
+  });
+}
+
+function riskReportFromRow(row: RiskReportRow): RiskReport {
+  return validateRiskReport({
+    id: row.id,
+    taskRunId: row.taskRunId,
+    level: row.level as RiskLevel,
+    summary: row.summary,
+    changedFiles: parseJson(row.changedFilesJson) ?? [],
+    verificationSummary: row.verificationSummary,
+    failedChecks: parseJson(row.failedChecksJson) ?? [],
+    riskFactors: parseJson(row.riskFactorsJson) ?? [],
+    manualReviewChecklist: parseJson(row.manualReviewChecklistJson) ?? [],
+    acceptanceRecommendation: row.acceptanceRecommendation,
+    findings: parseJson(row.findingsJson) ?? [],
+    createdAt: row.createdAt
+  });
+}
+
+function memoryItemFromRow(row: MemoryItemRow): MemoryItem {
+  return validateMemoryItem({
+    id: row.id,
+    projectId: row.projectId,
+    taskId: nullToUndefined(row.taskId),
+    category: row.category as MemoryItem["category"],
+    status: row.status as MemoryItem["status"],
+    content: row.content,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt
+  });
+}
+
+function comparisonReportFromRow(row: ComparisonReportRow): ComparisonReport {
+  return validateComparisonReport({
+    id: row.id,
+    taskId: row.taskId,
+    baselineRunId: nullToUndefined(row.baselineRunId),
+    candidateRunId: nullToUndefined(row.candidateRunId),
+    summary: row.summary,
+    createdAt: row.createdAt
+  });
+}
+
+function skillFromRow(row: SkillRow): Skill {
+  return validateSkill({
+    id: row.id,
+    projectId: nullToUndefined(row.projectId),
+    name: row.name,
+    description: row.description,
+    path: row.path,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt
+  });
+}
+
+function settingFromRow(row: SettingRow): Setting {
+  return validateSetting({
+    key: row.key,
+    value: parseJson(row.valueJson),
+    updatedAt: row.updatedAt
+  });
+}
+
+function verificationInsertSql(result: VerificationResult): string {
+  const validResult = validateVerificationResult(result);
+  return `
+INSERT INTO verification_results (
+  id,
+  task_run_id,
+  command,
+  status,
+  exit_code,
+  stdout,
+  stderr,
+  started_at,
+  completed_at,
+  created_at
+) VALUES (
+  ${sqlString(validResult.id)},
+  ${sqlString(validResult.taskRunId)},
+  ${sqlString(validResult.command)},
+  ${sqlString(validResult.status)},
+  ${sqlNullableInteger(validResult.exitCode)},
+  ${sqlNullableString(validResult.stdout)},
+  ${sqlNullableString(validResult.stderr)},
+  ${sqlNullableString(validResult.startedAt)},
+  ${sqlNullableString(validResult.completedAt)},
+  ${sqlString(validResult.createdAt)}
+);`;
+}
+
+function cloneRunEvent(event: RunEvent): RunEvent {
+  return {
+    ...event,
+    metadata: cloneJsonObject(event.metadata)
+  };
+}
+
+function cloneRunArtifact(artifact: RunArtifact): RunArtifact {
+  return {
+    ...artifact,
+    metadata: cloneJsonObject(artifact.metadata)
+  };
+}
+
+function cloneRiskReport(report: RiskReport): RiskReport {
+  return {
+    ...report,
+    changedFiles: [...report.changedFiles],
+    failedChecks: [...report.failedChecks],
+    riskFactors: [...report.riskFactors],
+    manualReviewChecklist: [...report.manualReviewChecklist],
+    findings: report.findings.map((finding) => ({ ...finding }))
+  };
+}
+
+function cloneSetting(setting: Setting): Setting {
+  return {
+    ...setting,
+    value: cloneJsonValue(setting.value)
+  };
+}
+
+function cloneJsonObject<T extends Record<string, unknown>>(value: T): T {
+  return cloneJsonValue(value) as T;
+}
+
+function cloneJsonValue(value: unknown): unknown {
+  return JSON.parse(JSON.stringify(value)) as unknown;
+}
+
 function parseJson<T>(value: string | null): T | undefined {
   return value === null ? undefined : JSON.parse(value) as T;
 }
@@ -621,6 +1777,10 @@ function sqlString(value: string): string {
 
 function sqlNullableString(value: string | undefined): string {
   return value === undefined ? "NULL" : sqlString(value);
+}
+
+function sqlNullableInteger(value: number | undefined): string {
+  return value === undefined ? "NULL" : String(value);
 }
 
 function sqlJson(value: unknown | undefined): string {

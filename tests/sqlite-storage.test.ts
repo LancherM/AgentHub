@@ -24,7 +24,27 @@ describe("SQLite storage", () => {
       database.query<{ version: number }>(
         "SELECT version FROM schema_migrations ORDER BY version ASC;"
       )
-    ).resolves.toEqual([{ version: 1 }]);
+    ).resolves.toEqual([{ version: 1 }, { version: 2 }]);
+    await expect(
+      database.query<{ name: string }>(
+        "SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name ASC;"
+      )
+    ).resolves.toEqual(
+      expect.arrayContaining([
+        { name: "projects" },
+        { name: "agent_profiles" },
+        { name: "tasks" },
+        { name: "task_runs" },
+        { name: "run_events" },
+        { name: "run_artifacts" },
+        { name: "verification_results" },
+        { name: "risk_reports" },
+        { name: "memory_items" },
+        { name: "comparison_reports" },
+        { name: "skills" },
+        { name: "settings" }
+      ])
+    );
   });
 
   it("persists tasks, runs, status transitions, and run metadata across instances", async () => {
@@ -32,6 +52,30 @@ describe("SQLite storage", () => {
     const databasePath = path.join(baseDirectory, "agent-hub.sqlite");
     const first = createSqliteRepositories({ databasePath });
 
+    await first.projectRepository.create({
+      id: "project_1",
+      name: "Project One",
+      rootPath: path.join(baseDirectory, "source"),
+      createdAt,
+      updatedAt: createdAt
+    });
+    await expect(
+      first.projectRepository.create({
+        id: "project_duplicate",
+        name: "Duplicate",
+        rootPath: path.join(baseDirectory, "source"),
+        createdAt,
+        updatedAt: createdAt
+      })
+    ).rejects.toThrow();
+    await first.agentProfileRepository.create({
+      id: "agent_profile_1",
+      kind: "fake",
+      displayName: "Fake",
+      enabled: true,
+      createdAt,
+      updatedAt: createdAt
+    });
     await first.taskRepository.create({
       id: "task_1",
       projectId: "project_1",
@@ -66,6 +110,77 @@ describe("SQLite storage", () => {
       verification: verification(),
       riskReport: riskReport()
     });
+    await first.runEventRepository.createMany([
+      {
+        id: "event_1",
+        taskRunId: "run_1",
+        sequence: 0,
+        type: "stdout",
+        message: "hello",
+        metadata: { stream: "stdout" },
+        createdAt
+      },
+      {
+        id: "event_2",
+        taskRunId: "run_1",
+        sequence: 1,
+        type: "exit",
+        message: "done",
+        metadata: { exitCode: 0 },
+        createdAt
+      }
+    ]);
+    await first.runArtifactRepository.create({
+      id: "artifact_1",
+      taskRunId: "run_1",
+      kind: "git_diff",
+      content: "diff text",
+      metadata: { changedFiles: [{ path: "fake-agent-output.md", status: "untracked" }] },
+      createdAt
+    });
+    await first.verificationResultRepository.create({
+      id: "verification_1",
+      taskRunId: "run_1",
+      command: "pnpm test",
+      status: "passed",
+      exitCode: 0,
+      stdout: "ok\n",
+      stderr: "",
+      createdAt
+    });
+    await first.riskReportRepository.create(riskReport());
+    await first.memoryItemRepository.create({
+      id: "memory_1",
+      projectId: "project_1",
+      taskId: "task_1",
+      category: "project_fact",
+      status: "proposed",
+      content: "Use fake agent in tests.",
+      createdAt,
+      updatedAt: createdAt
+    });
+    await first.comparisonReportRepository.create({
+      id: "comparison_1",
+      taskId: "task_1",
+      baselineRunId: "run_1",
+      candidateRunId: "run_1",
+      summary: "Same run comparison.",
+      createdAt
+    });
+    await first.skillRepository.create({
+      id: "skill_1",
+      projectId: "project_1",
+      name: "fake-skill",
+      description: "A fake test skill.",
+      path: path.join(baseDirectory, "skill.md"),
+      createdAt,
+      updatedAt: createdAt
+    });
+    await first.settingsRepository.set({
+      key: "ui.theme",
+      value: { theme: "system" },
+      updatedAt
+    });
     await first.taskRunRepository.updateStatus(
       "run_1",
       "succeeded",
@@ -79,6 +194,9 @@ describe("SQLite storage", () => {
 
     const second = createSqliteRepositories({ databasePath });
 
+    await expect(second.projectRepository.list()).resolves.toEqual([
+      expect.objectContaining({ id: "project_1", name: "Project One" })
+    ]);
     await expect(second.taskRepository.list()).resolves.toEqual([
       expect.objectContaining({ id: "task_1", status: "completed" })
     ]);
@@ -108,6 +226,36 @@ describe("SQLite storage", () => {
         verification: expect.objectContaining({ summary: "1 passed, 0 failed, 0 skipped" }),
         riskReport: expect.objectContaining({ level: "low" })
       })
+    );
+    await expect(second.runEventRepository.listByRunId("run_1")).resolves.toEqual([
+      expect.objectContaining({ id: "event_1", sequence: 0, metadata: { stream: "stdout" } }),
+      expect.objectContaining({ id: "event_2", sequence: 1, metadata: { exitCode: 0 } })
+    ]);
+    await expect(
+      second.runArtifactRepository.getLatestByRunIdAndKind("run_1", "git_diff")
+    ).resolves.toEqual(
+      expect.objectContaining({
+        content: "diff text",
+        metadata: { changedFiles: [{ path: "fake-agent-output.md", status: "untracked" }] }
+      })
+    );
+    await expect(second.verificationResultRepository.listByRunId("run_1")).resolves.toEqual([
+      expect.objectContaining({ command: "pnpm test", status: "passed" })
+    ]);
+    await expect(second.riskReportRepository.getLatestByRunId("run_1")).resolves.toEqual(
+      expect.objectContaining({ level: "low", changedFiles: ["fake-agent-output.md"] })
+    );
+    await expect(second.memoryItemRepository.listByProjectId("project_1")).resolves.toEqual([
+      expect.objectContaining({ id: "memory_1", status: "proposed" })
+    ]);
+    await expect(second.comparisonReportRepository.listByTaskId("task_1")).resolves.toEqual([
+      expect.objectContaining({ id: "comparison_1", summary: "Same run comparison." })
+    ]);
+    await expect(second.skillRepository.list("project_1")).resolves.toEqual([
+      expect.objectContaining({ id: "skill_1", name: "fake-skill" })
+    ]);
+    await expect(second.settingsRepository.get("ui.theme")).resolves.toEqual(
+      expect.objectContaining({ key: "ui.theme", value: { theme: "system" } })
     );
   });
 });

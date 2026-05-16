@@ -1,7 +1,34 @@
 import type { AgentAdapter } from "./agent-adapters";
 import type { DiffCollectionResult } from "./diff-collector";
-import type { AgentKind, Task, TaskRun, TaskRunStatus, TaskStatus } from "./domain";
-import type { RiskReport } from "./domain";
+import {
+  validateAgentProfile,
+  validateComparisonReport,
+  validateMemoryItem,
+  validateProject,
+  validateRiskReport,
+  validateRunArtifact,
+  validateRunEvent,
+  validateSetting,
+  validateSkill,
+  validateTask,
+  validateTaskRun,
+  validateVerificationResult,
+  type AgentKind,
+  type AgentProfile,
+  type ComparisonReport,
+  type MemoryItem,
+  type Project,
+  type RiskReport,
+  type RunArtifact,
+  type RunEvent,
+  type Setting,
+  type Skill,
+  type Task,
+  type TaskRun,
+  type TaskRunStatus,
+  type TaskStatus,
+  type VerificationResult
+} from "./domain";
 import type { VerificationSuiteResult } from "./verification";
 import type { WorkspaceCleanupResult, Workspace } from "./workspace";
 
@@ -13,11 +40,25 @@ export interface RunStatusTransition {
   at: string;
 }
 
+export interface ProjectRepository {
+  create(project: Project): Promise<Project>;
+  get(projectId: string): Promise<Project | undefined>;
+  getByRootPath(rootPath: string): Promise<Project | undefined>;
+  list(): Promise<Project[]>;
+}
+
+export interface AgentProfileRepository {
+  create(profile: AgentProfile): Promise<AgentProfile>;
+  get(profileId: string): Promise<AgentProfile | undefined>;
+  list(): Promise<AgentProfile[]>;
+}
+
 export interface TaskRepository {
   create(task: Task): Promise<Task>;
   updateStatus(taskId: string, status: TaskStatus, updatedAt: string): Promise<Task>;
   get(taskId: string): Promise<Task | undefined>;
   list(): Promise<Task[]>;
+  listByProjectId(projectId: string): Promise<Task[]>;
 }
 
 export interface TaskRunRepository {
@@ -48,12 +89,120 @@ export interface RunMetadataRepository {
   get(runId: string): Promise<RunMetadata | undefined>;
 }
 
+export interface RunEventRepository {
+  create(event: RunEvent): Promise<RunEvent>;
+  createMany(events: RunEvent[]): Promise<RunEvent[]>;
+  listByRunId(runId: string): Promise<RunEvent[]>;
+  countByRunId(runId: string): Promise<number>;
+}
+
+export interface RunArtifactRepository {
+  create(artifact: RunArtifact): Promise<RunArtifact>;
+  listByRunId(runId: string): Promise<RunArtifact[]>;
+  getLatestByRunIdAndKind(
+    runId: string,
+    kind: string
+  ): Promise<RunArtifact | undefined>;
+}
+
+export interface VerificationResultRepository {
+  create(result: VerificationResult): Promise<VerificationResult>;
+  createMany(results: VerificationResult[]): Promise<VerificationResult[]>;
+  listByRunId(runId: string): Promise<VerificationResult[]>;
+}
+
+export interface RiskReportRepository {
+  create(report: RiskReport): Promise<RiskReport>;
+  listByRunId(runId: string): Promise<RiskReport[]>;
+  getLatestByRunId(runId: string): Promise<RiskReport | undefined>;
+}
+
+export interface MemoryItemRepository {
+  create(item: MemoryItem): Promise<MemoryItem>;
+  updateStatus(
+    memoryId: string,
+    status: MemoryItem["status"],
+    updatedAt: string
+  ): Promise<MemoryItem>;
+  get(memoryId: string): Promise<MemoryItem | undefined>;
+  listByProjectId(projectId: string): Promise<MemoryItem[]>;
+}
+
+export interface ComparisonReportRepository {
+  create(report: ComparisonReport): Promise<ComparisonReport>;
+  listByTaskId(taskId: string): Promise<ComparisonReport[]>;
+}
+
+export interface SkillRepository {
+  create(skill: Skill): Promise<Skill>;
+  list(projectId?: string): Promise<Skill[]>;
+}
+
+export interface SettingsRepository {
+  set(setting: Setting): Promise<Setting>;
+  get(key: string): Promise<Setting | undefined>;
+  list(): Promise<Setting[]>;
+}
+
+export class InMemoryProjectRepository implements ProjectRepository {
+  private readonly projects = new Map<string, Project>();
+
+  async create(project: Project): Promise<Project> {
+    const validProject = validateProject(project);
+    for (const existing of this.projects.values()) {
+      if (existing.rootPath === validProject.rootPath && existing.id !== validProject.id) {
+        throw new Error(`project root ${validProject.rootPath} is already registered`);
+      }
+    }
+    this.projects.set(validProject.id, { ...validProject });
+    return { ...validProject };
+  }
+
+  async get(projectId: string): Promise<Project | undefined> {
+    const project = this.projects.get(projectId);
+    return project ? { ...project } : undefined;
+  }
+
+  async getByRootPath(rootPath: string): Promise<Project | undefined> {
+    const project = [...this.projects.values()].find((entry) => entry.rootPath === rootPath);
+    return project ? { ...project } : undefined;
+  }
+
+  async list(): Promise<Project[]> {
+    return [...this.projects.values()]
+      .sort((left, right) => left.createdAt.localeCompare(right.createdAt))
+      .map((project) => ({ ...project }));
+  }
+}
+
+export class InMemoryAgentProfileRepository implements AgentProfileRepository {
+  private readonly profiles = new Map<string, AgentProfile>();
+
+  async create(profile: AgentProfile): Promise<AgentProfile> {
+    const validProfile = validateAgentProfile(profile);
+    this.profiles.set(validProfile.id, { ...validProfile });
+    return { ...validProfile };
+  }
+
+  async get(profileId: string): Promise<AgentProfile | undefined> {
+    const profile = this.profiles.get(profileId);
+    return profile ? { ...profile } : undefined;
+  }
+
+  async list(): Promise<AgentProfile[]> {
+    return [...this.profiles.values()]
+      .sort((left, right) => left.createdAt.localeCompare(right.createdAt))
+      .map((profile) => ({ ...profile }));
+  }
+}
+
 export class InMemoryTaskRepository implements TaskRepository {
   private readonly tasks = new Map<string, Task>();
 
   async create(task: Task): Promise<Task> {
-    this.tasks.set(task.id, { ...task });
-    return { ...task };
+    const validTask = validateTask(task);
+    this.tasks.set(validTask.id, { ...validTask });
+    return { ...validTask };
   }
 
   async updateStatus(
@@ -80,6 +229,10 @@ export class InMemoryTaskRepository implements TaskRepository {
       .sort((left, right) => left.createdAt.localeCompare(right.createdAt))
       .map((task) => ({ ...task }));
   }
+
+  async listByProjectId(projectId: string): Promise<Task[]> {
+    return (await this.list()).filter((task) => task.projectId === projectId);
+  }
 }
 
 export class InMemoryTaskRunRepository implements TaskRunRepository {
@@ -87,11 +240,12 @@ export class InMemoryTaskRunRepository implements TaskRunRepository {
   private readonly transitions = new Map<string, RunStatusTransition[]>();
 
   async create(run: TaskRun): Promise<TaskRun> {
-    this.runs.set(run.id, { ...run });
-    this.transitions.set(run.id, [
-      { runId: run.id, status: run.status, at: run.createdAt }
+    const validRun = validateTaskRun(run);
+    this.runs.set(validRun.id, { ...validRun });
+    this.transitions.set(validRun.id, [
+      { runId: validRun.id, status: validRun.status, at: validRun.createdAt }
     ]);
-    return { ...run };
+    return { ...validRun };
   }
 
   async updateExecutionPaths(
@@ -125,6 +279,7 @@ export class InMemoryTaskRunRepository implements TaskRunRepository {
       ...run,
       status,
       updatedAt,
+      startedAt: status === "running" ? run.startedAt ?? updatedAt : run.startedAt,
       completedAt: isTerminalRunStatus(status) ? updatedAt : run.completedAt
     };
     this.runs.set(runId, updated);
@@ -170,6 +325,215 @@ export class InMemoryRunMetadataRepository implements RunMetadataRepository {
   async get(runId: string): Promise<RunMetadata | undefined> {
     const metadata = this.metadata.get(runId);
     return metadata ? cloneRunMetadata(metadata) : undefined;
+  }
+}
+
+export class InMemoryRunEventRepository implements RunEventRepository {
+  private readonly events = new Map<string, RunEvent>();
+
+  async create(event: RunEvent): Promise<RunEvent> {
+    const validEvent = validateRunEvent(event);
+    const existingSequence = [...this.events.values()].find(
+      (entry) =>
+        entry.taskRunId === validEvent.taskRunId &&
+        entry.sequence === validEvent.sequence &&
+        entry.id !== validEvent.id
+    );
+    if (existingSequence) {
+      throw new Error(
+        `run event sequence ${validEvent.sequence} already exists for run ${validEvent.taskRunId}`
+      );
+    }
+    this.events.set(validEvent.id, cloneRunEvent(validEvent));
+    return cloneRunEvent(validEvent);
+  }
+
+  async createMany(events: RunEvent[]): Promise<RunEvent[]> {
+    const created: RunEvent[] = [];
+    for (const event of events) {
+      created.push(await this.create(event));
+    }
+    return created;
+  }
+
+  async listByRunId(runId: string): Promise<RunEvent[]> {
+    return [...this.events.values()]
+      .filter((event) => event.taskRunId === runId)
+      .sort((left, right) => left.sequence - right.sequence)
+      .map(cloneRunEvent);
+  }
+
+  async countByRunId(runId: string): Promise<number> {
+    return (await this.listByRunId(runId)).length;
+  }
+}
+
+export class InMemoryRunArtifactRepository implements RunArtifactRepository {
+  private readonly artifacts = new Map<string, RunArtifact>();
+
+  async create(artifact: RunArtifact): Promise<RunArtifact> {
+    const validArtifact = validateRunArtifact(artifact);
+    this.artifacts.set(validArtifact.id, cloneRunArtifact(validArtifact));
+    return cloneRunArtifact(validArtifact);
+  }
+
+  async listByRunId(runId: string): Promise<RunArtifact[]> {
+    return [...this.artifacts.values()]
+      .filter((artifact) => artifact.taskRunId === runId)
+      .sort((left, right) => left.createdAt.localeCompare(right.createdAt))
+      .map(cloneRunArtifact);
+  }
+
+  async getLatestByRunIdAndKind(
+    runId: string,
+    kind: string
+  ): Promise<RunArtifact | undefined> {
+    const artifacts = (await this.listByRunId(runId)).filter(
+      (artifact) => artifact.kind === kind
+    );
+    return artifacts.at(-1);
+  }
+}
+
+export class InMemoryVerificationResultRepository
+  implements VerificationResultRepository
+{
+  private readonly results = new Map<string, VerificationResult>();
+
+  async create(result: VerificationResult): Promise<VerificationResult> {
+    const validResult = validateVerificationResult(result);
+    this.results.set(validResult.id, { ...validResult });
+    return { ...validResult };
+  }
+
+  async createMany(results: VerificationResult[]): Promise<VerificationResult[]> {
+    const created: VerificationResult[] = [];
+    for (const result of results) {
+      created.push(await this.create(result));
+    }
+    return created;
+  }
+
+  async listByRunId(runId: string): Promise<VerificationResult[]> {
+    return [...this.results.values()]
+      .filter((result) => result.taskRunId === runId)
+      .sort((left, right) => left.createdAt.localeCompare(right.createdAt))
+      .map((result) => ({ ...result }));
+  }
+}
+
+export class InMemoryRiskReportRepository implements RiskReportRepository {
+  private readonly reports = new Map<string, RiskReport>();
+
+  async create(report: RiskReport): Promise<RiskReport> {
+    const validReport = validateRiskReport(report);
+    this.reports.set(validReport.id, cloneRiskReport(validReport));
+    return cloneRiskReport(validReport);
+  }
+
+  async listByRunId(runId: string): Promise<RiskReport[]> {
+    return [...this.reports.values()]
+      .filter((report) => report.taskRunId === runId)
+      .sort((left, right) => left.createdAt.localeCompare(right.createdAt))
+      .map(cloneRiskReport);
+  }
+
+  async getLatestByRunId(runId: string): Promise<RiskReport | undefined> {
+    return (await this.listByRunId(runId)).at(-1);
+  }
+}
+
+export class InMemoryMemoryItemRepository implements MemoryItemRepository {
+  private readonly items = new Map<string, MemoryItem>();
+
+  async create(item: MemoryItem): Promise<MemoryItem> {
+    const validItem = validateMemoryItem(item);
+    this.items.set(validItem.id, { ...validItem });
+    return { ...validItem };
+  }
+
+  async updateStatus(
+    memoryId: string,
+    status: MemoryItem["status"],
+    updatedAt: string
+  ): Promise<MemoryItem> {
+    const item = this.items.get(memoryId);
+    if (!item) {
+      throw new Error(`memory item ${memoryId} not found`);
+    }
+    const updated = validateMemoryItem({ ...item, status, updatedAt });
+    this.items.set(memoryId, updated);
+    return { ...updated };
+  }
+
+  async get(memoryId: string): Promise<MemoryItem | undefined> {
+    const item = this.items.get(memoryId);
+    return item ? { ...item } : undefined;
+  }
+
+  async listByProjectId(projectId: string): Promise<MemoryItem[]> {
+    return [...this.items.values()]
+      .filter((item) => item.projectId === projectId)
+      .sort((left, right) => left.createdAt.localeCompare(right.createdAt))
+      .map((item) => ({ ...item }));
+  }
+}
+
+export class InMemoryComparisonReportRepository
+  implements ComparisonReportRepository
+{
+  private readonly reports = new Map<string, ComparisonReport>();
+
+  async create(report: ComparisonReport): Promise<ComparisonReport> {
+    const validReport = validateComparisonReport(report);
+    this.reports.set(validReport.id, { ...validReport });
+    return { ...validReport };
+  }
+
+  async listByTaskId(taskId: string): Promise<ComparisonReport[]> {
+    return [...this.reports.values()]
+      .filter((report) => report.taskId === taskId)
+      .sort((left, right) => left.createdAt.localeCompare(right.createdAt))
+      .map((report) => ({ ...report }));
+  }
+}
+
+export class InMemorySkillRepository implements SkillRepository {
+  private readonly skills = new Map<string, Skill>();
+
+  async create(skill: Skill): Promise<Skill> {
+    const validSkill = validateSkill(skill);
+    this.skills.set(validSkill.id, { ...validSkill });
+    return { ...validSkill };
+  }
+
+  async list(projectId?: string): Promise<Skill[]> {
+    return [...this.skills.values()]
+      .filter((skill) => projectId === undefined || skill.projectId === projectId)
+      .sort((left, right) => left.createdAt.localeCompare(right.createdAt))
+      .map((skill) => ({ ...skill }));
+  }
+}
+
+export class InMemorySettingsRepository implements SettingsRepository {
+  private readonly settings = new Map<string, Setting>();
+
+  async set(setting: Setting): Promise<Setting> {
+    const validSetting = validateSetting(setting);
+    const cloned = cloneSetting(validSetting);
+    this.settings.set(validSetting.key, cloned);
+    return cloneSetting(cloned);
+  }
+
+  async get(key: string): Promise<Setting | undefined> {
+    const setting = this.settings.get(key);
+    return setting ? cloneSetting(setting) : undefined;
+  }
+
+  async list(): Promise<Setting[]> {
+    return [...this.settings.values()]
+      .sort((left, right) => left.key.localeCompare(right.key))
+      .map(cloneSetting);
   }
 }
 
@@ -241,4 +605,44 @@ export function cloneRunMetadata(metadata: RunMetadata): RunMetadata {
         }
       : undefined
   };
+}
+
+function cloneRunEvent(event: RunEvent): RunEvent {
+  return {
+    ...event,
+    metadata: cloneJsonObject(event.metadata)
+  };
+}
+
+function cloneRunArtifact(artifact: RunArtifact): RunArtifact {
+  return {
+    ...artifact,
+    metadata: cloneJsonObject(artifact.metadata)
+  };
+}
+
+function cloneRiskReport(report: RiskReport): RiskReport {
+  return {
+    ...report,
+    changedFiles: [...report.changedFiles],
+    failedChecks: [...report.failedChecks],
+    riskFactors: [...report.riskFactors],
+    manualReviewChecklist: [...report.manualReviewChecklist],
+    findings: report.findings.map((finding) => ({ ...finding }))
+  };
+}
+
+function cloneSetting(setting: Setting): Setting {
+  return {
+    ...setting,
+    value: cloneJsonValue(setting.value)
+  };
+}
+
+function cloneJsonObject<T extends Record<string, unknown>>(value: T): T {
+  return cloneJsonValue(value) as T;
+}
+
+function cloneJsonValue(value: unknown): unknown {
+  return JSON.parse(JSON.stringify(value)) as unknown;
 }

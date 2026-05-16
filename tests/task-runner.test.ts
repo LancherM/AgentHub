@@ -8,7 +8,15 @@ import {
   MarkdownContextFormatter
 } from "../src/context-compiler";
 import type { DiffCollectionResult, DiffCollectorService } from "../src/diff-collector";
-import { DefaultAgentRegistry, InMemoryTaskRepository, InMemoryTaskRunRepository } from "../src/storage";
+import {
+  DefaultAgentRegistry,
+  InMemoryRiskReportRepository,
+  InMemoryRunArtifactRepository,
+  InMemoryRunEventRepository,
+  InMemoryTaskRepository,
+  InMemoryTaskRunRepository,
+  InMemoryVerificationResultRepository
+} from "../src/storage";
 import {
   FixedClock,
   SequenceIdGenerator,
@@ -88,9 +96,17 @@ describe("task runner", () => {
     const runRoot = await createTestDirectory("agent-hub-runs");
     const taskRepository = new InMemoryTaskRepository();
     const taskRunRepository = new InMemoryTaskRunRepository();
+    const runEventRepository = new InMemoryRunEventRepository();
+    const runArtifactRepository = new InMemoryRunArtifactRepository();
+    const verificationResultRepository = new InMemoryVerificationResultRepository();
+    const riskReportRepository = new InMemoryRiskReportRepository();
     const runner = new TaskRunner({
       taskRepository,
       taskRunRepository,
+      runEventRepository,
+      runArtifactRepository,
+      verificationResultRepository,
+      riskReportRepository,
       defaultRunRoot: runRoot,
       workspaceManager: new TestWorkspaceManager(runRoot),
       diffCollector: new StaticDiffCollector(),
@@ -118,6 +134,26 @@ describe("task runner", () => {
       "running",
       "succeeded"
     ]);
+    await expect(runEventRepository.listByRunId("run_0002")).resolves.toEqual([
+      expect.objectContaining({ sequence: 0, type: "stdout" }),
+      expect.objectContaining({ sequence: 1, type: "exit" })
+    ]);
+    await expect(
+      runArtifactRepository.getLatestByRunIdAndKind("run_0002", "git_diff")
+    ).resolves.toEqual(
+      expect.objectContaining({
+        kind: "git_diff",
+        metadata: expect.objectContaining({
+          changedFiles: [{ path: "fake-agent-output.md", status: "untracked" }]
+        })
+      })
+    );
+    await expect(verificationResultRepository.listByRunId("run_0002")).resolves.toEqual([
+      expect.objectContaining({ command: "not configured", status: "skipped" })
+    ]);
+    await expect(riskReportRepository.getLatestByRunId("run_0002")).resolves.toEqual(
+      expect.objectContaining({ level: "medium" })
+    );
   });
 
   it("passes compiled context to the fake adapter", async () => {

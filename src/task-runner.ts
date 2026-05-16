@@ -17,28 +17,42 @@ import { DiffCollector, type DiffCollectionResult, type DiffCollectorService } f
 import {
   createId,
   nowIso,
+  validateRunArtifact,
+  validateRunEvent,
+  validateVerificationResult,
   validateTask,
   validateTaskBrief,
   validateTaskRun,
   type AgentKind,
+  type JsonObject,
   type RiskReport,
+  type RunEvent,
   type Task,
   type TaskBrief,
-  type TaskRun
+  type TaskRun,
+  type VerificationResult
 } from "./domain";
 import { RiskReportGenerator } from "./risk-report";
-import { NodeShellExecutor, type ShellExecutor } from "./shell-executor";
+import { formatShellCommand, NodeShellExecutor, type ShellExecutor } from "./shell-executor";
 import {
   DefaultAgentRegistry,
+  InMemoryRiskReportRepository,
+  InMemoryRunArtifactRepository,
+  InMemoryRunEventRepository,
   InMemoryRunMetadataRepository,
   InMemoryTaskRepository,
   InMemoryTaskRunRepository,
+  InMemoryVerificationResultRepository,
   type AgentRegistry,
+  type RiskReportRepository,
+  type RunArtifactRepository,
+  type RunEventRepository,
   type RunMetadataRepository,
   type RunStatus,
   type RunStatusTransition,
   type TaskRepository,
-  type TaskRunRepository
+  type TaskRunRepository,
+  type VerificationResultRepository
 } from "./storage";
 import { VerificationRunner, type VerificationCommand, type VerificationSuiteResult } from "./verification";
 import {
@@ -102,6 +116,10 @@ export interface TaskRunnerDependencies {
   contextFormatter?: ContextFormatter;
   taskRepository?: TaskRepository;
   taskRunRepository?: TaskRunRepository;
+  runEventRepository?: RunEventRepository;
+  runArtifactRepository?: RunArtifactRepository;
+  verificationResultRepository?: VerificationResultRepository;
+  riskReportRepository?: RiskReportRepository;
   runMetadataRepository?: RunMetadataRepository;
   agentRegistry?: AgentRegistry;
   shellExecutor?: ShellExecutor;
@@ -154,6 +172,10 @@ export class FixedClock implements Clock {
 export class TaskRunner {
   readonly taskRepository: TaskRepository;
   readonly taskRunRepository: TaskRunRepository;
+  readonly runEventRepository: RunEventRepository;
+  readonly runArtifactRepository: RunArtifactRepository;
+  readonly verificationResultRepository: VerificationResultRepository;
+  readonly riskReportRepository: RiskReportRepository;
   readonly runMetadataRepository: RunMetadataRepository;
   private readonly contextCompiler: ContextCompiler;
   private readonly contextFormatter: ContextFormatter;
@@ -174,6 +196,15 @@ export class TaskRunner {
       dependencies.taskRepository ?? new InMemoryTaskRepository();
     this.taskRunRepository =
       dependencies.taskRunRepository ?? new InMemoryTaskRunRepository();
+    this.runEventRepository =
+      dependencies.runEventRepository ?? new InMemoryRunEventRepository();
+    this.runArtifactRepository =
+      dependencies.runArtifactRepository ?? new InMemoryRunArtifactRepository();
+    this.verificationResultRepository =
+      dependencies.verificationResultRepository ??
+      new InMemoryVerificationResultRepository();
+    this.riskReportRepository =
+      dependencies.riskReportRepository ?? new InMemoryRiskReportRepository();
     this.runMetadataRepository =
       dependencies.runMetadataRepository ?? new InMemoryRunMetadataRepository();
     this.agentRegistry =
@@ -230,6 +261,10 @@ export class TaskRunner {
     const adapter = this.agentRegistry.get(parsed.agentKind);
     if (!adapter) {
       const message = `agent ${parsed.agentKind} is not registered`;
+      const events: AgentRunEvent[] = [{ type: "error", message }];
+      await this.runEventRepository.createMany(
+        toPersistedRunEvents(run.id, events, this.clock, this.idGenerator)
+      );
       const failedRun = await this.taskRunRepository.updateStatus(
         run.id,
         "failed",
@@ -244,7 +279,7 @@ export class TaskRunner {
         ok: false,
         task: failedTask,
         run: failedRun,
-        events: [{ type: "error", message }],
+        events,
         status: "failed",
         contextBundle,
         contextMarkdown,
@@ -282,6 +317,10 @@ export class TaskRunner {
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
+      const events: AgentRunEvent[] = [{ type: "error", message }];
+      await this.runEventRepository.createMany(
+        toPersistedRunEvents(run.id, events, this.clock, this.idGenerator)
+      );
       const failedRun = await this.taskRunRepository.updateStatus(
         run.id,
         "failed",
@@ -296,7 +335,7 @@ export class TaskRunner {
         ok: false,
         task: failedTask,
         run: failedRun,
-        events: [{ type: "error", message }],
+        events,
         status: "failed",
         contextBundle,
         contextMarkdown,
@@ -427,6 +466,33 @@ export class TaskRunner {
       verification,
       riskReport
     });
+    await this.runEventRepository.createMany(
+      toPersistedRunEvents(run.id, events, this.clock, this.idGenerator)
+    );
+    await this.runArtifactRepository.create(
+      createDiffArtifact(run.id, diff, this.clock, this.idGenerator)
+    );
+    if (taskBriefPath) {
+      await this.runArtifactRepository.create(
+        createTextArtifact({
+          runId: run.id,
+          kind: "task_brief",
+          content: await fs.readFile(taskBriefPath, "utf8"),
+          metadata: { path: taskBriefPath },
+          clock: this.clock,
+          idGenerator: this.idGenerator
+        })
+      );
+    }
+    await this.verificationResultRepository.createMany(
+      toPersistedVerificationResults(
+        run.id,
+        verification,
+        this.clock,
+        this.idGenerator
+      )
+    );
+    await this.riskReportRepository.create(riskReport);
 
     const fakeOutput = extractFakeOutput(events);
     const errorEvent = events.find((event) => event.type === "error");
@@ -498,6 +564,115 @@ export function createTaskBrief(task: Task, contextMarkdown = ""): TaskBrief {
     contextPackId: "context_bundle",
     createdAt
   });
+}
+
+function toPersistedRunEvents(
+  runId: string,
+  events: AgentRunEvent[],
+  clock: Clock,
+  idGenerator: IdGenerator
+): RunEvent[] {
+  return events.map((event, sequence) => {
+    const metadata: JsonObject = { ...(event.metadata ?? {}) };
+    if (event.type === "exit") {
+      metadata.exitCode = event.exitCode;
+    }
+    return validateRunEvent({
+      id: idGenerator.nextId("event"),
+      taskRunId: runId,
+      sequence,
+      type: event.type,
+      message: event.message,
+      metadata,
+      createdAt: clock.now()
+    });
+  });
+}
+
+function createDiffArtifact(
+  runId: string,
+  diff: DiffCollectionResult,
+  clock: Clock,
+  idGenerator: IdGenerator
+) {
+  return createTextArtifact({
+    runId,
+    kind: "git_diff",
+    content:
+      diff.diff.trim().length > 0
+        ? diff.diff
+        : JSON.stringify(
+            {
+              changedFiles: diff.changedFiles,
+              stat: diff.stat,
+              fileSummaries: diff.fileSummaries,
+              error: diff.error
+            },
+            null,
+            2
+          ),
+    metadata: {
+      ok: diff.ok,
+      workspacePath: diff.workspacePath,
+      isClean: diff.isClean,
+      changedFiles: diff.changedFiles,
+      stat: diff.stat,
+      fileSummaries: diff.fileSummaries,
+      error: diff.error
+    },
+    clock,
+    idGenerator
+  });
+}
+
+function createTextArtifact(input: {
+  runId: string;
+  kind: string;
+  content: string;
+  metadata: JsonObject;
+  clock: Clock;
+  idGenerator: IdGenerator;
+}) {
+  return validateRunArtifact({
+    id: input.idGenerator.nextId("artifact"),
+    taskRunId: input.runId,
+    kind: input.kind,
+    content: input.content,
+    metadata: input.metadata,
+    createdAt: input.clock.now()
+  });
+}
+
+function toPersistedVerificationResults(
+  runId: string,
+  verification: VerificationSuiteResult,
+  clock: Clock,
+  idGenerator: IdGenerator
+): VerificationResult[] {
+  if (verification.results.length === 0) {
+    return [
+      validateVerificationResult({
+        id: idGenerator.nextId("verification"),
+        taskRunId: runId,
+        command: "not configured",
+        status: "skipped",
+        createdAt: clock.now()
+      })
+    ];
+  }
+
+  return verification.results.map((result) =>
+    validateVerificationResult({
+      id: idGenerator.nextId("verification"),
+      taskRunId: runId,
+      command: formatShellCommand(result.command),
+      status: result.status,
+      exitCode: result.exitCode ?? undefined,
+      stdout: result.stdout,
+      stderr: result.stderr,
+      createdAt: clock.now()
+    })
+  );
 }
 
 function parseRunInput(input: RunTaskInput): { agentKind: AgentKind; taskPrompt: string } {

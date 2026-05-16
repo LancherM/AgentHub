@@ -180,6 +180,12 @@ export interface Skill {
   updatedAt: string;
 }
 
+export interface Setting {
+  key: string;
+  value: unknown;
+  updatedAt: string;
+}
+
 export interface ContextPack {
   id: string;
   projectId: string;
@@ -388,6 +394,16 @@ export function validateSkill(input: Skill): Skill {
   required(input.path, "skill.path", issues);
   timestamp(input.createdAt, "skill.createdAt", issues);
   timestamp(input.updatedAt, "skill.updatedAt", issues);
+  return finish(input, issues);
+}
+
+export function validateSetting(input: Setting): Setting {
+  const issues: string[] = [];
+  required(input.key, "setting.key", issues);
+  if (input.value === undefined) {
+    issues.push("setting.value is required");
+  }
+  timestamp(input.updatedAt, "setting.updatedAt", issues);
   return finish(input, issues);
 }
 
