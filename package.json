@@ -1,0 +1,25 @@
+{
+  "name": "agent-hub",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Local-first CLI for orchestrating coding agents.",
+  "bin": {
+    "agent-hub": "./dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit --pretty false -p tsconfig.json",
+    "test": "vitest run",
+    "lint": "tsc --noEmit --pretty false -p tsconfig.json"
+  },
+  "devDependencies": {
+    "@types/node": "20.19.0",
+    "pnpm": "10.10.0",
+    "typescript": "5.7.2",
+    "vitest": "1.6.0"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": ["esbuild"]
+  },
+  "packageManager": "pnpm@10.10.0"
+}
