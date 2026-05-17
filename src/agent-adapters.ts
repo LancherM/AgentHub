@@ -181,12 +181,13 @@ export class CodexAdapter implements AgentAdapter {
     });
   }
 
-  run(input: AgentRunInput): AsyncIterable<AgentRunEvent> {
-    return runProcessAgent({
+  async *run(input: AgentRunInput): AsyncIterable<AgentRunEvent> {
+    yield* runProcessAgentWithPreflight({
       adapterKind: this.kind,
       displayName: this.displayName,
       executable: this.executable,
       args: this.runArgs,
+      detect: () => this.detect(),
       processRunner: this.processRunner,
       input,
       timeoutMs: this.runTimeoutMs
@@ -224,12 +225,13 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     });
   }
 
-  run(input: AgentRunInput): AsyncIterable<AgentRunEvent> {
-    return runProcessAgent({
+  async *run(input: AgentRunInput): AsyncIterable<AgentRunEvent> {
+    yield* runProcessAgentWithPreflight({
       adapterKind: this.kind,
       displayName: this.displayName,
       executable: this.executable,
       args: this.runArgs,
+      detect: () => this.detect(),
       processRunner: this.processRunner,
       input,
       timeoutMs: this.runTimeoutMs
@@ -295,6 +297,53 @@ async function detectProcessAgent(input: {
       }`
     };
   }
+}
+
+async function* runProcessAgentWithPreflight(input: {
+  adapterKind: AgentKind;
+  displayName: string;
+  executable: string;
+  args: string[];
+  detect: () => Promise<AgentDetectionResult>;
+  processRunner: ProcessRunner;
+  input: AgentRunInput;
+  timeoutMs?: number;
+}): AsyncIterable<AgentRunEvent> {
+  let detection: AgentDetectionResult;
+  try {
+    detection = await input.detect();
+  } catch (error) {
+    detection = {
+      available: false,
+      reason: `${input.displayName} CLI detection failed: ${
+        error instanceof Error ? error.message : String(error)
+      }`
+    };
+  }
+
+  if (!detection.available) {
+    yield* failureEvents(
+      `${input.displayName} preflight failed: ${
+        detection.reason ?? "CLI unavailable or not configured"
+      }`,
+      {
+        adapter: input.adapterKind,
+        detection
+      }
+    );
+    return;
+  }
+
+  yield {
+    type: "status",
+    message: `${input.displayName} preflight passed`,
+    metadata: {
+      adapter: input.adapterKind,
+      version: detection.version ?? null
+    }
+  };
+
+  yield* runProcessAgent(input);
 }
 
 async function* runProcessAgent(input: {
@@ -506,14 +555,24 @@ function structuredMessage(event: JsonObject): string | undefined {
 
 function assertSafeAdapterArgs(adapterKind: AgentKind, args: string[]): void {
   const normalized = args.join(" ").toLowerCase();
+  const lowerArgs = args.map((arg) => arg.toLowerCase());
   const dangerousFlags = [
     "--dangerously-bypass-approvals-and-sandbox",
     "--dangerously-skip-permissions",
-    "--ignore-rules"
+    "--ignore-rules",
+    "--bypass-permissions"
   ];
   if (
     dangerousFlags.some((flag) => normalized.includes(flag)) ||
-    normalized.includes("--sandbox danger-full-access")
+    lowerArgs.some((arg) => arg.startsWith("--sandbox=danger-full-access")) ||
+    lowerArgs.some(
+      (arg, index) => arg === "--sandbox" && lowerArgs[index + 1] === "danger-full-access"
+    ) ||
+    lowerArgs.some(
+      (arg, index) =>
+        (arg === "--permission-mode" || arg === "--permissions") &&
+        lowerArgs[index + 1]?.includes("bypass")
+    )
   ) {
     throw new Error(`${adapterKind} adapter configuration contains unsafe permission flags`);
   }

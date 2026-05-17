@@ -1,5 +1,10 @@
 import { spawn } from "node:child_process";
 import path from "node:path";
+import {
+  detectDangerousCommandText,
+  shellCommandSearchText
+} from "./dangerous-commands";
+import { buildChildProcessEnv } from "./process-environment";
 
 export interface ShellCommand {
   executable: string;
@@ -31,6 +36,28 @@ export interface ShellExecutor {
   execute(command: ShellCommand, options: ShellExecutionOptions): Promise<ShellResult>;
 }
 
+export interface SpawnedShellProcess {
+  stdout?: NodeJS.ReadableStream | null;
+  stderr?: NodeJS.ReadableStream | null;
+  on(event: "error", listener: (error: Error) => void): this;
+  on(
+    event: "close",
+    listener: (code: number | null, signal: NodeJS.Signals | string | null) => void
+  ): this;
+  kill(signal?: NodeJS.Signals | string | number): boolean;
+}
+
+export type ShellSpawner = (
+  executable: string,
+  args: string[],
+  options: {
+    cwd: string;
+    env: NodeJS.ProcessEnv;
+    shell: false;
+    stdio: ["ignore", "pipe", "pipe"];
+  }
+) => SpawnedShellProcess;
+
 export class ShellExecutorError extends Error {
   constructor(message: string) {
     super(message);
@@ -39,6 +66,8 @@ export class ShellExecutorError extends Error {
 }
 
 export class NodeShellExecutor implements ShellExecutor {
+  constructor(private readonly spawner: ShellSpawner = spawnShellProcess) {}
+
   async execute(
     command: ShellCommand,
     options: ShellExecutionOptions
@@ -61,9 +90,9 @@ export class NodeShellExecutor implements ShellExecutor {
     }
 
     return new Promise<ShellResult>((resolve) => {
-      const child = spawn(command.executable, command.args ?? [], {
+      const child = this.spawner(command.executable, command.args ?? [], {
         cwd,
-        env: options.env ? { ...process.env, ...options.env } : process.env,
+        env: buildChildProcessEnv(options.env),
         shell: false,
         stdio: ["ignore", "pipe", "pipe"]
       });
@@ -143,19 +172,11 @@ export function formatShellCommand(command: ShellCommand): string {
 }
 
 export function isDangerousShellCommand(command: ShellCommand): boolean {
-  const parts = [command.executable, ...(command.args ?? [])];
-  const normalized = parts.join(" ").toLowerCase();
-  if (path.basename(command.executable) === "sudo") {
-    return true;
-  }
-  return [
-    "rm -rf /",
-    "chmod -r 777",
-    "curl | sh",
-    "wget | sh",
-    "git push --force",
-    "git clean -fdx"
-  ].some((pattern) => normalized.includes(pattern));
+  return (
+    detectDangerousCommandText(
+      shellCommandSearchText(command.executable, command.args ?? [])
+    ).length > 0
+  );
 }
 
 export function assertSafeShellCommand(command: ShellCommand): void {
@@ -189,3 +210,6 @@ function normalizeCommand(command: ShellCommand): ShellCommand {
     displayName: command.displayName
   };
 }
+
+const spawnShellProcess: ShellSpawner = (executable, args, options) =>
+  spawn(executable, args, options) as SpawnedShellProcess;

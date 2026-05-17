@@ -13,6 +13,7 @@ Current module boundaries under `src/`:
   worktree overlay materialization
 - `process-runner`: direct child-process spawning with stdin, streaming
   stdout/stderr, exit code and signal capture, and CLI detection helpers
+- `process-environment`: allowlisted child-process environment construction
 - `shell-executor`: explicit shell command boundary with cwd, stdout/stderr,
   exit code, duration, timeout, dry-run, and dangerous-command checks
 - `workspace`: workspace abstractions and safe git worktree session management
@@ -22,6 +23,8 @@ Current module boundaries under `src/`:
   workspace
 - `safety`: standalone scanners for sensitive paths, dangerous commands,
   risky diffs, large deletions, binary files, and risk level aggregation
+- `dangerous-commands`: shared dangerous-command matching rules for shell
+  execution rejection and safety scanning
 - `risk-report`: structured risk report generation from safety scanner output,
   diff metadata, and verification results
 - `storage`: repository abstractions and in-memory implementations for
@@ -35,6 +38,15 @@ Current module boundaries under `src/`:
 - `cli`: command parsing, interactive console input, output rendering, and
   opt-in debug rendering, including manual run-event recording
 - `agent-parser`: `@agent` prompt parsing
+
+Child process environment policy is explicit by default. `ProcessRunner` and
+`ShellExecutor` build child environments from a small inherited allowlist
+needed for local CLI execution: path lookup, home/config/cache locations,
+temporary directories, locale/terminal flags, CI, and required Windows process
+variables. They do not pass all of `process.env`, so secrets such as arbitrary
+API keys or tokens are not inherited accidentally. Callers may still provide
+explicit per-process environment overrides; an override value of `undefined`
+removes an allowlisted variable for that child.
 
 The CLI calls the runner rather than owning orchestration logic. The runner
 compiles context, creates a worktree workspace through a `WorkspaceManager`,
@@ -76,12 +88,25 @@ from existing events for that run. This keeps manual notes in the same ordered
 event stream as adapter-captured output while avoiding any task execution.
 
 Safety review is separated from report rendering. `SafetyScanner` scans the
-collected diff, changed-file metadata, and verification command text and returns
-structured findings. Sensitive path changes and dangerous command findings use
-`level: blocking`; aggregation preserves that level instead of coercing it to
-high. `RiskReportGenerator` adds verification and manual-review context around
-those scanner findings and the task runner persists the resulting report to
-`risk_reports` for both successful and failed runs.
+collected diff, changed-file metadata, verification command text, and captured
+adapter run-event text and returns structured findings. Sensitive path changes
+and dangerous command findings use `level: blocking`; aggregation preserves
+that level instead of coercing it to high. Dangerous command detection is shared
+by `SafetyScanner` and `ShellExecutor`, so configured verification commands and
+generated/diff text use the same rules for `sudo`, `rm -rf /`, `chmod -R 777`,
+`curl | sh`, `wget | sh`, `git push --force`, and `git clean -fdx`, including
+common `sh -c` and `bash -lc` wrappers. `RiskReportGenerator` adds verification
+and manual-review context around those scanner findings and the task runner
+persists the resulting report to `risk_reports` for both successful and failed
+runs.
+
+The MVP risk input boundary is intentionally bounded. The runner scans adapter
+stdout, stderr, parsed structured messages, error/status events, and exit
+metadata because those are persisted as ordered run events. It does not
+recursively read arbitrary files from the retained worktree or scan every
+artifact blob beyond the diff and the event stream in this phase; future
+artifact types can opt into the same `SafetyScanner` text boundary when they
+become first-class logs.
 
 The default agent registry includes fake, Codex, and Claude Code adapters.
 Real adapters run only inside the isolated worktree cwd. They use
@@ -92,14 +117,19 @@ context are sent through stdin, while the generated worktree-local
 do not use permission-bypass flags, do not push, do not merge, and do not delete
 branches.
 
-Process detection is non-fatal. `CodexAdapter.detect()` runs `codex --version`
-and `ClaudeCodeAdapter.detect()` runs `claude --version`; missing commands,
+Process detection is non-fatal and is part of real-adapter run preflight.
+`CodexAdapter.detect()` runs `codex --version` and
+`ClaudeCodeAdapter.detect()` runs `claude --version`; missing commands,
 non-zero exits, or setup/authentication failures return `available: false` with
-a reason. During runs, stdout and stderr become `RunEvent` rows. Valid JSONL
-stdout lines are additionally mapped to message/status/error events, malformed
-structured output remains preserved as raw stdout, and exit events record both
-exit code and signal metadata. A non-zero exit marks the run failed, and the
-failed run is still persisted through the same repositories as successful runs.
+a reason. `CodexAdapter.run()` and `ClaudeCodeAdapter.run()` call detection
+before invoking the real process. Unavailable adapters emit an error event and
+failed exit event without launching the executable. Available adapters emit a
+preflight status event, then stdout and stderr become `RunEvent` rows. Valid
+JSONL stdout lines are additionally mapped to message/status/error events,
+malformed structured output remains preserved as raw stdout, and exit events
+record both exit code and signal metadata. A non-zero exit marks the run failed,
+and the failed run is still persisted through the same repositories as
+successful runs.
 
 The context compiler owns the boundary for generated context artifacts. It can
 initialize and inspect context stores, read external context from Agent

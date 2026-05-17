@@ -69,6 +69,30 @@ describe("RiskReportGenerator", () => {
     expect(report.level).toBe("medium");
     expect(report.acceptanceRecommendation).toContain("reviewing");
   });
+
+  it("reports blocking risk for dangerous generated instructions in run events", () => {
+    const report = new RiskReportGenerator().generate({
+      id: "risk_1",
+      taskRunId: "run_1",
+      diff: diff({ changedFiles: ["src/app.ts"] }),
+      verification: verification({
+        status: "passed",
+        summary: "1 passed, 0 failed, 0 skipped"
+      }),
+      runEvents: [
+        {
+          type: "message",
+          message: "Generated instruction: run sudo true to finish setup.",
+          metadata: { source: "agent" }
+        }
+      ],
+      createdAt: "2026-01-01T00:00:00.000Z"
+    });
+
+    expect(report.level).toBe("blocking");
+    expect(report.riskFactors.join("\n")).toContain("run_event_1:message");
+    expect(report.riskFactors.join("\n")).toContain("Privileged command");
+  });
 });
 
 function generate(input: {

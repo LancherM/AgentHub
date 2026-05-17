@@ -1,6 +1,6 @@
 import { EventEmitter } from "node:events";
 import { PassThrough, Writable } from "node:stream";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   NodeProcessRunner,
   type ProcessRunEvent,
@@ -10,6 +10,10 @@ import {
 import { createTestDirectory } from "./helpers";
 
 describe("NodeProcessRunner", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
   it("spawns executable args without a shell, writes stdin, streams output, and closes stdin", async () => {
     const cwd = await createTestDirectory("process-runner");
     const children: MockChildProcess[] = [];
@@ -77,6 +81,38 @@ describe("NodeProcessRunner", () => {
     await expect(
       collect(runner.run({ executable: "agent", cwd }))
     ).resolves.toEqual([{ type: "exit", exitCode: null, signal: "SIGTERM" }]);
+  });
+
+  it("uses an allowlisted child environment plus explicit overrides", async () => {
+    const cwd = await createTestDirectory("process-runner-env");
+    vi.stubEnv("PATH", "/test/bin");
+    vi.stubEnv("HOME", "/home/test-user");
+    vi.stubEnv("AGENT_HUB_TEST_SECRET", "do-not-pass");
+    const calls: Parameters<ProcessSpawner>[] = [];
+    const runner = new NodeProcessRunner((executable, args, options) => {
+      calls.push([executable, args, options]);
+      const child = new MockChildProcess();
+      queueMicrotask(() => {
+        child.close(0, null);
+      });
+      return child;
+    });
+
+    await collect(
+      runner.run({
+        executable: "agent",
+        cwd,
+        env: {
+          CUSTOM_ENV: "explicit",
+          HOME: undefined
+        }
+      })
+    );
+
+    expect(calls[0][2].env.PATH).toBe("/test/bin");
+    expect(calls[0][2].env.HOME).toBeUndefined();
+    expect(calls[0][2].env.CUSTOM_ENV).toBe("explicit");
+    expect(calls[0][2].env.AGENT_HUB_TEST_SECRET).toBeUndefined();
   });
 });
 

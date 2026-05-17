@@ -526,6 +526,7 @@ export class TaskRunner {
         taskRunId: run.id,
         diff,
         verification,
+        runEvents: events,
         createdAt: this.clock.now()
       });
     } catch (error) {

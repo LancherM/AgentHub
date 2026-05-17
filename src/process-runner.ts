@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import path from "node:path";
 import type { Readable, Writable } from "node:stream";
+import { buildChildProcessEnv } from "./process-environment";
 
 export interface ProcessRunInput {
   executable: string;
@@ -98,7 +99,7 @@ export class NodeProcessRunner implements ProcessRunner {
     try {
       child = this.spawner(input.executable, args, {
         cwd: path.resolve(input.cwd),
-        env: input.env ? { ...process.env, ...input.env } : process.env,
+        env: buildChildProcessEnv(input.env),
         shell: false,
         stdio: ["pipe", "pipe", "pipe"]
       });
