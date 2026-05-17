@@ -50,7 +50,9 @@ describe("process-backed agent adapters", () => {
 
     expect(runner.detectCalls[0]).toMatchObject({
       executable: "codex",
-      args: ["--version"]
+      args: ["--version"],
+      cwd: input.worktreePath,
+      env: input.environment
     });
     expect(runner.runCalls[0]).toMatchObject({
       executable: "codex",
@@ -136,10 +138,11 @@ describe("process-backed agent adapters", () => {
     const root = await createTestDirectory("adapter-original-root");
     const briefPath = path.join(root, "brief.md");
     await fs.writeFile(briefPath, "# Brief\n", "utf8");
+    const runner = new MockProcessRunner();
 
     await expect(
       collect(
-        new CodexAdapter({ processRunner: new MockProcessRunner() }).run({
+        new CodexAdapter({ processRunner: runner }).run({
           originalProjectRoot: root,
           worktreePath: root,
           taskBriefPath: briefPath,
@@ -155,6 +158,8 @@ describe("process-backed agent adapters", () => {
         message: expect.stringContaining("original project root")
       })
     );
+    expect(runner.detectCalls).toHaveLength(0);
+    expect(runner.runCalls).toHaveLength(0);
     expect(() =>
       new CodexAdapter({ runArgs: ["exec", "--dangerously-bypass-approvals-and-sandbox", "-"] })
     ).toThrow("unsafe permission flags");
@@ -177,7 +182,8 @@ async function createInput(name: string) {
     taskId: "task_1",
     taskTitle: "Run real adapter",
     taskPrompt: "Do the task.",
-    contextMarkdown: "Context payload"
+    contextMarkdown: "Context payload",
+    environment: { AGENT_HUB_TEST: "1" }
   };
 }
 

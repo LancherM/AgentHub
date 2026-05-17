@@ -127,9 +127,11 @@ The process-backed adapters use direct executable-plus-args spawning:
 - Codex runs `codex exec --json -` in the isolated worktree.
 - Claude Code runs `claude --print --output-format stream-json` in the isolated
   worktree.
-- Before launching Codex or Claude Code for a run, Agent Hub calls adapter
-  detection. Missing CLI, authentication, or setup failures become failed run
-  events and no real adapter process is started.
+- Before launching Codex or Claude Code for a run, Agent Hub first validates
+  the isolated worktree and runtime task brief boundary, then runs adapter
+  detection from that worktree with the run environment. Missing CLI,
+  authentication, or setup failures become failed run events and no real
+  adapter process is started.
 - Child processes receive only Agent Hub's explicit environment overrides plus
   a small inherited allowlist for path lookup, home/config/cache paths, temp
   directories, locale/terminal flags, CI, and required Windows process
@@ -218,11 +220,13 @@ SQLite now enforces the important imported storage constraints at the database
 boundary. Tasks reference projects with cascade delete, task runs reference
 agent profiles when one is selected, task and run status values are checked,
 agent kinds are checked, JSON columns reject invalid JSON, and run event
-sequence numbers remain unique per run. Ad-hoc CLI runs still use the
-`adhoc_project` task project id, but SQLite-backed runs create that local
-project row first so the foreign-key contract is preserved. Upgrades from
-older SQLite databases also backfill missing legacy task project rows, including
-pre-change ad-hoc tasks, before adding the stricter task foreign key.
+sequence numbers remain unique per run. Ad-hoc CLI runs reuse an existing
+project for the same repository root. The first legacy ad-hoc root may still
+use `adhoc_project` for compatibility; additional ad-hoc roots get
+deterministic root-scoped project ids so tasks and later memory writeback stay
+attached to the correct local repository. Upgrades from older SQLite databases
+also backfill missing legacy task project rows, including pre-change ad-hoc
+tasks, before adding the stricter task foreign key.
 
 Task, task-run, and memory status changes follow the imported lifecycle rather
 than arbitrary enum changes. Failed task runs remain inspectable and return the
@@ -237,9 +241,10 @@ automatic pushes.
 GitHub CI/CD is available for repository maintenance. Pull requests to `main`
 run the validation suite (`pnpm typecheck`, `pnpm lint`, `pnpm test`, and
 `pnpm build`). Pushes to `main` and manual workflow runs build a packaged CLI
-artifact from the workspace app/package directories, root package metadata,
-`README.md`, `pnpm-workspace.yaml`, and `pnpm-lock.yaml`. Version tags that
-match `v*.*.*` create or update a GitHub Release with that artifact. The
+artifact from the workspace app/package directories, tests, the CI workflow,
+root package metadata, `README.md`, workspace/lock files, and root TypeScript/
+Vitest config files needed by those advertised validation scripts. Version tags
+that match `v*.*.*` create or update a GitHub Release with that artifact. The
 workflow publishes local CLI release assets only; it does not deploy a hosted
 service or change Agent Hub's local-first product model.
 
