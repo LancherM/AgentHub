@@ -212,6 +212,15 @@ extraction order is:
    contracts
 5. move CLI into `apps/cli`
 
+Repository CI/CD lives in `.github/workflows/ci-cd.yml` and stays outside the
+Agent Hub runtime. The workflow installs the pinned pnpm and Node versions from
+the root package, runs the same local validation commands documented for
+developers, uploads a built CLI package artifact for `main` and manual runs,
+and publishes that artifact to GitHub Releases only for `v*.*.*` tags. Release
+publishing uses the repository-scoped `GITHUB_TOKEN` with `contents: write` on
+the release job only. There is no deployment target, external backend, custom
+secret, remote task execution, or automatic code push in the CI/CD path.
+
 Desktop preparation remains architectural only. The future desktop app should
 live under `apps/desktop`, call local core/task-runner APIs through Electron
 IPC or Tauri commands, and render projects, tasks, runs, diffs, verification,

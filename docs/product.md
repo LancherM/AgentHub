@@ -185,6 +185,14 @@ The product remains local-only. This rebuild does not add cloud sync, accounts,
 team features, hosted dashboards, automatic pull requests, automatic merges, or
 automatic pushes.
 
+GitHub CI/CD is available for repository maintenance. Pull requests to `main`
+run the validation suite (`pnpm typecheck`, `pnpm lint`, `pnpm test`, and
+`pnpm build`). Pushes to `main` and manual workflow runs build a packaged CLI
+artifact from `dist/`, `package.json`, `README.md`, and `pnpm-lock.yaml`.
+Version tags that match `v*.*.*` create or update a GitHub Release with that
+artifact. The workflow publishes local CLI release assets only; it does not
+deploy a hosted service or change Agent Hub's local-first product model.
+
 Deferred product capabilities include richer Codex/Claude structured event
 mapping, automatic memory proposal generation from completed runs, richer
 comparison scoring, a physical monorepo package split after shared contracts
