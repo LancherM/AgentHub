@@ -101,7 +101,8 @@ describe("domain model validation", () => {
 
   it("rejects status transitions outside the imported lifecycle", () => {
     expect(() => validateTaskStatusTransition("open", "running")).not.toThrow();
-    expect(() => validateTaskStatusTransition("running", "open"))
+    expect(() => validateTaskStatusTransition("running", "open")).not.toThrow();
+    expect(() => validateTaskStatusTransition("completed", "open"))
       .toThrow(DomainStateTransitionError);
 
     expect(() => validateTaskRunStatusTransition("queued", "running")).not.toThrow();

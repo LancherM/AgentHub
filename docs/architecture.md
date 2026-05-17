@@ -206,12 +206,13 @@ guards abort before rebuilding if existing rows would violate those
 relationships or enum values.
 
 Repository implementations enforce the imported state diagrams before writing
-status updates. Tasks may move `open -> running -> completed` or cancel from
-`open`/`running`; task runs move through `queued -> running -> succeeded` or
-`failed`, with cancellation from `queued` or `running`; memory items move only
-from `proposed` to `approved` or `rejected`. Repeating the same status remains
-idempotent, but terminal or reverse transitions are rejected in both SQLite and
-in-memory repositories.
+status updates. Tasks may move `open -> running -> completed`, return from
+`running` to `open` after a failed run, or cancel from `open`/`running`; task
+runs move through `queued -> running -> succeeded` or `failed`, with
+cancellation from `queued` or `running`; memory items move only from `proposed`
+to `approved` or `rejected`. Repeating the same status remains idempotent, but
+invalid terminal transitions are rejected in both SQLite and in-memory
+repositories.
 
 When the CLI executes an ad-hoc SQLite-backed run, it creates the local
 `adhoc_project` project row before calling the runner. That preserves the

@@ -427,6 +427,18 @@ VALUES ('event_bad_json', 'run_constraints', 1, 'stdout', 'bad json', '{bad', '$
     await expect(
       repositories.taskRepository.updateStatus("task_lifecycle", "completed", updatedAt)
     ).rejects.toThrow("invalid task status transition open -> completed");
+    await repositories.taskRepository.updateStatus(
+      "task_lifecycle",
+      "running",
+      updatedAt
+    );
+    await expect(
+      repositories.taskRepository.updateStatus(
+        "task_lifecycle",
+        "open",
+        "2026-01-01T00:00:02.000Z"
+      )
+    ).resolves.toMatchObject({ status: "open" });
     await expect(
       repositories.taskRunRepository.updateStatus("run_lifecycle", "failed", updatedAt)
     ).rejects.toThrow("invalid task run status transition queued -> failed");

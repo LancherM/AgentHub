@@ -316,14 +316,20 @@ export class TaskRunner {
         "running",
         this.clock.now()
       );
+      const failedAt = this.clock.now();
       const failedRun = await this.taskRunRepository.updateStatus(
         run.id,
         "failed",
-        this.clock.now()
+        failedAt
+      );
+      const reopenedTask = await this.taskRepository.updateStatus(
+        currentTask.id,
+        "open",
+        failedAt
       );
       return this.result({
         ok: false,
-        task: currentTask,
+        task: reopenedTask,
         run: failedRun,
         events,
         status: "failed",
@@ -359,14 +365,20 @@ export class TaskRunner {
         "running",
         this.clock.now()
       );
+      const failedAt = this.clock.now();
       const failedRun = await this.taskRunRepository.updateStatus(
         run.id,
         "failed",
-        this.clock.now()
+        failedAt
+      );
+      const reopenedTask = await this.taskRepository.updateStatus(
+        currentTask.id,
+        "open",
+        failedAt
       );
       return this.result({
         ok: false,
-        task: currentTask,
+        task: reopenedTask,
         run: failedRun,
         events,
         status: "failed",
@@ -642,9 +654,11 @@ export class TaskRunner {
       status,
       completedAt
     );
-    const updatedTask = status === "succeeded"
-      ? await this.taskRepository.updateStatus(task.id, "completed", completedAt)
-      : currentTask;
+    const updatedTask = await this.taskRepository.updateStatus(
+      currentTask.id,
+      status === "succeeded" ? "completed" : "open",
+      completedAt
+    );
 
     const fakeOutput = extractFakeOutput(events);
     const errorEvent = events.find((event) => event.type === "error");

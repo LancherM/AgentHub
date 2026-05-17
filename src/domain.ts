@@ -532,7 +532,7 @@ function parseEnum<T extends readonly string[]>(
 
 const taskStatusTransitions: Record<TaskStatus, readonly TaskStatus[]> = {
   open: ["running", "cancelled"],
-  running: ["completed", "cancelled"],
+  running: ["open", "completed", "cancelled"],
   completed: [],
   cancelled: []
 };

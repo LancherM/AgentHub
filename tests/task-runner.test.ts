@@ -199,7 +199,9 @@ describe("task runner", () => {
   it("records failed fake adapter execution without crashing", async () => {
     const projectRoot = await createTestDirectory("agent-hub-project");
     const runRoot = await createTestDirectory("agent-hub-runs");
+    const taskRepository = new InMemoryTaskRepository();
     const runner = new TaskRunner({
+      taskRepository,
       defaultRunRoot: runRoot,
       workspaceManager: new TestWorkspaceManager(runRoot),
       diffCollector: new StaticDiffCollector(),
@@ -219,6 +221,10 @@ describe("task runner", () => {
     expect(result.ok).toBe(false);
     expect(result.status).toBe("failed");
     expect(result.error).toBe("forced fake failure");
+    expect(result.task.status).toBe("open");
+    await expect(taskRepository.get(result.task.id)).resolves.toMatchObject({
+      status: "open"
+    });
     expect(result.statusTransitions.map((transition) => transition.status)).toEqual([
       "queued",
       "running",
@@ -425,9 +431,11 @@ describe("task runner", () => {
   it("finalizes a failed run when diff collection throws", async () => {
     const projectRoot = await createTestDirectory("agent-hub-project");
     const runRoot = await createTestDirectory("agent-hub-runs");
+    const taskRepository = new InMemoryTaskRepository();
     const taskRunRepository = new InMemoryTaskRunRepository();
     const runEventRepository = new InMemoryRunEventRepository();
     const runner = new TaskRunner({
+      taskRepository,
       defaultRunRoot: runRoot,
       workspaceManager: new TestWorkspaceManager(runRoot),
       diffCollector: new ThrowingDiffCollector("git exploded"),
@@ -448,6 +456,10 @@ describe("task runner", () => {
     expect(result.status).toBe("failed");
     expect(result.diff).toMatchObject({ ok: false, error: "git exploded" });
     expect(result.workspaceCleanup?.cleaned).toBe(true);
+    expect(result.task.status).toBe("open");
+    await expect(taskRepository.get(result.task.id)).resolves.toMatchObject({
+      status: "open"
+    });
     await expect(taskRunRepository.get(result.run.id)).resolves.toMatchObject({
       status: "failed",
       completedAt: "2026-01-01T00:00:00.000Z"
