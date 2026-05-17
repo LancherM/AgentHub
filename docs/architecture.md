@@ -20,8 +20,10 @@ Current module boundaries under `src/`:
   collection from an isolated workspace
 - `verification`: configured verification command execution inside the
   workspace
-- `risk-report`: structured risk report generation from diff and verification
-  results
+- `safety`: standalone scanners for sensitive paths, dangerous commands,
+  risky diffs, large deletions, binary files, and risk level aggregation
+- `risk-report`: structured risk report generation from safety scanner output,
+  diff metadata, and verification results
 - `storage`: repository abstractions and in-memory implementations for
   projects, agent profiles, tasks, runs, events, artifacts, verification
   results, risk reports, memory items, comparison reports, skills, settings,
@@ -30,7 +32,8 @@ Current module boundaries under `src/`:
   implementations for the MVP persistence tables
 - `task-runner`: adapter orchestration with context compilation and
   repository-backed persistence
-- `cli`: command parsing and output rendering
+- `cli`: command parsing, interactive console input, output rendering, and
+  opt-in debug rendering
 - `agent-parser`: `@agent` prompt parsing
 
 The CLI calls the runner rather than owning orchestration logic. The runner
@@ -42,6 +45,25 @@ generates a risk report, persists run metadata and structured run records
 through repository interfaces, records run status transitions, and applies
 workspace cleanup policy. The default cleanup policy is `never`, so worktrees
 are retained unless a caller explicitly selects cleanup behavior.
+
+Interactive CLI mode is a shell over the same command/runtime path. Bare
+`agent-hub` reads line-oriented input, handles slash commands locally, and
+routes natural language prompts or `@agent` prompts through the existing run
+command and `TaskRunner`. It keeps selected agent and project state in the CLI
+layer only; it does not create a second orchestration implementation.
+
+Debug rendering is also a CLI concern. `--debug` or `AGENT_HUB_DEBUG=1` appends
+run boundaries, context artifact paths, verification stdout/stderr, changed
+file summaries, and a truncated diff preview after the normal run summary. It
+does not alter runner inputs, adapter behavior, persistence, or exit status.
+
+Safety review is separated from report rendering. `SafetyScanner` scans the
+collected diff, changed-file metadata, and verification command text and returns
+structured findings. Sensitive path changes and dangerous command findings use
+`level: blocking`; aggregation preserves that level instead of coercing it to
+high. `RiskReportGenerator` adds verification and manual-review context around
+those scanner findings and the task runner persists the resulting report to
+`risk_reports` for both successful and failed runs.
 
 The default agent registry includes fake, Codex, and Claude Code adapters.
 Real adapters run only inside the isolated worktree cwd. They use
@@ -120,6 +142,24 @@ payloads to `run_artifacts`, verification command rows to
 legacy aggregate `run_metadata` remains for compatibility with existing show
 paths and is no longer the only persisted source for run inspection.
 
+Memory items remain SQLite domain records until the user explicitly acts.
+`memory propose` creates a `proposed` row, `memory reject` moves it to
+`rejected`, and `memory approve` moves it to `approved` and appends the memory
+content to the Agent Hub-owned context store under `memory/approved.md`.
+Approved-memory writeback uses the same context store path resolution as
+context init/build, so the default destination is app data rather than the
+project repository. The context compiler reads approved memory only from that
+file provider; proposed and rejected database rows are not injected into context
+packs.
+
+Comparison reports are generated from persisted run data rather than process
+memory or UI state. The CLI loads each selected run, diff artifacts or legacy
+metadata, verification rows, and latest risk reports, then writes a textual
+summary to `comparison_reports`. The summary includes changed-file overlap,
+per-run diff stats, verification summaries, failed checks, risk levels, and
+risk factors. Comparison is review-only and performs no accept, merge, branch
+delete, or push action.
+
 All adapters run against an isolated worktree and refuse to run when that
 directory is the original project root or when the generated task brief is
 outside the isolated directory. Codex is invoked as `codex exec --json -`.
@@ -139,6 +179,31 @@ with metadata such as binary status and byte size.
 Shell usage is limited to `ShellExecutor` and `ProcessRunner` implementations.
 Git worktree, git diff, verification commands, and real agent processes use
 executable-plus-args calls with explicit cwd; task prompts are never
-interpreted as shell commands.
+interpreted as shell commands. Git operations additionally go through the
+Git safety helpers, which set non-interactive/hardened Git environment and
+command-line config overrides, disable external diff/textconv for diff
+collection, and reject repository-local Git config keys such as `core.fsmonitor`,
+`core.hooksPath`, executable filters, external diff drivers, textconv commands,
+and config includes before invoking Git.
 
-No API server or desktop shell is present in this slice.
+The physical monorepo split is intentionally deferred in this slice. The
+runtime behavior is stable, but the current single-package type graph still has
+contracts that cross the target dependency direction: repository interfaces
+reference adapter, diff, verification, and workspace result types, and adapter
+inputs reference context compiler bundle types. A mechanical file move now
+would bake those reverse dependencies into package APIs. The next safe
+extraction order is:
+
+1. move shared enums and DTOs that are imported by every package into
+   `packages/shared`
+2. move domain validation and repository contracts into `packages/core`
+3. move SQLite repositories into `packages/db`
+4. move context compiler, safety, adapters, and task runner behind core/shared
+   contracts
+5. move CLI into `apps/cli`
+
+Desktop preparation remains architectural only. The future desktop app should
+live under `apps/desktop`, call local core/task-runner APIs through Electron
+IPC or Tauri commands, and render projects, tasks, runs, diffs, verification,
+risk, memory, and comparison data from local repositories. No API server or
+desktop UI implementation is present in this slice.

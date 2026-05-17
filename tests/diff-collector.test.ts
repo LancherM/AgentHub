@@ -64,6 +64,23 @@ describe("DiffCollector", () => {
     expect(result.commands).toHaveLength(1);
   });
 
+
+  it("rejects executable local git config before collecting diffs", async () => {
+    const workspacePath = await createTestDirectory("diff-malicious-config");
+    await fs.mkdir(path.join(workspacePath, ".git"));
+    await fs.writeFile(
+      path.join(workspacePath, ".git", "config"),
+      "[core]\n	hooksPath = .githooks\n",
+      "utf8"
+    );
+    const shell = new MockShellExecutor();
+
+    await expect(new DiffCollector(shell).collect({ workspacePath })).rejects.toThrow(
+      /executable local git config/
+    );
+    expect(shell.calls).toHaveLength(0);
+  });
+
   it("keeps modified generated overlays while excluding unchanged generated files", async () => {
     const workspacePath = await createTestDirectory("diff-overlay");
     const unchanged = path.join(workspacePath, ".agent-hub", "tasks", "task_1", "brief.md");
@@ -95,11 +112,9 @@ describe("DiffCollector", () => {
 
     expect(result.changedFiles).toEqual([{ path: "AGENTS.md", status: "modified" }]);
     expect(result.diff).not.toContain(".agent-hub/tasks/task_1/brief.md");
-    expect(shell.calls.at(-1)?.command.args).toEqual([
-      "diff",
-      "--",
-      "AGENTS.md"
-    ]);
+    expect(shell.calls.at(-1)?.command.args).toEqual(
+      expect.arrayContaining(["diff", "--no-ext-diff", "--no-textconv", "--", "AGENTS.md"])
+    );
   });
 
   it("excludes unchanged generated tracked overlay content from diff text and stats", async () => {

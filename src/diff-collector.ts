@@ -3,6 +3,11 @@ import fs from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { isWorkspacePathInside } from "./workspace";
 import { type ShellExecutor, type ShellResult } from "./shell-executor";
+import {
+  assertSafeLocalGitConfig,
+  safeGitCommand,
+  safeGitExecutionOptions
+} from "./git-safety";
 
 const MAX_UNTRACKED_DIFF_BYTES = 1024 * 1024;
 
@@ -70,10 +75,14 @@ export class DiffCollector implements DiffCollectorService {
       throw new Error("diff collection workspace path must be absolute");
     }
 
+    if (!input.dryRun) {
+      await assertSafeLocalGitConfig(workspacePath);
+    }
+
     const commands: ShellResult[] = [];
     const statusResult = await this.shellExecutor.execute(
-      { executable: "git", args: ["status", "--porcelain"] },
-      { cwd: workspacePath, dryRun: input.dryRun }
+      safeGitCommand(["status", "--porcelain"]),
+      safeGitExecutionOptions({ cwd: workspacePath, dryRun: input.dryRun })
     );
     commands.push(statusResult);
     if (statusResult.exitCode !== 0) {
@@ -81,8 +90,16 @@ export class DiffCollector implements DiffCollectorService {
     }
 
     const statResult = await this.shellExecutor.execute(
-      { executable: "git", args: ["diff", "--stat", "--shortstat", "HEAD", "--"] },
-      { cwd: workspacePath, dryRun: input.dryRun }
+      safeGitCommand([
+        "diff",
+        "--no-ext-diff",
+        "--no-textconv",
+        "--stat",
+        "--shortstat",
+        "HEAD",
+        "--"
+      ]),
+      safeGitExecutionOptions({ cwd: workspacePath, dryRun: input.dryRun })
     );
     commands.push(statResult);
     if (statResult.exitCode !== 0) {
@@ -90,8 +107,15 @@ export class DiffCollector implements DiffCollectorService {
     }
 
     const numstatResult = await this.shellExecutor.execute(
-      { executable: "git", args: ["diff", "--numstat", "HEAD", "--"] },
-      { cwd: workspacePath, dryRun: input.dryRun }
+      safeGitCommand([
+        "diff",
+        "--no-ext-diff",
+        "--no-textconv",
+        "--numstat",
+        "HEAD",
+        "--"
+      ]),
+      safeGitExecutionOptions({ cwd: workspacePath, dryRun: input.dryRun })
     );
     commands.push(numstatResult);
     if (numstatResult.exitCode !== 0) {
@@ -119,8 +143,15 @@ export class DiffCollector implements DiffCollectorService {
     const cachedDiffResult =
       trackedDiffPaths.length > 0
         ? await this.shellExecutor.execute(
-            { executable: "git", args: ["diff", "--cached", "--", ...trackedDiffPaths] },
-            { cwd: workspacePath, dryRun: input.dryRun }
+            safeGitCommand([
+              "diff",
+              "--no-ext-diff",
+              "--no-textconv",
+              "--cached",
+              "--",
+              ...trackedDiffPaths
+            ]),
+            safeGitExecutionOptions({ cwd: workspacePath, dryRun: input.dryRun })
           )
         : undefined;
     if (cachedDiffResult) {
@@ -133,8 +164,14 @@ export class DiffCollector implements DiffCollectorService {
     const unstagedDiffResult =
       trackedDiffPaths.length > 0
         ? await this.shellExecutor.execute(
-            { executable: "git", args: ["diff", "--", ...trackedDiffPaths] },
-            { cwd: workspacePath, dryRun: input.dryRun }
+            safeGitCommand([
+              "diff",
+              "--no-ext-diff",
+              "--no-textconv",
+              "--",
+              ...trackedDiffPaths
+            ]),
+            safeGitExecutionOptions({ cwd: workspacePath, dryRun: input.dryRun })
           )
         : undefined;
     if (unstagedDiffResult) {

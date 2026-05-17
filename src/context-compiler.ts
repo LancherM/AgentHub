@@ -134,6 +134,18 @@ export interface ContextExportResult {
   previews: Array<{ path: string; content: string }>;
 }
 
+export interface ApprovedMemoryWriteInput extends ContextStoreInitInput {
+  memoryId: string;
+  content: string;
+  approvedAt?: string;
+}
+
+export interface ApprovedMemoryWriteResult {
+  config: ContextStoreConfig;
+  path: string;
+  written: boolean;
+}
+
 export interface ContextProviderResult<T> {
   items: T[];
   warnings?: string[];
@@ -555,6 +567,32 @@ export async function exportContextToRepository(
   }
 
   return { config, dryRun, changedFiles, warnings, previews };
+}
+
+export async function appendApprovedMemory(
+  input: ApprovedMemoryWriteInput
+): Promise<ApprovedMemoryWriteResult> {
+  const config = resolveContextStoreConfig(input);
+  const memoryDirectory = path.join(config.storeRoot, "memory");
+  const approvedPath = path.join(memoryDirectory, "approved.md");
+  await fs.mkdir(memoryDirectory, { recursive: true });
+  await ensureFile(approvedPath, defaultContextFileContent("memory/approved.md"));
+  const existing = await readFileIfExists(approvedPath) ?? "";
+  const marker = `<!-- agent-hub:memory ${input.memoryId} -->`;
+  if (existing.includes(marker)) {
+    return { config, path: approvedPath, written: false };
+  }
+  const entry = [
+    marker,
+    `## ${input.memoryId}`,
+    input.approvedAt ? `approved_at: ${input.approvedAt}` : undefined,
+    "",
+    input.content.trim(),
+    ""
+  ].filter((line) => line !== undefined).join("\n");
+  const next = `${existing.trimEnd()}\n\n${entry}`.trimStart();
+  await safeWriteFile(approvedPath, `${next.trimEnd()}\n`, config.storeRoot);
+  return { config, path: approvedPath, written: true };
 }
 
 export function createTaskBrief(input: {
