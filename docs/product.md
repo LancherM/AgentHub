@@ -90,6 +90,9 @@ outputs are returned when available, and workspace cleanup is still attempted
 according to the selected cleanup policy. Dangerous verification commands are
 reported as failed verification results instead of bypassing finalization;
 verification timeouts and process signals are preserved in the command result.
+Task brief artifacts are persisted from Agent Hub's generated brief content,
+not by rereading worktree paths after materialization, so malicious symlinks in
+an untrusted worktree cannot be captured as task brief artifact contents.
 
 Run summaries include the selected `context_delivery` mode and `branch_name`
 alongside existing review fields such as worktree path, task brief path,

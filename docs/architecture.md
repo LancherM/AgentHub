@@ -163,7 +163,10 @@ materializes managed `AGENTS.md`, `CLAUDE.md`, and skill copies under
 `.claude/skills` and `.agents/skills`, but only inside the isolated worktree.
 Existing non-empty skill files are not overwritten without warning. All runtime
 artifact writes reject symlink path components before writing so a generated
-artifact path cannot escape the worktree or export root.
+artifact path cannot escape the worktree or export root. Persisted task brief
+artifacts use the generated in-memory task brief content rather than rereading
+worktree runtime files, so a failed materialization path cannot disclose a
+symlink target into Agent Hub storage.
 
 Overlay materialization returns generated-file baselines and warnings to the
 runner. Baselines are passed into diff collection so unchanged Agent Hub
