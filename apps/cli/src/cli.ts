@@ -27,6 +27,7 @@ import {
   type ContextStoreMode,
   type AgentKind,
   type MemoryCategory,
+  type RunContextDeliveryMode,
   type RunEventType,
   type VerificationResult
 } from "@agent-hub/core";
@@ -1513,7 +1514,7 @@ function isJsonObjectLine(value: string): boolean {
 function renderRunDebug(
   result: CliRunResult,
   input: RunTaskInput,
-  deliveryMode: ContextDeliveryMode
+  deliveryMode: RunContextDeliveryMode
 ): string {
   const lines = [
     "debug:",
@@ -1623,7 +1624,7 @@ interface ParsedRunArgs {
   title?: string;
   prompt?: string;
   workspaceBasePath?: string;
-  deliveryMode?: ContextDeliveryMode;
+  deliveryMode?: RunContextDeliveryMode;
   contextStoreRoot?: string;
   retainOnFailure: boolean;
   dryRun: boolean;
@@ -1694,7 +1695,7 @@ function parseRunArgs(args: string[], cwd: string): ParsedRunArgs {
   let title: string | undefined;
   let prompt: string | undefined;
   let workspaceBasePath: string | undefined;
-  let deliveryMode: ContextDeliveryMode | undefined;
+  let deliveryMode: RunContextDeliveryMode | undefined;
   let contextStoreRoot: string | undefined;
   let retainOnFailure = false;
   let dryRun = false;
@@ -1793,7 +1794,7 @@ function parseRunArgs(args: string[], cwd: string): ParsedRunArgs {
       continue;
     }
     if (parsingFlags && arg === "--delivery-mode") {
-      deliveryMode = parseDeliveryMode(args[index + 1]);
+      deliveryMode = parseRunDeliveryMode(args[index + 1]);
       index += 1;
       continue;
     }
@@ -1982,6 +1983,18 @@ function parseDeliveryMode(value: string | undefined): ContextDeliveryMode | und
     return value;
   }
   throw new Error("--delivery-mode must be runtime_injection, worktree_overlay, or repo_export");
+}
+
+function parseRunDeliveryMode(value: string | undefined): RunContextDeliveryMode | undefined {
+  if (value === undefined) {
+    throw new Error("--delivery-mode requires a value");
+  }
+  if (value === "runtime_injection" || value === "worktree_overlay") {
+    return value;
+  }
+  throw new Error(
+    "--delivery-mode must be runtime_injection or worktree_overlay for task runs"
+  );
 }
 
 function renderContextBuildResult(result: ContextBuildResult): string {

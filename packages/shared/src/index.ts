@@ -12,6 +12,12 @@ export const contextDeliveryModes = [
 ] as const;
 export type ContextDeliveryMode = (typeof contextDeliveryModes)[number];
 
+export const runContextDeliveryModes = [
+  "runtime_injection",
+  "worktree_overlay"
+] as const;
+export type RunContextDeliveryMode = (typeof runContextDeliveryModes)[number];
+
 export const contextStoreModes = ["external", "repo_local"] as const;
 export type ContextStoreMode = (typeof contextStoreModes)[number];
 
