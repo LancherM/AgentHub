@@ -141,6 +141,9 @@ Git safety helpers, which set non-interactive/hardened Git environment and
 command-line config overrides, disable external diff/textconv for diff
 collection, and reject repository-local Git config keys such as `core.fsmonitor`,
 `core.hooksPath`, executable filters, external diff drivers, textconv commands,
-and config includes before invoking Git.
+and config includes before invoking Git. The local config scan includes
+`.git/config` plus `config.worktree` files in both the resolved worktree gitdir
+and common Git directory when `extensions.worktreeConfig`-style per-worktree
+configuration is present.
 
 No API server or desktop shell is present in this slice.

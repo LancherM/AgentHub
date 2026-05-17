@@ -81,6 +81,30 @@ describe("DiffCollector", () => {
     expect(shell.calls).toHaveLength(0);
   });
 
+  it("rejects executable common-dir per-worktree git config before collecting diffs", async () => {
+    const workspacePath = await createTestDirectory("diff-malicious-common-config");
+    const gitDir = path.join(workspacePath, "common", ".git", "worktrees", "feature");
+    const commonDir = path.join(workspacePath, "common", ".git");
+    await fs.mkdir(gitDir, { recursive: true });
+    await fs.writeFile(
+      path.join(workspacePath, ".git"),
+      "gitdir: common/.git/worktrees/feature\n",
+      "utf8"
+    );
+    await fs.writeFile(path.join(gitDir, "commondir"), "../..\n", "utf8");
+    await fs.writeFile(
+      path.join(commonDir, "config.worktree"),
+      "[diff \"poc\"]\n	command = ./diff-poc.sh\n",
+      "utf8"
+    );
+    const shell = new MockShellExecutor();
+
+    await expect(new DiffCollector(shell).collect({ workspacePath })).rejects.toThrow(
+      /config\.worktree: diff\.poc\.command/
+    );
+    expect(shell.calls).toHaveLength(0);
+  });
+
   it("keeps modified generated overlays while excluding unchanged generated files", async () => {
     const workspacePath = await createTestDirectory("diff-overlay");
     const unchanged = path.join(workspacePath, ".agent-hub", "tasks", "task_1", "brief.md");
