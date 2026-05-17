@@ -121,10 +121,12 @@ Process detection is non-fatal and is part of real-adapter run preflight.
 `CodexAdapter.detect()` runs `codex --version` and
 `ClaudeCodeAdapter.detect()` runs `claude --version`; missing commands,
 non-zero exits, or setup/authentication failures return `available: false` with
-a reason. `CodexAdapter.run()` and `ClaudeCodeAdapter.run()` call detection
-before invoking the real process. Unavailable adapters emit an error event and
-failed exit event without launching the executable. Available adapters emit a
-preflight status event, then stdout and stderr become `RunEvent` rows. Valid
+a reason. `CodexAdapter.run()` and `ClaudeCodeAdapter.run()` validate the
+worktree and generated task brief boundary before run-scoped detection, and
+that detection runs from the isolated worktree cwd with the run environment.
+Unavailable adapters emit an error event and failed exit event without
+launching the executable. Available adapters emit a preflight status event,
+then stdout and stderr become `RunEvent` rows. Valid
 JSONL stdout lines are additionally mapped to message/status/error events,
 malformed structured output remains preserved as raw stdout, and exit events
 record both exit code and signal metadata. A non-zero exit marks the run failed,
@@ -217,10 +219,13 @@ to `approved` or `rejected`. Repeating the same status remains idempotent, but
 invalid terminal transitions are rejected in both SQLite and in-memory
 repositories.
 
-When the CLI executes an ad-hoc SQLite-backed run, it creates the local
-`adhoc_project` project row before calling the runner. That preserves the
-historical ad-hoc task id surface while satisfying the new task-to-project
-foreign key. During SQLite migration 3, legacy task project ids that do not yet
+When the CLI executes an ad-hoc SQLite-backed run, it first looks up a project
+by the resolved repository root. The first legacy ad-hoc root can keep the
+`adhoc_project` id for compatibility; if that id already belongs to a different
+root, the CLI creates a deterministic root-scoped ad-hoc project id before
+calling the runner. That preserves the task-to-project foreign-key contract
+without attaching later ad-hoc tasks or memory writeback to the wrong local
+repository. During SQLite migration 3, legacy task project ids that do not yet
 have a `projects` row are backfilled as local legacy projects before the task
 tables are rebuilt with foreign-key constraints.
 

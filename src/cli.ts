@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { createHash } from "node:crypto";
 import path from "node:path";
 import { createInterface } from "node:readline/promises";
 import { parseAgentPrompt } from "./agent-parser";
@@ -801,21 +802,37 @@ async function withAdhocProject(
   if (runInput.projectId !== undefined) {
     return runInput;
   }
-  const projectId = "adhoc_project";
-  const existingProject = await runtime.projectRepository.get(projectId);
-  if (!existingProject) {
-    const now = nowIso();
-    await runtime.projectRepository.create(
-      validateProject({
-        id: projectId,
-        name: path.basename(path.resolve(runInput.projectRoot)) || projectId,
-        rootPath: path.resolve(runInput.projectRoot),
-        createdAt: now,
-        updatedAt: now
-      })
-    );
+
+  const projectRoot = path.resolve(runInput.projectRoot);
+  const existingForRoot = await runtime.projectRepository.getByRootPath(projectRoot);
+  if (existingForRoot) {
+    return { ...runInput, projectId: existingForRoot.id };
   }
+
+  let projectId = "adhoc_project";
+  const existingProject = await runtime.projectRepository.get(projectId);
+  if (existingProject && existingProject.rootPath !== projectRoot) {
+    projectId = adhocProjectIdForRoot(projectRoot);
+  }
+
+  const now = nowIso();
+  await runtime.projectRepository.create(
+    validateProject({
+      id: projectId,
+      name: path.basename(projectRoot) || projectId,
+      rootPath: projectRoot,
+      createdAt: now,
+      updatedAt: now
+    })
+  );
   return { ...runInput, projectId };
+}
+
+function adhocProjectIdForRoot(projectRoot: string): string {
+  return `adhoc_project_${createHash("sha256")
+    .update(projectRoot)
+    .digest("hex")
+    .slice(0, 12)}`;
 }
 
 async function addRunEvent(
