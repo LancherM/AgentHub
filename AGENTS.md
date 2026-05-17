@@ -128,19 +128,21 @@ The MVP must support:
 
 ## Current Implementation Status
 
-The current implementation is a partial CLI-first vertical slice.
+The current implementation is a partial CLI-first baseline in a single root
+TypeScript package. The target `apps/` and `packages/` split is still an
+architecture goal, not the current physical layout.
 
 Implemented:
 
-- pnpm workspace with TypeScript project references and Vitest tests.
-- Local packages for core models, SQLite persistence, context compilation, task
-  running, agent adapters, safety placeholders, and shared types.
+- Root TypeScript package with strict typechecking, Vitest tests, and clear
+  module boundaries under `src/`.
+- Domain models, SQLite persistence, context compilation, task running, agent
+  adapters, safety scanning, risk report generation, and shared types.
 - CLI commands for project registration/listing, context store init/show,
   context pack build, optional repo export, task creation/listing/history, task
-  runs, and manual run-event recording.
+  runs, manual run-event recording, memory workflows, and run comparison.
 - Interactive CLI with `@agent` prompts, `/agents`, `/use`, `/context`,
-  `/context init`, `/clear`, `/exit`, and `/quit`; `/sync` remains only as a
-  deprecated alias for `/context init`.
+  `/context init`, `/clear`, `/exit`, and `/quit`.
 - Git worktree creation for task runs.
 - Runtime context pack and task brief generation, worktree-local runtime file
   writing, verification command execution, agent event capture, and diff
@@ -150,18 +152,23 @@ Implemented:
   files from collected diffs.
 - `FakeAgentAdapter`.
 - `CodexAdapter` using non-interactive `codex exec` inside the task worktree.
+- `ClaudeCodeAdapter` using non-interactive `claude --print` inside the task
+  worktree.
 - Registered `agent-hub run --task ...` creates and finalizes SQLite task run
   rows, persists mapped agent events, verification results, and git diff run
-  artifacts. Risk report persistence APIs exist, but risk report generation is
-  still pending.
+  artifacts.
+- Safety scanning and risk report persistence for sensitive paths, dangerous
+  commands, risky diffs, large deletions, and binary file changes.
+- Memory proposal, listing, approval, rejection, and approved-memory writeback
+  to the Agent Hub-owned context store.
+- Persisted comparison report generation for two runs of a task.
 
 Not yet implemented:
 
-- `ClaudeCodeAdapter`.
-- Real comparison report generation.
-- Memory proposal, approval, rejection, and approved-memory writeback flows.
-- Risk report generation and sensitive-file or dangerous-command scanning.
 - Desktop app.
+- Physical monorepo split into `apps/` and `packages/`.
+- Automatic memory proposal generation from completed runs.
+- Richer comparison scoring beyond the current persisted textual summary.
 
 ## Explicit Non-goals for MVP
 
@@ -208,6 +215,19 @@ agent-hub/
     vibe-prompts.md
 ```
 
+Current physical layout:
+
+```text
+agent-hub/
+  src/
+  tests/
+  docs/
+  specs/imported/
+```
+
+Do not restructure into the target monorepo package layout unless the user asks
+for that specific work.
+
 ## Package Responsibilities
 
 ### apps/cli
@@ -229,11 +249,9 @@ Implemented commands:
 - `agent-hub task history`
 - `agent-hub run`
 - `agent-hub run event add`
-
-MVP target commands that currently exist only as placeholders or remain to be completed:
-
 - `agent-hub compare`
 - `agent-hub memory list`
+- `agent-hub memory propose`
 - `agent-hub memory approve`
 - `agent-hub memory reject`
 
@@ -291,8 +309,7 @@ Required adapters:
 
 Current status:
 
-- `FakeAgentAdapter` and `CodexAdapter` are implemented.
-- `ClaudeCodeAdapter` is still pending.
+- `FakeAgentAdapter`, `CodexAdapter`, and `ClaudeCodeAdapter` are implemented.
 
 All real adapters must run inside the task worktree.
 
@@ -358,7 +375,8 @@ Current status:
 
 - Worktree creation, adapter execution, verification commands, diff collection,
   and task run summaries are implemented.
-- Comparison report production is still pending.
+- Comparison reports are currently generated from persisted run data in the CLI
+  layer. Keep this review-only and local; do not accept, merge, or push changes.
 
 ### packages/safety
 
@@ -371,9 +389,9 @@ Responsible for:
 
 Current status:
 
-- Only basic safety types are implemented.
-- Command denylist, sensitive file detection, diff scanning, and risk report
-  generation are still pending.
+- Safety scanners and risk report generation are implemented for sensitive file
+  paths, dangerous command text, risky diffs, large deletion volume, and binary
+  file changes.
 
 ### packages/shared
 

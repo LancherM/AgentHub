@@ -33,7 +33,7 @@ Current module boundaries under `src/`:
 - `task-runner`: adapter orchestration with context compilation and
   repository-backed persistence
 - `cli`: command parsing, interactive console input, output rendering, and
-  opt-in debug rendering
+  opt-in debug rendering, including manual run-event recording
 - `agent-parser`: `@agent` prompt parsing
 
 The CLI calls the runner rather than owning orchestration logic. The runner
@@ -56,6 +56,13 @@ Debug rendering is also a CLI concern. `--debug` or `AGENT_HUB_DEBUG=1` appends
 run boundaries, context artifact paths, verification stdout/stderr, changed
 file summaries, and a truncated diff preview after the normal run summary. It
 does not alter runner inputs, adapter behavior, persistence, or exit status.
+
+Manual run-event recording is a CLI persistence operation, not an adapter or
+runner behavior. `run event add` loads the target run through
+`TaskRunRepository`, validates the event type against the domain enum, appends
+the event through `RunEventRepository`, and derives the next sequence number
+from existing events for that run. This keeps manual notes in the same ordered
+event stream as adapter-captured output while avoiding any task execution.
 
 Safety review is separated from report rendering. `SafetyScanner` scans the
 collected diff, changed-file metadata, and verification command text and returns

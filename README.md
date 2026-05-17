@@ -1,46 +1,72 @@
 # Agent Hub
 
 Agent Hub is a local-first, CLI-first developer tool for orchestrating coding
-agents. The current rebuild is intentionally narrow and uses only the
-deterministic fake adapter.
+agents in isolated git worktrees. The current implementation is a single root
+TypeScript package that preserves the target module boundaries under `src/`;
+the future `apps/` and `packages/` split is intentionally deferred.
 
 ## Commands
 
 ```sh
-agent-hub run [--repo <path>] [--workspace-base <path>] [--retain-on-failure] "@fake <task>"
-agent-hub tasks list
+agent-hub [--project <path>] [--agent fake|codex|claude-code]
+agent-hub [--db <path>] project add --name <name> --root <path>
+agent-hub [--db <path>] project list
+agent-hub [--db <path>] task create --project-id <project-id> --title <title> [--description <text>]
+agent-hub [--db <path>] task list [--project-id <project-id>]
+agent-hub [--db <path>] task history --task-id <task-id>
+agent-hub context init --project-root <path> --project-id <project-id>
+agent-hub context show --project-root <path> --project-id <project-id>
+agent-hub context build --project-root <path> --project-id <project-id> --task-id <task-id> --title <title> --prompt <prompt>
+agent-hub context export --project-root <path> --project-id <project-id> --dry-run|--write
+agent-hub [--db <path>] run --task <task-id> --agent fake|codex|claude-code
+agent-hub run [--repo <path>] [--workspace-base <path>] [--retain-on-failure] "@fake|@codex|@claude-code <task>"
+agent-hub [--db <path>] run event add --run-id <run-id> --type <type> --message <message>
 agent-hub runs list
 agent-hub runs show <run-id>
 agent-hub risks show <run-id>
+agent-hub [--db <path>] memory list --project-id <project-id>
+agent-hub [--db <path>] memory propose --project-id <project-id> --category <category> --content <text>
+agent-hub [--db <path>] memory approve --memory-id <memory-id>
+agent-hub [--db <path>] memory reject --memory-id <memory-id>
+agent-hub [--db <path>] compare --task-id <task-id> --baseline <run-id> --candidate <run-id>
 ```
-
-Task, run, and run metadata storage is still in-memory. List/show commands are
-useful within the same CLI process or test runtime; persistent SQLite storage is
-still deferred.
 
 ## Current Capabilities
 
-- Builds a non-invasive context bundle from task prompt, agent selection,
-  repository metadata, project summary, relevant memories, relevant skills,
-  user constraints, and execution hints.
-- Formats context bundles as readable markdown.
-- Runs the fake adapter with the compiled context payload.
-- Creates an isolated git worktree under the configured workspace base.
-- Collects changed files, diff stats, raw diff text, and simple file summaries.
-- Runs explicitly configured verification commands inside the workspace.
-- Generates a structured risk report with verification summary, failed checks,
-  risk factors, manual review checklist, and acceptance recommendation.
-- Persists task and run metadata through in-memory repositories.
-- Records task run status transitions.
-- Does not run Codex or Claude Code.
-- Keeps shell execution behind the `ShellExecutor` abstraction and never turns
-  task prompt text into shell commands.
+- Uses SQLite by default for local project, task, run, event, artifact,
+  verification, risk, memory, comparison, skill, and settings persistence.
+- Keeps in-memory repositories available for injected tests and focused runner
+  verification.
+- Builds non-invasive task context and task briefs from Agent Hub-owned context
+  stores.
+- Supports explicit repository context export with dry-run preview and managed
+  blocks.
+- Runs fake, Codex, and Claude Code adapters inside isolated worktrees.
+- Injects task brief/context at runtime by default; optional worktree overlays
+  stay inside the isolated worktree.
+- Captures run events, verification results, git diffs, run artifacts, and risk
+  reports.
+- Allows manual event recording with `run event add`; appended events use the
+  next sequence number for the selected run.
+- Supports explicit memory proposal, approval, rejection, and approved-memory
+  writeback.
+- Generates persisted comparison reports for two runs of a task.
+- Does not add cloud sync, accounts, remote execution, automatic merges,
+  automatic pushes, or automatic pull requests.
 
 ## Validation
 
 ```sh
-pnpm test
 pnpm typecheck
+pnpm test
 pnpm lint
 pnpm build
+```
+
+If global `pnpm` is unavailable, use the repo-local binary:
+
+```sh
+./node_modules/.bin/pnpm typecheck
+./node_modules/.bin/pnpm test
+./node_modules/.bin/pnpm lint
 ```

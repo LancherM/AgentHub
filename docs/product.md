@@ -6,8 +6,9 @@ agents on a developer machine.
 The current verified rebuild slice supports registered projects, registered
 tasks, Agent Hub-owned context stores, context artifact build/export,
 deterministic fake-agent runs, process-backed Codex and Claude Code runs, and
-cross-process SQLite-backed run inspection. Running `agent-hub` with no
-subcommand starts an interactive shell over the same local core services:
+cross-process SQLite-backed run inspection, manual run-event recording, memory
+workflows, and comparison reports. Running `agent-hub` with no subcommand
+starts an interactive shell over the same local core services:
 
 ```sh
 agent-hub [--project <path>] [--agent fake|codex|claude-code]
@@ -23,6 +24,7 @@ agent-hub context build --project-root <path> --project-id <project-id> --task-i
 agent-hub context export --project-root <path> --project-id <project-id> --dry-run|--write
 agent-hub [--db <path>] run --task <task-id> --agent fake|codex|claude-code
 agent-hub run [--repo <path>] [--workspace-base <path>] [--retain-on-failure] "@fake|@codex|@claude-code <task>"
+agent-hub [--db <path>] run event add --run-id <run-id> --type <type> --message <message>
 agent-hub tasks list
 agent-hub runs list
 agent-hub runs show <run-id>
@@ -78,6 +80,17 @@ receive the task brief/context through stdin-driven runtime injection and do
 not require repository-level `AGENTS.md` or `CLAUDE.md`. `worktree_overlay` is
 opt-in and writes generated `AGENTS.md`, `CLAUDE.md`, and skill copies only
 inside the isolated worktree, never the original checkout.
+
+Run summaries include the selected `context_delivery` mode and `branch_name`
+alongside existing review fields such as worktree path, task brief path,
+changed file count, verification summary, risk level, retained workspace,
+events count, warnings, and adapter output.
+
+Manual event recording is available for persisted task runs:
+`run event add --run-id ... --type ... --message ...`. The command validates
+the run exists, validates the event type, appends through the
+`RunEventRepository`, and assigns the next sequence number after existing
+events for that run.
 
 `--debug` is opt-in and does not change run behavior. For supported run
 commands it appends run boundary details, context artifact paths, verification
@@ -156,6 +169,7 @@ generated worktree.
 Structured run data is now also persisted in first-class SQLite tables:
 
 - adapter event streams in `run_events`
+- manually recorded run events in `run_events`
 - git diff artifacts in `run_artifacts`
 - verification command rows in `verification_results`
 - risk reports in `risk_reports`
