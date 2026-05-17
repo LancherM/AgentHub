@@ -323,16 +323,12 @@ async function enrichChangedFiles(
     const inspected = await inspectWorktreeFile(workspacePath, file.path);
     const stats = numericStats.get(file.path);
     const binary = stats?.binary || inspected.binary;
-    const omittedReason =
-      inspected.omittedReason ??
-      (inspected.sizeBytes !== undefined && inspected.sizeBytes > MAX_UNTRACKED_DIFF_BYTES
-        ? `larger than ${MAX_UNTRACKED_DIFF_BYTES} bytes`
-        : undefined);
+    const omittedReason = file.status === "untracked" ? inspected.omittedReason : undefined;
     enriched.push({
       ...file,
       binary: binary || undefined,
       sizeBytes: binary || omittedReason ? inspected.sizeBytes : undefined,
-      symlinkTarget: inspected.symlinkTarget,
+      symlinkTarget: file.status === "untracked" ? inspected.symlinkTarget : undefined,
       omittedReason
     });
   }
@@ -442,7 +438,7 @@ function summarizeChangedFiles(
 
 async function hashFileIfExists(workspacePath: string, relativePath: string): Promise<string | undefined> {
   try {
-    const filePath = resolveWorkspacePath(workspacePath, relativePath);
+    const filePath = await safeInspectablePath(workspacePath, relativePath);
     const stats = await fs.lstat(filePath);
     if (stats.isSymbolicLink()) {
       return undefined;
@@ -468,7 +464,7 @@ async function inspectWorktreeFile(
   omittedReason?: string;
 }> {
   try {
-    const absolutePath = resolveWorkspacePath(workspacePath, relativePath);
+    const absolutePath = await safeInspectablePath(workspacePath, relativePath);
     const stats = await fs.lstat(absolutePath);
     if (stats.isSymbolicLink()) {
       return {
@@ -477,7 +473,11 @@ async function inspectWorktreeFile(
       };
     }
     if (!stats.isFile()) {
-      return { binary: false, sizeBytes: stats.size };
+      return {
+        binary: false,
+        sizeBytes: stats.size,
+        omittedReason: "not a regular file"
+      };
     }
     if (stats.size > MAX_UNTRACKED_DIFF_BYTES) {
       return {
@@ -492,12 +492,21 @@ async function inspectWorktreeFile(
       sizeBytes: stats.size
     };
   } catch {
-    return { binary: false };
+    return {
+      binary: false,
+      omittedReason: "unreadable or outside workspace"
+    };
   }
 }
 
 async function safeReadablePath(workspacePath: string, relativePath: string): Promise<string> {
   return realpathInside(workspacePath, resolveWorkspacePath(workspacePath, relativePath));
+}
+
+async function safeInspectablePath(workspacePath: string, relativePath: string): Promise<string> {
+  const candidatePath = resolveWorkspacePath(workspacePath, relativePath);
+  const safeParent = await realpathInside(workspacePath, path.dirname(candidatePath));
+  return path.join(safeParent, path.basename(candidatePath));
 }
 
 function resolveWorkspacePath(workspacePath: string, relativePath: string): string {

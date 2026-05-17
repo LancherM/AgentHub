@@ -161,7 +161,6 @@ describe("DiffCollector", () => {
     expect(result.fileSummaries).toContain("image.bin: untracked, binary, 3 bytes");
   });
 
-
   it("records untracked symlinks without reading their targets", async () => {
     const workspacePath = await createTestDirectory("diff-symlink");
     const outsidePath = path.join(await createTestDirectory("diff-outside-secret"), "secret.txt");
@@ -208,6 +207,34 @@ describe("DiffCollector", () => {
     expect(result.diff).toContain("Untracked file large.txt added (larger than 1048576 bytes; content omitted)");
     expect(result.diff).not.toContain("+aaaaaaaaaa");
     expect(result.fileSummaries).toContain("large.txt: untracked, content omitted (larger than 1048576 bytes)");
+    expect(result.stat.insertions).toBe(0);
+  });
+
+  it("omits synthetic diff content when untracked paths resolve outside the worktree", async () => {
+    const workspacePath = await createTestDirectory("diff-symlink-parent");
+    const outsideDirectory = await createTestDirectory("diff-outside-directory");
+    await fs.writeFile(path.join(outsideDirectory, "secret.txt"), "AGENTHUB_SECRET_MARKER\n", "utf8");
+    await fs.symlink(outsideDirectory, path.join(workspacePath, "linked-dir"));
+    const shell = new MockShellExecutor([
+      { stdout: "?? linked-dir/secret.txt\n" },
+      { stdout: " 1 file changed\n" },
+      { stdout: "" }
+    ]);
+
+    const result = await new DiffCollector(shell).collect({ workspacePath });
+
+    expect(result.ok).toBe(true);
+    expect(result.changedFiles).toEqual([
+      {
+        path: "linked-dir/secret.txt",
+        status: "untracked",
+        omittedReason: "unreadable or outside workspace"
+      }
+    ]);
+    expect(result.diff).toContain(
+      "Untracked file linked-dir/secret.txt added (unreadable or outside workspace; content omitted)"
+    );
+    expect(result.diff).not.toContain("AGENTHUB_SECRET_MARKER");
     expect(result.stat.insertions).toBe(0);
   });
 

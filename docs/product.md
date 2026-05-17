@@ -141,9 +141,13 @@ Diff collection records binary file metadata, synthesizes reviewable patches
 for bounded untracked text files, and excludes generated overlay files only
 while they still match their Agent Hub baseline. Untracked symlinks are recorded
 as symlinks without dereferencing their targets, oversized untracked files have
-their contents omitted, and all file reads are constrained to real paths inside
-the isolated worktree. If an agent modifies generated overlay files, those files
-are included in the diff.
+their contents omitted, and synthetic untracked file reads are constrained to
+real paths inside the isolated worktree. If an agent modifies generated overlay
+files, those files are included in the diff. Git worktree and diff operations
+apply hardened Git invocation defaults and reject repository-local Git config
+keys that can execute helpers, hooks, filters, external diff commands, or
+included config before Agent Hub invokes Git in the selected repository or
+generated worktree.
 
 Structured run data is now also persisted in first-class SQLite tables:
 
