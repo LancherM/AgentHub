@@ -88,7 +88,9 @@ helpers during checkout.
 receive the task brief/context through stdin-driven runtime injection and do
 not require repository-level `AGENTS.md` or `CLAUDE.md`. `worktree_overlay` is
 opt-in and writes generated `AGENTS.md`, `CLAUDE.md`, and skill copies only
-inside the isolated worktree, never the original checkout.
+inside the isolated worktree, never the original checkout. Task runs accept
+only `runtime_injection` and `worktree_overlay`; `repo_export` remains an
+explicit `context export` action and is rejected as a run delivery mode.
 
 Task runs are inspectable even when later execution stages fail. After a run
 row exists, failures in diff collection, verification execution, risk report

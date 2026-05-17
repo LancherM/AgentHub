@@ -84,6 +84,33 @@ describe("task runner", () => {
     ).rejects.toThrow(TaskRunnerError);
   });
 
+  it("rejects repo_export delivery mode for task runs", async () => {
+    const projectRoot = await createTestDirectory("agent-hub-project");
+    const runRoot = await createTestDirectory("agent-hub-runs");
+    const taskRepository = new InMemoryTaskRepository();
+    const runner = new TaskRunner({
+      taskRepository,
+      defaultRunRoot: runRoot,
+      workspaceManager: new TestWorkspaceManager(runRoot),
+      diffCollector: new StaticDiffCollector(),
+      verificationRunner: new VerificationRunner(new MockShellExecutor())
+    });
+
+    await expect(
+      runner.run({
+        projectRoot,
+        taskPrompt: "Do not export repo context during a run",
+        agentKind: "fake",
+        deliveryMode: "repo_export" as never
+      })
+    ).rejects.toThrow(
+      "deliveryMode must be runtime_injection or worktree_overlay for task runs"
+    );
+
+    await expect(taskRepository.list()).resolves.toEqual([]);
+    await expect(fs.readdir(runRoot)).resolves.toEqual([]);
+  });
+
   it("rejects unimplemented agents", async () => {
     const projectRoot = await createTestDirectory("agent-hub-project");
     const runRoot = await createTestDirectory("agent-hub-runs");

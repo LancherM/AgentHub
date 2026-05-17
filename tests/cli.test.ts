@@ -61,6 +61,33 @@ describe("CLI", () => {
     expect(output.join("")).toContain("acceptance:");
   });
 
+  it("rejects repo_export delivery mode for task runs", async () => {
+    const projectRoot = await createTestDirectory("cli-project");
+    const runtime = createCliRuntime({ storageMode: "memory" });
+    const output: string[] = [];
+    const errors: string[] = [];
+    const io = {
+      stdout: { write: (chunk: string) => { output.push(chunk); return true; } },
+      stderr: { write: (chunk: string) => { errors.push(chunk); return true; } }
+    };
+
+    await expect(
+      main([
+        "run",
+        "--delivery-mode",
+        "repo_export",
+        "@fake",
+        "compile context"
+      ], io, projectRoot, runtime)
+    ).resolves.toBe(1);
+
+    expect(output.join("")).toBe("");
+    expect(errors.join("")).toContain(
+      "--delivery-mode must be runtime_injection or worktree_overlay for task runs"
+    );
+    await expect(runtime.taskRepository.list()).resolves.toEqual([]);
+  });
+
   it("routes @codex and --agent claude-code runs through process-backed adapters", async () => {
     const projectRoot = await createTestDirectory("cli-process-project");
     const runRoot = path.join(await createTestDirectory("cli-process-runs"), "runs");
