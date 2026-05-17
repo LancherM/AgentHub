@@ -98,7 +98,11 @@ Persisted run metadata currently covers:
 Diff collection records binary file metadata, synthesizes reviewable patches
 for untracked text files, and excludes generated overlay files only while they
 still match their Agent Hub baseline. If an agent modifies generated overlay
-files, those files are included in the diff.
+files, those files are included in the diff. Git worktree and diff operations
+apply hardened Git invocation defaults and reject repository-local Git config
+keys that can execute helpers, hooks, filters, external diff commands, or
+included config before Agent Hub invokes Git in the selected repository or
+generated worktree.
 
 Structured run data is now also persisted in first-class SQLite tables:
 
