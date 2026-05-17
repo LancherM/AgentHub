@@ -102,7 +102,9 @@ files, those files are included in the diff. Git worktree and diff operations
 apply hardened Git invocation defaults and reject repository-local Git config
 keys that can execute helpers, hooks, filters, external diff commands, or
 included config before Agent Hub invokes Git in the selected repository or
-generated worktree.
+generated worktree. The scan covers both `.git/config` and per-worktree
+`config.worktree` files in the resolved worktree git directory and common Git
+directory before any Agent Hub Git command runs.
 
 Structured run data is now also persisted in first-class SQLite tables:
 

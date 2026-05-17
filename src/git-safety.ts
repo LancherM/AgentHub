@@ -102,14 +102,25 @@ async function findGitDirectory(startPath: string): Promise<string | undefined> 
 }
 
 async function findLocalConfigPaths(gitDirectory: string): Promise<string[]> {
-  const paths = [path.join(gitDirectory, "config")];
+  const paths = localConfigPathsForGitDirectory(gitDirectory);
   const commonDir = await readOptionalTextFile(
     path.join(gitDirectory, "commondir")
   );
   if (commonDir) {
-    paths.push(path.join(path.resolve(gitDirectory, commonDir.trim()), "config"));
+    paths.push(
+      ...localConfigPathsForGitDirectory(
+        path.resolve(gitDirectory, commonDir.trim())
+      )
+    );
   }
   return [...new Set(paths)];
+}
+
+function localConfigPathsForGitDirectory(gitDirectory: string): string[] {
+  return [
+    path.join(gitDirectory, "config"),
+    path.join(gitDirectory, "config.worktree")
+  ];
 }
 
 function parseGitConfigKeys(config: string): string[] {

@@ -59,6 +59,32 @@ describe("GitWorktreeWorkspaceManager", () => {
     expect(shell.calls).toHaveLength(0);
   });
 
+  it("rejects executable per-worktree git config before invoking git", async () => {
+    const sourceRepositoryPath = await createTestDirectory(
+      "workspace-malicious-worktree-config"
+    );
+    const workspaceBasePath = await createTestDirectory("workspace-base");
+    await fs.mkdir(path.join(sourceRepositoryPath, ".git"));
+    await fs.writeFile(
+      path.join(sourceRepositoryPath, ".git", "config.worktree"),
+      "[filter \"poc\"]\n	smudge = ./smudge-poc.sh\n",
+      "utf8"
+    );
+    const shell = new MockShellExecutor();
+    const manager = new GitWorktreeWorkspaceManager(shell);
+
+    await expect(
+      manager.createSession({
+        sourceRepositoryPath,
+        workspaceBasePath,
+        taskId: "task_1",
+        runId: "run_1",
+        agentKind: "fake"
+      })
+    ).rejects.toThrow(/config\.worktree: filter\.poc\.smudge/);
+    expect(shell.calls).toHaveLength(0);
+  });
+
   it("rejects unsafe workspace base paths inside the source repository", async () => {
     const sourceRepositoryPath = await createTestDirectory("workspace-source");
     const workspaceBasePath = path.join(sourceRepositoryPath, ".agent-hub", "runs");
