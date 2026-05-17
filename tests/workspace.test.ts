@@ -34,9 +34,10 @@ describe("GitWorktreeWorkspaceManager", () => {
     expect(shell.calls[2].command.args).toContain("core.hooksPath=/dev/null");
   });
 
-
   it("rejects executable local git config before invoking git", async () => {
-    const sourceRepositoryPath = await createTestDirectory("workspace-malicious-config");
+    const sourceRepositoryPath = await createTestDirectory(
+      "workspace-malicious-config"
+    );
     const workspaceBasePath = await createTestDirectory("workspace-base");
     await fs.mkdir(path.join(sourceRepositoryPath, ".git"));
     await fs.writeFile(
@@ -58,6 +59,51 @@ describe("GitWorktreeWorkspaceManager", () => {
     ).rejects.toThrow(/executable local git config/);
     expect(shell.calls).toHaveLength(0);
   });
+
+  it.each([
+    {
+      name: "dotted filter driver names",
+      fileName: "config",
+      config: '[filter "foo.bar"]\n	smudge = ./smudge-poc.sh\n'
+    },
+    {
+      name: "section headers with inline comments",
+      fileName: "config",
+      config: '[filter "poc"] # inline comment\n	process = ./process-poc.sh\n'
+    },
+    {
+      name: "worktree-local git config files",
+      fileName: "config.worktree",
+      config: '[filter "poc"]\n	clean = ./clean-poc.sh\n'
+    }
+  ])(
+    "rejects executable local git config with $name",
+    async ({ fileName, config }) => {
+      const sourceRepositoryPath = await createTestDirectory(
+        `workspace-malicious-${fileName}`
+      );
+      const workspaceBasePath = await createTestDirectory("workspace-base");
+      await fs.mkdir(path.join(sourceRepositoryPath, ".git"));
+      await fs.writeFile(
+        path.join(sourceRepositoryPath, ".git", fileName),
+        config,
+        "utf8"
+      );
+      const shell = new MockShellExecutor();
+      const manager = new GitWorktreeWorkspaceManager(shell);
+
+      await expect(
+        manager.createSession({
+          sourceRepositoryPath,
+          workspaceBasePath,
+          taskId: "task_1",
+          runId: "run_1",
+          agentKind: "fake"
+        })
+      ).rejects.toThrow(/executable local git config/);
+      expect(shell.calls).toHaveLength(0);
+    }
+  );
 
   it("rejects unsafe workspace base paths inside the source repository", async () => {
     const sourceRepositoryPath = await createTestDirectory("workspace-source");
