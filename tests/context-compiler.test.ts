@@ -7,6 +7,7 @@ import {
   InMemorySkillProvider,
   MarkdownContextFormatter,
   StaticProjectContextProvider,
+  appendApprovedMemory,
   buildContextArtifacts,
   exportContextToRepository,
   initContextStore,
@@ -223,6 +224,41 @@ describe("ContextCompiler", () => {
     });
 
     expect(built.warnings).toContain("context file missing: context/security.md");
+  });
+
+  it("builds context packs from approved memory written to the context store", async () => {
+    const projectRoot = await createTestDirectory("context-approved-memory-project");
+    const agentHubHome = await createTestDirectory("context-approved-memory-home");
+    await initContextStore({
+      projectRoot,
+      projectId: "project_memory",
+      agentHubHome
+    });
+    await appendApprovedMemory({
+      projectRoot,
+      projectId: "project_memory",
+      memoryId: "memory_approved",
+      content: "Approved memory is available to future task briefs.",
+      approvedAt: "2026-01-01T00:00:00.000Z",
+      agentHubHome
+    });
+
+    const built = await buildContextArtifacts({
+      projectRoot,
+      projectId: "project_memory",
+      taskId: "task_memory",
+      title: "Use approved memory",
+      prompt: "Build context with approved memory",
+      selectedAgentId: "fake",
+      agentHubHome
+    });
+
+    expect(built.contextPack.approvedMemorySections.join("\n")).toContain(
+      "Approved memory is available to future task briefs."
+    );
+    expect(built.taskBrief.renderedContent).toContain(
+      "Approved memory is available to future task briefs."
+    );
   });
 
   it("exports managed blocks while preserving user content and fenced examples", async () => {

@@ -771,9 +771,10 @@ async function runCommand(
   try {
     const options = parseRunArgs(args, cwd);
     const runInput = await resolveRunInput(options, runtime);
+    const effectiveRunInput = await withAdhocProject(runInput, runtime);
 
     const result = await runtime.taskRunner.run({
-      ...runInput,
+      ...effectiveRunInput,
       workspaceBasePath: options.workspaceBasePath,
       workspaceCleanupPolicy: options.retainOnFailure ? "retain_on_failure" : undefined,
       dryRun: options.dryRun,
@@ -784,13 +785,37 @@ async function runCommand(
 
     io.stdout.write(renderRunSummary(result, options.deliveryMode ?? "runtime_injection"));
     if (inheritedDebug || options.debug) {
-      io.stdout.write(renderRunDebug(result, runInput));
+      io.stdout.write(renderRunDebug(result, effectiveRunInput));
     }
     return result.ok ? 0 : 1;
   } catch (error) {
     io.stderr.write(`error: ${error instanceof Error ? error.message : String(error)}\n`);
     return 1;
   }
+}
+
+async function withAdhocProject(
+  runInput: RunTaskInput,
+  runtime: CliRuntime
+): Promise<RunTaskInput> {
+  if (runInput.projectId !== undefined) {
+    return runInput;
+  }
+  const projectId = "adhoc_project";
+  const existingProject = await runtime.projectRepository.get(projectId);
+  if (!existingProject) {
+    const now = nowIso();
+    await runtime.projectRepository.create(
+      validateProject({
+        id: projectId,
+        name: path.basename(path.resolve(runInput.projectRoot)) || projectId,
+        rootPath: path.resolve(runInput.projectRoot),
+        createdAt: now,
+        updatedAt: now
+      })
+    );
+  }
+  return { ...runInput, projectId };
 }
 
 async function addRunEvent(
@@ -1201,6 +1226,7 @@ interface ComparisonRunSnapshot {
   changedFiles: string[];
   stat: { filesChanged: number; insertions: number; deletions: number };
   verification: string;
+  verificationOutcomes: string[];
   risk: string;
   riskFactors: string[];
   failedChecks: string[];
@@ -1235,6 +1261,18 @@ async function loadComparisonRun(
           .filter((result) => result.status === "failed")
           .map((result) => result.command)
       : metadata?.verification?.failedCommands.map((result) => result.label) ?? [];
+  const verificationOutcomes =
+    verificationRows.length > 0
+      ? verificationRows.map((result) => formatVerificationOutcome(
+          result.command,
+          result.status,
+          result.exitCode
+        ))
+      : metadata?.verification?.results.map((result) => formatVerificationOutcome(
+          result.label,
+          result.status,
+          result.exitCode ?? undefined
+        )) ?? [];
 
   return {
     runId: run.id,
@@ -1251,6 +1289,7 @@ async function loadComparisonRun(
       verificationRows.length > 0
         ? summarizeVerificationResults(verificationRows)
         : metadata?.verification?.summary ?? "not available",
+    verificationOutcomes,
     risk: riskReport?.level ?? "not available",
     riskFactors: riskReport?.riskFactors ?? [],
     failedChecks
@@ -1269,13 +1308,18 @@ function renderComparisonSummary(
     `task_id: ${taskId}`,
     `baseline: ${formatComparisonRun(baseline)}`,
     `candidate: ${formatComparisonRun(candidate)}`,
+    `baseline_diff_stats: ${formatDiffStat(baseline.stat)}`,
+    `candidate_diff_stats: ${formatDiffStat(candidate.stat)}`,
     `baseline_only_files: ${formatList(baselineOnly)}`,
     `candidate_only_files: ${formatList(candidateOnly)}`,
     `shared_files: ${formatList(shared)}`,
+    `baseline_verification_outcomes: ${formatList(baseline.verificationOutcomes)}`,
+    `candidate_verification_outcomes: ${formatList(candidate.verificationOutcomes)}`,
     `baseline_risk_factors: ${formatList(baseline.riskFactors)}`,
     `candidate_risk_factors: ${formatList(candidate.riskFactors)}`,
     `baseline_failed_checks: ${formatList(baseline.failedChecks)}`,
-    `candidate_failed_checks: ${formatList(candidate.failedChecks)}`
+    `candidate_failed_checks: ${formatList(candidate.failedChecks)}`,
+    `summary_tradeoffs: ${comparisonTradeoffs(baseline, candidate)}`
   ].join("\n");
 }
 
@@ -1289,6 +1333,60 @@ function formatComparisonRun(run: ComparisonRunSnapshot): string {
     `verification=${run.verification}`,
     `risk=${run.risk}`
   ].join(" ");
+}
+
+function formatDiffStat(stat: ComparisonRunSnapshot["stat"]): string {
+  return `${stat.filesChanged} files, +${stat.insertions}/-${stat.deletions}`;
+}
+
+function formatVerificationOutcome(
+  label: string,
+  status: string,
+  exitCode: number | undefined
+): string {
+  return exitCode === undefined
+    ? `${label}: ${status}`
+    : `${label}: ${status} (${exitCode})`;
+}
+
+function comparisonTradeoffs(
+  baseline: ComparisonRunSnapshot,
+  candidate: ComparisonRunSnapshot
+): string {
+  const notes: string[] = [];
+  if (candidate.failedChecks.length > baseline.failedChecks.length) {
+    notes.push("candidate has more failed checks");
+  } else if (candidate.failedChecks.length < baseline.failedChecks.length) {
+    notes.push("candidate has fewer failed checks");
+  }
+  if (riskRank(candidate.risk) > riskRank(baseline.risk)) {
+    notes.push("candidate has higher risk");
+  } else if (riskRank(candidate.risk) < riskRank(baseline.risk)) {
+    notes.push("candidate has lower risk");
+  }
+  if (candidate.stat.filesChanged > baseline.stat.filesChanged) {
+    notes.push("candidate changes more files");
+  } else if (candidate.stat.filesChanged < baseline.stat.filesChanged) {
+    notes.push("candidate changes fewer files");
+  }
+  return notes.length === 0
+    ? "no material tradeoff detected from stored run data"
+    : notes.join("; ");
+}
+
+function riskRank(risk: string): number {
+  switch (risk) {
+    case "low":
+      return 1;
+    case "medium":
+      return 2;
+    case "high":
+      return 3;
+    case "blocking":
+      return 4;
+    default:
+      return 0;
+  }
 }
 
 function changedFilePaths(value: unknown): string[] {

@@ -199,6 +199,31 @@ payloads to `run_artifacts`, verification command rows to
 legacy aggregate `run_metadata` remains for compatibility with existing show
 paths and is no longer the only persisted source for run inspection.
 
+Migration version 3 rebuilds the early `tasks` and `task_runs` tables to add
+the imported database constraints that SQLite cannot add in place. Existing
+valid rows are copied forward, `tasks.project_id` cascades from `projects`,
+`task_runs.agent_profile_id` references `agent_profiles` with delete-to-null
+semantics, task statuses and run statuses use enum-like `CHECK` constraints,
+and task-run agent kinds are checked at the table boundary. The migration
+guards abort before rebuilding if existing rows would violate those
+relationships or enum values.
+
+Repository implementations enforce the imported state diagrams before writing
+status updates. Tasks may move `open -> running -> completed`, return from
+`running` to `open` after a failed run, or cancel from `open`/`running`; task
+runs move through `queued -> running -> succeeded` or `failed`, with
+cancellation from `queued` or `running`; memory items move only from `proposed`
+to `approved` or `rejected`. Repeating the same status remains idempotent, but
+invalid terminal transitions are rejected in both SQLite and in-memory
+repositories.
+
+When the CLI executes an ad-hoc SQLite-backed run, it creates the local
+`adhoc_project` project row before calling the runner. That preserves the
+historical ad-hoc task id surface while satisfying the new task-to-project
+foreign key. During SQLite migration 3, legacy task project ids that do not yet
+have a `projects` row are backfilled as local legacy projects before the task
+tables are rebuilt with foreign-key constraints.
+
 Memory items remain SQLite domain records until the user explicitly acts.
 `memory propose` creates a `proposed` row, `memory reject` moves it to
 `rejected`, and `memory approve` moves it to `approved` and appends the memory
@@ -213,9 +238,9 @@ Comparison reports are generated from persisted run data rather than process
 memory or UI state. The CLI loads each selected run, diff artifacts or legacy
 metadata, verification rows, and latest risk reports, then writes a textual
 summary to `comparison_reports`. The summary includes changed-file overlap,
-per-run diff stats, verification summaries, failed checks, risk levels, and
-risk factors. Comparison is review-only and performs no accept, merge, branch
-delete, or push action.
+per-run diff stats, verification summaries, per-command verification outcomes,
+failed checks, risk levels, risk factors, and summary tradeoffs. Comparison is
+review-only and performs no accept, merge, branch delete, or push action.
 
 All adapters run against an isolated worktree and refuse to run when that
 directory is the original project root or when the generated task brief is

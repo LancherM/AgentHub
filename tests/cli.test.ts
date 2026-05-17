@@ -887,11 +887,16 @@ describe("CLI", () => {
     ]);
     expect(errors.join("")).toBe("");
     expect(output.join("")).toContain("Created comparison report");
+    expect(output.join("")).toContain("candidate_diff_stats: 2 files, +12/-0");
     expect(output.join("")).toContain("candidate_only_files: src/b.ts");
+    expect(output.join("")).toContain("candidate_verification_outcomes: pnpm lint: failed (1)");
     expect(output.join("")).toContain("verification=0 passed, 1 failed, 0 skipped");
     expect(output.join("")).toContain("risk=blocking");
     expect(output.join("")).toContain(
       "candidate_risk_factors: Sensitive file path changed. .env"
+    );
+    expect(output.join("")).toContain(
+      "summary_tradeoffs: candidate has more failed checks; candidate has higher risk; candidate changes more files"
     );
   });
 

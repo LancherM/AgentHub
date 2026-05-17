@@ -157,10 +157,10 @@ briefs.
 
 The compare workflow generates a persisted comparison report for two runs of a
 task. `compare --task-id ... --baseline ... --candidate ...` compares changed
-files, diff stats, verification summaries, failed checks, risk levels, and risk
-factors from persisted run artifacts and reports, then stores the summary in
-`comparison_reports`. It is a review aid only; it does not accept, merge, or
-push changes.
+files, diff stats, verification summaries, per-command verification outcomes,
+failed checks, risk levels, risk factors, and summary tradeoffs from persisted
+run artifacts and reports, then stores the summary in `comparison_reports`. It
+is a review aid only; it does not accept, merge, or push changes.
 
 SQLite is stored in Agent Hub-owned application data by default, not in the
 target project repository. `AGENT_HUB_HOME` can point Agent Hub at an alternate
@@ -204,6 +204,22 @@ The initialized SQLite schema covers the imported MVP table set: projects,
 agent profiles, tasks, task runs, run events, run artifacts, verification
 results, risk reports, memory items, comparison reports, skills, settings, and
 status transitions.
+
+SQLite now enforces the important imported storage constraints at the database
+boundary. Tasks reference projects with cascade delete, task runs reference
+agent profiles when one is selected, task and run status values are checked,
+agent kinds are checked, JSON columns reject invalid JSON, and run event
+sequence numbers remain unique per run. Ad-hoc CLI runs still use the
+`adhoc_project` task project id, but SQLite-backed runs create that local
+project row first so the foreign-key contract is preserved. Upgrades from
+older SQLite databases also backfill missing legacy task project rows, including
+pre-change ad-hoc tasks, before adding the stricter task foreign key.
+
+Task, task-run, and memory status changes follow the imported lifecycle rather
+than arbitrary enum changes. Failed task runs remain inspectable and return the
+parent task from `running` back to `open` so task lists and later `--task` runs
+reflect that no run is currently active. A later successful run can complete the
+task, or the user can cancel it.
 
 The product remains local-only. This rebuild does not add cloud sync, accounts,
 team features, hosted dashboards, automatic pull requests, automatic merges, or

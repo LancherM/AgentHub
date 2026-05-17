@@ -270,8 +270,13 @@ export class TaskRunner {
       createdAt,
       updatedAt: createdAt
     });
-    await this.taskRepository.create(task);
-    await this.taskRepository.updateStatus(task.id, "running", this.clock.now());
+    let currentTask = await this.taskRepository.get(task.id);
+    currentTask ??= await this.taskRepository.create(task);
+    currentTask = await this.taskRepository.updateStatus(
+      currentTask.id,
+      "running",
+      this.clock.now()
+    );
 
     const contextBundle = await this.contextCompiler.compile({
       taskPrompt: parsed.taskPrompt,
@@ -306,19 +311,25 @@ export class TaskRunner {
       await this.runEventRepository.createMany(
         toPersistedRunEvents(run.id, events, this.clock, this.idGenerator)
       );
+      await this.taskRunRepository.updateStatus(
+        run.id,
+        "running",
+        this.clock.now()
+      );
+      const failedAt = this.clock.now();
       const failedRun = await this.taskRunRepository.updateStatus(
         run.id,
         "failed",
-        this.clock.now()
+        failedAt
       );
-      const failedTask = await this.taskRepository.updateStatus(
-        task.id,
+      const reopenedTask = await this.taskRepository.updateStatus(
+        currentTask.id,
         "open",
-        this.clock.now()
+        failedAt
       );
       return this.result({
         ok: false,
-        task: failedTask,
+        task: reopenedTask,
         run: failedRun,
         events,
         status: "failed",
@@ -349,19 +360,25 @@ export class TaskRunner {
       await this.runEventRepository.createMany(
         toPersistedRunEvents(run.id, events, this.clock, this.idGenerator)
       );
+      await this.taskRunRepository.updateStatus(
+        run.id,
+        "running",
+        this.clock.now()
+      );
+      const failedAt = this.clock.now();
       const failedRun = await this.taskRunRepository.updateStatus(
         run.id,
         "failed",
-        this.clock.now()
+        failedAt
       );
-      const failedTask = await this.taskRepository.updateStatus(
-        task.id,
+      const reopenedTask = await this.taskRepository.updateStatus(
+        currentTask.id,
         "open",
-        this.clock.now()
+        failedAt
       );
       return this.result({
         ok: false,
-        task: failedTask,
+        task: reopenedTask,
         run: failedRun,
         events,
         status: "failed",
@@ -621,18 +638,6 @@ export class TaskRunner {
     }
     status = status === "succeeded" && !finalizationFailed ? "succeeded" : "failed";
 
-    let completedAt = this.clock.now();
-    let updatedRun = await this.taskRunRepository.updateStatus(
-      currentRun.id,
-      status,
-      completedAt
-    );
-    let updatedTask = await this.taskRepository.updateStatus(
-      task.id,
-      status === "succeeded" ? "completed" : "open",
-      completedAt
-    );
-
     try {
       await this.runEventRepository.createMany(
         toPersistedRunEvents(run.id, events, this.clock, this.idGenerator)
@@ -643,19 +648,20 @@ export class TaskRunner {
       if (status === "succeeded") {
         status = "failed";
         finalizationError ??= message;
-        completedAt = this.clock.now();
-        updatedRun = await this.taskRunRepository.updateStatus(
-          currentRun.id,
-          status,
-          completedAt
-        );
-        updatedTask = await this.taskRepository.updateStatus(
-          task.id,
-          "open",
-          completedAt
-        );
       }
     }
+
+    const completedAt = this.clock.now();
+    const updatedRun = await this.taskRunRepository.updateStatus(
+      currentRun.id,
+      status,
+      completedAt
+    );
+    const updatedTask = await this.taskRepository.updateStatus(
+      currentTask.id,
+      status === "succeeded" ? "completed" : "open",
+      completedAt
+    );
 
     const fakeOutput = extractFakeOutput(events);
     const errorEvent = events.find((event) => event.type === "error");
