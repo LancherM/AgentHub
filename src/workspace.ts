@@ -6,6 +6,11 @@ import {
   type ShellExecutor,
   type ShellResult
 } from "./shell-executor";
+import {
+  assertSafeLocalGitConfig,
+  safeGitCommand,
+  safeGitExecutionOptions
+} from "./git-safety";
 
 export type WorkspaceCleanupPolicy =
   | "always"
@@ -77,36 +82,37 @@ export class GitWorktreeWorkspaceManager implements WorkspaceManager {
       await fs.mkdir(path.dirname(workspacePath), { recursive: true });
     }
 
+    if (!normalized.dryRun) {
+      await assertSafeLocalGitConfig(normalized.sourceRepositoryPath);
+    }
+
     const insideCheck = await this.shellExecutor.execute(
-      { executable: "git", args: ["rev-parse", "--is-inside-work-tree"] },
-      {
+      safeGitCommand(["rev-parse", "--is-inside-work-tree"]),
+      safeGitExecutionOptions({
         cwd: normalized.sourceRepositoryPath,
         dryRun: normalized.dryRun
-      }
+      })
     );
     creationCommands.push(insideCheck);
     ensureCommandSucceeded(insideCheck, "validate source repository");
 
     const statusResult = await this.shellExecutor.execute(
-      { executable: "git", args: ["status", "--porcelain"] },
-      {
+      safeGitCommand(["status", "--porcelain"]),
+      safeGitExecutionOptions({
         cwd: normalized.sourceRepositoryPath,
         dryRun: normalized.dryRun
-      }
+      })
     );
     creationCommands.push(statusResult);
     ensureCommandSucceeded(statusResult, "check source repository status");
     const sourceRepositoryDirty = statusResult.stdout.trim().length > 0;
 
     const addResult = await this.shellExecutor.execute(
-      {
-        executable: "git",
-        args: ["worktree", "add", "-b", branchName, workspacePath, "HEAD"]
-      },
-      {
+      safeGitCommand(["worktree", "add", "-b", branchName, workspacePath, "HEAD"]),
+      safeGitExecutionOptions({
         cwd: normalized.sourceRepositoryPath,
         dryRun: normalized.dryRun
-      }
+      })
     );
     creationCommands.push(addResult);
     ensureCommandSucceeded(addResult, "create git worktree");
@@ -180,12 +186,10 @@ class GitWorktreeWorkspaceSession implements WorkspaceSession {
       };
     }
 
+    await assertSafeLocalGitConfig(this.workspace.sourceRepositoryPath);
     const removeResult = await this.shellExecutor.execute(
-      {
-        executable: "git",
-        args: ["worktree", "remove", "--force", this.workspace.path]
-      },
-      { cwd: this.workspace.sourceRepositoryPath }
+      safeGitCommand(["worktree", "remove", "--force", this.workspace.path]),
+      safeGitExecutionOptions({ cwd: this.workspace.sourceRepositoryPath })
     );
     ensureCommandSucceeded(removeResult, "remove git worktree");
     return {

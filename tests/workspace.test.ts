@@ -1,3 +1,4 @@
+import fs from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { GitWorktreeWorkspaceManager, WorkspaceError } from "../src/workspace";
@@ -24,11 +25,38 @@ describe("GitWorktreeWorkspaceManager", () => {
 
     expect(session.workspace.path.startsWith(workspaceBasePath)).toBe(true);
     expect(session.workspace.branchName).toBe("agent-hub/task_1/fake");
-    expect(shell.calls.map((call) => call.command.args?.slice(0, 2))).toEqual([
-      ["rev-parse", "--is-inside-work-tree"],
-      ["status", "--porcelain"],
-      ["worktree", "add"]
+    expect(shell.calls.map((call) => call.command.args?.join(" "))).toEqual([
+      expect.stringContaining("rev-parse --is-inside-work-tree"),
+      expect.stringContaining("status --porcelain"),
+      expect.stringContaining("worktree add")
     ]);
+    expect(shell.calls[0].command.args).toContain("core.fsmonitor=false");
+    expect(shell.calls[2].command.args).toContain("core.hooksPath=/dev/null");
+  });
+
+
+  it("rejects executable local git config before invoking git", async () => {
+    const sourceRepositoryPath = await createTestDirectory("workspace-malicious-config");
+    const workspaceBasePath = await createTestDirectory("workspace-base");
+    await fs.mkdir(path.join(sourceRepositoryPath, ".git"));
+    await fs.writeFile(
+      path.join(sourceRepositoryPath, ".git", "config"),
+      "[core]\n	fsmonitor = ./fsmonitor-poc.sh\n",
+      "utf8"
+    );
+    const shell = new MockShellExecutor();
+    const manager = new GitWorktreeWorkspaceManager(shell);
+
+    await expect(
+      manager.createSession({
+        sourceRepositoryPath,
+        workspaceBasePath,
+        taskId: "task_1",
+        runId: "run_1",
+        agentKind: "fake"
+      })
+    ).rejects.toThrow(/executable local git config/);
+    expect(shell.calls).toHaveLength(0);
   });
 
   it("rejects unsafe workspace base paths inside the source repository", async () => {
@@ -126,10 +154,9 @@ describe("GitWorktreeWorkspaceManager", () => {
     const cleanup = await session.cleanup({ successful: true });
 
     expect(cleanup.cleaned).toBe(true);
-    expect(shell.calls.at(-1)?.command.args?.slice(0, 2)).toEqual([
-      "worktree",
-      "remove"
-    ]);
+    expect(shell.calls.at(-1)?.command.args?.join(" ")).toContain(
+      "worktree remove"
+    );
   });
 
   it("supports dry-run mode without cleanup commands", async () => {

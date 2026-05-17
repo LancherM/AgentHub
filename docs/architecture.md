@@ -176,7 +176,12 @@ binary status and byte size.
 Shell usage is limited to `ShellExecutor` and `ProcessRunner` implementations.
 Git worktree, git diff, verification commands, and real agent processes use
 executable-plus-args calls with explicit cwd; task prompts are never
-interpreted as shell commands.
+interpreted as shell commands. Git operations additionally go through the
+Git safety helpers, which set non-interactive/hardened Git environment and
+command-line config overrides, disable external diff/textconv for diff
+collection, and reject repository-local Git config keys such as `core.fsmonitor`,
+`core.hooksPath`, executable filters, external diff drivers, textconv commands,
+and config includes before invoking Git.
 
 The physical monorepo split is intentionally deferred in this slice. The
 runtime behavior is stable, but the current single-package type graph still has
