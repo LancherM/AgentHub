@@ -6,6 +6,24 @@ workspace shape: `apps/cli` is a thin CLI over local packages in `packages/`.
 The desktop shell is intentionally deferred until the CLI, core APIs, and
 package boundaries are stable.
 
+## Repository Layout
+
+```text
+apps/cli                 CLI parser, interactive shell, command rendering
+packages/shared          Shared types, enums, and utility contracts
+packages/core            Domain validation and repository interfaces
+packages/db              SQLite schema, migrations, and repositories
+packages/context-compiler Context stores, context packs, briefs, and export
+packages/task-runner     Worktrees, verification, diffs, risk orchestration
+packages/agent-adapters  Fake, Codex, and Claude Code adapters
+packages/safety          Dangerous-command, sensitive-path, and risk scanning
+tests                    Cross-package Vitest coverage
+```
+
+There is no desktop app yet. Future desktop work should live under
+`apps/desktop` and call the same local core/task-runner APIs rather than adding
+a web server or duplicating orchestration logic.
+
 ## Commands
 
 ```sh
@@ -22,6 +40,7 @@ agent-hub context export --project-root <path> --project-id <project-id> --dry-r
 agent-hub [--db <path>] run --task <task-id> --agent fake|codex|claude-code
 agent-hub run [--repo <path>] [--workspace-base <path>] [--retain-on-failure] "@fake|@codex|@claude-code <task>"
 agent-hub [--db <path>] run event add --run-id <run-id> --type <type> --message <message>
+agent-hub tasks list
 agent-hub runs list
 agent-hub runs show <run-id>
 agent-hub risks show <run-id>
@@ -54,6 +73,12 @@ agent-hub [--db <path>] compare --task-id <task-id> --baseline <run-id> --candid
 - Generates persisted comparison reports for two runs of a task.
 - Does not add cloud sync, accounts, remote execution, automatic merges,
   automatic pushes, or automatic pull requests.
+
+## Current Gaps
+
+- Desktop app.
+- Automatic memory proposal generation from completed runs.
+- Richer comparison scoring beyond the persisted textual summary.
 
 ## Validation
 

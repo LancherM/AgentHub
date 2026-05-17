@@ -128,14 +128,16 @@ The MVP must support:
 
 ## Current Implementation Status
 
-The current implementation is a partial CLI-first baseline in a single root
-TypeScript package. The target `apps/` and `packages/` split is still an
-architecture goal, not the current physical layout.
+The current implementation is a CLI-first pnpm workspace with `apps/cli` and
+local core packages under `packages/`. The desktop app remains deferred, but
+the physical CLI/core package split is now present.
 
 Implemented:
 
-- Root TypeScript package with strict typechecking, Vitest tests, and clear
-  module boundaries under `src/`.
+- Root workspace scripts with strict typechecking, Vitest tests, build
+  references, and clear package boundaries under `apps/` and `packages/`.
+- `apps/cli` as the thin command-line and interactive shell over local package
+  APIs.
 - Domain models, SQLite persistence, context compilation, task running, agent
   adapters, safety scanning, risk report generation, and shared types.
 - CLI commands for project registration/listing, context store init/show,
@@ -166,7 +168,6 @@ Implemented:
 Not yet implemented:
 
 - Desktop app.
-- Physical monorepo split into `apps/` and `packages/`.
 - Automatic memory proposal generation from completed runs.
 - Richer comparison scoring beyond the current persisted textual summary.
 
@@ -191,13 +192,12 @@ Do not implement:
 
 ## Repository Structure
 
-Target structure:
+Current physical layout:
 
 ```text
 agent-hub/
   apps/
     cli/
-    desktop/
 
   packages/
     core/
@@ -208,25 +208,21 @@ agent-hub/
     safety/
     shared/
 
-  docs/
-    product.md
-    architecture.md
-    milestones.md
-    vibe-prompts.md
-```
-
-Current physical layout:
-
-```text
-agent-hub/
-  src/
   tests/
   docs/
   specs/imported/
 ```
 
-Do not restructure into the target monorepo package layout unless the user asks
-for that specific work.
+Future desktop target:
+
+```text
+agent-hub/
+  apps/
+    desktop/
+```
+
+Do not do a larger package restructure, add a desktop app, or introduce a
+browser/server architecture unless the user asks for that specific work.
 
 ## Package Responsibilities
 
@@ -238,6 +234,7 @@ The CLI is the first user-facing interface and must be able to run without the d
 
 Implemented commands:
 
+- `agent-hub`
 - `agent-hub project add`
 - `agent-hub project list`
 - `agent-hub context init`
@@ -249,6 +246,10 @@ Implemented commands:
 - `agent-hub task history`
 - `agent-hub run`
 - `agent-hub run event add`
+- `agent-hub tasks list`
+- `agent-hub runs list`
+- `agent-hub runs show`
+- `agent-hub risks show`
 - `agent-hub compare`
 - `agent-hub memory list`
 - `agent-hub memory propose`
