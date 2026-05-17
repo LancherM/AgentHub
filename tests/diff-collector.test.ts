@@ -2,8 +2,8 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import { DiffCollector } from "../src/diff-collector";
-import { NodeShellExecutor } from "../src/shell-executor";
+import { DiffCollector } from "@agent-hub/task-runner";
+import { NodeShellExecutor } from "@agent-hub/task-runner";
 import { createTestDirectory, MockShellExecutor } from "./helpers";
 
 describe("DiffCollector", () => {

@@ -5,7 +5,7 @@ import {
   ClaudeCodeAdapter,
   CodexAdapter,
   type AgentRunEvent
-} from "../src/agent-adapters";
+} from "@agent-hub/agent-adapters";
 import { createTestDirectory, MockProcessRunner } from "./helpers";
 
 describe("process-backed agent adapters", () => {

@@ -1,12 +1,13 @@
 {
-  "extends": "./tsconfig.json",
-  "compilerOptions": {
-    "declaration": true,
-    "outDir": "dist",
-    "rootDir": "src",
-    "sourceMap": true
-  },
-  "include": ["src/**/*.ts"],
-  "exclude": ["tests/**/*.ts"]
+  "files": [],
+  "references": [
+    { "path": "./packages/shared" },
+    { "path": "./packages/core" },
+    { "path": "./packages/safety" },
+    { "path": "./packages/agent-adapters" },
+    { "path": "./packages/context-compiler" },
+    { "path": "./packages/db" },
+    { "path": "./packages/task-runner" },
+    { "path": "./apps/cli" }
+  ]
 }
-

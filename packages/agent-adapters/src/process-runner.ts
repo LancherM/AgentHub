@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import path from "node:path";
 import type { Readable, Writable } from "node:stream";
-import { buildChildProcessEnv } from "./process-environment";
+import { buildChildProcessEnv } from "@agent-hub/shared";
 
 export interface ProcessRunInput {
   executable: string;

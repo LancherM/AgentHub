@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { FakeAgentAdapter, type AgentRunEvent } from "../src/agent-adapters";
+import { FakeAgentAdapter, type AgentRunEvent } from "@agent-hub/agent-adapters";
 import { createTestDirectory } from "./helpers";
 
 describe("FakeAgentAdapter", () => {

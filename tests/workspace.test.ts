@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { GitWorktreeWorkspaceManager, WorkspaceError } from "../src/workspace";
+import { GitWorktreeWorkspaceManager, WorkspaceError } from "@agent-hub/task-runner";
 import { createTestDirectory, MockShellExecutor } from "./helpers";
 
 describe("GitWorktreeWorkspaceManager", () => {

@@ -5,69 +5,32 @@ import path from "node:path";
 import {
   nowIso,
   validateContextPack,
-  validateTaskBrief,
-  type AgentKind,
-  type ContextDeliveryMode,
-  type ContextPack,
-  type ContextStoreMode,
-  type TaskBrief
-} from "./domain";
+  validateTaskBrief
+} from "@agent-hub/core";
+import type {
+  AgentKind,
+  ContextBundle,
+  ContextDeliveryMode,
+  ContextPack,
+  ContextSection,
+  ContextStoreMode,
+  ContextSourceKind,
+  MemoryContextItem,
+  ProjectContext,
+  SkillContextItem,
+  TargetRepositoryMetadata,
+  TaskBrief
+} from "@agent-hub/shared";
 
-export type ContextSourceKind =
-  | "task"
-  | "agent"
-  | "repository"
-  | "project"
-  | "memory"
-  | "skill"
-  | "user_constraint"
-  | "execution_hint";
-
-export interface TargetRepositoryMetadata {
-  id: string;
-  name: string;
-  rootPath: string;
-}
-
-export interface ContextSource {
-  kind: ContextSourceKind;
-  id: string;
-  label: string;
-}
-
-export interface ContextSection {
-  id: string;
-  title: string;
-  body: string;
-  source: ContextSource;
-  order: number;
-}
-
-export interface ContextBundle {
-  id: string;
-  taskPrompt: string;
-  selectedAgentId: AgentKind;
-  targetRepository: TargetRepositoryMetadata;
-  sections: ContextSection[];
-  warnings: string[];
-}
-
-export interface MemoryContextItem {
-  id: string;
-  content: string;
-}
-
-export interface SkillContextItem {
-  id: string;
-  name: string;
-  description: string;
-  content?: string;
-}
-
-export interface ProjectContext {
-  summary?: string;
-  warnings?: string[];
-}
+export type {
+  ContextBundle,
+  ContextSection,
+  ContextSourceKind,
+  MemoryContextItem,
+  ProjectContext,
+  SkillContextItem,
+  TargetRepositoryMetadata
+} from "@agent-hub/shared";
 
 export interface ContextStoreConfig {
   projectRoot: string;

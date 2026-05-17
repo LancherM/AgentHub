@@ -1,245 +1,41 @@
 import path from "node:path";
-import { randomUUID } from "node:crypto";
+import {
+  DomainValidationError,
+  agentKinds,
+  contextDeliveryModes,
+  memoryCategories,
+  memoryStatuses,
+  riskLevels,
+  runEventTypes,
+  taskRunStatuses,
+  taskStatuses,
+  verificationStatuses,
+  type AgentProfile,
+  type ComparisonReport,
+  type ContextPack,
+  type MemoryItem,
+  type MemoryStatus,
+  type Project,
+  type RiskReport,
+  type RunArtifact,
+  type RunEvent,
+  type Setting,
+  type Skill,
+  type Task,
+  type TaskBrief,
+  type TaskRun,
+  type TaskRunStatus,
+  type TaskStatus,
+  type VerificationResult
+} from "@agent-hub/shared";
 
-export const agentKinds = ["fake", "codex", "claude-code"] as const;
-export type AgentKind = (typeof agentKinds)[number];
-
-export const contextDeliveryModes = [
-  "runtime_injection",
-  "worktree_overlay",
-  "repo_export"
-] as const;
-export type ContextDeliveryMode = (typeof contextDeliveryModes)[number];
-
-export const contextStoreModes = ["external", "repo_local"] as const;
-export type ContextStoreMode = (typeof contextStoreModes)[number];
-
-export const taskStatuses = ["open", "running", "completed", "cancelled"] as const;
-export type TaskStatus = (typeof taskStatuses)[number];
-
-export const taskRunStatuses = [
-  "queued",
-  "running",
-  "succeeded",
-  "failed",
-  "cancelled"
-] as const;
-export type TaskRunStatus = (typeof taskRunStatuses)[number];
-
-export const runEventTypes = [
-  "stdout",
-  "stderr",
-  "message",
-  "status",
-  "error",
-  "exit"
-] as const;
-export type RunEventType = (typeof runEventTypes)[number];
-
-export const verificationStatuses = ["passed", "failed", "skipped"] as const;
-export type VerificationStatus = (typeof verificationStatuses)[number];
-
-export const memoryCategories = [
-  "project_fact",
-  "workflow_rule",
-  "user_preference",
-  "temporary_note"
-] as const;
-export type MemoryCategory = (typeof memoryCategories)[number];
-
-export const memoryStatuses = ["proposed", "approved", "rejected"] as const;
-export type MemoryStatus = (typeof memoryStatuses)[number];
-
-export const riskLevels = ["low", "medium", "high", "blocking"] as const;
-export type RiskLevel = (typeof riskLevels)[number];
-
-export type JsonObject = Record<string, unknown>;
-
-export interface Project {
-  id: string;
-  name: string;
-  rootPath: string;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface AgentProfile {
-  id: string;
-  kind: AgentKind;
-  displayName: string;
-  command?: string;
-  enabled: boolean;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface Task {
-  id: string;
-  projectId: string;
-  title: string;
-  description?: string;
-  status: TaskStatus;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface TaskRun {
-  id: string;
-  taskId: string;
-  agentProfileId?: string;
-  agentKind: AgentKind;
-  status: TaskRunStatus;
-  worktreePath?: string;
-  branchName?: string;
-  startedAt?: string;
-  completedAt?: string;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface RunEvent {
-  id: string;
-  taskRunId: string;
-  sequence: number;
-  type: RunEventType;
-  message: string;
-  metadata: JsonObject;
-  createdAt: string;
-}
-
-export interface RunArtifact {
-  id: string;
-  taskRunId: string;
-  kind: string;
-  content: string;
-  metadata: JsonObject;
-  createdAt: string;
-}
-
-export interface VerificationResult {
-  id: string;
-  taskRunId: string;
-  command: string;
-  status: VerificationStatus;
-  exitCode?: number;
-  stdout?: string;
-  stderr?: string;
-  startedAt?: string;
-  completedAt?: string;
-  createdAt: string;
-}
-
-export interface ComparisonReport {
-  id: string;
-  taskId: string;
-  baselineRunId?: string;
-  candidateRunId?: string;
-  summary: string;
-  createdAt: string;
-}
-
-export interface MemoryItem {
-  id: string;
-  projectId: string;
-  taskId?: string;
-  category: MemoryCategory;
-  status: MemoryStatus;
-  content: string;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface RiskFinding {
-  level: RiskLevel;
-  summary: string;
-  details?: string;
-}
-
-export interface RiskReport {
-  id: string;
-  taskRunId: string;
-  level: RiskLevel;
-  summary: string;
-  changedFiles: string[];
-  verificationSummary: string;
-  failedChecks: string[];
-  riskFactors: string[];
-  manualReviewChecklist: string[];
-  acceptanceRecommendation: string;
-  findings: RiskFinding[];
-  createdAt: string;
-}
-
-export interface Skill {
-  id: string;
-  projectId?: string;
-  name: string;
-  description: string;
-  path: string;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface Setting {
-  key: string;
-  value: unknown;
-  updatedAt: string;
-}
-
-export interface ContextPack {
-  id: string;
-  projectId: string;
-  taskId: string;
-  taskTitle?: string;
-  taskPrompt?: string;
-  deliveryMode: ContextDeliveryMode;
-  contextSections: string[];
-  approvedMemorySections: string[];
-  skillReferences: string[];
-  createdAt: string;
-}
-
-export interface TaskBrief {
-  taskId: string;
-  taskTitle: string;
-  taskPrompt?: string;
-  renderedContent: string;
-  contextPackId: string;
-  createdAt: string;
-}
-
-export class DomainValidationError extends Error {
-  readonly issues: string[];
-
-  constructor(issues: string[]) {
-    super(`Invalid domain object: ${issues.join("; ")}`);
-    this.name = "DomainValidationError";
-    this.issues = issues;
-  }
-}
+export * from "@agent-hub/shared";
 
 export class DomainStateTransitionError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "DomainStateTransitionError";
   }
-}
-
-export function nowIso(): string {
-  return new Date().toISOString();
-}
-
-export function createId(prefix: string): string {
-  const cleanPrefix = prefix.trim().replace(/[^a-z0-9_-]+/gi, "_");
-  if (cleanPrefix.length === 0) {
-    throw new DomainValidationError(["id prefix is required"]);
-  }
-
-  return `${cleanPrefix}_${randomUUID()}`;
-}
-
-export function parseAgentKind(value: string): AgentKind {
-  return parseEnum(value, agentKinds, "agent kind");
 }
 
 export function validateTaskStatusTransition(
@@ -516,18 +312,6 @@ function enumValue<T extends readonly string[]>(
   if (typeof value !== "string" || !values.includes(value)) {
     issues.push(`${field} must be one of ${values.join(", ")}`);
   }
-}
-
-function parseEnum<T extends readonly string[]>(
-  value: string,
-  values: T,
-  label: string
-): T[number] {
-  if (values.includes(value)) {
-    return value;
-  }
-
-  throw new DomainValidationError([`${label} must be one of ${values.join(", ")}`]);
 }
 
 const taskStatusTransitions: Record<TaskStatus, readonly TaskStatus[]> = {

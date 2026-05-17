@@ -1,7 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import type { ContextBundle } from "./context-compiler";
-import type { AgentKind, JsonObject } from "./domain";
+import type { AgentKind, ContextBundle, JsonObject } from "@agent-hub/shared";
 import { NodeProcessRunner, type ProcessRunner } from "./process-runner";
 
 export interface AgentDetectionResult {
@@ -43,6 +42,31 @@ export interface AgentAdapter {
   displayName: string;
   detect(): Promise<AgentDetectionResult>;
   run(input: AgentRunInput): AsyncIterable<AgentRunEvent>;
+}
+
+export interface AgentRegistry {
+  get(agentKind: AgentKind): AgentAdapter | undefined;
+  list(): AgentAdapter[];
+}
+
+export class DefaultAgentRegistry implements AgentRegistry {
+  private readonly adapters = new Map<AgentKind, AgentAdapter>();
+
+  constructor(adapters: AgentAdapter[] = []) {
+    for (const adapter of adapters) {
+      this.adapters.set(adapter.kind, adapter);
+    }
+  }
+
+  get(agentKind: AgentKind): AgentAdapter | undefined {
+    return this.adapters.get(agentKind);
+  }
+
+  list(): AgentAdapter[] {
+    return [...this.adapters.values()].sort((left, right) =>
+      left.kind.localeCompare(right.kind)
+    );
+  }
 }
 
 export interface FakeAgentAdapterOptions {

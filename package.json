@@ -4,10 +4,10 @@
   "private": true,
   "description": "Local-first CLI for orchestrating coding agents.",
   "bin": {
-    "agent-hub": "./dist/cli.js"
+    "agent-hub": "./apps/cli/dist/cli.js"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
+    "build": "tsc -b tsconfig.build.json",
     "typecheck": "tsc --noEmit --pretty false -p tsconfig.json",
     "test": "vitest run",
     "lint": "tsc --noEmit --pretty false -p tsconfig.json"
@@ -18,6 +18,10 @@
     "typescript": "5.7.2",
     "vitest": "1.6.0"
   },
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
   "pnpm": {
     "onlyBuiltDependencies": ["esbuild"]
   },

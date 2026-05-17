@@ -36,7 +36,7 @@ import {
   type TaskStatus,
   type VerificationResult,
   type VerificationStatus
-} from "./domain";
+} from "@agent-hub/core";
 import {
   cloneRunMetadata,
   type AgentProfileRepository,
@@ -54,7 +54,7 @@ import {
   type TaskRepository,
   type TaskRunRepository,
   type VerificationResultRepository
-} from "./storage";
+} from "@agent-hub/core";
 
 export interface SqliteStorageOptions {
   databasePath?: string;

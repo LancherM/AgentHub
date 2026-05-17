@@ -1,14 +1,18 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import type { AgentRunEvent } from "./agent-adapters";
+import type { AgentRunEvent } from "@agent-hub/agent-adapters";
 import {
   ClaudeCodeAdapter,
   CodexAdapter,
+  DefaultAgentRegistry,
   FakeAgentAdapter,
-  isPathInside
-} from "./agent-adapters";
-import { parseAgentPrompt } from "./agent-parser";
+  isPathInside,
+  NodeProcessRunner,
+  parseAgentPrompt,
+  type AgentRegistry,
+  type ProcessRunner
+} from "@agent-hub/agent-adapters";
 import {
   DefaultContextCompiler,
   MarkdownContextFormatter,
@@ -20,7 +24,7 @@ import {
   type ContextCompilerInput,
   type ContextFormatter,
   type TargetRepositoryMetadata
-} from "./context-compiler";
+} from "@agent-hub/context-compiler";
 import { DiffCollector, type DiffCollectionResult, type DiffCollectorService } from "./diff-collector";
 import {
   createId,
@@ -40,12 +44,10 @@ import {
   type TaskBrief,
   type TaskRun,
   type VerificationResult
-} from "./domain";
-import { RiskReportGenerator } from "./risk-report";
-import { NodeProcessRunner, type ProcessRunner } from "./process-runner";
+} from "@agent-hub/core";
+import { RiskReportGenerator } from "@agent-hub/safety";
 import { formatShellCommand, NodeShellExecutor, type ShellExecutor } from "./shell-executor";
 import {
-  DefaultAgentRegistry,
   InMemoryRiskReportRepository,
   InMemoryRunArtifactRepository,
   InMemoryRunEventRepository,
@@ -53,7 +55,6 @@ import {
   InMemoryTaskRepository,
   InMemoryTaskRunRepository,
   InMemoryVerificationResultRepository,
-  type AgentRegistry,
   type RiskReportRepository,
   type RunArtifactRepository,
   type RunEventRepository,
@@ -63,7 +64,7 @@ import {
   type TaskRepository,
   type TaskRunRepository,
   type VerificationResultRepository
-} from "./storage";
+} from "@agent-hub/core";
 import {
   VerificationRunner,
   type VerificationCommand,

@@ -1,5 +1,9 @@
-import type { RiskFinding, RiskLevel } from "./domain";
-import type { ChangedFile, DiffCollectionResult } from "./diff-collector";
+import type {
+  ChangedFile,
+  DiffCollectionResult,
+  RiskFinding,
+  RiskLevel
+} from "@agent-hub/shared";
 import { detectDangerousCommandText } from "./dangerous-commands";
 
 export type SafetyFindingCategory =

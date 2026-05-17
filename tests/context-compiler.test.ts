@@ -15,7 +15,7 @@ import {
   replaceManagedBlock,
   safeWriteFile,
   type MemoryProvider
-} from "../src/context-compiler";
+} from "@agent-hub/context-compiler";
 import { createTestDirectory } from "./helpers";
 
 const baseInput = {

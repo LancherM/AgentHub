@@ -1,0 +1,18 @@
+{
+  "name": "@agent-hub/cli",
+  "version": "0.0.0",
+  "private": true,
+  "type": "commonjs",
+  "bin": {
+    "agent-hub": "./dist/cli.js"
+  },
+  "main": "./dist/cli.js",
+  "types": "./dist/cli.d.ts",
+  "dependencies": {
+    "@agent-hub/agent-adapters": "workspace:*",
+    "@agent-hub/context-compiler": "workspace:*",
+    "@agent-hub/core": "workspace:*",
+    "@agent-hub/db": "workspace:*",
+    "@agent-hub/task-runner": "workspace:*"
+  }
+}
