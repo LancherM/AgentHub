@@ -162,7 +162,8 @@ and common shell-wrapped variants of `sudo`, `rm -rf /`, `chmod -R 777`,
 `curl | sh`, `wget | sh`, `git push --force`, and `git clean -fdx`. Blocking
 findings remain `blocking` in the aggregated risk level and are surfaced in
 `risks show`; they are not downgraded to high. Agent Hub still does not
-automatically accept, merge, or push any run output.
+automatically accept, merge, or push any run output. Debug run output redacts
+the raw diff preview when a blocking sensitive-path finding exists.
 
 The memory workflow is explicit and user-approved. `memory propose` creates a
 SQLite memory item in `proposed` state, `memory list` shows project memory
@@ -170,7 +171,8 @@ items, `memory approve` marks an item approved and appends it to the Agent
 Hub-owned context store at `memory/approved.md`, and `memory reject` marks it
 rejected. Context builds read approved memory only from the context store, so
 proposed and rejected SQLite memory items are not injected into future task
-briefs.
+briefs. A newly initialized `# Approved Memory` placeholder is ignored until an
+actual approved memory entry is appended.
 
 The compare workflow generates a persisted comparison report for two runs of a
 task. `compare --task-id ... --baseline ... --candidate ...` compares changed
