@@ -75,8 +75,9 @@ layer only; it does not create a second orchestration implementation.
 
 Run output rendering is also a CLI concern. Normal `run` output shows the
 agent-facing output extracted from fake output, structured message/error
-events, structured adapter status events, or raw non-JSON stdout/stderr
-fallbacks. It does not show Agent Hub run metadata by default, and
+events, or raw non-JSON stdout/stderr fallbacks. Structured lifecycle/status
+events are persisted for inspection and debug output but are not rendered as
+normal agent output. It does not show Agent Hub run metadata by default, and
 interactive mode does not echo prompt dispatch lines unless debug rendering is
 enabled.
 

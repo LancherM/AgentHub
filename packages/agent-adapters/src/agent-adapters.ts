@@ -572,13 +572,14 @@ class StructuredOutputParser {
     const type = String(
       adapterEvent.type ?? adapterEvent.event ?? adapterEvent.kind ?? "event"
     );
-    const message = structuredMessage(adapterEvent) ?? `${this.displayName} ${type}`;
+    const structuredOutput = structuredMessage(adapterEvent);
+    const message = structuredOutput ?? `${this.displayName} ${type}`;
     const metadata = { adapterEvent };
 
     if (/error|failed|failure/i.test(type)) {
       return [{ type: "error", message, metadata }];
     }
-    if (/message|assistant|agent|result/i.test(type)) {
+    if (structuredOutput !== undefined || /message|assistant|agent|result/i.test(type)) {
       return [{ type: "message", message, metadata }];
     }
     return [{ type: "status", message, metadata }];
@@ -586,19 +587,42 @@ class StructuredOutputParser {
 }
 
 function structuredMessage(event: JsonObject): string | undefined {
-  for (const key of ["message", "content", "text", "summary", "result"]) {
+  for (const key of ["message", "content", "text", "summary", "result", "item", "delta"]) {
     const value = event[key];
-    if (typeof value === "string" && value.trim().length > 0) {
-      return value;
+    const text = structuredTextFromValue(value);
+    if (text !== undefined) {
+      return text;
     }
-    if (value && typeof value === "object" && !Array.isArray(value)) {
-      const nested = value as JsonObject;
-      for (const nestedKey of ["content", "text", "message"]) {
-        const nestedValue = nested[nestedKey];
-        if (typeof nestedValue === "string" && nestedValue.trim().length > 0) {
-          return nestedValue;
-        }
-      }
+  }
+  return undefined;
+}
+
+function structuredTextFromValue(value: JsonObject[string], depth = 0): string | undefined {
+  if (depth > 4 || value === undefined || value === null) {
+    return undefined;
+  }
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : undefined;
+  }
+  if (Array.isArray(value)) {
+    const parts = value
+      .map((entry) => structuredTextFromValue(entry as JsonObject[string], depth + 1))
+      .filter((entry): entry is string => entry !== undefined);
+    return parts.length > 0 ? parts.join("\n") : undefined;
+  }
+  if (typeof value !== "object") {
+    return undefined;
+  }
+
+  const nested = value as JsonObject;
+  if (typeof nested.type === "string" && /reasoning/i.test(nested.type)) {
+    return undefined;
+  }
+  for (const key of ["text", "message", "content", "result", "summary", "delta", "item"]) {
+    const text = structuredTextFromValue(nested[key], depth + 1);
+    if (text !== undefined) {
+      return text;
     }
   }
   return undefined;

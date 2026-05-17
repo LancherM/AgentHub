@@ -72,7 +72,13 @@ describe("CLI", () => {
       verificationRunner: new VerificationRunner(new MockShellExecutor()),
       processRunner: new MockProcessRunner([
         [
-          { type: "stdout", data: "{\"type\":\"agent_message\",\"message\":\"codex ok\"}\n" },
+          { type: "stdout", data: "{\"type\":\"thread.started\"}\n" },
+          { type: "stdout", data: "{\"type\":\"turn.started\"}\n" },
+          {
+            type: "stdout",
+            data: "{\"type\":\"item.completed\",\"item\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"codex ok\"}]}}\n"
+          },
+          { type: "stdout", data: "{\"type\":\"turn.completed\"}\n" },
           { type: "exit", exitCode: 0, signal: null }
         ],
         [
@@ -106,6 +112,10 @@ describe("CLI", () => {
     expect(errors.join("")).toBe("");
     expect(output.join("")).toContain("codex ok");
     expect(output.join("")).toContain("claude ok");
+    expect(output.join("")).not.toContain("Codex thread.started");
+    expect(output.join("")).not.toContain("Codex turn.started");
+    expect(output.join("")).not.toContain("Codex item.completed");
+    expect(output.join("")).not.toContain("Codex turn.completed");
     expect(output.join("")).not.toContain("agent: codex");
     expect(output.join("")).not.toContain("agent: claude-code");
   });

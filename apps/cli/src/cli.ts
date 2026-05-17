@@ -1485,19 +1485,6 @@ function extractAgentOutput(result: CliRunResult): string {
     return structuredOutput.join("\n");
   }
 
-  const structuredStatus = result.events
-    .filter(
-      (event) =>
-        event.type === "status" &&
-        event.metadata !== undefined &&
-        typeof event.metadata.adapterEvent === "object"
-    )
-    .map((event) => event.message.trim())
-    .filter(Boolean);
-  if (structuredStatus.length > 0) {
-    return structuredStatus.join("\n");
-  }
-
   return result.events
     .filter((event) => event.type === "stdout" || event.type === "stderr")
     .flatMap((event) => humanReadableRawLines(event.message))

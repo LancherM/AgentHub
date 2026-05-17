@@ -105,9 +105,9 @@ an untrusted worktree cannot be captured as task brief artifact contents.
 
 Normal run output is optimized for CLI use and shows the agent-facing output
 only. Agent Hub extracts fake-agent output, structured message/error events,
-structured adapter status events, or raw non-JSON stdout/stderr fallbacks
-instead of printing run metadata after every task. Interactive mode follows
-the same rule and does not echo `run: <prompt>` in normal mode.
+or raw non-JSON stdout/stderr fallbacks instead of printing run metadata or
+adapter lifecycle events after every task. Interactive mode follows the same
+rule and does not echo `run: <prompt>` in normal mode.
 
 Manual event recording is available for persisted task runs:
 `run event add --run-id ... --type ... --message ...`. The command validates
