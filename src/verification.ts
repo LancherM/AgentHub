@@ -32,6 +32,7 @@ export interface VerificationCommandResult {
   stdout: string;
   stderr: string;
   exitCode: number | null;
+  signal?: NodeJS.Signals | string | null;
   durationMs: number;
   timedOut: boolean;
   dryRun: boolean;
@@ -79,13 +80,18 @@ export class VerificationRunner {
       }
 
       const shellCommand = toShellCommand(command);
-      assertSafeShellCommand(shellCommand);
-      const shellResult = await this.shellExecutor.execute(shellCommand, {
-        cwd: input.cwd,
-        timeoutMs: command.timeoutMs,
-        dryRun: input.dryRun
-      });
-      const result = toVerificationResult(command, shellResult, input.dryRun ?? false);
+      let result: VerificationCommandResult;
+      try {
+        assertSafeShellCommand(shellCommand);
+        const shellResult = await this.shellExecutor.execute(shellCommand, {
+          cwd: input.cwd,
+          timeoutMs: command.timeoutMs,
+          dryRun: input.dryRun
+        });
+        result = toVerificationResult(command, shellResult, input.dryRun ?? false);
+      } catch (error) {
+        result = failedVerificationResult(command, shellCommand, error);
+      }
       results.push(result);
 
       if (result.status === "failed" && shouldStopOnFailure(command, input)) {
@@ -127,11 +133,34 @@ function toVerificationResult(
     stdout: shellResult.stdout,
     stderr: shellResult.stderr,
     exitCode: shellResult.exitCode,
+    signal: shellResult.signal,
     durationMs: shellResult.durationMs,
     timedOut: shellResult.timedOut,
     dryRun: shellResult.dryRun,
     skippedReason: dryRun ? "Dry-run mode did not execute this command." : undefined,
     error: shellResult.error
+  };
+}
+
+function failedVerificationResult(
+  command: VerificationCommand,
+  shellCommand: ShellCommand,
+  error: unknown
+): VerificationCommandResult {
+  const message = error instanceof Error ? error.message : String(error);
+  return {
+    commandId: command.id,
+    label: command.label ?? command.id,
+    command: shellCommand,
+    status: "failed",
+    stdout: "",
+    stderr: message,
+    exitCode: null,
+    signal: null,
+    durationMs: 0,
+    timedOut: false,
+    dryRun: false,
+    error: message
   };
 }
 

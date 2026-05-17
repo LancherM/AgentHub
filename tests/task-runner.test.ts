@@ -5,9 +5,14 @@ import { CodexAdapter, FakeAgentAdapter } from "../src/agent-adapters";
 import {
   DefaultContextCompiler,
   InMemoryMemoryProvider,
+  initContextStore,
   MarkdownContextFormatter
 } from "../src/context-compiler";
-import type { DiffCollectionResult, DiffCollectorService } from "../src/diff-collector";
+import type {
+  DiffCollectionInput,
+  DiffCollectionResult,
+  DiffCollectorService
+} from "../src/diff-collector";
 import {
   DefaultAgentRegistry,
   InMemoryRiskReportRepository,
@@ -290,6 +295,236 @@ describe("task runner", () => {
     expect(result.riskReport?.level).toBe("high");
     expect(result.workspaceCleanup?.retained).toBe(true);
   });
+
+  it("runs verification commands with cwd set to the worktree", async () => {
+    const projectRoot = await createTestDirectory("agent-hub-project");
+    const runRoot = await createTestDirectory("agent-hub-runs");
+    const shell = new MockShellExecutor([{ exitCode: 0, stdout: "ok\n" }]);
+    const runner = new TaskRunner({
+      defaultRunRoot: runRoot,
+      workspaceManager: new TestWorkspaceManager(runRoot),
+      diffCollector: new StaticDiffCollector(),
+      verificationRunner: new VerificationRunner(shell),
+      idGenerator: new SequenceIdGenerator(),
+      clock: new FixedClock("2026-01-01T00:00:00.000Z")
+    });
+
+    const result = await runner.run({
+      projectRoot,
+      rawPrompt: "@fake verify cwd",
+      verificationCommands: [{ id: "test", command: "pnpm", args: ["test"] }]
+    });
+
+    expect(result.status).toBe("succeeded");
+    expect(shell.calls[0].options.cwd).toBe(result.worktreePath);
+  });
+
+  it("converts dangerous verification commands into an inspectable failed run", async () => {
+    const projectRoot = await createTestDirectory("agent-hub-project");
+    const runRoot = await createTestDirectory("agent-hub-runs");
+    const runEventRepository = new InMemoryRunEventRepository();
+    const runner = new TaskRunner({
+      defaultRunRoot: runRoot,
+      workspaceManager: new TestWorkspaceManager(runRoot),
+      diffCollector: new StaticDiffCollector(),
+      verificationRunner: new VerificationRunner(new MockShellExecutor()),
+      runEventRepository,
+      idGenerator: new SequenceIdGenerator(),
+      clock: new FixedClock("2026-01-01T00:00:00.000Z")
+    });
+
+    const result = await runner.run({
+      projectRoot,
+      rawPrompt: "@fake reject dangerous verification",
+      verificationCommands: [{ id: "danger", command: "sudo", args: ["true"] }]
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.status).toBe("failed");
+    expect(result.verification?.failedCommands[0]).toMatchObject({
+      commandId: "danger",
+      stderr: expect.stringContaining("refusing to execute dangerous command")
+    });
+    await expect(runEventRepository.listByRunId(result.run.id)).resolves.toEqual([
+      expect.objectContaining({ type: "stdout" }),
+      expect.objectContaining({ type: "exit" })
+    ]);
+  });
+
+  it("finalizes a failed run when diff collection throws", async () => {
+    const projectRoot = await createTestDirectory("agent-hub-project");
+    const runRoot = await createTestDirectory("agent-hub-runs");
+    const taskRunRepository = new InMemoryTaskRunRepository();
+    const runEventRepository = new InMemoryRunEventRepository();
+    const runner = new TaskRunner({
+      defaultRunRoot: runRoot,
+      workspaceManager: new TestWorkspaceManager(runRoot),
+      diffCollector: new ThrowingDiffCollector("git exploded"),
+      verificationRunner: new VerificationRunner(new MockShellExecutor()),
+      taskRunRepository,
+      runEventRepository,
+      idGenerator: new SequenceIdGenerator(),
+      clock: new FixedClock("2026-01-01T00:00:00.000Z")
+    });
+
+    const result = await runner.run({
+      projectRoot,
+      rawPrompt: "@fake inspect failed finalization",
+      workspaceCleanupPolicy: "always"
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.status).toBe("failed");
+    expect(result.diff).toMatchObject({ ok: false, error: "git exploded" });
+    expect(result.workspaceCleanup?.cleaned).toBe(true);
+    await expect(taskRunRepository.get(result.run.id)).resolves.toMatchObject({
+      status: "failed",
+      completedAt: "2026-01-01T00:00:00.000Z"
+    });
+    await expect(runEventRepository.listByRunId(result.run.id)).resolves.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "error",
+          message: "diff collection failed: git exploded"
+        })
+      ])
+    );
+  });
+
+  it("returns a structured failed run when artifact persistence throws", async () => {
+    const projectRoot = await createTestDirectory("agent-hub-project");
+    const runRoot = await createTestDirectory("agent-hub-runs");
+    const runEventRepository = new InMemoryRunEventRepository();
+    const runner = new TaskRunner({
+      defaultRunRoot: runRoot,
+      workspaceManager: new TestWorkspaceManager(runRoot),
+      diffCollector: new StaticDiffCollector(),
+      verificationRunner: new VerificationRunner(new MockShellExecutor()),
+      runArtifactRepository: new ThrowingRunArtifactRepository("artifact disk full"),
+      runEventRepository,
+      idGenerator: new SequenceIdGenerator(),
+      clock: new FixedClock("2026-01-01T00:00:00.000Z")
+    });
+
+    const result = await runner.run({
+      projectRoot,
+      rawPrompt: "@fake persist artifact failure"
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.status).toBe("failed");
+    expect(result.error).toBe("diff artifact persistence failed: artifact disk full");
+    await expect(runEventRepository.listByRunId(result.run.id)).resolves.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "error",
+          message: "diff artifact persistence failed: artifact disk full"
+        })
+      ])
+    );
+  });
+
+  it("returns a structured failed run when workspace cleanup throws", async () => {
+    const projectRoot = await createTestDirectory("agent-hub-project");
+    const runRoot = await createTestDirectory("agent-hub-runs");
+    const runEventRepository = new InMemoryRunEventRepository();
+    const runner = new TaskRunner({
+      defaultRunRoot: runRoot,
+      workspaceManager: new TestWorkspaceManager(runRoot, {
+        cleanup: async () => {
+          throw new Error("remove failed");
+        }
+      }),
+      diffCollector: new StaticDiffCollector(),
+      verificationRunner: new VerificationRunner(new MockShellExecutor()),
+      runEventRepository,
+      idGenerator: new SequenceIdGenerator(),
+      clock: new FixedClock("2026-01-01T00:00:00.000Z")
+    });
+
+    const result = await runner.run({
+      projectRoot,
+      rawPrompt: "@fake cleanup failure",
+      workspaceCleanupPolicy: "always"
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.status).toBe("failed");
+    expect(result.workspaceCleanup).toMatchObject({
+      cleaned: false,
+      retained: true,
+      reason: "workspace cleanup failed: remove failed"
+    });
+    await expect(runEventRepository.listByRunId(result.run.id)).resolves.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "error",
+          message: "workspace cleanup failed: remove failed"
+        })
+      ])
+    );
+  });
+
+  it("propagates worktree overlay warnings and generated file baselines", async () => {
+    const projectRoot = await createTestDirectory("agent-hub-project");
+    const runRoot = await createTestDirectory("agent-hub-runs");
+    const agentHubHome = await createTestDirectory("agent-hub-context-home");
+    const initialized = await initContextStore({
+      projectRoot,
+      projectId: "project_1",
+      agentHubHome
+    });
+    await fs.mkdir(path.join(initialized.storeRoot, "skills", "review"), {
+      recursive: true
+    });
+    await fs.writeFile(
+      path.join(initialized.storeRoot, "skills", "review", "SKILL.md"),
+      "Generated skill.\n",
+      "utf8"
+    );
+    const diffCollector = new RecordingDiffCollector();
+    const runner = new TaskRunner({
+      defaultRunRoot: runRoot,
+      workspaceManager: new TestWorkspaceManager(runRoot, {
+        beforeRun: async (workspacePath) => {
+          const conflictPath = path.join(
+            workspacePath,
+            ".claude",
+            "skills",
+            "review",
+            "SKILL.md"
+          );
+          await fs.mkdir(path.dirname(conflictPath), { recursive: true });
+          await fs.writeFile(conflictPath, "User skill.\n", "utf8");
+        }
+      }),
+      diffCollector,
+      verificationRunner: new VerificationRunner(new MockShellExecutor()),
+      idGenerator: new SequenceIdGenerator(),
+      clock: new FixedClock("2026-01-01T00:00:00.000Z")
+    });
+
+    const result = await runner.run({
+      projectRoot,
+      rawPrompt: "@fake overlay warning",
+      deliveryMode: "worktree_overlay",
+      contextStoreRoot: initialized.storeRoot
+    });
+
+    expect(result.warnings).toContain(
+      ".claude/skills/review/SKILL.md already exists and was not overwritten"
+    );
+    expect(diffCollector.inputs[0].generatedFileBaselines?.map((entry) => entry.path))
+      .toEqual(expect.arrayContaining([
+        ".agent-hub/tasks/task_0001/brief.md",
+        ".agent-hub/tasks/task_0001/context-pack.json",
+        "AGENTS.md",
+        "CLAUDE.md",
+        ".agents/skills/review/SKILL.md"
+      ]));
+    expect(diffCollector.inputs[0].generatedFileBaselines?.map((entry) => entry.path))
+      .not.toContain(".claude/skills/review/SKILL.md");
+  });
 });
 
 function createTestRunner(runRoot: string): TaskRunner {
@@ -303,12 +538,21 @@ function createTestRunner(runRoot: string): TaskRunner {
   });
 }
 
+interface TestWorkspaceManagerOptions {
+  beforeRun?: (workspacePath: string) => Promise<void>;
+  cleanup?: WorkspaceSession["cleanup"];
+}
+
 class TestWorkspaceManager implements WorkspaceManager {
-  constructor(private readonly runRoot: string) {}
+  constructor(
+    private readonly runRoot: string,
+    private readonly options: TestWorkspaceManagerOptions = {}
+  ) {}
 
   async createSession(config: WorkspaceConfig): Promise<WorkspaceSession> {
     const workspacePath = path.join(this.runRoot, `${config.taskId}-${config.agentKind}`);
     await fs.mkdir(workspacePath, { recursive: true });
+    await this.options.beforeRun?.(workspacePath);
     return {
       workspace: {
         path: workspacePath,
@@ -323,7 +567,7 @@ class TestWorkspaceManager implements WorkspaceManager {
         cleanupPolicy: config.cleanupPolicy ?? "never"
       },
       creationCommands: [],
-      cleanup: async ({ successful }) => {
+      cleanup: this.options.cleanup ?? (async ({ successful }) => {
         if (config.cleanupPolicy === "retain_on_failure" && !successful) {
           return {
             cleaned: false,
@@ -338,7 +582,7 @@ class TestWorkspaceManager implements WorkspaceManager {
           reason: "test cleanup",
           commands: []
         };
-      }
+      })
     };
   }
 }
@@ -360,5 +604,32 @@ class StaticDiffCollector implements DiffCollectorService {
       fileSummaries: ["fake-agent-output.md: untracked"],
       commands: []
     };
+  }
+}
+
+class RecordingDiffCollector extends StaticDiffCollector {
+  readonly inputs: DiffCollectionInput[] = [];
+
+  async collect(input: DiffCollectionInput): Promise<DiffCollectionResult> {
+    this.inputs.push(input);
+    return super.collect(input);
+  }
+}
+
+class ThrowingDiffCollector implements DiffCollectorService {
+  constructor(private readonly message: string) {}
+
+  async collect(): Promise<DiffCollectionResult> {
+    throw new Error(this.message);
+  }
+}
+
+class ThrowingRunArtifactRepository extends InMemoryRunArtifactRepository {
+  constructor(private readonly message: string) {
+    super();
+  }
+
+  async create(): Promise<never> {
+    throw new Error(this.message);
   }
 }

@@ -20,6 +20,7 @@ export interface ShellResult {
   stdout: string;
   stderr: string;
   exitCode: number | null;
+  signal?: NodeJS.Signals | string | null;
   durationMs: number;
   timedOut: boolean;
   dryRun: boolean;
@@ -102,6 +103,7 @@ export class NodeShellExecutor implements ShellExecutor {
           stdout,
           stderr,
           exitCode: null,
+          signal: null,
           durationMs: Date.now() - start,
           timedOut,
           dryRun: false,
@@ -123,6 +125,7 @@ export class NodeShellExecutor implements ShellExecutor {
           stdout,
           stderr,
           exitCode: code,
+          signal,
           durationMs: Date.now() - start,
           timedOut,
           dryRun: false,

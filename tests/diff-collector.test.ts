@@ -142,6 +142,35 @@ describe("DiffCollector", () => {
     expect(result.diff).toBe("");
   });
 
+  it("excludes unchanged generated untracked overlays but includes agent-modified overlays", async () => {
+    const workspacePath = await createTestDirectory("diff-untracked-overlay");
+    await fs.writeFile(path.join(workspacePath, "AGENTS.md"), "generated\nagent edit\n", "utf8");
+    await fs.writeFile(path.join(workspacePath, "CLAUDE.md"), "generated\n", "utf8");
+    const shell = new MockShellExecutor([
+      { stdout: "?? AGENTS.md\n?? CLAUDE.md\n" },
+      { stdout: " 2 files changed, 3 insertions(+)\n" },
+      { stdout: "" }
+    ]);
+
+    const result = await new DiffCollector(shell).collect({
+      workspacePath,
+      generatedFileBaselines: [
+        {
+          path: "AGENTS.md",
+          sha256: createHash("sha256").update("generated\n").digest("hex")
+        },
+        {
+          path: "CLAUDE.md",
+          sha256: createHash("sha256").update("generated\n").digest("hex")
+        }
+      ]
+    });
+
+    expect(result.changedFiles).toEqual([{ path: "AGENTS.md", status: "untracked" }]);
+    expect(result.diff).toContain("+++ b/AGENTS.md");
+    expect(result.diff).not.toContain("+++ b/CLAUDE.md");
+  });
+
   it("adds binary metadata for binary files", async () => {
     const workspacePath = await createTestDirectory("diff-binary");
     await fs.writeFile(path.join(workspacePath, "image.bin"), Buffer.from([0, 1, 2]));
