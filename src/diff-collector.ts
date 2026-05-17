@@ -9,6 +9,8 @@ import {
   safeGitExecutionOptions
 } from "./git-safety";
 
+const MAX_UNTRACKED_DIFF_BYTES = 1024 * 1024;
+
 export type ChangedFileStatus =
   | "added"
   | "modified"
@@ -23,6 +25,8 @@ export interface ChangedFile {
   status: ChangedFileStatus;
   binary?: boolean;
   sizeBytes?: number;
+  symlinkTarget?: string;
+  omittedReason?: string;
 }
 
 export interface DiffStat {
@@ -290,6 +294,12 @@ function summarizeFile(
   file: ChangedFile,
   stats: { insertions: number; deletions: number } | undefined
 ): string {
+  if (file.symlinkTarget !== undefined) {
+    return `${file.path}: ${file.status}, symlink -> ${file.symlinkTarget}`;
+  }
+  if (file.omittedReason) {
+    return `${file.path}: ${file.status}, content omitted (${file.omittedReason})`;
+  }
   if (file.binary) {
     return `${file.path}: ${file.status}, binary${file.sizeBytes !== undefined ? `, ${file.sizeBytes} bytes` : ""}`;
   }
@@ -310,13 +320,20 @@ async function enrichChangedFiles(
 ): Promise<ChangedFile[]> {
   const enriched: ChangedFile[] = [];
   for (const file of files) {
+    const inspected = await inspectWorktreeFile(workspacePath, file.path);
     const stats = numericStats.get(file.path);
-    const binary = stats?.binary || await isBinaryFile(path.join(workspacePath, file.path));
-    const sizeBytes = await fileSize(path.join(workspacePath, file.path));
+    const binary = stats?.binary || inspected.binary;
+    const omittedReason =
+      inspected.omittedReason ??
+      (inspected.sizeBytes !== undefined && inspected.sizeBytes > MAX_UNTRACKED_DIFF_BYTES
+        ? `larger than ${MAX_UNTRACKED_DIFF_BYTES} bytes`
+        : undefined);
     enriched.push({
       ...file,
       binary: binary || undefined,
-      sizeBytes: binary ? sizeBytes : undefined
+      sizeBytes: binary || omittedReason ? inspected.sizeBytes : undefined,
+      symlinkTarget: inspected.symlinkTarget,
+      omittedReason
     });
   }
   return enriched;
@@ -333,7 +350,7 @@ async function filterGeneratedAndExcludedFiles(
     const normalizedPath = normalizeRelativePath(file.path);
     const baseline = generatedBaselines.get(normalizedPath);
     if (baseline !== undefined) {
-      const currentHash = await hashFileIfExists(path.join(workspacePath, normalizedPath));
+      const currentHash = await hashFileIfExists(workspacePath, normalizedPath);
       if (currentHash === baseline) {
         continue;
       }
@@ -358,13 +375,23 @@ async function buildUntrackedDiff(
   const chunks: string[] = [];
   const stats = new Map<string, { insertions: number; deletions: number }>();
   for (const file of changedFiles.filter((entry) => entry.status === "untracked")) {
-    const absolutePath = path.join(workspacePath, file.path);
+    if (file.symlinkTarget !== undefined) {
+      chunks.push(`Untracked symlink ${file.path} -> ${file.symlinkTarget} added`);
+      stats.set(file.path, { insertions: 0, deletions: 0 });
+      continue;
+    }
+    if (file.omittedReason) {
+      chunks.push(`Untracked file ${file.path} added (${file.omittedReason}; content omitted)`);
+      stats.set(file.path, { insertions: 0, deletions: 0 });
+      continue;
+    }
     if (file.binary) {
       chunks.push(`Binary file ${file.path} added (${file.sizeBytes ?? 0} bytes)`);
       stats.set(file.path, { insertions: 0, deletions: 0 });
       continue;
     }
     try {
+      const absolutePath = await safeReadablePath(workspacePath, file.path);
       const content = await fs.readFile(absolutePath, "utf8");
       const contentLines = content.split(/\r?\n/).filter((line, index, lines) =>
         index < lines.length - 1 || line.length > 0
@@ -413,9 +440,16 @@ function summarizeChangedFiles(
   };
 }
 
-async function hashFileIfExists(filePath: string): Promise<string | undefined> {
+async function hashFileIfExists(workspacePath: string, relativePath: string): Promise<string | undefined> {
   try {
-    return createHash("sha256").update(await fs.readFile(filePath)).digest("hex");
+    const filePath = resolveWorkspacePath(workspacePath, relativePath);
+    const stats = await fs.lstat(filePath);
+    if (stats.isSymbolicLink()) {
+      return undefined;
+    }
+    return createHash("sha256")
+      .update(await fs.readFile(await safeReadablePath(workspacePath, relativePath)))
+      .digest("hex");
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
       return undefined;
@@ -424,12 +458,64 @@ async function hashFileIfExists(filePath: string): Promise<string | undefined> {
   }
 }
 
-async function fileSize(filePath: string): Promise<number | undefined> {
+async function inspectWorktreeFile(
+  workspacePath: string,
+  relativePath: string
+): Promise<{
+  binary: boolean;
+  sizeBytes?: number;
+  symlinkTarget?: string;
+  omittedReason?: string;
+}> {
   try {
-    return (await fs.stat(filePath)).size;
+    const absolutePath = resolveWorkspacePath(workspacePath, relativePath);
+    const stats = await fs.lstat(absolutePath);
+    if (stats.isSymbolicLink()) {
+      return {
+        binary: false,
+        symlinkTarget: await fs.readlink(absolutePath)
+      };
+    }
+    if (!stats.isFile()) {
+      return { binary: false, sizeBytes: stats.size };
+    }
+    if (stats.size > MAX_UNTRACKED_DIFF_BYTES) {
+      return {
+        binary: false,
+        sizeBytes: stats.size,
+        omittedReason: `larger than ${MAX_UNTRACKED_DIFF_BYTES} bytes`
+      };
+    }
+    const safePath = await safeReadablePath(workspacePath, relativePath);
+    return {
+      binary: await isBinaryFile(safePath),
+      sizeBytes: stats.size
+    };
   } catch {
-    return undefined;
+    return { binary: false };
   }
+}
+
+async function safeReadablePath(workspacePath: string, relativePath: string): Promise<string> {
+  return realpathInside(workspacePath, resolveWorkspacePath(workspacePath, relativePath));
+}
+
+function resolveWorkspacePath(workspacePath: string, relativePath: string): string {
+  const resolvedWorkspace = path.resolve(workspacePath);
+  const resolvedCandidate = path.resolve(resolvedWorkspace, relativePath);
+  if (!isPathInsideOrEqual(resolvedCandidate, resolvedWorkspace)) {
+    throw new Error("diff file path must stay inside the workspace");
+  }
+  return resolvedCandidate;
+}
+
+async function realpathInside(basePath: string, candidatePath: string): Promise<string> {
+  const resolvedBase = await fs.realpath(basePath);
+  const resolvedCandidate = await fs.realpath(candidatePath);
+  if (!isPathInsideOrEqual(resolvedCandidate, resolvedBase)) {
+    throw new Error("diff file path must stay inside the workspace");
+  }
+  return resolvedCandidate;
 }
 
 async function isBinaryFile(filePath: string): Promise<boolean> {
@@ -445,6 +531,11 @@ async function isBinaryFile(filePath: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+function isPathInsideOrEqual(candidatePath: string, basePath: string): boolean {
+  const relative = path.relative(basePath, candidatePath);
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
 }
 
 function isExcludedPath(filePath: string, excludePathPrefixes: string[]): boolean {
