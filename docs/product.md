@@ -96,9 +96,12 @@ Persisted run metadata currently covers:
 - generated risk report
 
 Diff collection records binary file metadata, synthesizes reviewable patches
-for untracked text files, and excludes generated overlay files only while they
-still match their Agent Hub baseline. If an agent modifies generated overlay
-files, those files are included in the diff.
+for bounded untracked text files, and excludes generated overlay files only
+while they still match their Agent Hub baseline. Untracked symlinks are recorded
+as symlinks without dereferencing their targets, oversized untracked files have
+their contents omitted, and all file reads are constrained to real paths inside
+the isolated worktree. If an agent modifies generated overlay files, those files
+are included in the diff.
 
 Structured run data is now also persisted in first-class SQLite tables:
 

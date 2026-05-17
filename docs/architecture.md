@@ -129,9 +129,12 @@ The diff collector first reads git status, then filters generated files against
 the baselines returned by context overlay materialization. Generated files are
 hidden only when their current content still matches the Agent Hub baseline; if
 the agent changes them, they become normal reviewable diff entries. Raw diff
-commands are scoped to the filtered tracked paths, and untracked text files get
-synthetic patch content. Binary files are represented with metadata such as
-binary status and byte size.
+commands are scoped to the filtered tracked paths, and bounded untracked text
+files get synthetic patch content. Before reading untracked files, the collector
+uses `lstat` to avoid dereferencing symlinks, records symlink targets via
+`readlink`, verifies readable real paths remain inside the isolated worktree,
+and omits synthetic content for oversized files. Binary files are represented
+with metadata such as binary status and byte size.
 
 Shell usage is limited to `ShellExecutor` and `ProcessRunner` implementations.
 Git worktree, git diff, verification commands, and real agent processes use
