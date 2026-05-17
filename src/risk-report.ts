@@ -1,5 +1,6 @@
 import {
   validateRiskReport,
+  type JsonObject,
   type RiskFinding,
   type RiskLevel,
   type RiskReport
@@ -14,8 +15,15 @@ export interface RiskReportInput {
   taskRunId: string;
   diff: DiffCollectionResult;
   verification: VerificationSuiteResult;
+  runEvents?: RiskReportRunEventInput[];
   manualReviewNotes?: string[];
   createdAt: string;
+}
+
+export interface RiskReportRunEventInput {
+  type?: string;
+  message: string;
+  metadata?: JsonObject;
 }
 
 export class RiskReportGenerator {
@@ -29,7 +37,11 @@ export class RiskReportGenerator {
       diff: input.diff,
       commands: input.verification.results.map((result) =>
         formatShellCommand(result.command)
-      )
+      ),
+      generatedText: (input.runEvents ?? []).map((event, index) => ({
+        label: `run_event_${index + 1}${event.type ? `:${event.type}` : ""}`,
+        text: stringifyRunEvent(event)
+      }))
     });
 
     if (!input.diff.ok) {
@@ -95,6 +107,22 @@ export class RiskReportGenerator {
       findings,
       createdAt: input.createdAt
     });
+  }
+}
+
+function stringifyRunEvent(event: RiskReportRunEventInput): string {
+  const metadata =
+    event.metadata === undefined ? "" : safeJsonStringify(event.metadata);
+  return [event.type ?? "", event.message, metadata]
+    .filter((part) => part.trim().length > 0)
+    .join("\n");
+}
+
+function safeJsonStringify(value: JsonObject): string {
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return "";
   }
 }
 

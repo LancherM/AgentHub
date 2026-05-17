@@ -48,6 +48,10 @@ describe("process-backed agent adapters", () => {
 
     const events = await collect(new CodexAdapter({ processRunner: runner }).run(input));
 
+    expect(runner.detectCalls[0]).toMatchObject({
+      executable: "codex",
+      args: ["--version"]
+    });
     expect(runner.runCalls[0]).toMatchObject({
       executable: "codex",
       args: ["exec", "--json", "-"],
@@ -56,6 +60,7 @@ describe("process-backed agent adapters", () => {
     expect(runner.runCalls[0].stdin).toContain("# Brief");
     expect(runner.runCalls[0].stdin).toContain("Context payload");
     expect(events).toEqual([
+      expect.objectContaining({ type: "status", message: "Codex preflight passed" }),
       expect.objectContaining({ type: "status", message: "starting Codex" }),
       expect.objectContaining({ type: "stdout", message: expect.stringContaining("agent_message") }),
       expect.objectContaining({ type: "message", message: "done" }),
@@ -86,6 +91,26 @@ describe("process-backed agent adapters", () => {
       type: "message",
       message: "complete"
     }));
+  });
+
+  it("preflights process-backed adapters and emits failed events when unavailable", async () => {
+    const runner = new MockProcessRunner(
+      [[{ type: "exit", exitCode: 0, signal: null }]],
+      [{ available: false, reason: "not authenticated" }]
+    );
+    const input = await createInput("codex-unavailable");
+
+    const events = await collect(new CodexAdapter({ processRunner: runner }).run(input));
+
+    expect(runner.detectCalls).toHaveLength(1);
+    expect(runner.runCalls).toHaveLength(0);
+    expect(events).toEqual([
+      expect.objectContaining({
+        type: "error",
+        message: "Codex preflight failed: Codex CLI unavailable: not authenticated"
+      }),
+      expect.objectContaining({ type: "exit", exitCode: 1 })
+    ]);
   });
 
   it("emits non-zero and signal exits as failed adapter exits", async () => {
@@ -132,6 +157,9 @@ describe("process-backed agent adapters", () => {
     );
     expect(() =>
       new CodexAdapter({ runArgs: ["exec", "--dangerously-bypass-approvals-and-sandbox", "-"] })
+    ).toThrow("unsafe permission flags");
+    expect(() =>
+      new CodexAdapter({ runArgs: ["exec", "--sandbox=danger-full-access", "-"] })
     ).toThrow("unsafe permission flags");
   });
 });

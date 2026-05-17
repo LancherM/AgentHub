@@ -1,5 +1,6 @@
 import type { RiskFinding, RiskLevel } from "./domain";
 import type { ChangedFile, DiffCollectionResult } from "./diff-collector";
+import { detectDangerousCommandText } from "./dangerous-commands";
 
 export type SafetyFindingCategory =
   | "sensitive_path"
@@ -17,7 +18,15 @@ export interface SafetyFinding extends RiskFinding {
 export interface SafetyScanInput {
   diff: DiffCollectionResult;
   commands?: string[];
+  generatedText?: SafetyTextSource[];
 }
+
+export type SafetyTextSource =
+  | string
+  | {
+      label: string;
+      text: string;
+    };
 
 export interface SafetyScanResult {
   level: RiskLevel;
@@ -35,21 +44,15 @@ const sensitivePathPatterns = [
   /(^|\/)tokens?\./i
 ];
 
-const dangerousCommandPatterns: Array<{ pattern: RegExp; summary: string }> = [
-  { pattern: /\bsudo\b/i, summary: "Privileged command detected." },
-  { pattern: /\brm\s+-rf\s+\/(?:\s|$)/i, summary: "Recursive root deletion command detected." },
-  { pattern: /\bchmod\s+-R\s+777\b/i, summary: "Unsafe recursive permission broadening detected." },
-  { pattern: /\bcurl\b[^\n|]*\|\s*(?:sh|bash)\b/i, summary: "curl pipe-to-shell installer detected." },
-  { pattern: /\bwget\b[^\n|]*\|\s*(?:sh|bash)\b/i, summary: "wget pipe-to-shell installer detected." },
-  { pattern: /\bgit\s+push\s+--force\b/i, summary: "Force push command detected." },
-  { pattern: /\bgit\s+clean\s+-fdx\b/i, summary: "Destructive git clean command detected." }
-];
-
 export class SafetyScanner {
   scan(input: SafetyScanInput): SafetyScanResult {
     const findings = [
       ...scanSensitivePaths(input.diff.changedFiles),
-      ...scanDangerousCommands(input.diff.diff, input.commands ?? []),
+      ...scanDangerousCommands(
+        input.diff.diff,
+        input.commands ?? [],
+        input.generatedText ?? []
+      ),
       ...scanDiff(input.diff),
       ...scanLargeDeletions(input.diff),
       ...scanBinaryFiles(input.diff.changedFiles)
@@ -75,26 +78,28 @@ export function scanSensitivePaths(changedFiles: ChangedFile[]): SafetyFinding[]
 
 export function scanDangerousCommands(
   diffText: string,
-  commands: string[] = []
+  commands: string[] = [],
+  generatedText: SafetyTextSource[] = []
 ): SafetyFinding[] {
   const haystacks = [
     { label: "diff", text: diffText },
-    ...commands.map((command) => ({ label: "command", text: command }))
+    ...commands.map((command) => ({ label: "command", text: command })),
+    ...generatedText.map((source, index) =>
+      typeof source === "string"
+        ? { label: `generated_text_${index + 1}`, text: source }
+        : source
+    )
   ].filter((entry) => entry.text.trim().length > 0);
   const findings: SafetyFinding[] = [];
 
   for (const source of haystacks) {
-    for (const rule of dangerousCommandPatterns) {
-      const match = source.text.match(rule.pattern);
-      if (!match) {
-        continue;
-      }
+    for (const match of detectDangerousCommandText(source.text)) {
       findings.push({
         level: "blocking",
         category: "dangerous_command",
-        command: match[0],
-        summary: rule.summary,
-        details: `${source.label}: ${match[0]}`
+        command: match.command,
+        summary: match.summary,
+        details: `${source.label}: ${match.command}`
       });
     }
   }

@@ -258,6 +258,7 @@ describe("task runner", () => {
     expect(result.status).toBe("failed");
     expect(result.run.status).toBe("failed");
     await expect(runEventRepository.listByRunId(result.run.id)).resolves.toEqual([
+      expect.objectContaining({ type: "status", message: "Codex preflight passed" }),
       expect.objectContaining({ type: "status", message: "starting Codex" }),
       expect.objectContaining({ type: "stderr", message: "codex failed\n" }),
       expect.objectContaining({
@@ -265,6 +266,76 @@ describe("task runner", () => {
         metadata: expect.objectContaining({ exitCode: 2, signal: null })
       })
     ]);
+  });
+
+  it("preflights unavailable real adapters into failed run events without launching them", async () => {
+    const projectRoot = await createTestDirectory("agent-hub-project");
+    const runRoot = await createTestDirectory("agent-hub-runs");
+    const processRunner = new MockProcessRunner(
+      [[{ type: "exit", exitCode: 0, signal: null }]],
+      [{ available: false, reason: "not authenticated" }]
+    );
+    const runner = new TaskRunner({
+      defaultRunRoot: runRoot,
+      workspaceManager: new TestWorkspaceManager(runRoot),
+      diffCollector: new StaticDiffCollector(),
+      verificationRunner: new VerificationRunner(new MockShellExecutor()),
+      agentRegistry: new DefaultAgentRegistry([
+        new CodexAdapter({ processRunner })
+      ]),
+      idGenerator: new SequenceIdGenerator(),
+      clock: new FixedClock("2026-01-01T00:00:00.000Z")
+    });
+
+    const result = await runner.run({
+      projectRoot,
+      rawPrompt: "@codex run unavailable adapter"
+    });
+
+    expect(result.status).toBe("failed");
+    expect(processRunner.detectCalls).toHaveLength(1);
+    expect(processRunner.runCalls).toHaveLength(0);
+    expect(result.events).toEqual([
+      expect.objectContaining({
+        type: "error",
+        message: "Codex preflight failed: Codex CLI unavailable: not authenticated"
+      }),
+      expect.objectContaining({ type: "exit", exitCode: 1 })
+    ]);
+  });
+
+  it("includes adapter run events in risk report dangerous-command scanning", async () => {
+    const projectRoot = await createTestDirectory("agent-hub-project");
+    const runRoot = await createTestDirectory("agent-hub-runs");
+    const runner = new TaskRunner({
+      defaultRunRoot: runRoot,
+      workspaceManager: new TestWorkspaceManager(runRoot),
+      diffCollector: new StaticDiffCollector(),
+      verificationRunner: new VerificationRunner(new MockShellExecutor()),
+      agentRegistry: new DefaultAgentRegistry([
+        new CodexAdapter({
+          processRunner: new MockProcessRunner([
+            [
+              { type: "stdout", data: "{\"type\":\"message\",\"message\":\"run sudo true\"}\n" },
+              { type: "exit", exitCode: 0, signal: null }
+            ]
+          ])
+        })
+      ]),
+      idGenerator: new SequenceIdGenerator(),
+      clock: new FixedClock("2026-01-01T00:00:00.000Z")
+    });
+
+    const result = await runner.run({
+      projectRoot,
+      rawPrompt: "@codex generate dangerous instruction"
+    });
+
+    expect(result.riskReport?.level).toBe("blocking");
+    expect(result.riskReport?.riskFactors.join("\n")).toContain("run_event_");
+    expect(result.riskReport?.riskFactors.join("\n")).toContain(
+      "Privileged command"
+    );
   });
 
   it("marks the run failed when verification fails and retains on failure when configured", async () => {

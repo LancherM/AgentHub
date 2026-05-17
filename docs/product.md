@@ -115,8 +115,13 @@ The process-backed adapters use direct executable-plus-args spawning:
 - Codex runs `codex exec --json -` in the isolated worktree.
 - Claude Code runs `claude --print --output-format stream-json` in the isolated
   worktree.
-- Detection calls lightweight version commands and reports missing CLI or setup
-  failures as unavailable reasons instead of crashing.
+- Before launching Codex or Claude Code for a run, Agent Hub calls adapter
+  detection. Missing CLI, authentication, or setup failures become failed run
+  events and no real adapter process is started.
+- Child processes receive only Agent Hub's explicit environment overrides plus
+  a small inherited allowlist for path lookup, home/config/cache paths, temp
+  directories, locale/terminal flags, CI, and required Windows process
+  variables.
 - stdout and stderr are captured as run events; structured JSONL output is
   parsed into message/status/error events when possible, while raw output is
   preserved.
@@ -130,10 +135,14 @@ processes. Ad hoc fake runs remain supported for the older vertical slice.
 
 Risk reports are backed by a standalone safety scanner. It checks sensitive
 paths, dangerous commands in generated diffs or configured verification
-commands, risky diff shape, large deletion volume, and binary file changes.
-Blocking findings remain `blocking` in the aggregated risk level and are
-surfaced in `risks show`; they are not downgraded to high. Agent Hub still does
-not automatically accept, merge, or push any run output.
+commands, dangerous generated instructions in captured adapter run events,
+risky diff shape, large deletion volume, and binary file changes. The dangerous
+command rules are shared with verification command rejection and cover direct
+and common shell-wrapped variants of `sudo`, `rm -rf /`, `chmod -R 777`,
+`curl | sh`, `wget | sh`, `git push --force`, and `git clean -fdx`. Blocking
+findings remain `blocking` in the aggregated risk level and are surfaced in
+`risks show`; they are not downgraded to high. Agent Hub still does not
+automatically accept, merge, or push any run output.
 
 The memory workflow is explicit and user-approved. `memory propose` creates a
 SQLite memory item in `proposed` state, `memory list` shows project memory
