@@ -64,7 +64,12 @@ import {
   type TaskRunRepository,
   type VerificationResultRepository
 } from "./storage";
-import { VerificationRunner, type VerificationCommand, type VerificationSuiteResult } from "./verification";
+import {
+  VerificationRunner,
+  type VerificationCommand,
+  type VerificationCommandResult,
+  type VerificationSuiteResult
+} from "./verification";
 import {
   GitWorktreeWorkspaceManager,
   type WorkspaceCleanupPolicy,
@@ -244,6 +249,17 @@ export class TaskRunner {
   async run(input: RunTaskInput): Promise<RunResult> {
     const parsed = parseRunInput(input);
     const projectRoot = path.resolve(input.projectRoot);
+    const workspaceBasePath = path.resolve(
+      input.workspaceBasePath ?? input.runRoot ?? this.defaultRunRoot
+    );
+    if (
+      samePath(projectRoot, workspaceBasePath) ||
+      isPathInside(workspaceBasePath, projectRoot)
+    ) {
+      throw new TaskRunnerError(
+        "workspace base path must be outside the original project root"
+      );
+    }
     const createdAt = this.clock.now();
     const task = validateTask({
       id: input.taskId ?? this.idGenerator.nextId("task"),
@@ -313,22 +329,9 @@ export class TaskRunner {
       });
     }
 
-    const workspaceBasePath = path.resolve(
-      input.workspaceBasePath ?? input.runRoot ?? this.defaultRunRoot
-    );
-    if (
-      samePath(projectRoot, workspaceBasePath) ||
-      isPathInside(workspaceBasePath, projectRoot)
-    ) {
-      throw new TaskRunnerError(
-        "workspace base path must be outside the original project root"
-      );
-    }
-
     let workspaceSession:
       | Awaited<ReturnType<WorkspaceManager["createSession"]>>
       | undefined;
-    let workspaceCleanup: WorkspaceCleanupResult | undefined;
 
     try {
       workspaceSession = await this.workspaceManager.createSession({
@@ -370,7 +373,7 @@ export class TaskRunner {
     }
 
     const worktreePath = workspaceSession.workspace.path;
-    const updatedRunWithPaths = await this.taskRunRepository.updateExecutionPaths(
+    let currentRun = await this.taskRunRepository.updateExecutionPaths(
       run.id,
       {
         worktreePath,
@@ -378,17 +381,51 @@ export class TaskRunner {
       },
       this.clock.now()
     );
-    await this.runMetadataRepository.save({
-      runId: run.id,
-      workspace: workspaceSession.workspace
-    });
 
     let taskBriefPath: string | undefined;
     const runtimeDirectory = path.join(worktreePath, ".agent-hub", "tasks", task.id);
     const events: AgentRunEvent[] = [];
+    const warnings = [...contextBundle.warnings];
     let generatedFileBaselines: GeneratedFileBaseline[] = [];
+    let workspaceCleanup: WorkspaceCleanupResult | undefined;
+    let diff: DiffCollectionResult = failedDiffResultFromError(
+      worktreePath,
+      "diff collection did not run"
+    );
+    let verification: VerificationSuiteResult = failedVerificationSuiteFromError(
+      "verification did not run",
+      input.verificationCommands
+    );
+    let riskReport: RiskReport | undefined;
+    let finalizationFailed = false;
+    let finalizationError: string | undefined;
+    const recordDiagnostic = (stage: string, error: unknown): void => {
+      const detail = errorMessage(error);
+      const message = `${stage} failed: ${detail}`;
+      finalizationFailed = true;
+      finalizationError ??= message;
+      warnings.push(message);
+      events.push({
+        type: "error",
+        message,
+        metadata: { stage, error: detail }
+      });
+    };
 
-    await this.taskRunRepository.updateStatus(run.id, "running", this.clock.now());
+    try {
+      await this.runMetadataRepository.save({
+        runId: run.id,
+        workspace: workspaceSession.workspace
+      });
+    } catch (error) {
+      recordDiagnostic("workspace metadata persistence", error);
+    }
+
+    currentRun = await this.taskRunRepository.updateStatus(
+      run.id,
+      "running",
+      this.clock.now()
+    );
 
     if (input.dryRun) {
       events.push({
@@ -401,143 +438,220 @@ export class TaskRunner {
         exitCode: 0
       });
     } else {
-      const taskBrief = createContextTaskBrief({
-        taskId: task.id,
-        title: task.title,
-        prompt: parsed.taskPrompt,
-        contextPackId: contextPack.id,
-        contextMarkdown
-      });
-      taskBriefPath = path.join(runtimeDirectory, "brief.md");
-      const overlay = await materializeWorktreeOverlay({
-        worktreePath,
-        taskId: task.id,
-        contextPack,
-        taskBrief,
-        contextMarkdown,
-        includeAgentFiles: input.deliveryMode === "worktree_overlay",
-        storeRoot:
-          input.deliveryMode === "worktree_overlay" ? input.contextStoreRoot : undefined
-      });
-      generatedFileBaselines = overlay.baselines;
-      if (input.deliveryMode !== "worktree_overlay") {
-        generatedFileBaselines = overlay.baselines.filter((baseline) =>
-          baseline.path.startsWith(".agent-hub/")
-        );
-      }
-
       try {
-        for await (const event of adapter.run({
-          originalProjectRoot: projectRoot,
-          worktreePath,
-          taskBriefPath,
-          contextPackPath: path.join(runtimeDirectory, "context-pack.json"),
-          contextBundle,
-          contextMarkdown,
-          runtimeDirectory,
+        const taskBrief = createContextTaskBrief({
           taskId: task.id,
-          taskTitle: task.title,
-          taskPrompt: parsed.taskPrompt
-        })) {
-          events.push(event);
+          title: task.title,
+          prompt: parsed.taskPrompt,
+          contextPackId: contextPack.id,
+          contextMarkdown
+        });
+        taskBriefPath = path.join(runtimeDirectory, "brief.md");
+        const overlay = await materializeWorktreeOverlay({
+          worktreePath,
+          taskId: task.id,
+          contextPack,
+          taskBrief,
+          contextMarkdown,
+          includeAgentFiles: input.deliveryMode === "worktree_overlay",
+          storeRoot:
+            input.deliveryMode === "worktree_overlay"
+              ? input.contextStoreRoot
+              : undefined
+        });
+        warnings.push(...overlay.warnings);
+        generatedFileBaselines = overlay.baselines;
+        if (input.deliveryMode !== "worktree_overlay") {
+          generatedFileBaselines = overlay.baselines.filter((baseline) =>
+            baseline.path.startsWith(".agent-hub/")
+          );
+        }
+
+        try {
+          for await (const event of adapter.run({
+            originalProjectRoot: projectRoot,
+            worktreePath,
+            taskBriefPath,
+            contextPackPath: path.join(runtimeDirectory, "context-pack.json"),
+            contextBundle,
+            contextMarkdown,
+            runtimeDirectory,
+            taskId: task.id,
+            taskTitle: task.title,
+            taskPrompt: parsed.taskPrompt
+          })) {
+            events.push(event);
+          }
+        } catch (error) {
+          events.push({
+            type: "error",
+            message: error instanceof Error ? error.message : String(error)
+          });
         }
       } catch (error) {
-        events.push({
-          type: "error",
-          message: error instanceof Error ? error.message : String(error)
-        });
+        recordDiagnostic("runtime context materialization", error);
       }
     }
 
-    const diff = await this.diffCollector.collect({
-      workspacePath: worktreePath,
-      excludePathPrefixes: [".agent-hub/"],
-      generatedFileBaselines,
-      dryRun: input.dryRun
-    });
-    const verification = await this.verificationRunner.run({
-      cwd: worktreePath,
-      commands: input.verificationCommands,
-      stopOnFailure: input.stopOnVerificationFailure,
-      dryRun: input.dryRun
-    });
-    const riskReport = this.riskReportGenerator.generate({
-      id: this.idGenerator.nextId("risk"),
-      taskRunId: run.id,
-      diff,
-      verification,
-      createdAt: this.clock.now()
-    });
+    try {
+      diff = await this.diffCollector.collect({
+        workspacePath: worktreePath,
+        excludePathPrefixes: [".agent-hub/"],
+        generatedFileBaselines,
+        dryRun: input.dryRun
+      });
+    } catch (error) {
+      recordDiagnostic("diff collection", error);
+      diff = failedDiffResultFromError(worktreePath, error);
+    }
+
+    try {
+      verification = await this.verificationRunner.run({
+        cwd: worktreePath,
+        commands: input.verificationCommands,
+        stopOnFailure: input.stopOnVerificationFailure,
+        dryRun: input.dryRun
+      });
+    } catch (error) {
+      recordDiagnostic("verification", error);
+      verification = failedVerificationSuiteFromError(
+        error,
+        input.verificationCommands
+      );
+    }
+
+    try {
+      riskReport = this.riskReportGenerator.generate({
+        id: this.idGenerator.nextId("risk"),
+        taskRunId: run.id,
+        diff,
+        verification,
+        createdAt: this.clock.now()
+      });
+    } catch (error) {
+      recordDiagnostic("risk report generation", error);
+    }
 
     const exitEvent = findLastExitEvent(events);
     const adapterSucceeded =
       exitEvent?.type === "exit" && exitEvent.exitCode === 0;
-    const status: RunStatus =
-      adapterSucceeded && diff.ok && verification.status !== "failed"
+    let status: RunStatus =
+      adapterSucceeded &&
+      diff.ok &&
+      verification.status !== "failed" &&
+      !finalizationFailed
         ? "succeeded"
         : "failed";
-    const completedAt = this.clock.now();
-    const updatedRun = await this.taskRunRepository.updateStatus(
-      updatedRunWithPaths.id,
-      status,
-      completedAt
-    );
-    const updatedTask = await this.taskRepository.updateStatus(
-      task.id,
-      status === "succeeded" ? "completed" : "open",
-      completedAt
-    );
+
+    try {
+      await this.runArtifactRepository.create(
+        createDiffArtifact(run.id, diff, this.clock, this.idGenerator)
+      );
+    } catch (error) {
+      recordDiagnostic("diff artifact persistence", error);
+    }
+    if (taskBriefPath) {
+      try {
+        await this.runArtifactRepository.create(
+          createTextArtifact({
+            runId: run.id,
+            kind: "task_brief",
+            content: await fs.readFile(taskBriefPath, "utf8"),
+            metadata: { path: taskBriefPath },
+            clock: this.clock,
+            idGenerator: this.idGenerator
+          })
+        );
+      } catch (error) {
+        recordDiagnostic("task brief artifact persistence", error);
+      }
+    }
+    try {
+      await this.verificationResultRepository.createMany(
+        toPersistedVerificationResults(
+          run.id,
+          verification,
+          this.clock,
+          this.idGenerator
+        )
+      );
+    } catch (error) {
+      recordDiagnostic("verification result persistence", error);
+    }
+    if (riskReport) {
+      try {
+        await this.riskReportRepository.create(riskReport);
+      } catch (error) {
+        recordDiagnostic("risk report persistence", error);
+      }
+    }
+
+    status = status === "succeeded" && !finalizationFailed ? "succeeded" : "failed";
 
     try {
       workspaceCleanup = await workspaceSession.cleanup({
         successful: status === "succeeded"
       });
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      events.push({ type: "error", message: `workspace cleanup failed: ${message}` });
+      recordDiagnostic("workspace cleanup", error);
       workspaceCleanup = {
         cleaned: false,
         retained: true,
-        reason: `workspace cleanup failed: ${message}`,
+        reason: `workspace cleanup failed: ${errorMessage(error)}`,
         commands: []
       };
     }
+    status = status === "succeeded" && !finalizationFailed ? "succeeded" : "failed";
 
-    await this.runMetadataRepository.save({
-      runId: run.id,
-      workspace: workspaceSession.workspace,
-      workspaceCleanup,
-      diff,
-      verification,
-      riskReport
-    });
-    await this.runEventRepository.createMany(
-      toPersistedRunEvents(run.id, events, this.clock, this.idGenerator)
-    );
-    await this.runArtifactRepository.create(
-      createDiffArtifact(run.id, diff, this.clock, this.idGenerator)
-    );
-    if (taskBriefPath) {
-      await this.runArtifactRepository.create(
-        createTextArtifact({
-          runId: run.id,
-          kind: "task_brief",
-          content: await fs.readFile(taskBriefPath, "utf8"),
-          metadata: { path: taskBriefPath },
-          clock: this.clock,
-          idGenerator: this.idGenerator
-        })
-      );
-    }
-    await this.verificationResultRepository.createMany(
-      toPersistedVerificationResults(
-        run.id,
+    try {
+      await this.runMetadataRepository.save({
+        runId: run.id,
+        workspace: workspaceSession.workspace,
+        workspaceCleanup,
+        diff,
         verification,
-        this.clock,
-        this.idGenerator
-      )
+        riskReport
+      });
+    } catch (error) {
+      recordDiagnostic("run metadata persistence", error);
+    }
+    status = status === "succeeded" && !finalizationFailed ? "succeeded" : "failed";
+
+    let completedAt = this.clock.now();
+    let updatedRun = await this.taskRunRepository.updateStatus(
+      currentRun.id,
+      status,
+      completedAt
     );
-    await this.riskReportRepository.create(riskReport);
+    let updatedTask = await this.taskRepository.updateStatus(
+      task.id,
+      status === "succeeded" ? "completed" : "open",
+      completedAt
+    );
+
+    try {
+      await this.runEventRepository.createMany(
+        toPersistedRunEvents(run.id, events, this.clock, this.idGenerator)
+      );
+    } catch (error) {
+      const message = `run event persistence failed: ${errorMessage(error)}`;
+      warnings.push(message);
+      if (status === "succeeded") {
+        status = "failed";
+        finalizationError ??= message;
+        completedAt = this.clock.now();
+        updatedRun = await this.taskRunRepository.updateStatus(
+          currentRun.id,
+          status,
+          completedAt
+        );
+        updatedTask = await this.taskRepository.updateStatus(
+          task.id,
+          "open",
+          completedAt
+        );
+      }
+    }
 
     const fakeOutput = extractFakeOutput(events);
     const errorEvent = events.find((event) => event.type === "error");
@@ -557,10 +671,11 @@ export class TaskRunner {
       verification,
       riskReport,
       workspaceCleanup,
-      warnings: [...contextBundle.warnings],
+      warnings,
       error:
         status === "failed"
-          ? errorEvent?.message ??
+          ? finalizationError ??
+            errorEvent?.message ??
             diff.error ??
             verification.failedCommands[0]?.stderr ??
             "run failed"
@@ -812,4 +927,78 @@ function extractFakeOutput(events: AgentRunEvent[]): string | undefined {
   }
 
   return undefined;
+}
+
+function failedDiffResultFromError(
+  worktreePath: string,
+  error: unknown
+): DiffCollectionResult {
+  return {
+    ok: false,
+    workspacePath: worktreePath,
+    isClean: false,
+    changedFiles: [],
+    stat: { filesChanged: 0, insertions: 0, deletions: 0, text: "" },
+    diff: "",
+    fileSummaries: [],
+    commands: [],
+    error: errorMessage(error)
+  };
+}
+
+function failedVerificationSuiteFromError(
+  error: unknown,
+  commands: VerificationCommand[] | undefined
+): VerificationSuiteResult {
+  const message = errorMessage(error);
+  const failedCommands =
+    commands && commands.length > 0
+      ? commands.map((command) => failedVerificationCommand(command, message))
+      : [
+          failedVerificationCommand(
+            {
+              id: "runner-finalization",
+              label: "Runner finalization",
+              command: "agent-hub",
+              args: ["finalize"]
+            },
+            message
+          )
+        ];
+  return {
+    status: "failed",
+    results: failedCommands,
+    failedCommands,
+    missingCommandConfig: false,
+    summary: `0 passed, ${failedCommands.length} failed, 0 skipped`,
+    durationMs: 0
+  };
+}
+
+function failedVerificationCommand(
+  command: VerificationCommand,
+  message: string
+): VerificationCommandResult {
+  return {
+    commandId: command.id,
+    label: command.label ?? command.id,
+    command: {
+      executable: command.command,
+      args: [...(command.args ?? [])],
+      displayName: command.label ?? command.id
+    },
+    status: "failed",
+    stdout: "",
+    stderr: message,
+    exitCode: null,
+    signal: null,
+    durationMs: 0,
+    timedOut: false,
+    dryRun: false,
+    error: message
+  };
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }

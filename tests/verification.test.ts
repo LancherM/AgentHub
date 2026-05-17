@@ -5,9 +5,8 @@ import { createTestDirectory, MockShellExecutor } from "./helpers";
 describe("VerificationRunner", () => {
   it("records successful verification commands", async () => {
     const cwd = await createTestDirectory("verify-success");
-    const runner = new VerificationRunner(
-      new MockShellExecutor([{ stdout: "ok\n", exitCode: 0 }])
-    );
+    const shell = new MockShellExecutor([{ stdout: "ok\n", exitCode: 0 }]);
+    const runner = new VerificationRunner(shell);
 
     const result = await runner.run({
       cwd,
@@ -21,6 +20,7 @@ describe("VerificationRunner", () => {
       status: "passed",
       stdout: "ok\n"
     });
+    expect(shell.calls[0].options.cwd).toBe(cwd);
   });
 
   it("records failed verification commands", async () => {
@@ -83,6 +83,56 @@ describe("VerificationRunner", () => {
       dryRun: true
     });
     expect(shell.calls[0].options.dryRun).toBe(true);
+  });
+
+  it("records timeout and process signal details as failed verification", async () => {
+    const cwd = await createTestDirectory("verify-timeout");
+    const runner = new VerificationRunner(
+      new MockShellExecutor([
+        {
+          exitCode: null,
+          signal: "SIGTERM",
+          timedOut: true,
+          error: "terminated by SIGTERM"
+        }
+      ])
+    );
+
+    const result = await runner.run({
+      cwd,
+      commands: [
+        { id: "slow", command: "node", args: ["slow-test.js"], timeoutMs: 10 }
+      ]
+    });
+
+    expect(result.status).toBe("failed");
+    expect(result.results[0]).toMatchObject({
+      commandId: "slow",
+      exitCode: null,
+      signal: "SIGTERM",
+      timedOut: true,
+      error: "terminated by SIGTERM"
+    });
+  });
+
+  it("converts dangerous command rejection into a structured failed result", async () => {
+    const cwd = await createTestDirectory("verify-dangerous");
+    const shell = new MockShellExecutor();
+    const runner = new VerificationRunner(shell);
+
+    const result = await runner.run({
+      cwd,
+      commands: [{ id: "privileged", command: "sudo", args: ["true"] }]
+    });
+
+    expect(result.status).toBe("failed");
+    expect(result.failedCommands[0]).toMatchObject({
+      commandId: "privileged",
+      status: "failed",
+      exitCode: null,
+      stderr: expect.stringContaining("refusing to execute dangerous command")
+    });
+    expect(shell.calls).toHaveLength(0);
   });
 
   it("reports missing command configuration", async () => {

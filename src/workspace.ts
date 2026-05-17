@@ -80,6 +80,9 @@ export class GitWorktreeWorkspaceManager implements WorkspaceManager {
 
     if (!normalized.dryRun) {
       await fs.mkdir(path.dirname(workspacePath), { recursive: true });
+      if (await pathExists(workspacePath)) {
+        throw new WorkspaceError(`worktree path already exists: ${workspacePath}`);
+      }
     }
 
     if (!normalized.dryRun) {
@@ -106,6 +109,25 @@ export class GitWorktreeWorkspaceManager implements WorkspaceManager {
     creationCommands.push(statusResult);
     ensureCommandSucceeded(statusResult, "check source repository status");
     const sourceRepositoryDirty = statusResult.stdout.trim().length > 0;
+
+    if (!normalized.dryRun) {
+      const branchCheck = await this.shellExecutor.execute(
+        safeGitCommand([
+          "show-ref",
+          "--verify",
+          "--quiet",
+          `refs/heads/${branchName}`
+        ]),
+        safeGitExecutionOptions({ cwd: normalized.sourceRepositoryPath })
+      );
+      creationCommands.push(branchCheck);
+      if (branchCheck.exitCode === 0) {
+        throw new WorkspaceError(`worktree branch already exists: ${branchName}`);
+      }
+      if (branchCheck.exitCode !== 1) {
+        ensureCommandSucceeded(branchCheck, "check worktree branch availability");
+      }
+    }
 
     const addResult = await this.shellExecutor.execute(
       safeGitCommand(["worktree", "add", "-b", branchName, workspacePath, "HEAD"]),
@@ -253,6 +275,18 @@ function ensureCommandSucceeded(result: ShellResult, action: string): void {
     throw new WorkspaceError(
       `${action} failed: ${detail ?? formatShellCommand(result.command)}`
     );
+  }
+}
+
+async function pathExists(candidatePath: string): Promise<boolean> {
+  try {
+    await fs.lstat(candidatePath);
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return false;
+    }
+    throw error;
   }
 }
 

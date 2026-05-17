@@ -8,11 +8,7 @@ describe("GitWorktreeWorkspaceManager", () => {
   it("creates a git worktree session through the shell executor", async () => {
     const sourceRepositoryPath = await createTestDirectory("workspace-source");
     const workspaceBasePath = await createTestDirectory("workspace-base");
-    const shell = new MockShellExecutor([
-      { stdout: "true\n" },
-      { stdout: "" },
-      { stdout: "created worktree\n" }
-    ]);
+    const shell = new MockShellExecutor(worktreeCreateResponses());
     const manager = new GitWorktreeWorkspaceManager(shell);
 
     const session = await manager.createSession({
@@ -28,10 +24,11 @@ describe("GitWorktreeWorkspaceManager", () => {
     expect(shell.calls.map((call) => call.command.args?.join(" "))).toEqual([
       expect.stringContaining("rev-parse --is-inside-work-tree"),
       expect.stringContaining("status --porcelain"),
+      expect.stringContaining("show-ref --verify --quiet"),
       expect.stringContaining("worktree add")
     ]);
     expect(shell.calls[0].command.args).toContain("core.fsmonitor=false");
-    expect(shell.calls[2].command.args).toContain("core.hooksPath=/dev/null");
+    expect(shell.calls[3].command.args).toContain("core.hooksPath=/dev/null");
   });
 
   it("rejects executable local git config before invoking git", async () => {
@@ -45,7 +42,7 @@ describe("GitWorktreeWorkspaceManager", () => {
       "[core]\n	fsmonitor = ./fsmonitor-poc.sh\n",
       "utf8"
     );
-    const shell = new MockShellExecutor();
+    const shell = new MockShellExecutor(worktreeCreateResponses());
     const manager = new GitWorktreeWorkspaceManager(shell);
 
     await expect(
@@ -124,7 +121,7 @@ describe("GitWorktreeWorkspaceManager", () => {
   it("cleanup only targets workspace-owned paths", async () => {
     const sourceRepositoryPath = await createTestDirectory("workspace-source");
     const workspaceBasePath = await createTestDirectory("workspace-base");
-    const shell = new MockShellExecutor();
+    const shell = new MockShellExecutor(worktreeCreateResponses());
     const manager = new GitWorktreeWorkspaceManager(shell);
     const session = await manager.createSession({
       sourceRepositoryPath,
@@ -138,13 +135,13 @@ describe("GitWorktreeWorkspaceManager", () => {
     await expect(session.cleanup({ successful: true })).rejects.toThrow(
       WorkspaceError
     );
-    expect(shell.calls).toHaveLength(3);
+    expect(shell.calls).toHaveLength(4);
   });
 
   it("retain-on-failure does not clean up the workspace", async () => {
     const sourceRepositoryPath = await createTestDirectory("workspace-source");
     const workspaceBasePath = await createTestDirectory("workspace-base");
-    const shell = new MockShellExecutor();
+    const shell = new MockShellExecutor(worktreeCreateResponses());
     const manager = new GitWorktreeWorkspaceManager(shell);
     const session = await manager.createSession({
       sourceRepositoryPath,
@@ -159,13 +156,13 @@ describe("GitWorktreeWorkspaceManager", () => {
 
     expect(cleanup.retained).toBe(true);
     expect(cleanup.cleaned).toBe(false);
-    expect(shell.calls).toHaveLength(3);
+    expect(shell.calls).toHaveLength(4);
   });
 
   it("defaults to retaining workspaces instead of automatic cleanup", async () => {
     const sourceRepositoryPath = await createTestDirectory("workspace-source");
     const workspaceBasePath = await createTestDirectory("workspace-base");
-    const shell = new MockShellExecutor();
+    const shell = new MockShellExecutor(worktreeCreateResponses());
     const manager = new GitWorktreeWorkspaceManager(shell);
     const session = await manager.createSession({
       sourceRepositoryPath,
@@ -180,13 +177,13 @@ describe("GitWorktreeWorkspaceManager", () => {
     expect(session.workspace.cleanupPolicy).toBe("never");
     expect(cleanup.retained).toBe(true);
     expect(cleanup.cleaned).toBe(false);
-    expect(shell.calls).toHaveLength(3);
+    expect(shell.calls).toHaveLength(4);
   });
 
   it("uses on-success cleanup only when explicitly requested", async () => {
     const sourceRepositoryPath = await createTestDirectory("workspace-source");
     const workspaceBasePath = await createTestDirectory("workspace-base");
-    const shell = new MockShellExecutor();
+    const shell = new MockShellExecutor(worktreeCreateResponses());
     const manager = new GitWorktreeWorkspaceManager(shell);
     const session = await manager.createSession({
       sourceRepositoryPath,
@@ -203,6 +200,54 @@ describe("GitWorktreeWorkspaceManager", () => {
     expect(shell.calls.at(-1)?.command.args?.join(" ")).toContain(
       "worktree remove"
     );
+  });
+
+  it("rejects an existing branch before creating a worktree", async () => {
+    const sourceRepositoryPath = await createTestDirectory("workspace-source");
+    const workspaceBasePath = await createTestDirectory("workspace-base");
+    const shell = new MockShellExecutor([
+      { stdout: "true\n" },
+      { stdout: "" },
+      { exitCode: 0 }
+    ]);
+    const manager = new GitWorktreeWorkspaceManager(shell);
+
+    await expect(
+      manager.createSession({
+        sourceRepositoryPath,
+        workspaceBasePath,
+        taskId: "task_1",
+        runId: "run_1",
+        agentKind: "fake"
+      })
+    ).rejects.toThrow("worktree branch already exists: agent-hub/task_1/fake");
+    expect(
+      shell.calls.some((call) => call.command.args?.join(" ").includes("worktree add"))
+    ).toBe(false);
+  });
+
+  it("rejects an existing worktree path before invoking git", async () => {
+    const sourceRepositoryPath = await createTestDirectory("workspace-source");
+    const workspaceBasePath = await createTestDirectory("workspace-base");
+    const workspacePath = path.join(
+      workspaceBasePath,
+      path.basename(sourceRepositoryPath),
+      "task_1-fake-run_1"
+    );
+    await fs.mkdir(workspacePath, { recursive: true });
+    const shell = new MockShellExecutor();
+    const manager = new GitWorktreeWorkspaceManager(shell);
+
+    await expect(
+      manager.createSession({
+        sourceRepositoryPath,
+        workspaceBasePath,
+        taskId: "task_1",
+        runId: "run_1",
+        agentKind: "fake"
+      })
+    ).rejects.toThrow(`worktree path already exists: ${workspacePath}`);
+    expect(shell.calls).toHaveLength(0);
   });
 
   it("supports dry-run mode without cleanup commands", async () => {
@@ -226,3 +271,12 @@ describe("GitWorktreeWorkspaceManager", () => {
     expect(shell.calls).toHaveLength(3);
   });
 });
+
+function worktreeCreateResponses() {
+  return [
+    { stdout: "true\n" },
+    { stdout: "" },
+    { exitCode: 1 },
+    { stdout: "created worktree\n" }
+  ];
+}

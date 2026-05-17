@@ -81,10 +81,22 @@ not require repository-level `AGENTS.md` or `CLAUDE.md`. `worktree_overlay` is
 opt-in and writes generated `AGENTS.md`, `CLAUDE.md`, and skill copies only
 inside the isolated worktree, never the original checkout.
 
+Task runs are inspectable even when later execution stages fail. After a run
+row exists, failures in diff collection, verification execution, risk report
+generation, artifact persistence, metadata persistence, or workspace cleanup
+are converted into diagnostic run events and warnings. The task run is
+finalized as `failed`, the task is returned to `open`, partial structured
+outputs are returned when available, and workspace cleanup is still attempted
+according to the selected cleanup policy. Dangerous verification commands are
+reported as failed verification results instead of bypassing finalization;
+verification timeouts and process signals are preserved in the command result.
+
 Run summaries include the selected `context_delivery` mode and `branch_name`
 alongside existing review fields such as worktree path, task brief path,
 changed file count, verification summary, risk level, retained workspace,
-events count, warnings, and adapter output.
+events count, warnings, and adapter output. Worktree overlay conflicts, such
+as existing non-empty skill files that Agent Hub refuses to overwrite, are
+included in the same warning output.
 
 Manual event recording is available for persisted task runs:
 `run event add --run-id ... --type ... --message ...`. The command validates

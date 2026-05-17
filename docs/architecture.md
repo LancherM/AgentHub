@@ -46,6 +46,17 @@ through repository interfaces, records run status transitions, and applies
 workspace cleanup policy. The default cleanup policy is `never`, so worktrees
 are retained unless a caller explicitly selects cleanup behavior.
 
+Runner finalization is deliberately defensive after the task run row has been
+created. Post-adapter stages catch and convert failures from diff collection,
+verification, risk generation, artifact/result persistence, metadata
+persistence, and workspace cleanup into diagnostic error events and run
+warnings. The runner uses synthetic failed diff or verification results when a
+stage cannot produce its normal output, marks the run `failed`, returns the
+task to `open`, persists every available partial record, and still attempts
+workspace cleanup according to policy. Event persistence is the last best-effort
+write; if it fails after an otherwise successful run, the run is downgraded to
+`failed` so it is not reported as cleanly complete without its event stream.
+
 Interactive CLI mode is a shell over the same command/runtime path. Bare
 `agent-hub` reads line-oriented input, handles slash commands locally, and
 routes natural language prompts or `@agent` prompts through the existing run
@@ -124,6 +135,12 @@ Existing non-empty skill files are not overwritten without warning. All runtime
 artifact writes reject symlink path components before writing so a generated
 artifact path cannot escape the worktree or export root.
 
+Overlay materialization returns generated-file baselines and warnings to the
+runner. Baselines are passed into diff collection so unchanged Agent Hub
+generated files are excluded, while agent-modified generated files stay
+reviewable. Overlay warnings are propagated through `RunResult.warnings` and
+normal CLI summary output.
+
 The repository interfaces remain the storage boundary. In-memory repositories
 are kept for focused tests and injected runtimes. The CLI default runtime uses
 SQLite repositories, initialized by simple versioned migrations, with the
@@ -195,6 +212,15 @@ and config includes before invoking Git. The local Git config scanner checks the
 repository config, common config, and worktree config files, and its parser
 accepts Git-style section comments and subsection names that contain dots so
 filter and diff driver helpers cannot bypass the pre-flight gate.
+
+Workspace creation performs collision preflights before `git worktree add`.
+An existing target worktree path fails before invoking Git, and an existing
+deterministic task/agent branch fails with a clear workspace error instead of
+attempting automatic cleanup, branch deletion, merge, push, or acceptance.
+Verification commands run with the isolated worktree as cwd. Dangerous command
+rejection is represented as a failed verification command, and shell results
+carry timeout and signal metadata so callers can distinguish command failures
+from process termination.
 
 The physical monorepo split is intentionally deferred in this slice. The
 runtime behavior is stable, but the current single-package type graph still has
