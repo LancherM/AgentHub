@@ -49,6 +49,8 @@ describe("CLI", () => {
 
     expect(errors.join("")).toBe("");
     expect(output.join("")).toContain("Task run completed");
+    expect(output.join("")).toContain("context_delivery: runtime_injection");
+    expect(output.join("")).toContain("branch_name:");
     expect(output.join("")).toContain("fake_output:");
     expect(output.join("")).toContain("changed_files: 1");
     expect(output.join("")).toContain("risk: medium");
@@ -241,6 +243,175 @@ describe("CLI", () => {
     expect(queryOutput.join("")).toContain(`Task ${taskId}`);
     expect(queryOutput.join("")).toContain("runs: 1");
     expect(queryOutput.join("")).toContain("events: 2");
+  });
+
+  it("records manual run events with the next sequence number", async () => {
+    const projectRoot = await createTestDirectory("cli-run-event-project");
+    const databasePath = path.join(
+      await createTestDirectory("cli-run-event-db"),
+      "agent-hub.sqlite"
+    );
+    const runtime = createCliRuntime({ sqliteDatabasePath: databasePath });
+    await seedManualRun(runtime, projectRoot, "run_manual");
+    await runtime.runEventRepository.createMany([
+      {
+        id: "event_existing_1",
+        taskRunId: "run_manual",
+        sequence: 0,
+        type: "stdout",
+        message: "first",
+        metadata: {},
+        createdAt: "2026-01-01T00:00:02.000Z"
+      },
+      {
+        id: "event_existing_2",
+        taskRunId: "run_manual",
+        sequence: 1,
+        type: "exit",
+        message: "done",
+        metadata: { exitCode: 0 },
+        createdAt: "2026-01-01T00:00:03.000Z"
+      }
+    ]);
+    const output: string[] = [];
+    const errors: string[] = [];
+    const io = {
+      stdout: { write: (chunk: string) => { output.push(chunk); return true; } },
+      stderr: { write: (chunk: string) => { errors.push(chunk); return true; } }
+    };
+
+    await expect(
+      main([
+        "run",
+        "event",
+        "add",
+        "--run-id",
+        "run_manual",
+        "--type",
+        "status",
+        "--message",
+        "manual review started"
+      ], io, projectRoot, runtime)
+    ).resolves.toBe(0);
+
+    const events = await runtime.runEventRepository.listByRunId("run_manual");
+    expect(errors.join("")).toBe("");
+    expect(output.join("")).toContain("Recorded run event");
+    expect(output.join("")).toContain("run_id: run_manual");
+    expect(output.join("")).toContain("sequence: 2");
+    expect(output.join("")).toContain("type: status");
+    expect(events.map((event) => event.sequence)).toEqual([0, 1, 2]);
+    expect(events[2]).toEqual(
+      expect.objectContaining({
+        type: "status",
+        message: "manual review started",
+        metadata: { source: "manual_cli" }
+      })
+    );
+  });
+
+  it("rejects manual run events for missing runs", async () => {
+    const projectRoot = await createTestDirectory("cli-run-event-missing-project");
+    const runtime = createCliRuntime({ storageMode: "memory" });
+    const output: string[] = [];
+    const errors: string[] = [];
+    const io = {
+      stdout: { write: (chunk: string) => { output.push(chunk); return true; } },
+      stderr: { write: (chunk: string) => { errors.push(chunk); return true; } }
+    };
+
+    await expect(
+      main([
+        "run",
+        "event",
+        "add",
+        "--run-id",
+        "run_missing",
+        "--type",
+        "stdout",
+        "--message",
+        "missing run"
+      ], io, projectRoot, runtime)
+    ).resolves.toBe(1);
+
+    expect(output.join("")).toBe("");
+    expect(errors.join("")).toContain("error: run run_missing not found");
+  });
+
+  it("rejects invalid manual run event types", async () => {
+    const projectRoot = await createTestDirectory("cli-run-event-invalid-project");
+    const runtime = createCliRuntime({ storageMode: "memory" });
+    await seedManualRun(runtime, projectRoot, "run_manual_invalid");
+    const output: string[] = [];
+    const errors: string[] = [];
+    const io = {
+      stdout: { write: (chunk: string) => { output.push(chunk); return true; } },
+      stderr: { write: (chunk: string) => { errors.push(chunk); return true; } }
+    };
+
+    await expect(
+      main([
+        "run",
+        "event",
+        "add",
+        "--run-id",
+        "run_manual_invalid",
+        "--type",
+        "tool",
+        "--message",
+        "invalid type"
+      ], io, projectRoot, runtime)
+    ).resolves.toBe(1);
+
+    expect(output.join("")).toBe("");
+    expect(errors.join("")).toContain(
+      "error: --type must be one of stdout, stderr, message, status, error, exit"
+    );
+  });
+
+  it("persists manual run events across SQLite runtime instances", async () => {
+    const projectRoot = await createTestDirectory("cli-run-event-persist-project");
+    const databasePath = path.join(
+      await createTestDirectory("cli-run-event-persist-db"),
+      "agent-hub.sqlite"
+    );
+    const firstRuntime = createCliRuntime({ sqliteDatabasePath: databasePath });
+    await seedManualRun(firstRuntime, projectRoot, "run_manual_persist");
+    const output: string[] = [];
+    const errors: string[] = [];
+    const io = {
+      stdout: { write: (chunk: string) => { output.push(chunk); return true; } },
+      stderr: { write: (chunk: string) => { errors.push(chunk); return true; } }
+    };
+
+    await expect(
+      main([
+        "run",
+        "event",
+        "add",
+        "--run-id",
+        "run_manual_persist",
+        "--type",
+        "stderr",
+        "--message",
+        "manual stderr event"
+      ], io, projectRoot, firstRuntime)
+    ).resolves.toBe(0);
+
+    const secondRuntime = createCliRuntime({ sqliteDatabasePath: databasePath });
+    await expect(
+      secondRuntime.runEventRepository.listByRunId("run_manual_persist")
+    ).resolves.toEqual([
+      expect.objectContaining({
+        taskRunId: "run_manual_persist",
+        sequence: 0,
+        type: "stderr",
+        message: "manual stderr event",
+        metadata: { source: "manual_cli" }
+      })
+    ]);
+    expect(errors.join("")).toBe("");
+    expect(output.join("")).toContain("Recorded run event");
   });
 
   it("supports context init, show, build, and export dry-run commands", async () => {
@@ -760,6 +931,36 @@ function restoreEnv(key: string, previousValue: string | undefined): void {
     return;
   }
   process.env[key] = previousValue;
+}
+
+async function seedManualRun(
+  runtime: ReturnType<typeof createCliRuntime>,
+  projectRoot: string,
+  runId: string
+): Promise<void> {
+  await runtime.projectRepository.create({
+    id: `project_${runId}`,
+    name: "Manual Run Event Project",
+    rootPath: projectRoot,
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z"
+  });
+  await runtime.taskRepository.create({
+    id: `task_${runId}`,
+    projectId: `project_${runId}`,
+    title: "Manual run event task",
+    status: "open",
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z"
+  });
+  await runtime.taskRunRepository.create({
+    id: runId,
+    taskId: `task_${runId}`,
+    agentKind: "fake",
+    status: "succeeded",
+    createdAt: "2026-01-01T00:00:01.000Z",
+    updatedAt: "2026-01-01T00:00:01.000Z"
+  });
 }
 
 function riskReportForRun(

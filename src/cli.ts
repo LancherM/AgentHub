@@ -15,15 +15,18 @@ import {
   nowIso,
   agentKinds,
   memoryCategories,
+  runEventTypes,
   parseAgentKind,
   validateComparisonReport,
   validateMemoryItem,
   validateProject,
+  validateRunEvent,
   validateTask,
   type ContextDeliveryMode,
   type ContextStoreMode,
   type AgentKind,
   type MemoryCategory,
+  type RunEventType,
   type VerificationResult
 } from "./domain";
 import { TaskRunner, type RunTaskInput, type TaskRunnerDependencies } from "./task-runner";
@@ -277,6 +280,10 @@ export async function main(
     return contextExport(rest.slice(1), io, cwd);
   }
 
+  if (command === "run" && rest[0] === "event" && rest[1] === "add") {
+    return addRunEvent(rest.slice(2), io, activeRuntime);
+  }
+
   if (command === "run") {
     return runCommand(rest, io, cwd, activeRuntime, debug);
   }
@@ -339,6 +346,7 @@ export function helpText(): string {
     "  agent-hub context export --project-root <path> --project-id <project-id> --dry-run|--write",
     "  agent-hub [--db <path>] run --task <task-id> --agent fake|codex|claude-code [--workspace-base <path>]",
     "  agent-hub [--db <path>] run [--repo <path>] [--workspace-base <path>] [--retain-on-failure] \"@fake|@codex|@claude-code <task>\"",
+    "  agent-hub [--db <path>] run event add --run-id <run-id> --type <type> --message <message>",
     "  agent-hub runs list",
     "  agent-hub runs show <run-id>",
     "  agent-hub risks show <run-id>",
@@ -774,11 +782,57 @@ async function runCommand(
       contextStoreRoot: options.contextStoreRoot
     });
 
-    io.stdout.write(renderRunSummary(result));
+    io.stdout.write(renderRunSummary(result, options.deliveryMode ?? "runtime_injection"));
     if (inheritedDebug || options.debug) {
       io.stdout.write(renderRunDebug(result, runInput));
     }
     return result.ok ? 0 : 1;
+  } catch (error) {
+    io.stderr.write(`error: ${error instanceof Error ? error.message : String(error)}\n`);
+    return 1;
+  }
+}
+
+async function addRunEvent(
+  args: string[],
+  io: CliIO,
+  runtime: CliRuntime
+): Promise<number> {
+  try {
+    const runId = requiredFlag(args, "--run-id");
+    const type = parseRunEventType(requiredFlag(args, "--type"));
+    const message = requiredFlag(args, "--message");
+    const run = await runtime.taskRunRepository.get(runId);
+    if (!run) {
+      throw new Error(`run ${runId} not found`);
+    }
+    const existingEvents = await runtime.runEventRepository.listByRunId(runId);
+    const nextSequence =
+      existingEvents.length === 0
+        ? 0
+        : Math.max(...existingEvents.map((event) => event.sequence)) + 1;
+    const event = await runtime.runEventRepository.create(
+      validateRunEvent({
+        id: createId("event"),
+        taskRunId: runId,
+        sequence: nextSequence,
+        type,
+        message,
+        metadata: { source: "manual_cli" },
+        createdAt: nowIso()
+      })
+    );
+    io.stdout.write(
+      [
+        "Recorded run event",
+        `id: ${event.id}`,
+        `run_id: ${event.taskRunId}`,
+        `sequence: ${event.sequence}`,
+        `type: ${event.type}`,
+        ""
+      ].join("\n")
+    );
+    return 0;
   } catch (error) {
     io.stderr.write(`error: ${error instanceof Error ? error.message : String(error)}\n`);
     return 1;
@@ -1290,15 +1344,19 @@ function numeric(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
-function renderRunSummary(result: Awaited<ReturnType<TaskRunner["run"]>>): string {
+function renderRunSummary(
+  result: Awaited<ReturnType<TaskRunner["run"]>>,
+  deliveryMode: ContextDeliveryMode
+): string {
   return [
     "Task run completed",
     `task_id: ${result.task.id}`,
     `run_id: ${result.run.id}`,
     `agent: ${result.run.agentKind}`,
     `status: ${result.status}`,
+    `context_delivery: ${deliveryMode}`,
     `worktree_path: ${result.worktreePath ?? "none"}`,
-    `branch: ${result.run.branchName ?? "none"}`,
+    `branch_name: ${result.run.branchName ?? "none"}`,
     `task_brief_path: ${result.taskBriefPath ?? "none"}`,
     `changed_files: ${result.diff?.changedFiles.length ?? 0}`,
     `verification: ${result.verification?.summary ?? "not available"}`,
@@ -1745,6 +1803,13 @@ function parseMemoryCategory(value: string): MemoryCategory {
     return value as MemoryCategory;
   }
   throw new Error(`--category must be one of ${memoryCategories.join(", ")}`);
+}
+
+function parseRunEventType(value: string): RunEventType {
+  if ((runEventTypes as readonly string[]).includes(value)) {
+    return value as RunEventType;
+  }
+  throw new Error(`--type must be one of ${runEventTypes.join(", ")}`);
 }
 
 function parseDeliveryMode(value: string | undefined): ContextDeliveryMode | undefined {

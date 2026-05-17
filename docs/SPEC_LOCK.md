@@ -68,8 +68,10 @@ Supported domain values are:
 - `codex`
 - `claude-code`
 
-Only `fake` is implemented in this rebuild slice. `codex` and `claude-code`
-remain domain values but must not run yet.
+All three adapters are implemented. `fake` is deterministic and always
+available. `codex` and `claude-code` are process-backed adapters that run only
+inside the isolated worktree and report unavailable status when their external
+CLIs cannot be detected.
 
 ## Domain Values
 
@@ -84,55 +86,69 @@ The current domain model validates these values:
 - memory status: `proposed`, `approved`, `rejected`
 - risk level: `low`, `medium`, `high`, `blocking`
 
-## Current Phase Boundary
+## Current Baseline Status
 
-The imported roadmap labels Phase 2 as "Core Domain And SQLite", but the direct
-rebuild task explicitly says to implement only the core domain model plus the
-fake adapter, minimal runner, minimal CLI, and tests.
+The repository has moved beyond the original fake-only rebuild slice. The
+current baseline includes the root TypeScript package, domain models, SQLite
+repositories, context store init/show/build/export, git worktree task runs,
+fake/Codex/Claude Code adapters, verification, diff collection, safety
+scanning, risk report persistence, memory workflows, comparison reports,
+interactive CLI mode, and manual run-event recording.
 
-For this repository state:
+The current physical layout is still a single root package with module
+boundaries under `src/`. The imported `apps/` and `packages/` monorepo layout
+remains a target architecture, not the current filesystem shape.
 
-- Phase 0 is spec consolidation and planning.
-- Phase 1 is TypeScript, Node.js, pnpm, Vitest, and CLI skeleton setup.
-- Phase 2 is the minimal local fake-agent vertical slice.
+Still deferred:
 
-SQLite persistence, CodexAdapter, ClaudeCodeAdapter, comparison reports, memory
-workflows, and desktop UI are deferred.
-
-Night 3 introduces safe shell execution boundaries, git worktree workspace
-management, diff collection, verification command execution, and structured
-risk report generation. These capabilities are wired only through the fake
-adapter run path.
+- Desktop app.
+- Physical monorepo package split.
+- Automatic memory proposal generation from completed runs.
+- Richer comparison scoring beyond the current persisted textual summary.
 
 ## Hard Constraints For This Slice
 
-- Do not implement `CodexAdapter`.
-- Do not implement `ClaudeCodeAdapter`.
-- Do not run shell commands outside the `ShellExecutor` abstraction.
+- Do not add desktop UI.
+- Do not restructure into `apps/` and `packages/`.
+- Do not introduce cloud, account, backend, login, team, automatic merge,
+  automatic push, or automatic pull request behavior.
+- Do not run shell commands outside the `ShellExecutor` or `ProcessRunner`
+  boundaries.
 - Do not execute shell commands derived directly from task prompts.
-- Keep real agent execution deferred.
-- Do not push to a remote.
+- Keep all real agent execution inside isolated task worktrees.
 - Do not delete files outside this repository.
 - Do not modify files outside this repository.
 - Do not introduce heavy frameworks without documenting why.
-- Keep commits local, small, and reviewable.
+- Keep commits small and reviewable.
 
 ## Minimal Run Behavior
 
-The implemented CLI command is:
+The implemented run commands include:
 
 ```sh
-agent-hub run "@fake <task>"
+agent-hub run --task <task-id> --agent fake|codex|claude-code
+agent-hub run "@fake|@codex|@claude-code <task>"
+agent-hub run event add --run-id <run-id> --type <type> --message <message>
 ```
 
-It parses the `@fake` route, creates an isolated git worktree under the
-configured workspace base, writes generated runtime files only inside that
-worktree, runs the deterministic fake adapter, collects git diff metadata, runs
-configured verification commands, generates a structured risk report, captures
-adapter events, cleans up according to the workspace cleanup policy, and prints
-a concise run summary.
+Task runs create an isolated git worktree under the configured workspace base,
+write generated runtime files only inside that worktree, run the selected
+adapter, collect git diff metadata, run configured verification commands,
+generate a structured risk report, capture adapter events, persist run data,
+clean up according to the workspace cleanup policy, and print a concise run
+summary. The run summary includes `context_delivery` and `branch_name` along
+with worktree path, task brief path, verification summary, risk level, retained
+workspace, warnings, and event count.
 
-Codex and Claude Code remain unsupported by the runner in this rebuild slice.
+Manual event recording validates the run, validates the event type, appends a
+`run_events` row through `RunEventRepository`, and preserves event ordering by
+using the next sequence number after existing events for the run.
+
+## Historical Phase Notes
+
+The Night 2 and Night 3 sections below are retained as historical reports. Their
+deferred-gap lists describe earlier rebuild boundaries and must not be read as
+the current implementation status.
 
 ## Night 2 Phase Boundary
 

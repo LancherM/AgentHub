@@ -1,5 +1,20 @@
 # Overnight Reports
 
+## Current Baseline Note
+
+The Night 1 through Night 3 reports below are historical implementation logs.
+Their "remaining gaps" and "recommended next scope" sections are stale for the
+current repository and must not be used as the active implementation status.
+
+As of the current baseline, the code includes SQLite persistence, context
+init/show/build/export, git worktree task runs, fake/Codex/Claude Code
+adapters, verification, diff collection, safety scanning, risk report
+persistence, memory propose/list/approve/reject flows, comparison report
+generation, interactive CLI mode, and manual `run event add` recording.
+
+Still deferred: desktop UI, physical `apps/` and `packages/` restructuring,
+automatic memory proposal generation, and richer comparison scoring.
+
 ## Night 3 Report
 
 ### Completed
