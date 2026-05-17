@@ -72,6 +72,35 @@ describe("process-backed agent adapters", () => {
     ]);
   });
 
+  it("extracts Codex assistant content from lifecycle JSONL events", async () => {
+    const runner = new MockProcessRunner([
+      [
+        { type: "stdout", data: "{\"type\":\"thread.started\"}\n" },
+        {
+          type: "stdout",
+          data: "{\"type\":\"item.completed\",\"item\":{\"type\":\"reasoning\",\"summary\":[]}}\n"
+        },
+        {
+          type: "stdout",
+          data: "{\"type\":\"item.completed\",\"item\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"hello from codex\"}]}}\n"
+        },
+        { type: "exit", exitCode: 0, signal: null }
+      ]
+    ]);
+    const input = await createInput("codex-lifecycle-adapter");
+
+    const events = await collect(new CodexAdapter({ processRunner: runner }).run(input));
+
+    expect(events).toContainEqual(expect.objectContaining({
+      type: "status",
+      message: "Codex thread.started"
+    }));
+    expect(events).toContainEqual(expect.objectContaining({
+      type: "message",
+      message: "hello from codex"
+    }));
+  });
+
   it("runs Claude Code in print mode without repository-level context files", async () => {
     const runner = new MockProcessRunner([
       [

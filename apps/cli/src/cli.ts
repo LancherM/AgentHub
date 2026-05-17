@@ -414,7 +414,9 @@ export async function runInteractive(
       continue;
     }
 
-    io.stdout.write(`run: ${line}\n`);
+    if (state.debug) {
+      io.stdout.write(`run: ${line}\n`);
+    }
     const runArgs = line.startsWith("@")
       ? ["--repo", state.projectRoot, line]
       : ["--repo", state.projectRoot, "--agent", state.selectedAgent, "--prompt", line];
@@ -788,9 +790,10 @@ async function runCommand(
       contextStoreRoot: options.contextStoreRoot
     });
 
-    io.stdout.write(renderRunSummary(result, options.deliveryMode ?? "runtime_injection"));
+    const deliveryMode = options.deliveryMode ?? "runtime_injection";
+    io.stdout.write(renderAgentOutput(result));
     if (inheritedDebug || options.debug) {
-      io.stdout.write(renderRunDebug(result, effectiveRunInput));
+      io.stdout.write(renderRunDebug(result, effectiveRunInput, deliveryMode));
     }
     return result.ok ? 0 : 1;
   } catch (error) {
@@ -1463,38 +1466,74 @@ function numeric(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
-function renderRunSummary(
-  result: Awaited<ReturnType<TaskRunner["run"]>>,
-  deliveryMode: ContextDeliveryMode
-): string {
-  return [
-    "Task run completed",
-    `task_id: ${result.task.id}`,
-    `run_id: ${result.run.id}`,
-    `agent: ${result.run.agentKind}`,
-    `status: ${result.status}`,
-    `context_delivery: ${deliveryMode}`,
-    `worktree_path: ${result.worktreePath ?? "none"}`,
-    `branch_name: ${result.run.branchName ?? "none"}`,
-    `task_brief_path: ${result.taskBriefPath ?? "none"}`,
-    `changed_files: ${result.diff?.changedFiles.length ?? 0}`,
-    `verification: ${result.verification?.summary ?? "not available"}`,
-    `risk: ${result.riskReport?.level ?? "not available"}`,
-    `retained_workspace: ${result.workspaceCleanup?.retained ? result.worktreePath ?? "unknown" : "none"}`,
-    `events: ${result.events.length}`,
-    `warnings: ${result.warnings.length === 0 ? "none" : result.warnings.join(", ")}`,
-    "fake_output:",
-    result.fakeOutput?.trim() ?? "(none)",
-    ""
-  ].join("\n");
+type CliRunResult = Awaited<ReturnType<TaskRunner["run"]>>;
+
+function renderAgentOutput(result: CliRunResult): string {
+  return `${extractAgentOutput(result).trimEnd() || "(no agent output)"}\n`;
+}
+
+function extractAgentOutput(result: CliRunResult): string {
+  if (result.fakeOutput?.trim()) {
+    return result.fakeOutput.trim();
+  }
+
+  const structuredOutput = result.events
+    .filter((event) => event.type === "message" || event.type === "error")
+    .map((event) => event.message.trim())
+    .filter(Boolean);
+  if (structuredOutput.length > 0) {
+    return structuredOutput.join("\n");
+  }
+
+  return result.events
+    .filter((event) => event.type === "stdout" || event.type === "stderr")
+    .flatMap((event) => humanReadableRawLines(event.message))
+    .join("\n");
+}
+
+function humanReadableRawLines(value: string): string[] {
+  return value
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0 && !isJsonObjectLine(line));
+}
+
+function isJsonObjectLine(value: string): boolean {
+  if (!value.startsWith("{") || !value.endsWith("}")) {
+    return false;
+  }
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed);
+  } catch {
+    return false;
+  }
 }
 
 function renderRunDebug(
-  result: Awaited<ReturnType<TaskRunner["run"]>>,
-  input: RunTaskInput
+  result: CliRunResult,
+  input: RunTaskInput,
+  deliveryMode: ContextDeliveryMode
 ): string {
   const lines = [
     "debug:",
+    "run_summary:",
+    `- task_id: ${result.task.id}`,
+    `- run_id: ${result.run.id}`,
+    `- agent: ${result.run.agentKind}`,
+    `- status: ${result.status}`,
+    `- context_delivery: ${deliveryMode}`,
+    `- worktree_path: ${result.worktreePath ?? "none"}`,
+    `- branch_name: ${result.run.branchName ?? "none"}`,
+    `- task_brief_path: ${result.taskBriefPath ?? "none"}`,
+    `- changed_files: ${result.diff?.changedFiles.length ?? 0}`,
+    `- verification: ${result.verification?.summary ?? "not available"}`,
+    `- risk: ${result.riskReport?.level ?? "not available"}`,
+    `- retained_workspace: ${result.workspaceCleanup?.retained ? result.worktreePath ?? "unknown" : "none"}`,
+    `- events: ${result.events.length}`,
+    `- warnings: ${result.warnings.length === 0 ? "none" : result.warnings.join(", ")}`,
+    "agent_output:",
+    indentBlock(extractAgentOutput(result) || "(none)", 2),
     "run_boundary:",
     `- project_root: ${input.projectRoot}`,
     `- task_id: ${result.task.id}`,
