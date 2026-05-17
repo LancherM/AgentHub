@@ -91,12 +91,16 @@ integration, verification, and user-facing summary in the main thread.
 
 ## Commit Rules
 
-After every completed change, create a local git commit for that change.
+Do not make changes directly on `main`, `master`, or any default branch.
+
+Before starting any implementation or documentation change, create or switch to
+a dedicated feature branch for that task.
+
+After every completed change, create a local git commit for that change, push
+the branch to the remote, and create a pull request.
 
 When a task contains multiple independent module or feature changes, split them
 into separate focused commits.
-
-Do not push commits to a remote unless the user explicitly asks for it.
 
 ## MVP Scope
 
