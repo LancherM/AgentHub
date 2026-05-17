@@ -245,6 +245,72 @@ describe("CLI", () => {
     expect(queryOutput.join("")).toContain("events: 2");
   });
 
+  it("keeps ad-hoc SQLite projects scoped to their repository roots", async () => {
+    const firstProjectRoot = await createTestDirectory("cli-adhoc-project-a");
+    const secondProjectRoot = await createTestDirectory("cli-adhoc-project-b");
+    const runRoot = path.join(await createTestDirectory("cli-adhoc-runs"), "runs");
+    const databasePath = path.join(
+      await createTestDirectory("cli-adhoc-db"),
+      "agent-hub.sqlite"
+    );
+    const runtime = createCliRuntime({
+      sqliteDatabasePath: databasePath,
+      defaultRunRoot: runRoot,
+      workspaceManager: new TestWorkspaceManager(runRoot),
+      diffCollector: new StaticDiffCollector(),
+      verificationRunner: new VerificationRunner(new MockShellExecutor()),
+      idGenerator: new SequenceIdGenerator(),
+      clock: new FixedClock("2026-01-01T00:00:00.000Z")
+    });
+    const output: string[] = [];
+    const errors: string[] = [];
+    const io = {
+      stdout: { write: (chunk: string) => { output.push(chunk); return true; } },
+      stderr: { write: (chunk: string) => { errors.push(chunk); return true; } }
+    };
+
+    await expect(
+      main([
+        "run",
+        "--repo",
+        firstProjectRoot,
+        "@fake",
+        "first ad-hoc run"
+      ], io, firstProjectRoot, runtime)
+    ).resolves.toBe(0);
+    await expect(
+      main([
+        "run",
+        "--repo",
+        secondProjectRoot,
+        "@fake",
+        "second ad-hoc run"
+      ], io, secondProjectRoot, runtime)
+    ).resolves.toBe(0);
+
+    const firstProject = await runtime.projectRepository.getByRootPath(firstProjectRoot);
+    const secondProject = await runtime.projectRepository.getByRootPath(secondProjectRoot);
+    const tasks = await runtime.taskRepository.list();
+
+    expect(errors.join("")).toBe("");
+    expect(firstProject).toEqual(
+      expect.objectContaining({
+        id: "adhoc_project",
+        rootPath: firstProjectRoot
+      })
+    );
+    expect(secondProject).toEqual(
+      expect.objectContaining({
+        rootPath: secondProjectRoot
+      })
+    );
+    expect(secondProject?.id).not.toBe("adhoc_project");
+    expect(tasks.map((task) => task.projectId)).toEqual([
+      firstProject?.id,
+      secondProject?.id
+    ]);
+  });
+
   it("records manual run events with the next sequence number", async () => {
     const projectRoot = await createTestDirectory("cli-run-event-project");
     const databasePath = path.join(

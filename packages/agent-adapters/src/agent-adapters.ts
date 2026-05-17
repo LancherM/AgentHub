@@ -211,7 +211,16 @@ export class CodexAdapter implements AgentAdapter {
       displayName: this.displayName,
       executable: this.executable,
       args: this.runArgs,
-      detect: () => this.detect(),
+      detect: (runInput) =>
+        detectProcessAgent({
+          displayName: this.displayName,
+          executable: this.executable,
+          args: this.detectArgs,
+          processRunner: this.processRunner,
+          timeoutMs: this.detectTimeoutMs,
+          cwd: path.resolve(runInput.worktreePath),
+          env: runInput.environment
+        }),
       processRunner: this.processRunner,
       input,
       timeoutMs: this.runTimeoutMs
@@ -255,7 +264,16 @@ export class ClaudeCodeAdapter implements AgentAdapter {
       displayName: this.displayName,
       executable: this.executable,
       args: this.runArgs,
-      detect: () => this.detect(),
+      detect: (runInput) =>
+        detectProcessAgent({
+          displayName: this.displayName,
+          executable: this.executable,
+          args: this.detectArgs,
+          processRunner: this.processRunner,
+          timeoutMs: this.detectTimeoutMs,
+          cwd: path.resolve(runInput.worktreePath),
+          env: runInput.environment
+        }),
       processRunner: this.processRunner,
       input,
       timeoutMs: this.runTimeoutMs
@@ -295,12 +313,15 @@ async function detectProcessAgent(input: {
   args: string[];
   processRunner: ProcessRunner;
   timeoutMs: number;
+  cwd?: string;
+  env?: Record<string, string | undefined>;
 }): Promise<AgentDetectionResult> {
   try {
     const result = await input.processRunner.detect({
       executable: input.executable,
       args: input.args,
-      cwd: process.cwd(),
+      cwd: input.cwd ?? process.cwd(),
+      env: input.env,
       timeoutMs: input.timeoutMs
     });
     if (result.available) {
@@ -328,14 +349,20 @@ async function* runProcessAgentWithPreflight(input: {
   displayName: string;
   executable: string;
   args: string[];
-  detect: () => Promise<AgentDetectionResult>;
+  detect: (input: AgentRunInput) => Promise<AgentDetectionResult>;
   processRunner: ProcessRunner;
   input: AgentRunInput;
   timeoutMs?: number;
 }): AsyncIterable<AgentRunEvent> {
+  const validation = await validateProcessAgentInput(input.input);
+  if (!validation.ok) {
+    yield* failureEvents(validation.message);
+    return;
+  }
+
   let detection: AgentDetectionResult;
   try {
-    detection = await input.detect();
+    detection = await input.detect(input.input);
   } catch (error) {
     detection = {
       available: false,

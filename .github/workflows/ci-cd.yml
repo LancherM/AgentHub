@@ -88,7 +88,7 @@ jobs:
           pnpm build
           mkdir -p artifacts
           safe_ref="${GITHUB_REF_NAME//\//-}"
-          tar -czf "artifacts/agent-hub-${safe_ref}.tgz" apps packages package.json README.md pnpm-workspace.yaml pnpm-lock.yaml
+          tar -czf "artifacts/agent-hub-${safe_ref}.tgz" .github/workflows/ci-cd.yml apps packages tests package.json README.md pnpm-workspace.yaml pnpm-lock.yaml tsconfig.json tsconfig.build.json vitest.config.ts
 
       - name: Upload package artifact
         uses: actions/upload-artifact@v4
