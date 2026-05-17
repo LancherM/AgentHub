@@ -170,6 +170,9 @@ writes only worktree-local runtime files under `.agent-hub/tasks/<task-id>/` and
 passes the generated context to the adapter. `worktree_overlay` additionally
 materializes managed `AGENTS.md`, `CLAUDE.md`, and skill copies under
 `.claude/skills` and `.agents/skills`, but only inside the isolated worktree.
+The CLI and task runner validate run delivery modes against that two-value set;
+`repo_export` is reserved for explicit repository export flows and is rejected
+during task runs.
 Existing non-empty skill files are not overwritten without warning. All runtime
 artifact writes reject symlink path components before writing so a generated
 artifact path cannot escape the worktree or export root. Persisted task brief

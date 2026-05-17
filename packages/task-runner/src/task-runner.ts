@@ -35,10 +35,10 @@ import {
   validateTask,
   validateTaskRun,
   type AgentKind,
-  type ContextDeliveryMode,
   type ContextPack,
   type JsonObject,
   type RiskReport,
+  type RunContextDeliveryMode,
   type RunEvent,
   type Task,
   type TaskBrief,
@@ -94,7 +94,7 @@ export interface RunTaskInput {
   taskId?: string;
   projectId?: string;
   title?: string;
-  deliveryMode?: ContextDeliveryMode;
+  deliveryMode?: RunContextDeliveryMode;
   contextStoreRoot?: string;
   runRoot?: string;
   workspaceBasePath?: string;
@@ -292,7 +292,7 @@ export class TaskRunner {
       task.id,
       task.title,
       parsed.taskPrompt,
-      input.deliveryMode ?? "runtime_injection"
+      parsed.deliveryMode
     );
 
     const run = validateTaskRun({
@@ -473,16 +473,16 @@ export class TaskRunner {
           contextPack,
           taskBrief,
           contextMarkdown,
-          includeAgentFiles: input.deliveryMode === "worktree_overlay",
+          includeAgentFiles: parsed.deliveryMode === "worktree_overlay",
           storeRoot:
-            input.deliveryMode === "worktree_overlay"
+            parsed.deliveryMode === "worktree_overlay"
               ? input.contextStoreRoot
               : undefined
         });
         taskBriefPath = generatedTaskBriefPath;
         warnings.push(...overlay.warnings);
         generatedFileBaselines = overlay.baselines;
-        if (input.deliveryMode !== "worktree_overlay") {
+        if (parsed.deliveryMode !== "worktree_overlay") {
           generatedFileBaselines = overlay.baselines.filter((baseline) =>
             baseline.path.startsWith(".agent-hub/")
           );
@@ -752,7 +752,7 @@ function createRuntimeContextPack(
   taskId: string,
   title: string,
   prompt: string,
-  deliveryMode: ContextDeliveryMode
+  deliveryMode: RunContextDeliveryMode
 ): ContextPack {
   return {
     id: bundle.id,
@@ -858,10 +858,15 @@ function toPersistedVerificationResults(
   );
 }
 
-function parseRunInput(input: RunTaskInput): { agentKind: AgentKind; taskPrompt: string } {
+function parseRunInput(input: RunTaskInput): {
+  agentKind: AgentKind;
+  taskPrompt: string;
+  deliveryMode: RunContextDeliveryMode;
+} {
+  const deliveryMode = parseRunDeliveryMode(input.deliveryMode);
   if (input.rawPrompt !== undefined) {
     const parsed = parseAgentPrompt(input.rawPrompt);
-    return { agentKind: parsed.agentKind, taskPrompt: parsed.prompt };
+    return { agentKind: parsed.agentKind, taskPrompt: parsed.prompt, deliveryMode };
   }
 
   if (!input.taskPrompt) {
@@ -870,8 +875,23 @@ function parseRunInput(input: RunTaskInput): { agentKind: AgentKind; taskPrompt:
 
   return {
     agentKind: input.agentKind ?? "fake",
-    taskPrompt: input.taskPrompt
+    taskPrompt: input.taskPrompt,
+    deliveryMode
   };
+}
+
+function parseRunDeliveryMode(
+  value: string | undefined
+): RunContextDeliveryMode {
+  if (value === undefined) {
+    return "runtime_injection";
+  }
+  if (value === "runtime_injection" || value === "worktree_overlay") {
+    return value;
+  }
+  throw new TaskRunnerError(
+    "deliveryMode must be runtime_injection or worktree_overlay for task runs"
+  );
 }
 
 async function createRunDirectory(
