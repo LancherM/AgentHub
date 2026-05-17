@@ -2,12 +2,16 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   DomainValidationError,
+  DomainStateTransitionError,
   nowIso,
   parseAgentKind,
   validateMemoryItem,
+  validateMemoryStatusTransition,
   validateProject,
   validateTask,
-  validateTaskRun
+  validateTaskRun,
+  validateTaskRunStatusTransition,
+  validateTaskStatusTransition
 } from "../src/domain";
 
 describe("domain model validation", () => {
@@ -94,5 +98,18 @@ describe("domain model validation", () => {
     expect(parseAgentKind("claude-code")).toBe("claude-code");
     expect(() => parseAgentKind("unknown")).toThrow(DomainValidationError);
   });
-});
 
+  it("rejects status transitions outside the imported lifecycle", () => {
+    expect(() => validateTaskStatusTransition("open", "running")).not.toThrow();
+    expect(() => validateTaskStatusTransition("running", "open"))
+      .toThrow(DomainStateTransitionError);
+
+    expect(() => validateTaskRunStatusTransition("queued", "running")).not.toThrow();
+    expect(() => validateTaskRunStatusTransition("queued", "failed"))
+      .toThrow(DomainStateTransitionError);
+
+    expect(() => validateMemoryStatusTransition("proposed", "approved")).not.toThrow();
+    expect(() => validateMemoryStatusTransition("rejected", "approved"))
+      .toThrow(DomainStateTransitionError);
+  });
+});

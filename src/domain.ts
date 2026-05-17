@@ -218,6 +218,13 @@ export class DomainValidationError extends Error {
   }
 }
 
+export class DomainStateTransitionError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "DomainStateTransitionError";
+  }
+}
+
 export function nowIso(): string {
   return new Date().toISOString();
 }
@@ -233,6 +240,27 @@ export function createId(prefix: string): string {
 
 export function parseAgentKind(value: string): AgentKind {
   return parseEnum(value, agentKinds, "agent kind");
+}
+
+export function validateTaskStatusTransition(
+  from: TaskStatus,
+  to: TaskStatus
+): void {
+  validateStatusTransition(from, to, taskStatusTransitions, "task");
+}
+
+export function validateTaskRunStatusTransition(
+  from: TaskRunStatus,
+  to: TaskRunStatus
+): void {
+  validateStatusTransition(from, to, taskRunStatusTransitions, "task run");
+}
+
+export function validateMemoryStatusTransition(
+  from: MemoryStatus,
+  to: MemoryStatus
+): void {
+  validateStatusTransition(from, to, memoryStatusTransitions, "memory item");
 }
 
 export function validateProject(input: Project): Project {
@@ -500,6 +528,43 @@ function parseEnum<T extends readonly string[]>(
   }
 
   throw new DomainValidationError([`${label} must be one of ${values.join(", ")}`]);
+}
+
+const taskStatusTransitions: Record<TaskStatus, readonly TaskStatus[]> = {
+  open: ["running", "cancelled"],
+  running: ["completed", "cancelled"],
+  completed: [],
+  cancelled: []
+};
+
+const taskRunStatusTransitions: Record<TaskRunStatus, readonly TaskRunStatus[]> = {
+  queued: ["running", "cancelled"],
+  running: ["succeeded", "failed", "cancelled"],
+  succeeded: [],
+  failed: [],
+  cancelled: []
+};
+
+const memoryStatusTransitions: Record<MemoryStatus, readonly MemoryStatus[]> = {
+  proposed: ["approved", "rejected"],
+  approved: [],
+  rejected: []
+};
+
+function validateStatusTransition<T extends string>(
+  from: T,
+  to: T,
+  transitions: Record<T, readonly T[]>,
+  label: string
+): void {
+  if (from === to) {
+    return;
+  }
+  if (!transitions[from]?.includes(to)) {
+    throw new DomainStateTransitionError(
+      `invalid ${label} status transition ${from} -> ${to}`
+    );
+  }
 }
 
 function finish<T>(input: T, issues: string[]): T {

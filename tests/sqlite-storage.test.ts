@@ -1,8 +1,9 @@
+import { spawn } from "node:child_process";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import type { DiffCollectionResult } from "../src/diff-collector";
 import type { RiskReport } from "../src/domain";
-import { createSqliteRepositories } from "../src/sqlite-storage";
+import { SQLITE_MIGRATIONS, createSqliteRepositories } from "../src/sqlite-storage";
 import type { VerificationSuiteResult } from "../src/verification";
 import type { Workspace, WorkspaceCleanupResult } from "../src/workspace";
 import { createTestDirectory } from "./helpers";
@@ -24,7 +25,7 @@ describe("SQLite storage", () => {
       database.query<{ version: number }>(
         "SELECT version FROM schema_migrations ORDER BY version ASC;"
       )
-    ).resolves.toEqual([{ version: 1 }, { version: 2 }]);
+    ).resolves.toEqual([{ version: 1 }, { version: 2 }, { version: 3 }]);
     await expect(
       database.query<{ name: string }>(
         "SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name ASC;"
@@ -186,6 +187,7 @@ describe("SQLite storage", () => {
       "succeeded",
       "2026-01-01T00:00:02.000Z"
     );
+    await first.taskRepository.updateStatus("task_1", "running", updatedAt);
     await first.taskRepository.updateStatus(
       "task_1",
       "completed",
@@ -257,6 +259,240 @@ describe("SQLite storage", () => {
     await expect(second.settingsRepository.get("ui.theme")).resolves.toEqual(
       expect.objectContaining({ key: "ui.theme", value: { theme: "system" } })
     );
+  });
+
+  it("enforces imported SQLite constraints for relationships, enums, JSON, and event order", async () => {
+    const baseDirectory = await createTestDirectory("sqlite-constraints");
+    const databasePath = path.join(baseDirectory, "agent-hub.sqlite");
+    const repositories = createSqliteRepositories({ databasePath });
+    await repositories.projectRepository.create({
+      id: "project_constraints",
+      name: "Constraints",
+      rootPath: path.join(baseDirectory, "source"),
+      createdAt,
+      updatedAt: createdAt
+    });
+    await repositories.agentProfileRepository.create({
+      id: "agent_profile_constraints",
+      kind: "fake",
+      displayName: "Fake",
+      enabled: true,
+      createdAt,
+      updatedAt: createdAt
+    });
+    await repositories.taskRepository.create({
+      id: "task_constraints",
+      projectId: "project_constraints",
+      title: "Check constraints",
+      status: "open",
+      createdAt,
+      updatedAt: createdAt
+    });
+    await repositories.taskRunRepository.create({
+      id: "run_constraints",
+      taskId: "task_constraints",
+      agentProfileId: "agent_profile_constraints",
+      agentKind: "fake",
+      status: "queued",
+      createdAt,
+      updatedAt: createdAt
+    });
+    await repositories.runEventRepository.create({
+      id: "event_constraints_1",
+      taskRunId: "run_constraints",
+      sequence: 0,
+      type: "stdout",
+      message: "first",
+      metadata: {},
+      createdAt
+    });
+
+    await expect(repositories.database.execute(`
+INSERT INTO tasks (id, project_id, title, status, created_at, updated_at)
+VALUES ('task_missing_project', 'missing_project', 'Missing', 'open', '${createdAt}', '${createdAt}');
+`)).rejects.toThrow();
+    await expect(repositories.database.execute(`
+INSERT INTO task_runs (id, task_id, agent_profile_id, agent_kind, status, created_at, updated_at)
+VALUES ('run_missing_profile', 'task_constraints', 'missing_profile', 'fake', 'queued', '${createdAt}', '${createdAt}');
+`)).rejects.toThrow();
+    await expect(repositories.database.execute(`
+INSERT INTO tasks (id, project_id, title, status, created_at, updated_at)
+VALUES ('task_bad_status', 'project_constraints', 'Bad', 'review_ready', '${createdAt}', '${createdAt}');
+`)).rejects.toThrow();
+    await expect(repositories.database.execute(`
+INSERT INTO task_runs (id, task_id, agent_kind, status, created_at, updated_at)
+VALUES ('run_bad_agent', 'task_constraints', 'unknown', 'queued', '${createdAt}', '${createdAt}');
+`)).rejects.toThrow();
+    await expect(repositories.database.execute(`
+INSERT INTO task_runs (id, task_id, agent_kind, status, created_at, updated_at)
+VALUES ('run_bad_status', 'task_constraints', 'fake', 'review_ready', '${createdAt}', '${createdAt}');
+`)).rejects.toThrow();
+    await expect(repositories.database.execute(`
+INSERT INTO run_events (id, task_run_id, sequence, type, message, metadata_json, created_at)
+VALUES ('event_bad_json', 'run_constraints', 1, 'stdout', 'bad json', '{bad', '${createdAt}');
+`)).rejects.toThrow();
+    await expect(repositories.runEventRepository.create({
+      id: "event_constraints_2",
+      taskRunId: "run_constraints",
+      sequence: 0,
+      type: "stderr",
+      message: "duplicate sequence",
+      metadata: {},
+      createdAt
+    })).rejects.toThrow();
+  });
+
+  it("cascades project deletion through tasks and task runs", async () => {
+    const baseDirectory = await createTestDirectory("sqlite-cascade");
+    const databasePath = path.join(baseDirectory, "agent-hub.sqlite");
+    const repositories = createSqliteRepositories({ databasePath });
+    await repositories.projectRepository.create({
+      id: "project_cascade",
+      name: "Cascade",
+      rootPath: path.join(baseDirectory, "source"),
+      createdAt,
+      updatedAt: createdAt
+    });
+    await repositories.taskRepository.create({
+      id: "task_cascade",
+      projectId: "project_cascade",
+      title: "Cascade task",
+      status: "open",
+      createdAt,
+      updatedAt: createdAt
+    });
+    await repositories.taskRunRepository.create({
+      id: "run_cascade",
+      taskId: "task_cascade",
+      agentKind: "fake",
+      status: "queued",
+      createdAt,
+      updatedAt: createdAt
+    });
+    await repositories.runEventRepository.create({
+      id: "event_cascade",
+      taskRunId: "run_cascade",
+      sequence: 0,
+      type: "stdout",
+      message: "will be deleted",
+      metadata: {},
+      createdAt
+    });
+
+    await repositories.database.execute("DELETE FROM projects WHERE id = 'project_cascade';");
+
+    await expect(repositories.taskRepository.get("task_cascade")).resolves.toBeUndefined();
+    await expect(repositories.taskRunRepository.get("run_cascade")).resolves.toBeUndefined();
+    await expect(repositories.runEventRepository.listByRunId("run_cascade"))
+      .resolves.toEqual([]);
+  });
+
+  it("rejects repository status updates outside the imported lifecycle", async () => {
+    const baseDirectory = await createTestDirectory("sqlite-lifecycle");
+    const databasePath = path.join(baseDirectory, "agent-hub.sqlite");
+    const repositories = createSqliteRepositories({ databasePath });
+    await repositories.projectRepository.create({
+      id: "project_lifecycle",
+      name: "Lifecycle",
+      rootPath: path.join(baseDirectory, "source"),
+      createdAt,
+      updatedAt: createdAt
+    });
+    await repositories.taskRepository.create({
+      id: "task_lifecycle",
+      projectId: "project_lifecycle",
+      title: "Lifecycle task",
+      status: "open",
+      createdAt,
+      updatedAt: createdAt
+    });
+    await repositories.taskRunRepository.create({
+      id: "run_lifecycle",
+      taskId: "task_lifecycle",
+      agentKind: "fake",
+      status: "queued",
+      createdAt,
+      updatedAt: createdAt
+    });
+    await repositories.memoryItemRepository.create({
+      id: "memory_lifecycle",
+      projectId: "project_lifecycle",
+      category: "workflow_rule",
+      status: "proposed",
+      content: "Only approved memory is injected.",
+      createdAt,
+      updatedAt: createdAt
+    });
+
+    await expect(
+      repositories.taskRepository.updateStatus("task_lifecycle", "completed", updatedAt)
+    ).rejects.toThrow("invalid task status transition open -> completed");
+    await expect(
+      repositories.taskRunRepository.updateStatus("run_lifecycle", "failed", updatedAt)
+    ).rejects.toThrow("invalid task run status transition queued -> failed");
+    await repositories.memoryItemRepository.updateStatus(
+      "memory_lifecycle",
+      "rejected",
+      updatedAt
+    );
+    await expect(
+      repositories.memoryItemRepository.updateStatus(
+        "memory_lifecycle",
+        "approved",
+        "2026-01-01T00:00:02.000Z"
+      )
+    ).rejects.toThrow("invalid memory item status transition rejected -> approved");
+  });
+
+  it("rebuilds version 2 task tables with new constraints while preserving rows", async () => {
+    const baseDirectory = await createTestDirectory("sqlite-migration-v3");
+    const databasePath = path.join(baseDirectory, "agent-hub.sqlite");
+    await initializeSqliteThroughVersion(databasePath, 2);
+    await runSqlite(databasePath, `
+INSERT INTO projects (id, name, root_path, created_at, updated_at)
+VALUES ('project_legacy', 'Legacy', '${path.join(baseDirectory, "source").replaceAll("'", "''")}', '${createdAt}', '${createdAt}');
+INSERT INTO agent_profiles (id, kind, display_name, enabled, created_at, updated_at)
+VALUES ('agent_profile_legacy', 'fake', 'Fake', 1, '${createdAt}', '${createdAt}');
+INSERT INTO tasks (id, project_id, title, status, created_at, updated_at)
+VALUES ('task_legacy', 'project_legacy', 'Legacy task', 'open', '${createdAt}', '${createdAt}');
+INSERT INTO task_runs (
+  id, task_id, agent_profile_id, agent_kind, status, created_at, updated_at
+)
+VALUES (
+  'run_legacy', 'task_legacy', 'agent_profile_legacy', 'fake', 'queued', '${createdAt}', '${createdAt}'
+);
+`);
+
+    const repositories = createSqliteRepositories({ databasePath });
+    await repositories.database.ensureInitialized();
+
+    await expect(repositories.taskRepository.get("task_legacy")).resolves.toEqual(
+      expect.objectContaining({ id: "task_legacy", projectId: "project_legacy" })
+    );
+    await expect(repositories.taskRunRepository.get("run_legacy")).resolves.toEqual(
+      expect.objectContaining({
+        id: "run_legacy",
+        taskId: "task_legacy",
+        agentProfileId: "agent_profile_legacy"
+      })
+    );
+    await expect(
+      repositories.database.query<{ version: number }>(
+        "SELECT version FROM schema_migrations ORDER BY version ASC;"
+      )
+    ).resolves.toEqual([{ version: 1 }, { version: 2 }, { version: 3 }]);
+    await expect(repositories.database.execute(`
+INSERT INTO tasks (id, project_id, title, status, created_at, updated_at)
+VALUES ('task_after_migration_bad', 'project_legacy', 'Bad', 'invalid', '${createdAt}', '${createdAt}');
+`)).rejects.toThrow();
+    await expect(repositories.database.execute(`
+INSERT INTO task_runs (
+  id, task_id, agent_profile_id, agent_kind, status, created_at, updated_at
+)
+VALUES (
+  'run_after_migration_bad', 'task_legacy', 'missing_profile', 'fake', 'queued', '${createdAt}', '${createdAt}'
+);
+`)).rejects.toThrow();
   });
 });
 
@@ -341,4 +577,58 @@ function riskReport(): RiskReport {
     findings: [],
     createdAt
   };
+}
+
+async function initializeSqliteThroughVersion(
+  databasePath: string,
+  version: number
+): Promise<void> {
+  const migrations = SQLITE_MIGRATIONS.filter((migration) => migration.version <= version);
+  const script = [
+    ".bail on",
+    "PRAGMA foreign_keys = ON;",
+    "CREATE TABLE IF NOT EXISTS schema_migrations (",
+    "  version INTEGER PRIMARY KEY,",
+    "  applied_at TEXT NOT NULL",
+    ");",
+    ...migrations.flatMap((migration) => [
+      "BEGIN;",
+      migration.sql,
+      `INSERT OR IGNORE INTO schema_migrations (version, applied_at) VALUES (${migration.version}, '${createdAt}');`,
+      "COMMIT;"
+    ])
+  ].join("\n");
+  await runSqlite(databasePath, script);
+}
+
+async function runSqlite(databasePath: string, script: string): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    const child = spawn("sqlite3", [databasePath], {
+      stdio: ["pipe", "pipe", "pipe"]
+    });
+    const stdout: Buffer[] = [];
+    const stderr: Buffer[] = [];
+    child.stdout.on("data", (chunk: Buffer) => {
+      stdout.push(chunk);
+    });
+    child.stderr.on("data", (chunk: Buffer) => {
+      stderr.push(chunk);
+    });
+    child.on("error", reject);
+    child.on("close", (code) => {
+      if (code === 0) {
+        resolve();
+        return;
+      }
+      reject(
+        new Error(
+          `sqlite3 exited with code ${code}: ${
+            Buffer.concat(stderr).toString("utf8").trim() ||
+            Buffer.concat(stdout).toString("utf8").trim()
+          }`
+        )
+      );
+    });
+    child.stdin.end(script);
+  });
 }

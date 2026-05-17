@@ -13,6 +13,9 @@ import {
   validateTask,
   validateTaskRun,
   validateVerificationResult,
+  validateMemoryStatusTransition,
+  validateTaskRunStatusTransition,
+  validateTaskStatusTransition,
   type AgentKind,
   type AgentProfile,
   type ComparisonReport,
@@ -201,6 +204,10 @@ export class InMemoryTaskRepository implements TaskRepository {
 
   async create(task: Task): Promise<Task> {
     const validTask = validateTask(task);
+    const existing = this.tasks.get(validTask.id);
+    if (existing) {
+      validateTaskStatusTransition(existing.status, validTask.status);
+    }
     this.tasks.set(validTask.id, { ...validTask });
     return { ...validTask };
   }
@@ -214,6 +221,7 @@ export class InMemoryTaskRepository implements TaskRepository {
     if (!task) {
       throw new Error(`task ${taskId} not found`);
     }
+    validateTaskStatusTransition(task.status, status);
     const updated = { ...task, status, updatedAt };
     this.tasks.set(taskId, updated);
     return { ...updated };
@@ -241,6 +249,10 @@ export class InMemoryTaskRunRepository implements TaskRunRepository {
 
   async create(run: TaskRun): Promise<TaskRun> {
     const validRun = validateTaskRun(run);
+    const existing = this.runs.get(validRun.id);
+    if (existing) {
+      validateTaskRunStatusTransition(existing.status, validRun.status);
+    }
     this.runs.set(validRun.id, { ...validRun });
     this.transitions.set(validRun.id, [
       { runId: validRun.id, status: validRun.status, at: validRun.createdAt }
@@ -283,10 +295,12 @@ export class InMemoryTaskRunRepository implements TaskRunRepository {
       completedAt: isTerminalRunStatus(status) ? updatedAt : run.completedAt
     };
     this.runs.set(runId, updated);
-    this.transitions.set(runId, [
-      ...(this.transitions.get(runId) ?? []),
-      { runId, status, at: updatedAt }
-    ]);
+    if (run.status !== status) {
+      this.transitions.set(runId, [
+        ...(this.transitions.get(runId) ?? []),
+        { runId, status, at: updatedAt }
+      ]);
+    }
     return { ...updated };
   }
 
@@ -448,6 +462,10 @@ export class InMemoryMemoryItemRepository implements MemoryItemRepository {
 
   async create(item: MemoryItem): Promise<MemoryItem> {
     const validItem = validateMemoryItem(item);
+    const existing = this.items.get(validItem.id);
+    if (existing) {
+      validateMemoryStatusTransition(existing.status, validItem.status);
+    }
     this.items.set(validItem.id, { ...validItem });
     return { ...validItem };
   }
@@ -461,6 +479,7 @@ export class InMemoryMemoryItemRepository implements MemoryItemRepository {
     if (!item) {
       throw new Error(`memory item ${memoryId} not found`);
     }
+    validateMemoryStatusTransition(item.status, status);
     const updated = validateMemoryItem({ ...item, status, updatedAt });
     this.items.set(memoryId, updated);
     return { ...updated };

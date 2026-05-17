@@ -15,6 +15,9 @@ import {
   validateTask,
   validateTaskRun,
   validateVerificationResult,
+  validateMemoryStatusTransition,
+  validateTaskRunStatusTransition,
+  validateTaskStatusTransition,
   type AgentKind,
   type AgentProfile,
   type ComparisonReport,
@@ -74,7 +77,11 @@ export interface SqliteRepositories {
   settingsRepository: SettingsRepository;
 }
 
-export const SQLITE_MIGRATIONS: Array<{ version: number; sql: string }> = [
+export const SQLITE_MIGRATIONS: Array<{
+  version: number;
+  sql: string;
+  transaction?: boolean;
+}> = [
   {
     version: 1,
     sql: `
@@ -280,6 +287,158 @@ CREATE TABLE IF NOT EXISTS settings (
   updated_at TEXT NOT NULL
 );
 `
+  },
+  {
+    version: 3,
+    transaction: false,
+    sql: `
+PRAGMA foreign_keys = OFF;
+PRAGMA legacy_alter_table = ON;
+BEGIN;
+
+CREATE TEMP TABLE migration_guard (ok INTEGER NOT NULL);
+
+INSERT INTO migration_guard (ok)
+SELECT CASE
+  WHEN EXISTS (
+    SELECT 1
+    FROM tasks
+    LEFT JOIN projects ON projects.id = tasks.project_id
+    WHERE projects.id IS NULL
+  ) THEN NULL
+  ELSE 1
+END;
+
+INSERT INTO migration_guard (ok)
+SELECT CASE
+  WHEN EXISTS (
+    SELECT 1
+    FROM task_runs
+    LEFT JOIN tasks ON tasks.id = task_runs.task_id
+    WHERE tasks.id IS NULL
+  ) THEN NULL
+  ELSE 1
+END;
+
+INSERT INTO migration_guard (ok)
+SELECT CASE
+  WHEN EXISTS (
+    SELECT 1
+    FROM task_runs
+    WHERE agent_profile_id IS NOT NULL
+      AND NOT EXISTS (
+        SELECT 1
+        FROM agent_profiles
+        WHERE agent_profiles.id = task_runs.agent_profile_id
+      )
+  ) THEN NULL
+  ELSE 1
+END;
+
+INSERT INTO migration_guard (ok)
+SELECT CASE
+  WHEN EXISTS (
+    SELECT 1
+    FROM tasks
+    WHERE status NOT IN ('open', 'running', 'completed', 'cancelled')
+  ) THEN NULL
+  ELSE 1
+END;
+
+INSERT INTO migration_guard (ok)
+SELECT CASE
+  WHEN EXISTS (
+    SELECT 1
+    FROM task_runs
+    WHERE agent_kind NOT IN ('fake', 'codex', 'claude-code')
+      OR status NOT IN ('queued', 'running', 'succeeded', 'failed', 'cancelled')
+  ) THEN NULL
+  ELSE 1
+END;
+
+DROP TABLE migration_guard;
+
+ALTER TABLE tasks RENAME TO tasks_old;
+
+CREATE TABLE tasks (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL,
+  title TEXT NOT NULL,
+  description TEXT,
+  status TEXT NOT NULL CHECK (status IN ('open', 'running', 'completed', 'cancelled')),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+);
+
+INSERT INTO tasks (
+  id, project_id, title, description, status, created_at, updated_at
+)
+SELECT id, project_id, title, description, status, created_at, updated_at
+FROM tasks_old;
+
+DROP TABLE tasks_old;
+
+ALTER TABLE task_runs RENAME TO task_runs_old;
+
+CREATE TABLE task_runs (
+  id TEXT PRIMARY KEY,
+  task_id TEXT NOT NULL,
+  agent_profile_id TEXT,
+  agent_kind TEXT NOT NULL CHECK (agent_kind IN ('fake', 'codex', 'claude-code')),
+  status TEXT NOT NULL CHECK (status IN ('queued', 'running', 'succeeded', 'failed', 'cancelled')),
+  worktree_path TEXT,
+  branch_name TEXT,
+  started_at TEXT,
+  completed_at TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE,
+  FOREIGN KEY (agent_profile_id) REFERENCES agent_profiles(id) ON DELETE SET NULL
+);
+
+INSERT INTO task_runs (
+  id,
+  task_id,
+  agent_profile_id,
+  agent_kind,
+  status,
+  worktree_path,
+  branch_name,
+  started_at,
+  completed_at,
+  created_at,
+  updated_at
+)
+SELECT
+  id,
+  task_id,
+  agent_profile_id,
+  agent_kind,
+  status,
+  worktree_path,
+  branch_name,
+  started_at,
+  completed_at,
+  created_at,
+  updated_at
+FROM task_runs_old;
+
+DROP TABLE task_runs_old;
+
+CREATE INDEX IF NOT EXISTS idx_tasks_project_id ON tasks(project_id);
+CREATE INDEX IF NOT EXISTS idx_tasks_project_status ON tasks(project_id, status);
+CREATE INDEX IF NOT EXISTS idx_task_runs_task_id ON task_runs(task_id);
+CREATE INDEX IF NOT EXISTS idx_task_runs_task_agent ON task_runs(task_id, agent_kind);
+CREATE INDEX IF NOT EXISTS idx_task_runs_status ON task_runs(status);
+
+INSERT INTO schema_migrations (version, applied_at)
+VALUES (3, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
+
+COMMIT;
+PRAGMA legacy_alter_table = OFF;
+PRAGMA foreign_keys = ON;
+`
   }
 ];
 
@@ -395,16 +554,16 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
       if (appliedVersions.has(migration.version)) {
         continue;
       }
-      await runSqliteScript(
-        this.databasePath,
-        sqlScript(`
+      const migrationSql = migration.transaction === false
+        ? migration.sql
+        : `
 BEGIN;
 ${migration.sql}
 INSERT OR IGNORE INTO schema_migrations (version, applied_at)
 VALUES (${migration.version}, ${sqlString(new Date().toISOString())});
 COMMIT;
-`)
-      );
+`;
+      await runSqliteScript(this.databasePath, sqlScript(migrationSql));
     }
   }
 
@@ -558,6 +717,10 @@ export class SQLiteTaskRepository implements TaskRepository {
 
   async create(task: Task): Promise<Task> {
     const validTask = validateTask(task);
+    const existing = await this.get(validTask.id);
+    if (existing) {
+      validateTaskStatusTransition(existing.status, validTask.status);
+    }
     await this.database.execute(`
 INSERT INTO tasks (
   id, project_id, title, description, status, created_at, updated_at
@@ -586,6 +749,11 @@ ON CONFLICT(id) DO UPDATE SET
     status: TaskStatus,
     updatedAt: string
   ): Promise<Task> {
+    const existing = await this.get(taskId);
+    if (!existing) {
+      throw new Error(`task ${taskId} not found`);
+    }
+    validateTaskStatusTransition(existing.status, status);
     await this.database.execute(`
 UPDATE tasks
 SET status = ${sqlString(status)}, updated_at = ${sqlString(updatedAt)}
@@ -655,6 +823,10 @@ export class SQLiteTaskRunRepository implements TaskRunRepository {
 
   async create(run: TaskRun): Promise<TaskRun> {
     const validRun = validateTaskRun(run);
+    const existing = await this.get(validRun.id);
+    if (existing) {
+      validateTaskRunStatusTransition(existing.status, validRun.status);
+    }
     await this.database.execute(`
 BEGIN;
 INSERT INTO task_runs (
@@ -730,6 +902,11 @@ WHERE id = ${sqlString(runId)};
     status: TaskRunStatus,
     updatedAt: string
   ): Promise<TaskRun> {
+    const existing = await this.get(runId);
+    if (!existing) {
+      throw new Error(`task run ${runId} not found`);
+    }
+    validateTaskRunStatusTransition(existing.status, status);
     await this.database.execute(`
 BEGIN;
 UPDATE task_runs
@@ -749,7 +926,8 @@ SET
 WHERE id = ${sqlString(runId)};
 INSERT INTO status_transitions (run_id, status, at)
 SELECT ${sqlString(runId)}, ${sqlString(status)}, ${sqlString(updatedAt)}
-WHERE EXISTS (SELECT 1 FROM task_runs WHERE id = ${sqlString(runId)});
+WHERE EXISTS (SELECT 1 FROM task_runs WHERE id = ${sqlString(runId)})
+  AND ${sqlString(existing.status)} <> ${sqlString(status)};
 COMMIT;
 `);
     const run = await this.get(runId);
@@ -1166,6 +1344,10 @@ export class SQLiteMemoryItemRepository implements MemoryItemRepository {
 
   async create(item: MemoryItem): Promise<MemoryItem> {
     const validItem = validateMemoryItem(item);
+    const existing = await this.get(validItem.id);
+    if (existing) {
+      validateMemoryStatusTransition(existing.status, validItem.status);
+    }
     await this.database.execute(`
 INSERT INTO memory_items (
   id, project_id, task_id, category, status, content, created_at, updated_at
@@ -1196,6 +1378,11 @@ ON CONFLICT(id) DO UPDATE SET
     status: MemoryItem["status"],
     updatedAt: string
   ): Promise<MemoryItem> {
+    const existing = await this.get(memoryId);
+    if (!existing) {
+      throw new Error(`memory item ${memoryId} not found`);
+    }
+    validateMemoryStatusTransition(existing.status, status);
     await this.database.execute(`
 UPDATE memory_items
 SET status = ${sqlString(status)}, updated_at = ${sqlString(updatedAt)}
