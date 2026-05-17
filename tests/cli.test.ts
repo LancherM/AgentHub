@@ -605,8 +605,8 @@ describe("CLI", () => {
     expect(output.join("")).toContain("using agent: fake");
     expect(output.join("")).toContain("Context store");
     expect(output.join("")).toContain("Initialized context store");
-    expect(output.join("")).toContain("run: summarize the project");
-    expect(output.join("")).toContain("run: @fake simulate the task");
+    expect(output.join("")).not.toContain("run: summarize the project");
+    expect(output.join("")).not.toContain("run: @fake simulate the task");
     expect(output.join("")).toContain("# Fake Agent Output");
     expect(output.join("")).toContain("\x1b[2J\x1b[H");
     expect(output.join("")).toContain("Exiting Agent Hub.");

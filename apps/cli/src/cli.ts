@@ -414,7 +414,9 @@ export async function runInteractive(
       continue;
     }
 
-    io.stdout.write(`run: ${line}\n`);
+    if (state.debug) {
+      io.stdout.write(`run: ${line}\n`);
+    }
     const runArgs = line.startsWith("@")
       ? ["--repo", state.projectRoot, line]
       : ["--repo", state.projectRoot, "--agent", state.selectedAgent, "--prompt", line];
