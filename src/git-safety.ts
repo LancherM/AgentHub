@@ -102,12 +102,19 @@ async function findGitDirectory(startPath: string): Promise<string | undefined> 
 }
 
 async function findLocalConfigPaths(gitDirectory: string): Promise<string[]> {
-  const paths = [path.join(gitDirectory, "config")];
+  const paths = [
+    path.join(gitDirectory, "config"),
+    path.join(gitDirectory, "config.worktree")
+  ];
   const commonDir = await readOptionalTextFile(
     path.join(gitDirectory, "commondir")
   );
   if (commonDir) {
-    paths.push(path.join(path.resolve(gitDirectory, commonDir.trim()), "config"));
+    const commonGitDirectory = path.resolve(gitDirectory, commonDir.trim());
+    paths.push(
+      path.join(commonGitDirectory, "config"),
+      path.join(commonGitDirectory, "config.worktree")
+    );
   }
   return [...new Set(paths)];
 }
@@ -120,7 +127,7 @@ function parseGitConfigKeys(config: string): string[] {
     if (line === "" || line.startsWith("#") || line.startsWith(";")) {
       continue;
     }
-    const sectionMatch = line.match(/^\[([^\]]+)\]$/);
+    const sectionMatch = line.match(/^\[([^\]]+)\](?:\s*(?:[#;].*)?)?$/);
     if (sectionMatch) {
       section = normalizeGitConfigSection(sectionMatch[1]);
       continue;
@@ -148,8 +155,8 @@ function isUnsafeLocalGitConfigKey(key: string): boolean {
     key === "interactive.difffilter" ||
     key === "include.path" ||
     key.startsWith("includeif.") ||
-    /^filter\.[^.]+\.(clean|smudge|process)$/.test(key) ||
-    /^diff\.[^.]+\.(command|textconv)$/.test(key)
+    /^filter\..+\.(clean|smudge|process)$/.test(key) ||
+    /^diff\..+\.(command|textconv)$/.test(key)
   );
 }
 

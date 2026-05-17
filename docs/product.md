@@ -63,12 +63,16 @@ Agent Hub-owned artifacts or inside isolated worktrees; default context build
 does not write repository-level agent files.
 
 The run command validates the task input, compiles non-invasive context, routes
-to the selected adapter, creates an isolated git worktree outside the original
+to the selected adapter, rejects unsafe repository-local Git config before any
+worktree checkout, creates an isolated git worktree outside the original
 project checkout, materializes runtime task brief/context-pack files inside
 that workspace, runs the adapter with the context payload, collects git diff
 metadata, runs explicitly configured verification commands, generates a
 structured risk report from safety scanner findings, captures events, applies
-the workspace cleanup policy, and prints a concise summary.
+the workspace cleanup policy, and prints a concise summary. The pre-flight Git
+config check covers worktree-local config files, inline section comments, and
+dotted filter or diff driver names that could otherwise enable executable Git
+helpers during checkout.
 `runtime_injection` remains the default delivery mode. Codex and Claude Code
 receive the task brief/context through stdin-driven runtime injection and do
 not require repository-level `AGENTS.md` or `CLAUDE.md`. `worktree_overlay` is
