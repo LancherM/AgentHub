@@ -217,7 +217,9 @@ repositories.
 When the CLI executes an ad-hoc SQLite-backed run, it creates the local
 `adhoc_project` project row before calling the runner. That preserves the
 historical ad-hoc task id surface while satisfying the new task-to-project
-foreign key.
+foreign key. During SQLite migration 3, legacy task project ids that do not yet
+have a `projects` row are backfilled as local legacy projects before the task
+tables are rebuilt with foreign-key constraints.
 
 Memory items remain SQLite domain records until the user explicitly acts.
 `memory propose` creates a `proposed` row, `memory reject` moves it to

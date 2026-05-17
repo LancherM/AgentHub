@@ -298,6 +298,27 @@ BEGIN;
 
 CREATE TEMP TABLE migration_guard (ok INTEGER NOT NULL);
 
+INSERT INTO projects (id, name, root_path, created_at, updated_at)
+SELECT
+  missing_projects.project_id,
+  CASE
+    WHEN missing_projects.project_id = 'adhoc_project' THEN 'Ad-hoc Project'
+    ELSE missing_projects.project_id
+  END,
+  '/agent-hub/legacy-projects/' || missing_projects.project_id,
+  missing_projects.created_at,
+  missing_projects.updated_at
+FROM (
+  SELECT
+    tasks.project_id,
+    COALESCE(MIN(tasks.created_at), strftime('%Y-%m-%dT%H:%M:%fZ', 'now')) AS created_at,
+    COALESCE(MAX(tasks.updated_at), strftime('%Y-%m-%dT%H:%M:%fZ', 'now')) AS updated_at
+  FROM tasks
+  LEFT JOIN projects ON projects.id = tasks.project_id
+  WHERE projects.id IS NULL
+  GROUP BY tasks.project_id
+) AS missing_projects;
+
 INSERT INTO migration_guard (ok)
 SELECT CASE
   WHEN EXISTS (

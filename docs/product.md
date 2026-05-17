@@ -208,7 +208,9 @@ agent profiles when one is selected, task and run status values are checked,
 agent kinds are checked, JSON columns reject invalid JSON, and run event
 sequence numbers remain unique per run. Ad-hoc CLI runs still use the
 `adhoc_project` task project id, but SQLite-backed runs create that local
-project row first so the foreign-key contract is preserved.
+project row first so the foreign-key contract is preserved. Upgrades from
+older SQLite databases also backfill missing legacy task project rows, including
+pre-change ad-hoc tasks, before adding the stricter task foreign key.
 
 Task, task-run, and memory status changes follow the imported lifecycle rather
 than arbitrary enum changes. Failed task runs remain inspectable and return the

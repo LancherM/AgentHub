@@ -456,6 +456,44 @@ VALUES ('event_bad_json', 'run_constraints', 1, 'stdout', 'bad json', '{bad', '$
     ).rejects.toThrow("invalid memory item status transition rejected -> approved");
   });
 
+  it("backfills legacy ad-hoc task projects during version 3 migration", async () => {
+    const baseDirectory = await createTestDirectory("sqlite-migration-v3-adhoc");
+    const databasePath = path.join(baseDirectory, "agent-hub.sqlite");
+    await initializeSqliteThroughVersion(databasePath, 2);
+    await runSqlite(databasePath, `
+INSERT INTO tasks (id, project_id, title, status, created_at, updated_at)
+VALUES ('task_adhoc_legacy', 'adhoc_project', 'Legacy ad-hoc task', 'open', '${createdAt}', '${updatedAt}');
+INSERT INTO task_runs (
+  id, task_id, agent_kind, status, created_at, updated_at
+)
+VALUES (
+  'run_adhoc_legacy', 'task_adhoc_legacy', 'fake', 'queued', '${createdAt}', '${updatedAt}'
+);
+`);
+
+    const repositories = createSqliteRepositories({ databasePath });
+    await repositories.database.ensureInitialized();
+
+    await expect(repositories.projectRepository.get("adhoc_project")).resolves.toEqual(
+      expect.objectContaining({
+        id: "adhoc_project",
+        name: "Ad-hoc Project",
+        rootPath: "/agent-hub/legacy-projects/adhoc_project"
+      })
+    );
+    await expect(repositories.taskRepository.get("task_adhoc_legacy")).resolves.toEqual(
+      expect.objectContaining({ id: "task_adhoc_legacy", projectId: "adhoc_project" })
+    );
+    await expect(repositories.taskRunRepository.get("run_adhoc_legacy")).resolves.toEqual(
+      expect.objectContaining({ id: "run_adhoc_legacy", taskId: "task_adhoc_legacy" })
+    );
+    await expect(
+      repositories.database.query<{ version: number }>(
+        "SELECT version FROM schema_migrations ORDER BY version ASC;"
+      )
+    ).resolves.toEqual([{ version: 1 }, { version: 2 }, { version: 3 }]);
+  });
+
   it("rebuilds version 2 task tables with new constraints while preserving rows", async () => {
     const baseDirectory = await createTestDirectory("sqlite-migration-v3");
     const databasePath = path.join(baseDirectory, "agent-hub.sqlite");
