@@ -383,6 +383,7 @@ export class TaskRunner {
     );
 
     let taskBriefPath: string | undefined;
+    let taskBriefArtifactContent: string | undefined;
     const runtimeDirectory = path.join(worktreePath, ".agent-hub", "tasks", task.id);
     const events: AgentRunEvent[] = [];
     const warnings = [...contextBundle.warnings];
@@ -446,7 +447,8 @@ export class TaskRunner {
           contextPackId: contextPack.id,
           contextMarkdown
         });
-        taskBriefPath = path.join(runtimeDirectory, "brief.md");
+        const generatedTaskBriefPath = path.join(runtimeDirectory, "brief.md");
+        taskBriefArtifactContent = taskBrief.renderedContent;
         const overlay = await materializeWorktreeOverlay({
           worktreePath,
           taskId: task.id,
@@ -459,6 +461,7 @@ export class TaskRunner {
               ? input.contextStoreRoot
               : undefined
         });
+        taskBriefPath = generatedTaskBriefPath;
         warnings.push(...overlay.warnings);
         generatedFileBaselines = overlay.baselines;
         if (input.deliveryMode !== "worktree_overlay") {
@@ -471,7 +474,7 @@ export class TaskRunner {
           for await (const event of adapter.run({
             originalProjectRoot: projectRoot,
             worktreePath,
-            taskBriefPath,
+            taskBriefPath: generatedTaskBriefPath,
             contextPackPath: path.join(runtimeDirectory, "context-pack.json"),
             contextBundle,
             contextMarkdown,
@@ -551,14 +554,14 @@ export class TaskRunner {
     } catch (error) {
       recordDiagnostic("diff artifact persistence", error);
     }
-    if (taskBriefPath) {
+    if (taskBriefArtifactContent !== undefined) {
       try {
         await this.runArtifactRepository.create(
           createTextArtifact({
             runId: run.id,
             kind: "task_brief",
-            content: await fs.readFile(taskBriefPath, "utf8"),
-            metadata: { path: taskBriefPath },
+            content: taskBriefArtifactContent,
+            metadata: taskBriefPath ? { path: taskBriefPath } : {},
             clock: this.clock,
             idGenerator: this.idGenerator
           })

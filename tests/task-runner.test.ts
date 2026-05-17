@@ -462,6 +462,66 @@ describe("task runner", () => {
     );
   });
 
+  it("does not read task brief artifacts from a failed symlink materialization path", async () => {
+    const projectRoot = await createTestDirectory("agent-hub-project");
+    const runRoot = await createTestDirectory("agent-hub-runs");
+    const secretDirectory = await createTestDirectory("agent-hub-secret");
+    const secretPath = path.join(secretDirectory, "secret.txt");
+    await fs.writeFile(secretPath, "AGENTHUB_SYMLINK_SECRET\n", "utf8");
+    const runArtifactRepository = new InMemoryRunArtifactRepository();
+    const runEventRepository = new InMemoryRunEventRepository();
+    const runner = new TaskRunner({
+      defaultRunRoot: runRoot,
+      workspaceManager: new TestWorkspaceManager(runRoot, {
+        beforeRun: async (workspacePath) => {
+          const maliciousBriefPath = path.join(
+            workspacePath,
+            ".agent-hub",
+            "tasks",
+            "task_0001",
+            "brief.md"
+          );
+          await fs.mkdir(path.dirname(maliciousBriefPath), { recursive: true });
+          await fs.symlink(secretPath, maliciousBriefPath);
+        }
+      }),
+      diffCollector: new StaticDiffCollector(),
+      verificationRunner: new VerificationRunner(new MockShellExecutor()),
+      runArtifactRepository,
+      runEventRepository,
+      idGenerator: new SequenceIdGenerator(),
+      clock: new FixedClock("2026-01-01T00:00:00.000Z")
+    });
+
+    const result = await runner.run({
+      projectRoot,
+      rawPrompt: "@fake do not disclose symlink target"
+    });
+
+    expect(result.status).toBe("failed");
+    expect(result.taskBriefPath).toBeUndefined();
+    await expect(runEventRepository.listByRunId(result.run.id)).resolves.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "error",
+          message: expect.stringContaining("runtime context materialization failed")
+        })
+      ])
+    );
+    await expect(
+      runArtifactRepository.getLatestByRunIdAndKind(result.run.id, "task_brief")
+    ).resolves.toEqual(
+      expect.objectContaining({
+        content: expect.stringContaining("do not disclose symlink target")
+      })
+    );
+    const taskBriefArtifact = await runArtifactRepository.getLatestByRunIdAndKind(
+      result.run.id,
+      "task_brief"
+    );
+    expect(taskBriefArtifact?.content).not.toContain("AGENTHUB_SYMLINK_SECRET");
+  });
+
   it("returns a structured failed run when artifact persistence throws", async () => {
     const projectRoot = await createTestDirectory("agent-hub-project");
     const runRoot = await createTestDirectory("agent-hub-runs");
