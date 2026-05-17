@@ -6,7 +6,7 @@ import {
   type ShellExecutor,
   type ShellResult
 } from "./shell-executor";
-import type { VerificationStatus } from "./domain";
+import type { VerificationStatus } from "@agent-hub/core";
 
 export interface VerificationCommand {
   id: string;

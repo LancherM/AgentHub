@@ -3,14 +3,13 @@ import path from "node:path";
 import {
   detectDangerousCommandText,
   shellCommandSearchText
-} from "./dangerous-commands";
-import { buildChildProcessEnv } from "./process-environment";
-
-export interface ShellCommand {
-  executable: string;
-  args?: string[];
-  displayName?: string;
-}
+} from "@agent-hub/safety";
+import {
+  buildChildProcessEnv,
+  formatShellCommand,
+  type ShellCommand,
+  type ShellResult
+} from "@agent-hub/shared";
 
 export interface ShellExecutionOptions {
   cwd: string;
@@ -19,18 +18,8 @@ export interface ShellExecutionOptions {
   dryRun?: boolean;
 }
 
-export interface ShellResult {
-  command: ShellCommand;
-  cwd: string;
-  stdout: string;
-  stderr: string;
-  exitCode: number | null;
-  signal?: NodeJS.Signals | string | null;
-  durationMs: number;
-  timedOut: boolean;
-  dryRun: boolean;
-  error?: string;
-}
+export { formatShellCommand };
+export type { ShellCommand, ShellResult };
 
 export interface ShellExecutor {
   execute(command: ShellCommand, options: ShellExecutionOptions): Promise<ShellResult>;
@@ -163,12 +152,6 @@ export class NodeShellExecutor implements ShellExecutor {
       });
     });
   }
-}
-
-export function formatShellCommand(command: ShellCommand): string {
-  return [command.executable, ...(command.args ?? [])]
-    .map((part) => (/\s/.test(part) ? JSON.stringify(part) : part))
-    .join(" ");
 }
 
 export function isDangerousShellCommand(command: ShellCommand): boolean {

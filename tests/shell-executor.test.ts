@@ -8,7 +8,7 @@ import {
   type ShellCommand,
   type ShellSpawner,
   type SpawnedShellProcess
-} from "../src/shell-executor";
+} from "@agent-hub/task-runner";
 import { createTestDirectory } from "./helpers";
 
 describe("NodeShellExecutor", () => {

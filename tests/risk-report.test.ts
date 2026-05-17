@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import type { DiffCollectionResult } from "../src/diff-collector";
-import { RiskReportGenerator } from "../src/risk-report";
-import type { VerificationCommandResult, VerificationSuiteResult } from "../src/verification";
+import type { DiffCollectionResult } from "@agent-hub/task-runner";
+import { RiskReportGenerator } from "@agent-hub/safety";
+import type { VerificationCommandResult, VerificationSuiteResult } from "@agent-hub/task-runner";
 
 describe("RiskReportGenerator", () => {
   it("reports low risk for a clean diff", () => {

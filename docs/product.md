@@ -10,6 +10,15 @@ cross-process SQLite-backed run inspection, manual run-event recording, memory
 workflows, and comparison reports. Running `agent-hub` with no subcommand
 starts an interactive shell over the same local core services:
 
+The implementation now uses the imported workspace shape for the CLI and local
+core packages. `apps/cli` contains CLI parsing, interactive mode, command
+dispatch, and output rendering. Shared contracts and local services live under
+`packages/shared`, `packages/core`, `packages/db`, `packages/context-compiler`,
+`packages/task-runner`, `packages/agent-adapters`, and `packages/safety`.
+Desktop remains deferred until the CLI, core APIs, and package boundaries are
+stable; this phase does not add Electron, React, Vite, a browser UI, or an API
+server.
+
 ```sh
 agent-hub [--project <path>] [--agent fake|codex|claude-code]
 agent-hub [--debug] run ...
@@ -228,12 +237,13 @@ automatic pushes.
 GitHub CI/CD is available for repository maintenance. Pull requests to `main`
 run the validation suite (`pnpm typecheck`, `pnpm lint`, `pnpm test`, and
 `pnpm build`). Pushes to `main` and manual workflow runs build a packaged CLI
-artifact from `dist/`, `package.json`, `README.md`, and `pnpm-lock.yaml`.
-Version tags that match `v*.*.*` create or update a GitHub Release with that
-artifact. The workflow publishes local CLI release assets only; it does not
-deploy a hosted service or change Agent Hub's local-first product model.
+artifact from the workspace app/package directories, root package metadata,
+`README.md`, `pnpm-workspace.yaml`, and `pnpm-lock.yaml`. Version tags that
+match `v*.*.*` create or update a GitHub Release with that artifact. The
+workflow publishes local CLI release assets only; it does not deploy a hosted
+service or change Agent Hub's local-first product model.
 
 Deferred product capabilities include richer Codex/Claude structured event
 mapping, automatic memory proposal generation from completed runs, richer
-comparison scoring, a physical monorepo package split after shared contracts
-are extracted, and the desktop shell.
+comparison scoring, and the desktop shell after the CLI/core/package
+boundaries are stable.

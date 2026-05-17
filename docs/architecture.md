@@ -1,43 +1,41 @@
 # Architecture
 
-The rebuild preserves the CLI-first architecture from the imported specs while
-starting from a minimal root TypeScript package.
+The rebuild preserves the CLI-first architecture from the imported specs and
+now uses the imported workspace package layout for the local CLI and core
+services.
 
-Current module boundaries under `src/`:
+Current workspace boundaries:
 
-- `domain`: validated domain entities, enums, and value objects
-- `agent-adapters`: common adapter contract, `FakeAgentAdapter`,
-  `CodexAdapter`, and `ClaudeCodeAdapter`
-- `context-compiler`: Agent Hub-owned context store init/show/build/export,
-  context pack and task brief generation, managed block handling, and optional
-  worktree overlay materialization
-- `process-runner`: direct child-process spawning with stdin, streaming
-  stdout/stderr, exit code and signal capture, and CLI detection helpers
-- `process-environment`: allowlisted child-process environment construction
-- `shell-executor`: explicit shell command boundary with cwd, stdout/stderr,
-  exit code, duration, timeout, dry-run, and dangerous-command checks
-- `workspace`: workspace abstractions and safe git worktree session management
-- `diff-collector`: staged, unstaged, untracked, and binary-aware git diff
-  collection from an isolated workspace
-- `verification`: configured verification command execution inside the
-  workspace
-- `safety`: standalone scanners for sensitive paths, dangerous commands,
-  risky diffs, large deletions, binary files, and risk level aggregation
-- `dangerous-commands`: shared dangerous-command matching rules for shell
-  execution rejection and safety scanning
-- `risk-report`: structured risk report generation from safety scanner output,
-  diff metadata, and verification results
-- `storage`: repository abstractions and in-memory implementations for
-  projects, agent profiles, tasks, runs, events, artifacts, verification
-  results, risk reports, memory items, comparison reports, skills, settings,
-  run metadata, and agent registry
-- `sqlite-storage`: SQLite migration/init logic and local repository
-  implementations for the MVP persistence tables
-- `task-runner`: adapter orchestration with context compilation and
-  repository-backed persistence
-- `cli`: command parsing, interactive console input, output rendering, and
-  opt-in debug rendering, including manual run-event recording
-- `agent-parser`: `@agent` prompt parsing
+- `packages/shared`: shared enums, DTOs, JSON/value types, ID/time helpers,
+  process environment helpers, context bundle contracts, shell/diff/
+  verification/workspace result contracts, agent kinds, context delivery
+  modes, memory states, and risk levels.
+- `packages/core`: domain validation, state transition helpers, repository
+  interfaces, and in-memory repository implementations. Core depends only on
+  shared and does not import db, task-runner, adapters, context-compiler,
+  safety, or CLI.
+- `packages/safety`: dangerous-command detection, deterministic safety
+  scanners, risk aggregation, and risk report generation.
+- `packages/agent-adapters`: the common adapter contract, adapter registry,
+  `FakeAgentAdapter`, `CodexAdapter`, `ClaudeCodeAdapter`, process runner, and
+  `@agent` prompt parsing. Adapters do not depend on CLI rendering.
+- `packages/context-compiler`: Agent Hub-owned context store init/show/build/
+  export, context pack and task brief generation, managed block handling,
+  worktree overlay materialization, and approved-memory writeback helpers.
+- `packages/db`: SQLite migrations, schema initialization, default database
+  path resolution, and SQLite repository implementations for the core
+  repository interfaces.
+- `packages/task-runner`: worktree management, shell execution, git safety,
+  diff collection, verification command execution, risk report orchestration,
+  and task-run orchestration.
+- `apps/cli`: command parsing, interactive console input, command dispatch,
+  output rendering, debug rendering, and manual run-event recording. The CLI is
+  thin over local package APIs and does not own orchestration logic.
+
+Desktop remains architectural only and deferred until these CLI, core, and
+package boundaries are stable. No desktop app, Electron/Tauri shell, browser
+UI, web server, login, cloud backend, or remote execution path is introduced in
+this phase.
 
 Child process environment policy is explicit by default. `ProcessRunner` and
 `ShellExecutor` build child environments from a small inherited allowlist
@@ -280,21 +278,13 @@ rejection is represented as a failed verification command, and shell results
 carry timeout and signal metadata so callers can distinguish command failures
 from process termination.
 
-The physical monorepo split is intentionally deferred in this slice. The
-runtime behavior is stable, but the current single-package type graph still has
-contracts that cross the target dependency direction: repository interfaces
-reference adapter, diff, verification, and workspace result types, and adapter
-inputs reference context compiler bundle types. A mechanical file move now
-would bake those reverse dependencies into package APIs. The next safe
-extraction order is:
-
-1. move shared enums and DTOs that are imported by every package into
-   `packages/shared`
-2. move domain validation and repository contracts into `packages/core`
-3. move SQLite repositories into `packages/db`
-4. move context compiler, safety, adapters, and task runner behind core/shared
-   contracts
-5. move CLI into `apps/cli`
+The physical package split is present, but it is still an MVP boundary rather
+than a desktop platform boundary. Cross-package contracts flow through
+`packages/shared` and `packages/core`; task-runner consumes context compiler,
+agent adapters, safety, and core repositories; apps/cli calls the local package
+APIs instead of duplicating orchestration. Future restructuring should preserve
+that direction and keep desktop work separate until these boundaries remain
+stable under feature work.
 
 Repository CI/CD lives in `.github/workflows/ci-cd.yml` and stays outside the
 Agent Hub runtime. The workflow installs the pinned pnpm and Node versions from

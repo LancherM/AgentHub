@@ -1,11 +1,11 @@
 import { spawn } from "node:child_process";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import type { DiffCollectionResult } from "../src/diff-collector";
-import type { RiskReport } from "../src/domain";
-import { SQLITE_MIGRATIONS, createSqliteRepositories } from "../src/sqlite-storage";
-import type { VerificationSuiteResult } from "../src/verification";
-import type { Workspace, WorkspaceCleanupResult } from "../src/workspace";
+import type { DiffCollectionResult } from "@agent-hub/task-runner";
+import type { RiskReport } from "@agent-hub/core";
+import { SQLITE_MIGRATIONS, createSqliteRepositories } from "@agent-hub/db";
+import type { VerificationSuiteResult } from "@agent-hub/task-runner";
+import type { Workspace, WorkspaceCleanupResult } from "@agent-hub/task-runner";
 import { createTestDirectory } from "./helpers";
 
 const createdAt = "2026-01-01T00:00:00.000Z";

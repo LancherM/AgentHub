@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { VerificationRunner } from "../src/verification";
+import { VerificationRunner } from "@agent-hub/task-runner";
 import { createTestDirectory, MockShellExecutor } from "./helpers";
 
 describe("VerificationRunner", () => {

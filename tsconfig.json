@@ -7,8 +7,18 @@
     "esModuleInterop": true,
     "forceConsistentCasingInFileNames": true,
     "skipLibCheck": true,
+    "baseUrl": ".",
+    "paths": {
+      "@agent-hub/agent-adapters": ["packages/agent-adapters/src/index.ts"],
+      "@agent-hub/cli": ["apps/cli/src/cli.ts"],
+      "@agent-hub/context-compiler": ["packages/context-compiler/src/index.ts"],
+      "@agent-hub/core": ["packages/core/src/index.ts"],
+      "@agent-hub/db": ["packages/db/src/index.ts"],
+      "@agent-hub/safety": ["packages/safety/src/index.ts"],
+      "@agent-hub/shared": ["packages/shared/src/index.ts"],
+      "@agent-hub/task-runner": ["packages/task-runner/src/index.ts"]
+    },
     "types": ["node", "vitest/globals"]
   },
-  "include": ["src/**/*.ts", "tests/**/*.ts", "vitest.config.ts"]
+  "include": ["apps/**/*.ts", "packages/**/*.ts", "tests/**/*.ts", "vitest.config.ts"]
 }
-

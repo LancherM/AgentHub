@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { AgentPromptParseError, parseAgentPrompt } from "../src/agent-parser";
+import { AgentPromptParseError, parseAgentPrompt } from "@agent-hub/agent-adapters";
 
 describe("@agent prompt parsing", () => {
   it("routes explicit fake prompts", () => {

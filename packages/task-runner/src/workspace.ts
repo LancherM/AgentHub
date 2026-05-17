@@ -1,6 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import type { AgentKind } from "./domain";
+import type { AgentKind } from "@agent-hub/core";
 import {
   formatShellCommand,
   type ShellExecutor,

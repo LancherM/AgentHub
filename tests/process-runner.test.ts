@@ -6,7 +6,7 @@ import {
   type ProcessRunEvent,
   type ProcessSpawner,
   type SpawnedProcess
-} from "../src/process-runner";
+} from "@agent-hub/agent-adapters";
 import { createTestDirectory } from "./helpers";
 
 describe("NodeProcessRunner", () => {

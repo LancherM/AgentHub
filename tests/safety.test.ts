@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { DiffCollectionResult } from "../src/diff-collector";
-import { RiskReportGenerator } from "../src/risk-report";
+import type { DiffCollectionResult } from "@agent-hub/task-runner";
+import { RiskReportGenerator } from "@agent-hub/safety";
 import {
   SafetyScanner,
   aggregateRiskLevel,
@@ -8,8 +8,8 @@ import {
   scanDangerousCommands,
   scanLargeDeletions,
   scanSensitivePaths
-} from "../src/safety";
-import type { VerificationSuiteResult } from "../src/verification";
+} from "@agent-hub/safety";
+import type { VerificationSuiteResult } from "@agent-hub/task-runner";
 
 describe("safety scanner", () => {
   it("flags sensitive paths as blocking and preserves blocking aggregation", () => {

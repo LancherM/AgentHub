@@ -1,39 +1,42 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { CodexAdapter, FakeAgentAdapter } from "../src/agent-adapters";
+import {
+  CodexAdapter,
+  DefaultAgentRegistry,
+  FakeAgentAdapter
+} from "@agent-hub/agent-adapters";
 import {
   DefaultContextCompiler,
   InMemoryMemoryProvider,
   initContextStore,
   MarkdownContextFormatter
-} from "../src/context-compiler";
+} from "@agent-hub/context-compiler";
 import type {
   DiffCollectionInput,
   DiffCollectionResult,
   DiffCollectorService
-} from "../src/diff-collector";
+} from "@agent-hub/task-runner";
 import {
-  DefaultAgentRegistry,
   InMemoryRiskReportRepository,
   InMemoryRunArtifactRepository,
   InMemoryRunEventRepository,
   InMemoryTaskRepository,
   InMemoryTaskRunRepository,
   InMemoryVerificationResultRepository
-} from "../src/storage";
+} from "@agent-hub/core";
 import {
   FixedClock,
   SequenceIdGenerator,
   TaskRunner,
   TaskRunnerError
-} from "../src/task-runner";
-import { VerificationRunner } from "../src/verification";
+} from "@agent-hub/task-runner";
+import { VerificationRunner } from "@agent-hub/task-runner";
 import type {
   WorkspaceConfig,
   WorkspaceManager,
   WorkspaceSession
-} from "../src/workspace";
+} from "@agent-hub/task-runner";
 import { createTestDirectory, MockProcessRunner, MockShellExecutor } from "./helpers";
 
 describe("task runner", () => {

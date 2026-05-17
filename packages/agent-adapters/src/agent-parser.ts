@@ -1,4 +1,8 @@
-import { DomainValidationError, parseAgentKind, type AgentKind } from "./domain";
+import {
+  DomainValidationError,
+  parseAgentKind,
+  type AgentKind
+} from "@agent-hub/shared";
 
 export interface ParsedAgentPrompt {
   agentKind: AgentKind;

@@ -2,17 +2,17 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { Readable } from "node:stream";
 import { describe, expect, it } from "vitest";
-import { createCliRuntime, main } from "../src/cli";
-import type { DiffCollectionResult, DiffCollectorService } from "../src/diff-collector";
-import type { RiskReport } from "../src/domain";
-import { createSqliteRepositories } from "../src/sqlite-storage";
-import { SequenceIdGenerator, FixedClock } from "../src/task-runner";
-import { VerificationRunner } from "../src/verification";
+import { createCliRuntime, main } from "@agent-hub/cli";
+import type { DiffCollectionResult, DiffCollectorService } from "@agent-hub/task-runner";
+import type { RiskReport } from "@agent-hub/core";
+import { createSqliteRepositories } from "@agent-hub/db";
+import { SequenceIdGenerator, FixedClock } from "@agent-hub/task-runner";
+import { VerificationRunner } from "@agent-hub/task-runner";
 import type {
   WorkspaceConfig,
   WorkspaceManager,
   WorkspaceSession
-} from "../src/workspace";
+} from "@agent-hub/task-runner";
 import { createTestDirectory, MockProcessRunner, MockShellExecutor } from "./helpers";
 
 describe("CLI", () => {

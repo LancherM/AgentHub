@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import path from "node:path";
 import { createInterface } from "node:readline/promises";
-import { parseAgentPrompt } from "./agent-parser";
+import { parseAgentPrompt } from "@agent-hub/agent-adapters";
 import {
   appendApprovedMemory,
   buildContextArtifacts,
@@ -9,7 +9,7 @@ import {
   initContextStore,
   showContextStore,
   type ContextBuildResult
-} from "./context-compiler";
+} from "@agent-hub/context-compiler";
 import {
   createId,
   nowIso,
@@ -28,10 +28,14 @@ import {
   type MemoryCategory,
   type RunEventType,
   type VerificationResult
-} from "./domain";
-import { TaskRunner, type RunTaskInput, type TaskRunnerDependencies } from "./task-runner";
-import { formatShellCommand } from "./shell-executor";
-import { createSqliteRepositories } from "./sqlite-storage";
+} from "@agent-hub/core";
+import {
+  formatShellCommand,
+  TaskRunner,
+  type RunTaskInput,
+  type TaskRunnerDependencies
+} from "@agent-hub/task-runner";
+import { createSqliteRepositories } from "@agent-hub/db";
 import {
   InMemoryAgentProfileRepository,
   InMemoryComparisonReportRepository,
@@ -59,7 +63,7 @@ import {
   type TaskRepository,
   type TaskRunRepository,
   type VerificationResultRepository
-} from "./storage";
+} from "@agent-hub/core";
 
 export interface CliIO {
   stdin?: NodeJS.ReadableStream;

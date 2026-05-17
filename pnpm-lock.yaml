@@ -21,6 +21,83 @@ importers:
         specifier: 1.6.0
         version: 1.6.0(@types/node@20.19.0)(lightningcss@1.32.0)
 
+  apps/cli:
+    dependencies:
+      '@agent-hub/agent-adapters':
+        specifier: workspace:*
+        version: link:../../packages/agent-adapters
+      '@agent-hub/context-compiler':
+        specifier: workspace:*
+        version: link:../../packages/context-compiler
+      '@agent-hub/core':
+        specifier: workspace:*
+        version: link:../../packages/core
+      '@agent-hub/db':
+        specifier: workspace:*
+        version: link:../../packages/db
+      '@agent-hub/task-runner':
+        specifier: workspace:*
+        version: link:../../packages/task-runner
+
+  packages/agent-adapters:
+    dependencies:
+      '@agent-hub/shared':
+        specifier: workspace:*
+        version: link:../shared
+
+  packages/context-compiler:
+    dependencies:
+      '@agent-hub/core':
+        specifier: workspace:*
+        version: link:../core
+      '@agent-hub/shared':
+        specifier: workspace:*
+        version: link:../shared
+
+  packages/core:
+    dependencies:
+      '@agent-hub/shared':
+        specifier: workspace:*
+        version: link:../shared
+
+  packages/db:
+    dependencies:
+      '@agent-hub/core':
+        specifier: workspace:*
+        version: link:../core
+      '@agent-hub/shared':
+        specifier: workspace:*
+        version: link:../shared
+
+  packages/safety:
+    dependencies:
+      '@agent-hub/core':
+        specifier: workspace:*
+        version: link:../core
+      '@agent-hub/shared':
+        specifier: workspace:*
+        version: link:../shared
+
+  packages/shared: {}
+
+  packages/task-runner:
+    dependencies:
+      '@agent-hub/agent-adapters':
+        specifier: workspace:*
+        version: link:../agent-adapters
+      '@agent-hub/context-compiler':
+        specifier: workspace:*
+        version: link:../context-compiler
+      '@agent-hub/core':
+        specifier: workspace:*
+        version: link:../core
+      '@agent-hub/safety':
+        specifier: workspace:*
+        version: link:../safety
+      '@agent-hub/shared':
+        specifier: workspace:*
+        version: link:../shared
+
 packages:
 
   '@esbuild/aix-ppc64@0.21.5':

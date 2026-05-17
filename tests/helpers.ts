@@ -6,14 +6,14 @@ import type {
   ShellExecutionOptions,
   ShellExecutor,
   ShellResult
-} from "../src/shell-executor";
+} from "@agent-hub/task-runner";
 import type {
   ProcessDetectionInput,
   ProcessDetectionResult,
   ProcessRunEvent,
   ProcessRunInput,
   ProcessRunner
-} from "../src/process-runner";
+} from "@agent-hub/agent-adapters";
 
 export async function createTestDirectory(name: string): Promise<string> {
   const directory = path.join(

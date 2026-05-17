@@ -1,5 +1,9 @@
-import type { AgentAdapter } from "./agent-adapters";
-import type { DiffCollectionResult } from "./diff-collector";
+import type {
+  DiffCollectionResult,
+  VerificationSuiteResult,
+  Workspace,
+  WorkspaceCleanupResult
+} from "@agent-hub/shared";
 import {
   validateAgentProfile,
   validateComparisonReport,
@@ -16,7 +20,6 @@ import {
   validateMemoryStatusTransition,
   validateTaskRunStatusTransition,
   validateTaskStatusTransition,
-  type AgentKind,
   type AgentProfile,
   type ComparisonReport,
   type MemoryItem,
@@ -32,8 +35,6 @@ import {
   type TaskStatus,
   type VerificationResult
 } from "./domain";
-import type { VerificationSuiteResult } from "./verification";
-import type { WorkspaceCleanupResult, Workspace } from "./workspace";
 
 export type RunStatus = TaskRunStatus;
 
@@ -553,31 +554,6 @@ export class InMemorySettingsRepository implements SettingsRepository {
     return [...this.settings.values()]
       .sort((left, right) => left.key.localeCompare(right.key))
       .map(cloneSetting);
-  }
-}
-
-export interface AgentRegistry {
-  get(agentKind: AgentKind): AgentAdapter | undefined;
-  list(): AgentAdapter[];
-}
-
-export class DefaultAgentRegistry implements AgentRegistry {
-  private readonly adapters = new Map<AgentKind, AgentAdapter>();
-
-  constructor(adapters: AgentAdapter[] = []) {
-    for (const adapter of adapters) {
-      this.adapters.set(adapter.kind, adapter);
-    }
-  }
-
-  get(agentKind: AgentKind): AgentAdapter | undefined {
-    return this.adapters.get(agentKind);
-  }
-
-  list(): AgentAdapter[] {
-    return [...this.adapters.values()].sort((left, right) =>
-      left.kind.localeCompare(right.kind)
-    );
   }
 }
 

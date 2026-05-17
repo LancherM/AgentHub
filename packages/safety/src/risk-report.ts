@@ -1,14 +1,16 @@
 import {
   validateRiskReport,
+} from "@agent-hub/core";
+import {
+  formatShellCommand,
   type JsonObject,
+  type DiffCollectionResult,
   type RiskFinding,
   type RiskLevel,
-  type RiskReport
-} from "./domain";
-import type { DiffCollectionResult } from "./diff-collector";
-import { formatShellCommand } from "./shell-executor";
+  type RiskReport,
+  type VerificationSuiteResult
+} from "@agent-hub/shared";
 import { SafetyScanner, aggregateRiskLevel, type SafetyFinding } from "./safety";
-import type { VerificationSuiteResult } from "./verification";
 
 export interface RiskReportInput {
   id: string;

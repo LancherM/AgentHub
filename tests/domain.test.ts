@@ -12,7 +12,7 @@ import {
   validateTaskRun,
   validateTaskRunStatusTransition,
   validateTaskStatusTransition
-} from "../src/domain";
+} from "@agent-hub/core";
 
 describe("domain model validation", () => {
   it("preserves valid project input", () => {

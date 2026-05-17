@@ -1,9 +1,10 @@
 # Agent Hub
 
 Agent Hub is a local-first, CLI-first developer tool for orchestrating coding
-agents in isolated git worktrees. The current implementation is a single root
-TypeScript package that preserves the target module boundaries under `src/`;
-the future `apps/` and `packages/` split is intentionally deferred.
+agents in isolated git worktrees. The current implementation uses the imported
+workspace shape: `apps/cli` is a thin CLI over local packages in `packages/`.
+The desktop shell is intentionally deferred until the CLI, core APIs, and
+package boundaries are stable.
 
 ## Commands
 
