@@ -595,6 +595,43 @@ describe("CLI", () => {
     await expect(fs.access(path.join(projectRoot, "AGENTS.md"))).rejects.toThrow();
   });
 
+  it("rejects repo_export delivery mode for context builds", async () => {
+    const projectRoot = await createTestDirectory("cli-context-project");
+    const agentHubHome = await createTestDirectory("cli-context-home");
+    const output: string[] = [];
+    const errors: string[] = [];
+    const io = {
+      stdout: { write: (chunk: string) => { output.push(chunk); return true; } },
+      stderr: { write: (chunk: string) => { errors.push(chunk); return true; } }
+    };
+
+    await expect(
+      main([
+        "context",
+        "build",
+        "--project-root",
+        projectRoot,
+        "--project-id",
+        "project_1",
+        "--task-id",
+        "task_1",
+        "--title",
+        "Build context",
+        "--prompt",
+        "Compile context",
+        "--agent-hub-home",
+        agentHubHome,
+        "--delivery-mode",
+        "repo_export"
+      ], io, projectRoot)
+    ).resolves.toBe(1);
+
+    expect(output.join("")).toBe("");
+    expect(errors.join("")).toContain(
+      "--delivery-mode must be runtime_injection or worktree_overlay for context build"
+    );
+  });
+
   it("enters interactive mode for bare CLI and routes prompts through the runner", async () => {
     const projectRoot = await createTestDirectory("cli-interactive-project");
     const runRoot = path.join(await createTestDirectory("cli-interactive-runs"), "runs");
