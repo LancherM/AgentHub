@@ -103,12 +103,10 @@ Task brief artifacts are persisted from Agent Hub's generated brief content,
 not by rereading worktree paths after materialization, so malicious symlinks in
 an untrusted worktree cannot be captured as task brief artifact contents.
 
-Run summaries include the selected `context_delivery` mode and `branch_name`
-alongside existing review fields such as worktree path, task brief path,
-changed file count, verification summary, risk level, retained workspace,
-events count, warnings, and adapter output. Worktree overlay conflicts, such
-as existing non-empty skill files that Agent Hub refuses to overwrite, are
-included in the same warning output.
+Normal run output is optimized for CLI use and shows the agent-facing output
+only. Agent Hub extracts fake-agent output, structured message/error events,
+structured adapter status events, or raw non-JSON stdout/stderr fallbacks
+instead of printing run metadata after every task.
 
 Manual event recording is available for persisted task runs:
 `run event add --run-id ... --type ... --message ...`. The command validates
@@ -117,10 +115,11 @@ the run exists, validates the event type, appends through the
 events for that run.
 
 `--debug` is opt-in and does not change run behavior. For supported run
-commands it appends run boundary details, context artifact paths, verification
-stdout/stderr, changed-file summaries, and a truncated diff preview to the
-normal summary. `AGENT_HUB_DEBUG=1` or `AGENT_HUB_DEBUG=true` enables the same
-debug rendering for local troubleshooting.
+commands it appends the detailed run summary, selected `context_delivery` mode,
+`branch_name`, run boundary details, context artifact paths, verification
+stdout/stderr, changed-file summaries, warnings, and a truncated diff preview
+to the normal agent output. `AGENT_HUB_DEBUG=1` or `AGENT_HUB_DEBUG=true`
+enables the same debug rendering for local troubleshooting.
 
 The process-backed adapters use direct executable-plus-args spawning:
 

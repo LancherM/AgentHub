@@ -48,10 +48,12 @@ describe("CLI", () => {
     ).resolves.toBe(0);
 
     expect(errors.join("")).toBe("");
-    expect(output.join("")).toContain("Task run completed");
-    expect(output.join("")).toContain("context_delivery: runtime_injection");
-    expect(output.join("")).toContain("branch_name:");
-    expect(output.join("")).toContain("fake_output:");
+    expect(output.join("")).toContain("# Fake Agent Output");
+    expect(output.join("")).not.toContain("Task run completed");
+    expect(output.join("")).not.toContain("context_delivery: runtime_injection");
+    expect(output.join("")).toContain("branch:");
+    expect(output.join("")).not.toContain("branch_name:");
+    expect(output.join("")).not.toContain("fake_output:");
     expect(output.join("")).toContain("changed_files: 1");
     expect(output.join("")).toContain("risk: medium");
     expect(output.join("")).toContain("task_0001\tcompleted\tadhoc_project\tcompile context");
@@ -102,8 +104,10 @@ describe("CLI", () => {
     ).resolves.toBe(0);
 
     expect(errors.join("")).toBe("");
-    expect(output.join("")).toContain("agent: codex");
-    expect(output.join("")).toContain("agent: claude-code");
+    expect(output.join("")).toContain("codex ok");
+    expect(output.join("")).toContain("claude ok");
+    expect(output.join("")).not.toContain("agent: codex");
+    expect(output.join("")).not.toContain("agent: claude-code");
   });
 
   it("persists CLI task, run, and risk views through SQLite runtimes", async () => {
@@ -603,7 +607,7 @@ describe("CLI", () => {
     expect(output.join("")).toContain("Initialized context store");
     expect(output.join("")).toContain("run: summarize the project");
     expect(output.join("")).toContain("run: @fake simulate the task");
-    expect(output.join("")).toContain("Task run completed");
+    expect(output.join("")).toContain("# Fake Agent Output");
     expect(output.join("")).toContain("\x1b[2J\x1b[H");
     expect(output.join("")).toContain("Exiting Agent Hub.");
   });
@@ -680,11 +684,13 @@ describe("CLI", () => {
     }
 
     expect(errors.join("")).toBe("");
-    expect(normalOutput.join("")).toContain("status: succeeded");
+    expect(normalOutput.join("")).toContain("# Fake Agent Output");
+    expect(normalOutput.join("")).not.toContain("status: succeeded");
     expect(debugOutput.join("")).toContain("status: succeeded");
     expect(envDebugOutput.join("")).toContain("status: succeeded");
     expect(normalOutput.join("")).not.toContain("debug:");
     expect(debugOutput.join("")).toContain("debug:");
+    expect(debugOutput.join("")).toContain("run_summary:");
     expect(debugOutput.join("")).toContain("run_boundary:");
     expect(debugOutput.join("")).toContain("verification_output:");
     expect(debugOutput.join("")).toContain("stdout:\n    ok");

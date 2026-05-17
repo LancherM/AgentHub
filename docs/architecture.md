@@ -73,10 +73,16 @@ routes natural language prompts or `@agent` prompts through the existing run
 command and `TaskRunner`. It keeps selected agent and project state in the CLI
 layer only; it does not create a second orchestration implementation.
 
-Debug rendering is also a CLI concern. `--debug` or `AGENT_HUB_DEBUG=1` appends
-run boundaries, context artifact paths, verification stdout/stderr, changed
-file summaries, and a truncated diff preview after the normal run summary. It
-does not alter runner inputs, adapter behavior, persistence, or exit status.
+Run output rendering is also a CLI concern. Normal `run` output shows the
+agent-facing output extracted from fake output, structured message/error
+events, structured adapter status events, or raw non-JSON stdout/stderr
+fallbacks. It does not show Agent Hub run metadata by default.
+
+Debug rendering remains opt-in. `--debug` or `AGENT_HUB_DEBUG=1` appends the
+run summary, run boundaries, context artifact paths, verification
+stdout/stderr, changed file summaries, and a truncated diff preview after the
+normal agent output. It does not alter runner inputs, adapter behavior,
+persistence, or exit status.
 
 Manual run-event recording is a CLI persistence operation, not an adapter or
 runner behavior. `run event add` loads the target run through
