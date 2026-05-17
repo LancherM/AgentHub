@@ -76,9 +76,14 @@ describe("process-backed agent adapters", () => {
     const runner = new MockProcessRunner([
       [
         { type: "stdout", data: "{\"type\":\"thread.started\"}\n" },
+        { type: "stdout", data: "{\"type\":\"turn.completed\",\"summary\":\"internal lifecycle summary\"}\n" },
         {
           type: "stdout",
           data: "{\"type\":\"item.completed\",\"item\":{\"type\":\"reasoning\",\"summary\":[]}}\n"
+        },
+        {
+          type: "stdout",
+          data: "{\"type\":\"item.completed\",\"item\":{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"prompt text\"}]}}\n"
         },
         {
           type: "stdout",
@@ -98,6 +103,22 @@ describe("process-backed agent adapters", () => {
     expect(events).toContainEqual(expect.objectContaining({
       type: "message",
       message: "hello from codex"
+    }));
+    expect(events).toContainEqual(expect.objectContaining({
+      type: "status",
+      message: "internal lifecycle summary"
+    }));
+    expect(events).toContainEqual(expect.objectContaining({
+      type: "status",
+      message: "prompt text"
+    }));
+    expect(events).not.toContainEqual(expect.objectContaining({
+      type: "message",
+      message: "internal lifecycle summary"
+    }));
+    expect(events).not.toContainEqual(expect.objectContaining({
+      type: "message",
+      message: "prompt text"
     }));
   });
 

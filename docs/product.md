@@ -71,7 +71,9 @@ uses Agent Hub managed blocks in `AGENTS.md` and optionally `CLAUDE.md`,
 preserves user-authored content outside those blocks, and ignores marker
 examples inside fenced code blocks. Runtime context files are generated in
 Agent Hub-owned artifacts or inside isolated worktrees; default context build
-does not write repository-level agent files.
+does not write repository-level agent files. `context build --delivery-mode`
+accepts only `runtime_injection` and `worktree_overlay`; `repo_export` remains
+exclusive to `context export`.
 
 The run command validates the task input, compiles non-invasive context, routes
 to the selected adapter, rejects unsafe repository-local Git config before any
@@ -108,8 +110,10 @@ an untrusted worktree cannot be captured as task brief artifact contents.
 Normal run output is optimized for CLI use and shows the agent-facing output
 only. Agent Hub extracts fake-agent output, structured message/error events,
 or raw non-JSON stdout/stderr fallbacks instead of printing run metadata or
-adapter lifecycle events after every task. Interactive mode follows the same
-rule and does not echo `run: <prompt>` in normal mode.
+adapter lifecycle events after every task. Structured lifecycle summaries and
+non-assistant message items remain persisted status events rather than normal
+agent output. Interactive mode follows the same rule and does not echo
+`run: <prompt>` in normal mode.
 
 Manual event recording is available for persisted task runs:
 `run event add --run-id ... --type ... --message ...`. The command validates

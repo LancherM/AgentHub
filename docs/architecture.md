@@ -77,9 +77,10 @@ Run output rendering is also a CLI concern. Normal `run` output shows the
 agent-facing output extracted from fake output, structured message/error
 events, or raw non-JSON stdout/stderr fallbacks. Structured lifecycle/status
 events are persisted for inspection and debug output but are not rendered as
-normal agent output. It does not show Agent Hub run metadata by default, and
-interactive mode does not echo prompt dispatch lines unless debug rendering is
-enabled.
+normal agent output. Parser promotion is limited to assistant/agent/result
+payloads, so lifecycle summaries and non-assistant message items remain status
+events. It does not show Agent Hub run metadata by default, and interactive
+mode does not echo prompt dispatch lines unless debug rendering is enabled.
 
 Debug rendering remains opt-in. `--debug` or `AGENT_HUB_DEBUG=1` appends the
 run summary, run boundaries, context artifact paths, verification
@@ -170,9 +171,10 @@ writes only worktree-local runtime files under `.agent-hub/tasks/<task-id>/` and
 passes the generated context to the adapter. `worktree_overlay` additionally
 materializes managed `AGENTS.md`, `CLAUDE.md`, and skill copies under
 `.claude/skills` and `.agents/skills`, but only inside the isolated worktree.
-The CLI and task runner validate run delivery modes against that two-value set;
+The CLI validates `context build` and task run delivery modes against that
+two-value set, and the task runner enforces the same boundary for runs.
 `repo_export` is reserved for explicit repository export flows and is rejected
-during task runs.
+outside those flows.
 Existing non-empty skill files are not overwritten without warning. All runtime
 artifact writes reject symlink path components before writing so a generated
 artifact path cannot escape the worktree or export root. Persisted task brief

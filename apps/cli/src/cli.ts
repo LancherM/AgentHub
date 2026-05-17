@@ -722,7 +722,7 @@ async function contextBuild(args: string[], io: CliIO, cwd: string): Promise<num
       title: requiredFlag(args, "--title"),
       prompt: requiredFlag(args, "--prompt"),
       selectedAgentId: parseAgentKind(optionalFlag(args, "--agent") ?? "fake"),
-      deliveryMode: parseDeliveryMode(optionalFlag(args, "--delivery-mode"))
+      deliveryMode: parseContextBuildDeliveryMode(optionalFlag(args, "--delivery-mode"))
     });
     io.stdout.write(renderContextBuildResult(result));
     return 0;
@@ -1983,6 +1983,20 @@ function parseDeliveryMode(value: string | undefined): ContextDeliveryMode | und
     return value;
   }
   throw new Error("--delivery-mode must be runtime_injection, worktree_overlay, or repo_export");
+}
+
+function parseContextBuildDeliveryMode(
+  value: string | undefined
+): RunContextDeliveryMode | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (value === "runtime_injection" || value === "worktree_overlay") {
+    return value;
+  }
+  throw new Error(
+    "--delivery-mode must be runtime_injection or worktree_overlay for context build"
+  );
 }
 
 function parseRunDeliveryMode(value: string | undefined): RunContextDeliveryMode | undefined {

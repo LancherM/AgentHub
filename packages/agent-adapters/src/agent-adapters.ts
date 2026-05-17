@@ -579,11 +579,25 @@ class StructuredOutputParser {
     if (/error|failed|failure/i.test(type)) {
       return [{ type: "error", message, metadata }];
     }
-    if (structuredOutput !== undefined || /message|assistant|agent|result/i.test(type)) {
+    if (isStructuredMessageEvent(adapterEvent, type, structuredOutput)) {
       return [{ type: "message", message, metadata }];
     }
     return [{ type: "status", message, metadata }];
   }
+}
+
+function isStructuredMessageEvent(
+  event: JsonObject,
+  type: string,
+  structuredOutput: string | undefined
+): boolean {
+  if (structuredOutput === undefined) {
+    return /message|assistant|agent|result|output_text/i.test(type);
+  }
+  if (/message|assistant|agent|result|output_text/i.test(type)) {
+    return true;
+  }
+  return isAssistantMessageItem(event.item);
 }
 
 function structuredMessage(event: JsonObject): string | undefined {
@@ -595,6 +609,14 @@ function structuredMessage(event: JsonObject): string | undefined {
     }
   }
   return undefined;
+}
+
+function isAssistantMessageItem(value: JsonObject[string]): boolean {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+  const item = value as JsonObject;
+  return item.type === "message" && item.role === "assistant";
 }
 
 function structuredTextFromValue(value: JsonObject[string], depth = 0): string | undefined {
