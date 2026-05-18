@@ -32,11 +32,19 @@ Current workspace boundaries:
 - `apps/cli`: command parsing, interactive console input, command dispatch,
   output rendering, debug rendering, and manual run-event recording. The CLI is
   thin over local package APIs and does not own orchestration logic.
+- `apps/desktop`: Electron main/preload plus React renderer for the first
+  local desktop shell. Main process services call the existing local
+  repositories and review helpers; the renderer calls only `window.agentHub`
+  and does not import Node.js, shell, filesystem, SQLite, git, or privileged
+  Agent Hub packages directly.
 
-Desktop remains architectural only and deferred until these CLI, core, and
-package boundaries are stable. No desktop app, Electron/Tauri shell, browser
-UI, web server, login, cloud backend, or remote execution path is introduced in
-this phase.
+Desktop remains a thin local shell. It does not add a web server, login, cloud
+backend, remote execution path, automatic merge, automatic push, or automatic
+repository export. Electron IPC registration stays in
+`apps/desktop/electron/ipc.ts`, while the pure handler factory lives in
+`apps/desktop/electron/ipc-handlers.ts` so shared service validation can be
+tested without loading Electron. Preload uses `contextBridge` rather than
+exposing `ipcRenderer`.
 
 Child process environment policy is explicit by default. `ProcessRunner` and
 `ShellExecutor` build child environments from a small inherited allowlist
@@ -274,6 +282,17 @@ summaries, per-command verification outcomes, failed checks, risk levels, risk
 factors, and summary tradeoffs. Comparison is review-only and performs no
 accept, merge, branch delete, or push action.
 
+The first desktop runtime integration is deliberately narrow. `apps/desktop`
+uses SQLite-backed services for project registration, run listing/detail,
+review tabs, verification rows, risk reports, and memory proposal decisions.
+`runs.create` records a fake-agent-backed desktop run through repository
+interfaces, emits IPC run events, persists a placeholder diff artifact,
+persists a skipped verification row, and persists a low-risk report. It does not call
+TaskRunner yet, create worktrees, invoke Codex or Claude Code, run verification
+commands, export repository context, merge, push, or write files into the
+target repository. Real TaskRunner and adapter execution can be wired behind
+the same IPC/service interfaces in a later slice.
+
 All adapters run against an isolated worktree and refuse to run when that
 directory is the original project root or when the generated task brief is
 outside the isolated directory. Codex is invoked as `codex exec --json -`.
@@ -315,13 +334,13 @@ rejection is represented as a failed verification command, and shell results
 carry timeout and signal metadata so callers can distinguish command failures
 from process termination.
 
-The physical package split is present, but it is still an MVP boundary rather
-than a desktop platform boundary. Cross-package contracts flow through
-`packages/shared` and `packages/core`; task-runner consumes context compiler,
-agent adapters, safety, and core repositories; apps/cli calls the local package
-APIs instead of duplicating orchestration. Future restructuring should preserve
-that direction and keep desktop work separate until these boundaries remain
-stable under feature work.
+The physical package split is present and now includes both user-facing app
+packages. Cross-package contracts flow through `packages/shared` and
+`packages/core`; task-runner consumes context compiler, agent adapters, safety,
+and core repositories; `apps/cli` and `apps/desktop` call local package APIs or
+main-process services instead of duplicating orchestration. Future
+restructuring should preserve that direction and keep desktop orchestration
+logic outside the renderer.
 
 Repository CI/CD lives in `.github/workflows/ci-cd.yml` and stays outside the
 Agent Hub runtime. The workflow installs the pinned pnpm and Node versions from
@@ -335,8 +354,10 @@ extraction. Release publishing uses the repository-scoped `GITHUB_TOKEN` with
 external backend, custom secret, remote task execution, or automatic code push
 in the CI/CD path.
 
-Desktop preparation remains architectural only. The future desktop app should
-live under `apps/desktop`, call local core/task-runner APIs through Electron
-IPC or Tauri commands, and render projects, tasks, runs, diffs, verification,
-risk, memory, and comparison data from local repositories. No API server or
-desktop UI implementation is present in this slice.
+Desktop is no longer architectural only. The first shell lives under
+`apps/desktop`, calls local services through Electron IPC, and renders projects,
+runs, diffs, verification, risk, and memory proposal data from local SQLite
+repositories. It does not add an API server, and its first run path records
+fake-agent-backed review rows only. Real TaskRunner, CodexAdapter, and
+ClaudeCodeAdapter execution remain follow-up desktop integration work behind
+the same IPC boundary.

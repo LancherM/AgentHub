@@ -20,8 +20,8 @@ baseline for the current repository.
 ## Locked Product Definition
 
 Agent Hub is a local-first CLI-first developer tool for orchestrating coding
-agents on a developer machine. The desktop app is a later shell over the same
-local core and must not own orchestration logic.
+agents on a developer machine. The desktop app is a shell over the same local
+core and must not own orchestration logic.
 
 Agent Hub is not a web SaaS product. The rebuild must not add account login,
 remote task execution, cloud storage, remote workers, automatic pull requests,
@@ -37,15 +37,14 @@ CLI
   -> task runner
   -> agent adapters
 
-Desktop shell, later
+Desktop shell
   -> local core
   -> task runner
   -> agent adapters
 ```
 
-The current rebuild slice uses a single TypeScript `src/` tree while preserving
-module boundaries in code. A workspace or package split can be introduced after
-the first verified vertical slice if the next phase needs it.
+The current rebuild uses a pnpm workspace with `apps/cli`, `apps/desktop`, and
+local packages under `packages/`.
 
 ## Context Delivery
 
@@ -93,23 +92,23 @@ current baseline includes the root TypeScript package, domain models, SQLite
 repositories, context store init/show/build/export, git worktree task runs,
 fake/Codex/Claude Code adapters, verification, diff collection, safety
 scanning, risk report persistence, memory workflows, comparison reports,
-interactive CLI mode, and manual run-event recording.
+interactive CLI mode, manual run-event recording, and the first Electron +
+React desktop shell.
 
-The current physical layout is still a single root package with module
-boundaries under `src/`. The imported `apps/` and `packages/` monorepo layout
-remains a target architecture, not the current filesystem shape.
+The current physical layout is the imported `apps/` and `packages/` monorepo
+shape. The desktop shell lives under `apps/desktop` and is currently
+fake-agent-backed for run creation.
 
 Still deferred:
 
-- Desktop app.
-- Physical monorepo package split.
+- Real desktop TaskRunner/Codex/Claude/fake execution, streaming,
+  cancellation, verification configuration, retained-worktree diff review, and
+  approved-memory writeback confirmation.
 - Automatic memory proposal generation from completed runs.
 - Richer comparison scoring beyond the current persisted textual summary.
 
 ## Hard Constraints For This Slice
 
-- Do not add desktop UI.
-- Do not restructure into `apps/` and `packages/`.
 - Do not introduce cloud, account, backend, login, team, automatic merge,
   automatic push, or automatic pull request behavior.
 - Do not run shell commands outside the `ShellExecutor` or `ProcessRunner`

@@ -8,9 +8,9 @@
   },
   "scripts": {
     "build": "tsc -b tsconfig.build.json",
-    "typecheck": "tsc --noEmit --pretty false -p tsconfig.json",
+    "typecheck": "tsc --noEmit --pretty false -p tsconfig.json && pnpm --filter desktop typecheck",
     "test": "vitest run",
-    "lint": "tsc --noEmit --pretty false -p tsconfig.json"
+    "lint": "tsc --noEmit --pretty false -p tsconfig.json && pnpm --filter desktop lint"
   },
   "devDependencies": {
     "@types/node": "20.19.0",
@@ -23,7 +23,7 @@
     "packages/*"
   ],
   "pnpm": {
-    "onlyBuiltDependencies": ["esbuild"]
+    "onlyBuiltDependencies": ["esbuild", "electron"]
   },
   "packageManager": "pnpm@10.10.0"
 }

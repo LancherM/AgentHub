@@ -128,9 +128,10 @@ The MVP must support:
 
 ## Current Implementation Status
 
-The current implementation is a CLI-first pnpm workspace with `apps/cli` and
-local core packages under `packages/`. The desktop app remains deferred, but
-the physical CLI/core package split is now present.
+The current implementation is a CLI-first pnpm workspace with `apps/cli`,
+`apps/desktop`, and local core packages under `packages/`. The physical
+CLI/core package split is present, and the first Electron + React desktop shell
+exists as a thin local UI over main-process IPC.
 
 Implemented:
 
@@ -164,10 +165,17 @@ Implemented:
 - Memory proposal, listing, approval, rejection, and approved-memory writeback
   to the Agent Hub-owned context store.
 - Persisted comparison report generation for two runs of a task.
+- `apps/desktop` Electron + React shell with a three-pane local review layout,
+  safe `window.agentHub` preload API, Electron main-process IPC handlers,
+  SQLite-backed project/run/review/memory service facades, and a
+  fake-agent-backed desktop run path that records local review rows without
+  modifying target repositories.
 
 Not yet implemented:
 
-- Desktop app.
+- Desktop TaskRunner integration for real Codex/Claude/fake agent execution,
+  live streaming, cancellation, verification configuration, retained-worktree
+  diff scanning, and approved-memory context-store writeback confirmation.
 - Automatic memory proposal generation from completed runs.
 - Richer comparison scoring beyond the current persisted textual summary.
 
@@ -198,6 +206,7 @@ Current physical layout:
 agent-hub/
   apps/
     cli/
+    desktop/
 
   packages/
     core/
@@ -213,16 +222,10 @@ agent-hub/
   specs/imported/
 ```
 
-Future desktop target:
-
-```text
-agent-hub/
-  apps/
-    desktop/
-```
-
-Do not do a larger package restructure, add a desktop app, or introduce a
-browser/server architecture unless the user asks for that specific work.
+Do not do a larger package restructure or introduce a browser/server
+architecture unless the user asks for that specific work. Future desktop work
+must stay inside `apps/desktop` and keep orchestration in shared local packages
+or Electron main-process services.
 
 ## Package Responsibilities
 
@@ -260,18 +263,26 @@ Implemented commands:
 
 Desktop shell.
 
-The desktop app should provide UI for:
+The first desktop app is implemented as an Electron + React + Vite workspace
+package. It provides UI for:
 
 - Projects
-- Tasks
 - Run details
 - Logs
 - Diff review
-- Comparison reports
-- Memory approval
-- Settings
+- Verification
+- Risk reports
+- Memory proposals
+- Placeholder navigation for Compare, Memory, Skills, and Settings
 
-The desktop app must call the local core. It must not duplicate task orchestration logic.
+The desktop app must call the local core through Electron main-process IPC. The
+renderer must not directly access Node.js, shell, filesystem, SQLite, or git.
+It must not duplicate task orchestration logic.
+
+Current desktop run creation is fake-agent backed and persists SQLite review
+records only. It must not write files to target repositories, export context,
+merge, push, or create pull requests. Real TaskRunner/Codex/Claude integration
+is follow-up work behind the same IPC boundary.
 
 ### packages/core
 
@@ -409,7 +420,7 @@ Use:
 - Zod for runtime validation
 - Node.js `child_process` for CLI adapter execution
 - simple-git or git CLI for git operations
-- Electron + React + Vite only after CLI/core is stable
+- Electron + React + Vite for the desktop shell
 
 Avoid:
 
@@ -628,6 +639,7 @@ Minimum expectations:
 - Task runner has integration tests using temporary git repositories.
 - Safety scanner has unit tests.
 - CLI commands have smoke tests.
+- Desktop IPC/service behavior has focused tests where practical.
 
 Before completing a task, run the most relevant commands:
 

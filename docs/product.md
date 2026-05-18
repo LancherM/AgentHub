@@ -10,14 +10,16 @@ cross-process SQLite-backed run inspection, manual run-event recording, memory
 workflows, and comparison reports. Running `agent-hub` with no subcommand
 starts an interactive shell over the same local core services:
 
-The implementation now uses the imported workspace shape for the CLI and local
-core packages. `apps/cli` contains CLI parsing, interactive mode, command
-dispatch, and output rendering. Shared contracts and local services live under
-`packages/shared`, `packages/core`, `packages/db`, `packages/context-compiler`,
+The implementation now uses the imported workspace shape for the CLI, local
+core packages, and first desktop shell. `apps/cli` contains CLI parsing,
+interactive mode, command dispatch, and output rendering. `apps/desktop`
+contains the Electron + React shell over the same local persistence/review
+interfaces. Shared contracts and local services live under `packages/shared`,
+`packages/core`, `packages/db`, `packages/context-compiler`,
 `packages/task-runner`, `packages/agent-adapters`, and `packages/safety`.
-Desktop remains deferred until the CLI, core APIs, and package boundaries are
-stable; this phase does not add Electron, React, Vite, a browser UI, or an API
-server.
+The desktop app is not a hosted web app and does not add an API server, login,
+cloud sync, remote execution, automatic merge, automatic push, or repository
+export behavior.
 
 ```sh
 agent-hub [--project <path>] [--agent fake|codex|claude-code]
@@ -192,6 +194,24 @@ failed checks, risk levels, risk factors, and summary tradeoffs from persisted
 run artifacts and reports, then stores the summary in `comparison_reports`. It
 is a review aid only; it does not accept, merge, or push changes.
 
+Agent Hub Desktop is now available as an MVP shell under `apps/desktop`. It
+starts with `pnpm --filter desktop dev` and presents a three-pane local review
+surface: projects and recent runs on the left, run timeline and composer in the
+center, and summary/diff/tests/risk/memory review tabs on the right. The
+renderer only calls the safe `window.agentHub` preload API. It has no direct
+Node.js, shell, filesystem, SQLite, or git access; privileged operations go
+through Electron main-process IPC registered in `apps/desktop/electron/ipc.ts`.
+The IPC handler factory is kept in `apps/desktop/electron/ipc-handlers.ts` so
+service-level validation remains testable in the root Vitest suite without
+loading Electron.
+
+The first desktop run path is intentionally fake-agent backed. It records
+SQLite task/run/event/artifact/verification/risk rows through the local
+repositories and never writes files into the selected target repository.
+CodexAdapter, ClaudeCodeAdapter, real TaskRunner streaming/cancellation, real
+diff scanning from retained worktrees, verification command configuration, and
+approved-memory context-store writeback remain follow-up desktop wiring tasks.
+
 SQLite is stored in Agent Hub-owned application data by default, not in the
 target project repository. `AGENT_HUB_HOME` can point Agent Hub at an alternate
 app data directory, and `AGENT_HUB_DB_PATH` can point at an explicit database
@@ -269,5 +289,5 @@ service or change Agent Hub's local-first product model.
 
 Deferred product capabilities include richer Codex/Claude structured event
 mapping, automatic memory proposal generation from completed runs, richer
-comparison scoring, and the desktop shell after the CLI/core/package
-boundaries are stable.
+comparison scoring, and real desktop TaskRunner/adapter execution beyond the
+current fake-agent-backed desktop run path.
