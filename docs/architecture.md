@@ -344,7 +344,10 @@ attempting automatic cleanup, branch deletion, merge, push, or acceptance.
 Verification commands run with the isolated worktree as cwd. Dangerous command
 rejection is represented as a failed verification command, and shell results
 carry timeout and signal metadata so callers can distinguish command failures
-from process termination.
+from process termination. If a run has no configured verification commands,
+the verification suite remains skipped and the task runner adds a warning to
+`RunResult.warnings`; normal CLI output stays agent-facing, while debug output
+renders the warning through the existing run-summary path.
 
 The physical package split is present and now includes both user-facing app
 packages. Cross-package contracts flow through `packages/shared` and

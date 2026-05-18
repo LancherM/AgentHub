@@ -62,6 +62,9 @@ describe("task runner", () => {
       { path: "fake-agent-output.md", status: "untracked" }
     ]);
     expect(result.verification?.status).toBe("skipped");
+    expect(result.warnings).toContain(
+      "No verification commands were configured; verification was skipped."
+    );
     expect(result.riskReport?.level).toBe("medium");
     expect(result.worktreePath?.startsWith(runRoot)).toBe(true);
     expect(result.taskBriefPath?.startsWith(result.worktreePath ?? "")).toBe(true);
@@ -424,6 +427,9 @@ describe("task runner", () => {
 
     expect(result.status).toBe("succeeded");
     expect(shell.calls[0].options.cwd).toBe(result.worktreePath);
+    expect(result.warnings).not.toContain(
+      "No verification commands were configured; verification was skipped."
+    );
   });
 
   it("converts dangerous verification commands into an inspectable failed run", async () => {
