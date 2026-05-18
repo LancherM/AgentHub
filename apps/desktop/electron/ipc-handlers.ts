@@ -62,7 +62,7 @@ export function createDesktopServices(
   return {
     projects,
     runs,
-    threads: createThreadService({ projects, runs }),
+    threads: createThreadService({ context, projects, runs }),
     review,
     memory
   };

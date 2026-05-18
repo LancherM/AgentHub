@@ -115,6 +115,7 @@ export interface RunArtifactRepository {
 
 export interface ConversationThreadRepository {
   create(thread: ConversationThread): Promise<ConversationThread>;
+  update(thread: ConversationThread): Promise<ConversationThread>;
   get(threadId: string): Promise<ConversationThread | undefined>;
   list(projectId?: string): Promise<ConversationThread[]>;
 }
@@ -437,6 +438,15 @@ export class InMemoryConversationThreadRepository
     const validThread = validateConversationThread(thread);
     if (this.threads.has(validThread.id)) {
       throw new Error(`conversation thread ${validThread.id} already exists`);
+    }
+    this.threads.set(validThread.id, cloneConversationThread(validThread));
+    return cloneConversationThread(validThread);
+  }
+
+  async update(thread: ConversationThread): Promise<ConversationThread> {
+    const validThread = validateConversationThread(thread);
+    if (!this.threads.has(validThread.id)) {
+      throw new Error(`conversation thread ${validThread.id} not found`);
     }
     this.threads.set(validThread.id, cloneConversationThread(validThread));
     return cloneConversationThread(validThread);

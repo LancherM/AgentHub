@@ -313,7 +313,7 @@ describe("desktop services", () => {
       memoryService: memory,
       fakeDelayMs: 5
     });
-    const threads = createThreadService({ projects, runs });
+    const threads = createThreadService({ context, projects, runs });
     const project = await projects.open(fixture.projectRoot);
 
     const detail = await threads.sendMessage({
@@ -360,6 +360,85 @@ describe("desktop services", () => {
     ]);
   });
 
+  it("persists desktop thread messages across service recreation", async () => {
+    const fixture = await createFixture();
+    const context = createDesktopServiceContext(fixture.repositories);
+    const projects = createProjectService(context);
+    const memory = createMemoryService(context);
+    const review = createReviewService(context, { memoryService: memory });
+    const runs = createRunService(context, {
+      reviewService: review,
+      memoryService: memory,
+      fakeDelayMs: 5
+    });
+    const threads = createThreadService({ context, projects, runs });
+    const project = await projects.open(fixture.projectRoot);
+
+    const first = await threads.sendMessage({
+      projectId: project.id,
+      text: "@fake first durable prompt",
+      contextMode: "auto"
+    });
+    const second = await threads.sendMessage({
+      threadId: first.id,
+      text: "@fake second durable prompt",
+      contextMode: "workspace"
+    });
+    const runIds = second.messages
+      .filter((message) => message.type === "agent_run")
+      .map((message) => message.runId);
+
+    for (const runId of runIds) {
+      await waitForRun(runs, runId, "completed");
+    }
+
+    const restartedRepositories = createSqliteRepositories({
+      databasePath: fixture.databasePath
+    });
+    const restartedContext =
+      createDesktopServiceContext(restartedRepositories);
+    const restartedProjects = createProjectService(restartedContext);
+    const restartedMemory = createMemoryService(restartedContext);
+    const restartedReview = createReviewService(restartedContext, {
+      memoryService: restartedMemory
+    });
+    const restartedRuns = createRunService(restartedContext, {
+      reviewService: restartedReview,
+      memoryService: restartedMemory,
+      fakeDelayMs: 5
+    });
+    const restartedThreads = createThreadService({
+      context: restartedContext,
+      projects: restartedProjects,
+      runs: restartedRuns
+    });
+
+    const restored = await restartedThreads.getThread(first.id);
+    expect(restored.messages.map((message) => message.type)).toEqual([
+      "user",
+      "agent_run",
+      "user",
+      "agent_run"
+    ]);
+    expect(
+      restored.messages
+        .filter((message) => message.type === "user")
+        .map((message) => message.text)
+    ).toEqual(["first durable prompt", "second durable prompt"]);
+    expect(
+      restored.messages
+        .filter((message) => message.type === "agent_run")
+        .map((message) => message.status)
+    ).toEqual(["completed", "completed"]);
+    await expect(restartedThreads.listThreads()).resolves.toMatchObject([
+      {
+        id: first.id,
+        runCount: 2,
+        activeRunCount: 0
+      }
+    ]);
+  });
+
   it("validates IPC run creation and rejects repo_export delivery", async () => {
     const fixture = await createFixture();
     const context = createDesktopServiceContext(fixture.repositories);
@@ -371,7 +450,7 @@ describe("desktop services", () => {
       memoryService: memory,
       fakeDelayMs: 5
     });
-    const threads = createThreadService({ projects, runs });
+    const threads = createThreadService({ context, projects, runs });
     const handlers = createIpcHandlers({ projects, runs, threads, review, memory });
     const sender = { send: vi.fn() };
     const project = await projects.open(fixture.projectRoot);
@@ -469,10 +548,12 @@ function sleep(ms: number): Promise<void> {
 
 async function createFixture(): Promise<{
   projectRoot: string;
+  databasePath: string;
   repositories: ReturnType<typeof createSqliteRepositories>;
 }> {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "agent-hub-desktop-"));
   const projectRoot = path.join(root, "repo");
+  const databasePath = path.join(root, "agent-hub.sqlite");
   await fs.mkdir(projectRoot);
   await fs.writeFile(
     path.join(projectRoot, "package.json"),
@@ -480,7 +561,7 @@ async function createFixture(): Promise<{
     "utf8"
   );
   const repositories = createSqliteRepositories({
-    databasePath: path.join(root, "agent-hub.sqlite")
+    databasePath
   });
-  return { projectRoot, repositories };
+  return { projectRoot, databasePath, repositories };
 }
