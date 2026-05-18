@@ -774,6 +774,48 @@ describe("CLI", () => {
     expect(envDebugOutput.join("")).toContain("debug:");
   });
 
+  it("redacts sensitive diff previews from debug output", async () => {
+    const projectRoot = await createTestDirectory("cli-sensitive-debug-project");
+    const runRoot = path.join(await createTestDirectory("cli-sensitive-debug-runs"), "runs");
+    const runtime = createCliRuntime({
+      storageMode: "memory",
+      defaultRunRoot: runRoot,
+      workspaceManager: new TestWorkspaceManager(runRoot),
+      diffCollector: new StaticDiffCollector(
+        [
+          "diff --git a/.env.local b/.env.local",
+          "new file mode 100644",
+          "--- /dev/null",
+          "+++ b/.env.local",
+          "+AGENTHUB_SECRET_MARKER=1"
+        ].join("\n"),
+        [{ path: ".env.local", status: "untracked" }]
+      ),
+      verificationRunner: new VerificationRunner(new MockShellExecutor()),
+      idGenerator: new SequenceIdGenerator(),
+      clock: new FixedClock("2026-01-01T00:00:00.000Z")
+    });
+    const output: string[] = [];
+    const errors: string[] = [];
+    const io = {
+      stdout: { write: (chunk: string) => { output.push(chunk); return true; } },
+      stderr: { write: (chunk: string) => { errors.push(chunk); return true; } }
+    };
+
+    await expect(
+      main(["--debug", "run", "@fake", "sensitive debug task"], io, projectRoot, runtime)
+    ).resolves.toBe(0);
+
+    const rendered = output.join("");
+    expect(errors.join("")).toBe("");
+    expect(rendered).toContain("- risk: blocking");
+    expect(rendered).toContain("diff_preview:");
+    expect(rendered).toContain(
+      "redacted because the risk report contains sensitive path findings"
+    );
+    expect(rendered).not.toContain("AGENTHUB_SECRET_MARKER");
+  });
+
   it("supports memory propose, list, approve, and reject without injecting rejected memory", async () => {
     const projectRoot = await createTestDirectory("cli-memory-project");
     const databasePath = path.join(
@@ -1167,22 +1209,27 @@ class TestWorkspaceManager implements WorkspaceManager {
 }
 
 class StaticDiffCollector implements DiffCollectorService {
-  constructor(private readonly diffText = "") {}
+  constructor(
+    private readonly diffText = "",
+    private readonly changedFiles: DiffCollectionResult["changedFiles"] = [
+      { path: "fake-agent-output.md", status: "untracked" }
+    ]
+  ) {}
 
   async collect(input: { workspacePath: string }): Promise<DiffCollectionResult> {
     return {
       ok: true,
       workspacePath: input.workspacePath,
       isClean: false,
-      changedFiles: [{ path: "fake-agent-output.md", status: "untracked" }],
+      changedFiles: this.changedFiles,
       stat: {
-        filesChanged: 1,
+        filesChanged: this.changedFiles.length,
         insertions: 1,
         deletions: 0,
         text: "1 file changed, 1 insertion(+)"
       },
       diff: this.diffText,
-      fileSummaries: ["fake-agent-output.md: untracked"],
+      fileSummaries: this.changedFiles.map((file) => `${file.path}: ${file.status}`),
       commands: []
     };
   }

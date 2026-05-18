@@ -25,6 +25,7 @@ export interface ChangedFile {
   status: ChangedFileStatus;
   binary?: boolean;
   sizeBytes?: number;
+  symlink?: boolean;
   symlinkTarget?: string;
   omittedReason?: string;
 }
@@ -294,6 +295,9 @@ function summarizeFile(
   file: ChangedFile,
   stats: { insertions: number; deletions: number } | undefined
 ): string {
+  if (file.symlink) {
+    return `${file.path}: ${file.status}, symlink target omitted`;
+  }
   if (file.symlinkTarget !== undefined) {
     return `${file.path}: ${file.status}, symlink -> ${file.symlinkTarget}`;
   }
@@ -328,6 +332,7 @@ async function enrichChangedFiles(
       ...file,
       binary: binary || undefined,
       sizeBytes: binary || omittedReason ? inspected.sizeBytes : undefined,
+      symlink: file.status === "untracked" ? inspected.symlink : undefined,
       symlinkTarget: file.status === "untracked" ? inspected.symlinkTarget : undefined,
       omittedReason
     });
@@ -371,6 +376,11 @@ async function buildUntrackedDiff(
   const chunks: string[] = [];
   const stats = new Map<string, { insertions: number; deletions: number }>();
   for (const file of changedFiles.filter((entry) => entry.status === "untracked")) {
+    if (file.symlink) {
+      chunks.push(`Untracked symlink ${file.path} added (target omitted)`);
+      stats.set(file.path, { insertions: 0, deletions: 0 });
+      continue;
+    }
     if (file.symlinkTarget !== undefined) {
       chunks.push(`Untracked symlink ${file.path} -> ${file.symlinkTarget} added`);
       stats.set(file.path, { insertions: 0, deletions: 0 });
@@ -460,6 +470,7 @@ async function inspectWorktreeFile(
 ): Promise<{
   binary: boolean;
   sizeBytes?: number;
+  symlink?: boolean;
   symlinkTarget?: string;
   omittedReason?: string;
 }> {
@@ -469,7 +480,7 @@ async function inspectWorktreeFile(
     if (stats.isSymbolicLink()) {
       return {
         binary: false,
-        symlinkTarget: await fs.readlink(absolutePath)
+        symlink: true
       };
     }
     if (!stats.isFile()) {

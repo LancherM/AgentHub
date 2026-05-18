@@ -125,8 +125,10 @@ events for that run.
 commands it appends the detailed run summary, selected `context_delivery` mode,
 `branch_name`, run boundary details, context artifact paths, verification
 stdout/stderr, changed-file summaries, warnings, and a truncated diff preview
-to the normal agent output. `AGENT_HUB_DEBUG=1` or `AGENT_HUB_DEBUG=true`
-enables the same debug rendering for local troubleshooting.
+to the normal agent output. If the risk report contains sensitive-path
+findings, the debug diff preview is redacted rather than printing potentially
+sensitive diff contents. `AGENT_HUB_DEBUG=1` or `AGENT_HUB_DEBUG=true` enables
+the same debug rendering for local troubleshooting.
 
 The process-backed adapters use direct executable-plus-args spawning:
 
@@ -170,7 +172,8 @@ items, `memory approve` marks an item approved and appends it to the Agent
 Hub-owned context store at `memory/approved.md`, and `memory reject` marks it
 rejected. Context builds read approved memory only from the context store, so
 proposed and rejected SQLite memory items are not injected into future task
-briefs.
+briefs. The initialized `# Approved Memory` placeholder is treated as empty
+and is not injected into task briefs until an approved memory entry is written.
 
 The compare workflow generates a persisted comparison report for two runs of a
 task. `compare --task-id ... --baseline ... --candidate ...` compares changed
@@ -198,14 +201,14 @@ Persisted run metadata currently covers:
 Diff collection records binary file metadata, synthesizes reviewable patches
 for bounded untracked text files, and excludes generated overlay files only
 while they still match their Agent Hub baseline. Untracked symlinks are recorded
-as symlinks without dereferencing their targets, oversized untracked files have
-their contents omitted, and synthetic untracked file reads are constrained to
-real paths inside the isolated worktree. If an agent modifies generated overlay
-files, those files are included in the diff. Git worktree and diff operations
-apply hardened Git invocation defaults and reject repository-local Git config
-keys that can execute helpers, hooks, filters, external diff commands, or
-included config before Agent Hub invokes Git in the selected repository or
-generated worktree.
+as symlinks without dereferencing, storing, or rendering their targets,
+oversized untracked files have their contents omitted, and synthetic untracked
+file reads are constrained to real paths inside the isolated worktree. If an
+agent modifies generated overlay files, those files are included in the diff.
+Git worktree and diff operations apply hardened Git invocation defaults and
+reject repository-local Git config keys that can execute helpers, hooks,
+filters, external diff commands, or included config before Agent Hub invokes
+Git in the selected repository or generated worktree.
 
 Structured run data is now also persisted in first-class SQLite tables:
 

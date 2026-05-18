@@ -205,11 +205,13 @@ describe("DiffCollector", () => {
 
     expect(result.ok).toBe(true);
     expect(result.changedFiles).toEqual([
-      { path: "leak.txt", status: "untracked", symlinkTarget: outsidePath }
+      { path: "leak.txt", status: "untracked", symlink: true }
     ]);
-    expect(result.diff).toContain(`Untracked symlink leak.txt -> ${outsidePath} added`);
+    expect(result.diff).toContain("Untracked symlink leak.txt added (target omitted)");
+    expect(result.diff).not.toContain(outsidePath);
     expect(result.diff).not.toContain("AGENTHUB_SECRET_MARKER");
-    expect(result.fileSummaries).toContain(`leak.txt: untracked, symlink -> ${outsidePath}`);
+    expect(result.fileSummaries).toContain("leak.txt: untracked, symlink target omitted");
+    expect(result.fileSummaries.join("\n")).not.toContain(outsidePath);
     expect(result.stat.insertions).toBe(0);
   });
 

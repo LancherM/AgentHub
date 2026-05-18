@@ -1586,7 +1586,7 @@ function renderRunDebug(
         ? ["    - none"]
         : result.diff.fileSummaries.map((summary) => `    - ${summary}`)),
       "  diff_preview:",
-      indentBlock(truncateText(result.diff.diff) || "(empty)", 4)
+      indentBlock(renderDiffPreview(result) || "(empty)", 4)
     );
   }
 
@@ -1599,6 +1599,26 @@ function truncateText(value: string, maxLength = 2_000): string {
     return value;
   }
   return `${value.slice(0, maxLength)}\n... truncated ${value.length - maxLength} chars`;
+}
+
+function renderDiffPreview(result: CliRunResult): string {
+  if (!result.diff) {
+    return "";
+  }
+  if (hasSensitivePathRisk(result)) {
+    return "redacted because the risk report contains sensitive path findings";
+  }
+  return truncateText(result.diff.diff);
+}
+
+function hasSensitivePathRisk(result: CliRunResult): boolean {
+  return result.riskReport?.findings.some((finding) => {
+    const category = (finding as { category?: unknown }).category;
+    return (
+      category === "sensitive_path" ||
+      finding.summary === "Sensitive file path changed."
+    );
+  }) ?? false;
 }
 
 function indentBlock(value: string, spaces: number): string {

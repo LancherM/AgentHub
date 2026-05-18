@@ -85,8 +85,9 @@ mode does not echo prompt dispatch lines unless debug rendering is enabled.
 Debug rendering remains opt-in. `--debug` or `AGENT_HUB_DEBUG=1` appends the
 run summary, run boundaries, context artifact paths, verification
 stdout/stderr, changed file summaries, and a truncated diff preview after the
-normal agent output. It does not alter runner inputs, adapter behavior,
-persistence, or exit status.
+normal agent output. When persisted risk findings include a sensitive path,
+the CLI replaces the raw diff preview with a redaction notice. It does not
+alter runner inputs, adapter behavior, persistence, or exit status.
 
 Manual run-event recording is a CLI persistence operation, not an adapter or
 runner behavior. `run event add` loads the target run through
@@ -146,7 +147,9 @@ initialize and inspect context stores, read external context from Agent
 Hub-owned app data by default, build typed context packs and task briefs, and
 perform explicit repository exports. Missing optional context files are
 reported as warnings rather than causing context builds to fail. The default
-external store path is:
+approved-memory heading created during context-store initialization is treated
+as an empty placeholder and is not injected into task context until approved
+memory is appended. The default external store path is:
 
 ```text
 <agent-hub-app-data>/context-stores/<project-id>/
@@ -187,6 +190,11 @@ runner. Baselines are passed into diff collection so unchanged Agent Hub
 generated files are excluded, while agent-modified generated files stay
 reviewable. Overlay warnings are propagated through `RunResult.warnings` and
 normal CLI summary output.
+
+Diff collection records untracked symlinks as symlinks while omitting their
+targets from changed-file metadata, synthetic diff text, and file summaries.
+This keeps review metadata useful without disclosing absolute target paths from
+outside the isolated worktree.
 
 The repository interfaces remain the storage boundary. In-memory repositories
 are kept for focused tests and injected runtimes. The CLI default runtime uses

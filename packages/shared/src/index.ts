@@ -294,6 +294,7 @@ export interface ChangedFile {
   status: ChangedFileStatus;
   binary?: boolean;
   sizeBytes?: number;
+  symlink?: boolean;
   symlinkTarget?: string;
   omittedReason?: string;
 }

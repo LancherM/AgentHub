@@ -651,6 +651,9 @@ class FileMemoryProvider implements MemoryProvider {
     if (!content?.trim()) {
       return { items: [] };
     }
+    if (isApprovedMemoryPlaceholder(content)) {
+      return { items: [] };
+    }
     return { items: [{ id: "approved", content }] };
   }
 }
@@ -900,6 +903,10 @@ function defaultContextFileContent(relativeFile: string): string {
     return "# Approved Memory\n\n";
   }
   return `# ${relativeFile.replace(/\.md$/, "")}\n\n`;
+}
+
+function isApprovedMemoryPlaceholder(content: string): boolean {
+  return content.trim() === "# Approved Memory";
 }
 
 function firstNonEmptyLine(content: string): string | undefined {
