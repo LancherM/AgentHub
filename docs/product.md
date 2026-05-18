@@ -194,22 +194,38 @@ failed checks, risk levels, risk factors, and summary tradeoffs from persisted
 run artifacts and reports, then stores the summary in `comparison_reports`. It
 is a review aid only; it does not accept, merge, or push changes.
 
-Agent Hub Desktop is now available as an MVP shell under `apps/desktop`. It
-starts with `pnpm --filter desktop dev` and presents a three-pane local review
-surface: projects and recent runs on the left, run timeline and composer in the
-center, and summary/diff/tests/risk/memory review tabs on the right. The
-renderer only calls the safe `window.agentHub` preload API. It has no direct
-Node.js, shell, filesystem, SQLite, or git access; privileged operations go
-through Electron main-process IPC registered in `apps/desktop/electron/ipc.ts`.
-The IPC handler factory is kept in `apps/desktop/electron/ipc-handlers.ts` so
-service-level validation remains testable in the root Vitest suite without
-loading Electron.
+Agent Hub Desktop is now available as a local run console under `apps/desktop`.
+It starts with `pnpm --filter desktop dev` and presents a three-pane local
+review surface: projects and recent runs on the left, a live run timeline and
+composer in the center, and summary/diff/tests/risk/memory review tabs on the
+right. The New Run modal creates a queued run for a registered project or local
+path, supports `@fake` as the enabled agent, exposes auto/minimal/full context
+mode selection, and returns immediately while the Electron main process starts
+the run. The selected run timeline receives live semantic events such as
+`run_started`, `context_compiled`, `agent_step`, `agent_output`,
+`verification_started`, `verification_finished`, `run_completed`,
+`run_failed`, and `run_cancelled`. Sidebar and detail status update through
+the desktop status sequence `queued -> running -> verifying -> completed`, or
+to `failed`/`cancelled` for terminal interruptions. Running fake runs can be
+cancelled from the center pane.
 
-The first desktop run path is intentionally fake-agent backed. It records
-SQLite task/run/event/artifact/verification/risk rows through the local
-repositories and never writes files into the selected target repository.
-CodexAdapter, ClaudeCodeAdapter, real TaskRunner streaming/cancellation, real
-diff scanning from retained worktrees, verification command configuration, and
+The renderer only calls the safe `window.agentHub` preload API. It has no
+direct Node.js, shell, filesystem, SQLite, or git access; privileged
+operations go through Electron main-process IPC registered in
+`apps/desktop/electron/ipc.ts`. The IPC handler factory is kept in
+`apps/desktop/electron/ipc-handlers.ts` so service-level validation and
+subscription behavior remain testable in the root Vitest suite without loading
+Electron.
+
+The current desktop execution path is intentionally fake-agent backed. The
+main process `RunService` creates SQLite task/run rows, streams live events
+through an in-memory emitter, persists run events as the DB layer supports
+them, records simulated verification output, and stores placeholder diff/risk
+review rows that explicitly say no real files were modified in fake mode. The
+fake runner never writes files into the selected target repository and does
+not export Agent Hub context files. CodexAdapter, ClaudeCodeAdapter, real
+TaskRunner streaming/cancellation, real diff scanning from retained worktrees,
+verification command configuration, accept/reject review workflows, and
 approved-memory context-store writeback remain follow-up desktop wiring tasks.
 
 SQLite is stored in Agent Hub-owned application data by default, not in the

@@ -1,4 +1,5 @@
-export type AgentKind = "fake" | "codex" | "claude-code";
+export type AgentId = "fake" | "codex" | "claude";
+export type AgentKind = AgentId;
 export type MemoryCategory =
   | "project_fact"
   | "workflow_rule"
@@ -6,19 +7,31 @@ export type MemoryCategory =
   | "temporary_note";
 export type RiskLevel = "low" | "medium" | "high" | "blocking";
 export type RunEventType =
-  | "stdout"
-  | "stderr"
-  | "message"
-  | "status"
-  | "error"
-  | "exit";
-export type TaskRunStatus =
+  | "run_started"
+  | "context_compiled"
+  | "agent_step"
+  | "agent_output"
+  | "verification_started"
+  | "verification_finished"
+  | "run_completed"
+  | "run_failed"
+  | "run_cancelled";
+export type RunStatus =
   | "queued"
   | "running"
-  | "succeeded"
+  | "verifying"
+  | "completed"
   | "failed"
   | "cancelled";
+export type TaskRunStatus = RunStatus;
 export type VerificationStatus = "passed" | "failed" | "skipped";
+export type EventPhase =
+  | "lifecycle"
+  | "context"
+  | "agent"
+  | "logs"
+  | "verification"
+  | "final";
 
 export interface RiskFinding {
   level: RiskLevel;
@@ -42,10 +55,19 @@ export interface RunSummary {
   taskId: string;
   title: string;
   taskPrompt: string;
-  agentKind: AgentKind;
-  status: TaskRunStatus;
+  agentId: AgentId;
+  status: RunStatus;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface RunEventPayload extends Record<string, unknown> {
+  message?: string;
+  phase?: EventPhase;
+  status?: RunStatus;
+  command?: string;
+  passed?: boolean;
+  summary?: string;
 }
 
 export interface RunEvent {
@@ -53,9 +75,8 @@ export interface RunEvent {
   runId: string;
   sequence: number;
   type: RunEventType;
-  message: string;
-  metadata: Record<string, unknown>;
-  createdAt: string;
+  timestamp: string;
+  payload: RunEventPayload;
 }
 
 export interface RunDetail extends RunSummary {
@@ -71,7 +92,7 @@ export interface CreateRunInput {
   projectId: string;
   prompt: string;
   title?: string;
-  agentKind: AgentKind;
+  agentId: AgentId;
   contextMode: ContextMode;
   deliveryMode?: "runtime_injection" | "worktree_overlay";
 }

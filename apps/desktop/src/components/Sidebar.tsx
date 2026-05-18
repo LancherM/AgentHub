@@ -67,7 +67,7 @@ export function Sidebar({
                   <RunStatusBadge status={run.status} compact />
                 </div>
                 <div className="row-subtitle">
-                  @{run.agentKind === "claude-code" ? "claude" : run.agentKind} · {run.projectName}
+                  @{run.agentId} · {run.projectName}
                 </div>
               </button>
             ))

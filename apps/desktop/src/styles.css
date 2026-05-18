@@ -263,6 +263,16 @@ button:disabled {
   color: #ffd6cf;
 }
 
+.inline-error,
+.form-error {
+  padding: 9px 11px;
+  border: 1px solid rgba(255, 125, 107, 0.5);
+  border-radius: 8px;
+  background: rgba(78, 25, 19, 0.82);
+  color: #ffd6cf;
+  font-size: 13px;
+}
+
 .thread-view {
   display: grid;
   grid-template-rows: auto auto minmax(0, 1fr) auto;
@@ -277,6 +287,14 @@ button:disabled {
   align-items: flex-start;
   justify-content: space-between;
   gap: 16px;
+}
+
+.thread-actions,
+.summary-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
 }
 
 .thread-header h1 {
@@ -412,6 +430,15 @@ button:disabled {
   background: #f1efe4;
   color: #151510;
   font-weight: 850;
+}
+
+.danger-button {
+  min-height: 32px;
+  border: 1px solid rgba(255, 125, 107, 0.48);
+  border-radius: 8px;
+  background: rgba(255, 125, 107, 0.12);
+  color: #ffd6cf;
+  font-weight: 800;
 }
 
 .review-panel {
@@ -553,7 +580,7 @@ button:disabled {
 }
 
 .verification-head.passed span,
-.status-badge.succeeded,
+.status-badge.completed,
 .risk-level.low {
   background: rgba(103, 216, 196, 0.16);
   color: var(--cyan);
@@ -570,6 +597,7 @@ button:disabled {
 .verification-head.skipped span,
 .status-badge.queued,
 .status-badge.running,
+.status-badge.verifying,
 .risk-level.medium {
   background: rgba(245, 189, 90, 0.16);
   color: var(--amber);
@@ -688,6 +716,10 @@ button:disabled {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 12px;
+}
+
+.form-error {
+  margin-top: 14px;
 }
 
 .modal-actions {

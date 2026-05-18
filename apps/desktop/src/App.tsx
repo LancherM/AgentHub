@@ -5,10 +5,11 @@ import { ReviewPanel } from "./components/ReviewPanel";
 import { NewRunModal, type NewRunDraft } from "./components/NewRunModal";
 import { agentHubApi } from "./lib/agentHubApi";
 import type {
-  AgentKind,
+  AgentId,
   ContextMode,
   ProjectSummary,
   RunDetail,
+  RunEvent,
   RunSummary
 } from "./lib/types";
 
@@ -35,19 +36,7 @@ export function App(): JSX.Element {
       setSelectedRun(undefined);
       return;
     }
-    let active = true;
-    const unsubscribe = agentHubApi.runs.onEvent(selectedRunId, () => {
-      void loadRun(selectedRunId);
-    });
-    void loadRun(selectedRunId).finally(() => {
-      if (!active) {
-        unsubscribe();
-      }
-    });
-    return () => {
-      active = false;
-      unsubscribe();
-    };
+    void loadRun(selectedRunId);
   }, [selectedRunId]);
 
   async function refreshShell(): Promise<void> {
@@ -74,8 +63,9 @@ export function App(): JSX.Element {
     try {
       const detail = await agentHubApi.runs.get(runId);
       setSelectedRun(detail);
+      setRuns((current) => upsertRunSummary(current, detail));
     } catch (err) {
-      setError(errorMessage(err));
+      setError(`Failed to load run: ${errorMessage(err)}`);
     }
   }
 
@@ -87,6 +77,7 @@ export function App(): JSX.Element {
       if (!projectId && draft.projectPath.trim()) {
         const project = await agentHubApi.projects.open(draft.projectPath);
         projectId = project.id;
+        setProjects((current) => upsertProjectSummary(current, project));
       }
       if (!projectId) {
         throw new Error("Choose a project or enter a local path.");
@@ -95,14 +86,14 @@ export function App(): JSX.Element {
         projectId,
         prompt: draft.prompt,
         title: draft.title,
-        agentKind: draft.agentKind,
+        agentId: draft.agentId,
         contextMode: draft.contextMode
       });
-      await refreshShell();
+      setRuns((current) => upsertRunSummary(current, summary));
       setSelectedRunId(summary.id);
       setIsNewRunOpen(false);
     } catch (err) {
-      setError(errorMessage(err));
+      setError(`Failed to create run: ${errorMessage(err)}`);
     } finally {
       setIsBusy(false);
     }
@@ -110,7 +101,7 @@ export function App(): JSX.Element {
 
   async function createInlineRun(
     prompt: string,
-    agentKind: AgentKind,
+    agentId: AgentId,
     contextMode: ContextMode
   ): Promise<void> {
     if (!selectedProjectId) {
@@ -122,9 +113,37 @@ export function App(): JSX.Element {
       projectPath: "",
       title: "",
       prompt,
-      agentKind,
+      agentId,
       contextMode
     });
+  }
+
+  async function cancelRun(runId: string): Promise<void> {
+    setError(undefined);
+    try {
+      await agentHubApi.runs.cancel(runId);
+      await loadRun(runId);
+    } catch (err) {
+      setError(`Cancel failed: ${errorMessage(err)}`);
+    }
+  }
+
+  function handleRunEvent(runId: string, event: RunEvent): void {
+    if (event.payload.status) {
+      setRuns((current) =>
+        current.map((run) =>
+          run.id === runId
+            ? { ...run, status: event.payload.status!, updatedAt: event.timestamp }
+            : run
+        )
+      );
+      setSelectedRun((current) =>
+        current?.id === runId
+          ? { ...current, status: event.payload.status!, updatedAt: event.timestamp }
+          : current
+      );
+    }
+    void loadRun(runId);
   }
 
   return (
@@ -142,6 +161,8 @@ export function App(): JSX.Element {
           run={selectedRun}
           isBusy={isBusy}
           onCreateRun={createInlineRun}
+          onCancelRun={cancelRun}
+          onRunEvent={handleRunEvent}
         />
       </main>
       <ReviewPanel run={selectedRun} />
@@ -160,4 +181,23 @@ export function App(): JSX.Element {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function upsertRunSummary(runs: RunSummary[], summary: RunSummary): RunSummary[] {
+  const next = [
+    summary,
+    ...runs.filter((run) => run.id !== summary.id)
+  ];
+  return next.sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+}
+
+function upsertProjectSummary(
+  projects: ProjectSummary[],
+  summary: ProjectSummary
+): ProjectSummary[] {
+  const next = [
+    summary,
+    ...projects.filter((project) => project.id !== summary.id)
+  ];
+  return next.sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
 }
