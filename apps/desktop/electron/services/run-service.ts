@@ -453,5 +453,7 @@ function agentLabel(agentKind: AgentKind): string {
       return "Claude Code";
     case "fake":
       return "Fake";
+    default:
+      return String(agentKind);
   }
 }

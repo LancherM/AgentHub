@@ -7,8 +7,8 @@
   "scripts": {
     "dev": "electron-vite dev",
     "build": "electron-vite build",
-    "typecheck": "tsc --noEmit --pretty false -p tsconfig.json",
-    "lint": "tsc --noEmit --pretty false -p tsconfig.json",
+    "typecheck": "tsc --pretty false -p tsconfig.typecheck.json",
+    "lint": "tsc --pretty false -p tsconfig.typecheck.json",
     "preview": "electron-vite preview"
   },
   "dependencies": {
