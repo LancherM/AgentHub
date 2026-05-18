@@ -221,6 +221,15 @@ remains inspectable. Thread/message persistence is an isolated in-memory Phase
 3 boundary for now; run records, events, simulated verification, placeholder
 diffs, and risk review rows remain SQLite-backed.
 
+The planned real multi-turn conversation route is captured in
+`docs/multiturn-conversation-prompts.md`. It keeps project context, thread
+context, current-turn context, and per-run context snapshots as separate
+layers, then replaces the current in-memory thread facade with persisted
+threads/messages and bounded runtime injection of prior conversation context.
+Until that route is implemented, desktop threads are a conversation UI and run
+review surface, not a guarantee that each new agent run sees the previous
+messages.
+
 The run inspector is the desktop drill-down surface for review evidence. It
 loads review summaries, changed-file stats, bounded unified diffs, captured
 verification rows, persisted TaskRunner safety reports when present,
