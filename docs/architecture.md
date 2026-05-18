@@ -196,6 +196,11 @@ generated files are excluded, while agent-modified generated files stay
 reviewable. Overlay warnings are propagated through `RunResult.warnings` and
 normal CLI summary output.
 
+Diff collection records untracked symlinks as symlinks while omitting their
+targets from changed-file metadata, synthetic diff text, and file summaries.
+This keeps review metadata useful without disclosing absolute target paths from
+outside the isolated worktree.
+
 The repository interfaces remain the storage boundary. In-memory repositories
 are kept for focused tests and injected runtimes. The CLI default runtime uses
 SQLite repositories, initialized by simple versioned migrations, with the
