@@ -250,7 +250,10 @@ risk classifier. Fake desktop runs explicitly show that no real repository
 files were modified and do not invent changed files. When a retained worktree
 exists, desktop diff loading uses read-only Git inspection from the Electron
 main process only; renderer code never receives shell, filesystem, SQLite, or
-Git access.
+Git access. Desktop memory proposal generation is idempotent for each run:
+summary cards, run-detail loading, and the memory tab can refresh in parallel
+without duplicating the same proposal content or growing beyond the bounded
+proposal set for that run.
 
 Inspector accept/reject actions are audit decisions only. Accepting a run
 records `accepted` review state and shows "Accepted for record. No merge was

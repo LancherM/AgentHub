@@ -72,10 +72,11 @@ is deterministic and evidence based; it classifies changed paths, verification
 failures, large diffs, dependency/config changes, generated files, and
 source-without-tests conditions without calling an LLM when no persisted
 safety report is available. `MemoryService` lists and generates a small number
-of conservative pending proposals, then maps approve/ignore to the existing
-local memory item states. All of these services sit behind preload IPC methods,
-so the renderer still has no Node.js, filesystem, SQLite, shell, child-process,
-or Git access.
+of conservative pending proposals, serializes generation per run, deduplicates
+proposal content, and caps generated proposals for a run before mapping
+approve/ignore to the existing local memory item states. All of these services
+sit behind preload IPC methods, so the renderer still has no Node.js,
+filesystem, SQLite, shell, child-process, or Git access.
 
 Run review decisions are stored as local `run_artifacts` entries of kind
 `review_decision`. They are not execution status transitions and they do not

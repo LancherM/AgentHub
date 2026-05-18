@@ -302,6 +302,47 @@ describe("desktop services", () => {
     });
   });
 
+  it("generates desktop memory proposals idempotently across repeated review loads", async () => {
+    const fixture = await createFixture();
+    const context = createDesktopServiceContext(fixture.repositories);
+    const projects = createProjectService(context);
+    const memory = createMemoryService(context);
+    const review = createReviewService(context, { memoryService: memory });
+    const runs = createRunService(context, {
+      reviewService: review,
+      memoryService: memory,
+      fakeDelayMs: 5
+    });
+    const project = await projects.open(fixture.projectRoot);
+    const run = await runs.createRun({
+      projectId: project.id,
+      prompt: "Verify desktop memory proposal generation.",
+      agentId: "fake",
+      contextMode: "auto"
+    });
+    await waitForRun(runs, run.id, "completed");
+
+    const [firstList, firstSummary, runDetail, secondSummary] = await Promise.all([
+      memory.listProposals(run.id),
+      review.getSummary(run.id),
+      runs.getRun(run.id),
+      review.getSummary(run.id)
+    ]);
+    const secondList = await memory.listProposals(run.id);
+    const storedItems = await fixture.repositories.memoryItemRepository.listByProjectId(
+      project.id
+    );
+    const storedRunItems = storedItems.filter((item) => item.taskId === run.taskId);
+
+    expect(firstList).toHaveLength(2);
+    expect(secondList).toHaveLength(2);
+    expect(runDetail.memoryProposals).toHaveLength(2);
+    expect(firstSummary.memoryProposalCount).toBe(2);
+    expect(secondSummary.memoryProposalCount).toBe(2);
+    expect(storedRunItems).toHaveLength(2);
+    expect(new Set(storedRunItems.map((item) => item.content)).size).toBe(2);
+  });
+
   it("thread sendMessage creates one user message and one run card per agent", async () => {
     const fixture = await createFixture();
     const context = createDesktopServiceContext(fixture.repositories);
