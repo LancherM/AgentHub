@@ -1,7 +1,7 @@
-import type { TaskRunStatus } from "../lib/types";
+import type { RunStatus } from "../lib/types";
 
 interface RunStatusBadgeProps {
-  status: TaskRunStatus;
+  status: RunStatus;
   compact?: boolean;
 }
 

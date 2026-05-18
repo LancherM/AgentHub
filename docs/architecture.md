@@ -46,6 +46,29 @@ repository export. Electron IPC registration stays in
 tested without loading Electron. Preload uses `contextBridge` rather than
 exposing `ipcRenderer`.
 
+The desktop run console now has a main-process `RunService` boundary for run
+creation, live event streaming, cancellation, and repository-backed review
+loading. Renderer components use only `window.agentHub.runs.create/list/get/
+cancel/onEvent`; the preload hides channel names and returns unsubscribe
+functions for live event listeners. IPC handlers validate inputs and manage
+per-window subscriptions, but do not own run lifecycle logic. The service maps
+desktop-facing agent IDs (`fake`, `codex`, `claude`) and run statuses
+(`queued`, `running`, `verifying`, `completed`, `failed`, `cancelled`) onto the
+existing core/SQLite contracts where possible. SQLite still stores the core
+run status enum, so the desktop-only `verifying` phase is represented by live
+run events while the persisted core run remains `running`; core `succeeded`
+is exposed to the desktop renderer as `completed`.
+
+Desktop Phase 2 execution is fake-agent only. The main process starts
+`apps/desktop/electron/services/fake-agent-runner.ts`, which emits semantic
+events over time and responds to `AbortController` cancellation. The runner
+does not read or write target repository files. `RunService` persists
+task/run rows, run events, simulated verification rows, and placeholder
+diff/risk review rows through the existing local repositories, then broadcasts
+each event through an in-memory emitter. Codex and Claude Code remain disabled
+in the renderer until real TaskRunner integration is wired behind the same IPC
+boundary.
+
 Desktop packaging is a local release concern layered over that shell. The
 workspace keeps Electron/Vite bundling in `apps/desktop`, then uses
 Electron Builder through `scripts/build-macos-dmg.sh` to package the generated

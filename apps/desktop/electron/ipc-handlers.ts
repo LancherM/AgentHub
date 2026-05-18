@@ -60,30 +60,40 @@ export function createDesktopServices(
 export function createIpcHandlers(
   services: DesktopServices
 ): Record<string, IpcHandler> {
+  const subscriptions = new WeakMap<
+    IpcEventSender,
+    Map<string, () => void>
+  >();
+
   return {
     [IPC_CHANNELS.projectsList]: async () => services.projects.list(),
     [IPC_CHANNELS.projectsOpen]: async (_event, input) =>
       services.projects.open(parsePath(input)),
     [IPC_CHANNELS.runsList]: async (_event, input) =>
-      services.runs.list(parseOptionalId(input, "projectId")),
+      services.runs.listRuns(parseOptionalId(input, "projectId")),
     [IPC_CHANNELS.runsGet]: async (_event, input) =>
-      services.runs.get(parseId(input, "runId")),
-    [IPC_CHANNELS.runsCreate]: async (event, input) => {
-      const summary = await services.runs.create(parseCreateRunInput(input));
-      const detail = await services.runs.get(summary.id);
-      for (const runEvent of detail.events) {
-        sendRunEvent(event.sender, summary.id, runEvent);
-      }
-      return summary;
-    },
+      services.runs.getRun(parseId(input, "runId")),
+    [IPC_CHANNELS.runsCreate]: async (_event, input) =>
+      services.runs.createRun(parseCreateRunInput(input)),
     [IPC_CHANNELS.runsCancel]: async (_event, input) => {
-      await services.runs.cancel(parseId(input, "runId"));
+      await services.runs.cancelRun(parseId(input, "runId"));
     },
-    [IPC_CHANNELS.runsSubscribe]: async (_event, input) => {
-      parseId(input, "runId");
+    [IPC_CHANNELS.runsSubscribe]: async (event, input) => {
+      const runId = parseId(input, "runId");
+      await services.runs.getRun(runId);
+      unsubscribeSenderRun(subscriptions, event.sender, runId);
+      const unsubscribe = services.runs.subscribe(runId, (runEvent) => {
+        sendRunEvent(event.sender, runId, runEvent);
+      });
+      let senderSubscriptions = subscriptions.get(event.sender);
+      if (!senderSubscriptions) {
+        senderSubscriptions = new Map();
+        subscriptions.set(event.sender, senderSubscriptions);
+      }
+      senderSubscriptions.set(runId, unsubscribe);
     },
-    [IPC_CHANNELS.runsUnsubscribe]: async (_event, input) => {
-      parseId(input, "runId");
+    [IPC_CHANNELS.runsUnsubscribe]: async (event, input) => {
+      unsubscribeSenderRun(subscriptions, event.sender, parseId(input, "runId"));
     },
     [IPC_CHANNELS.reviewDiff]: async (_event, input) =>
       services.review.getDiff(parseId(input, "runId")),
@@ -106,6 +116,20 @@ function sendRunEvent(
   event: RunEvent
 ): void {
   sender.send(runEventChannel(runId), event);
+}
+
+function unsubscribeSenderRun(
+  subscriptions: WeakMap<IpcEventSender, Map<string, () => void>>,
+  sender: IpcEventSender,
+  runId: string
+): void {
+  const senderSubscriptions = subscriptions.get(sender);
+  const unsubscribe = senderSubscriptions?.get(runId);
+  if (!unsubscribe) {
+    return;
+  }
+  unsubscribe();
+  senderSubscriptions?.delete(runId);
 }
 
 function parsePath(input: unknown): string {
@@ -145,13 +169,13 @@ function parseCreateRunInput(input: unknown): CreateRunInput {
   const prompt = parseId(value.prompt, "prompt");
   const title =
     value.title === undefined ? undefined : parseId(value.title, "title");
-  const agentKind = value.agentKind;
+  const agentId = value.agentId;
   if (
-    agentKind !== "fake" &&
-    agentKind !== "codex" &&
-    agentKind !== "claude-code"
+    agentId !== "fake" &&
+    agentId !== "codex" &&
+    agentId !== "claude"
   ) {
-    throw new Error("agentKind must be fake, codex, or claude-code");
+    throw new Error("agentId must be fake, codex, or claude");
   }
   const contextMode = value.contextMode;
   if (
@@ -174,7 +198,7 @@ function parseCreateRunInput(input: unknown): CreateRunInput {
     projectId,
     prompt,
     title,
-    agentKind,
+    agentId,
     contextMode,
     deliveryMode
   };

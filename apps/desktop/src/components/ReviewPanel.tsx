@@ -3,6 +3,7 @@ import type { RunDetail } from "../lib/types";
 import { DiffViewer } from "./DiffViewer";
 import { MemoryProposals } from "./MemoryProposals";
 import { RiskReport } from "./RiskReport";
+import { RunStatusBadge } from "./RunStatusBadge";
 import { VerificationPanel } from "./VerificationPanel";
 
 interface ReviewPanelProps {
@@ -61,8 +62,25 @@ function Summary({ run }: { run: RunDetail }): JSX.Element {
   return (
     <div className="summary-stack">
       <section>
-        <div className="panel-label">Final Summary</div>
-        <p>{run.summary}</p>
+        <div className="summary-heading">
+          <div>
+            <div className="panel-label">Run Summary</div>
+            <p>{run.summary}</p>
+          </div>
+          <RunStatusBadge status={run.status} />
+        </div>
+      </section>
+      <section>
+        <div className="panel-label">Verification</div>
+        <p>{run.verification.summary}</p>
+      </section>
+      <section>
+        <div className="panel-label">Fake Mode Boundary</div>
+        <p>No real files modified in fake mode.</p>
+      </section>
+      <section>
+        <div className="panel-label">Task</div>
+        <p>{run.taskPrompt}</p>
       </section>
       <section>
         <div className="panel-label">Changed Files</div>
@@ -79,7 +97,7 @@ function Summary({ run }: { run: RunDetail }): JSX.Element {
       <section className="summary-metrics">
         <div>
           <span>Agent</span>
-          <strong>@{run.agentKind === "claude-code" ? "claude" : run.agentKind}</strong>
+          <strong>@{run.agentId}</strong>
         </div>
         <div>
           <span>Tests</span>
