@@ -77,7 +77,7 @@ pnpm lint
 ### 3. Guard local settings against secrets
 
 Status: done
-Done: 2026-05-18 via codex/todo-3-secret-settings; PR: pending
+Done: 2026-05-18 via codex/todo-3-secret-settings; PR: https://github.com/LancherM/AgentHub/pull/37
 
 Prompt:
 
