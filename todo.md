@@ -76,6 +76,9 @@ pnpm lint
 
 ### 3. Guard local settings against secrets
 
+Status: done
+Done: 2026-05-18 via codex/todo-3-secret-settings; PR: pending
+
 Prompt:
 
 You are working in `/Users/lan/agent-hub`. Enforce the imported database rule

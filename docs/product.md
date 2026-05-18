@@ -259,13 +259,15 @@ SQLite now enforces the important imported storage constraints at the database
 boundary. Tasks reference projects with cascade delete, task runs reference
 agent profiles when one is selected, task and run status values are checked,
 agent kinds are checked, JSON columns reject invalid JSON, and run event
-sequence numbers remain unique per run. Ad-hoc CLI runs reuse an existing
-project for the same repository root. The first legacy ad-hoc root may still
-use `adhoc_project` for compatibility; additional ad-hoc roots get
-deterministic root-scoped project ids so tasks and later memory writeback stay
-attached to the correct local repository. Upgrades from older SQLite databases
-also backfill missing legacy task project rows, including pre-change ad-hoc
-tasks, before adding the stricter task foreign key.
+sequence numbers remain unique per run. Local settings reject secret-like keys
+and string values before they can be stored in SQLite or in-memory test
+repositories, so settings remain limited to safe local behavior preferences.
+Ad-hoc CLI runs reuse an existing project for the same repository root. The
+first legacy ad-hoc root may still use `adhoc_project` for compatibility;
+additional ad-hoc roots get deterministic root-scoped project ids so tasks and
+later memory writeback stay attached to the correct local repository. Upgrades
+from older SQLite databases also backfill missing legacy task project rows,
+including pre-change ad-hoc tasks, before adding the stricter task foreign key.
 
 Task, task-run, and memory status changes follow the imported lifecycle rather
 than arbitrary enum changes in both SQLite and injected in-memory
