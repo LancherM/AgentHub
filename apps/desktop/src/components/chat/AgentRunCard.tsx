@@ -2,8 +2,10 @@ import { useEffect, useMemo, useState } from "react";
 import { agentHubApi } from "../../lib/agentHubApi";
 import type {
   AgentRunMessage,
+  ReviewSummary,
   RunDetail,
   RunEvent,
+  RunInspectorTab,
   RunStatus
 } from "../../lib/types";
 import { RunStatusBadge } from "../RunStatusBadge";
@@ -12,7 +14,7 @@ interface AgentRunCardProps {
   message: AgentRunMessage;
   initialRun?: RunDetail;
   onRunUpdated(run: RunDetail): void;
-  onOpenInspector(runId: string): void;
+  onOpenInspector(runId: string, tab?: RunInspectorTab): void;
   onCancelRun(runId: string): Promise<void>;
 }
 
@@ -26,6 +28,7 @@ export function AgentRunCard({
   const [run, setRun] = useState<RunDetail | undefined>(initialRun);
   const [events, setEvents] = useState<RunEvent[]>(initialRun?.events ?? []);
   const [status, setStatus] = useState<RunStatus>(initialRun?.status ?? message.status);
+  const [reviewSummary, setReviewSummary] = useState<ReviewSummary | undefined>();
   const [expanded, setExpanded] = useState(false);
   const [streamError, setStreamError] = useState<string | undefined>();
   const [cancelError, setCancelError] = useState<string | undefined>();
@@ -34,6 +37,7 @@ export function AgentRunCard({
     setRun(initialRun);
     setEvents(initialRun?.events ?? []);
     setStatus(initialRun?.status ?? message.status);
+    setReviewSummary(undefined);
   }, [initialRun, message.runId, message.status]);
 
   useEffect(() => {
@@ -49,6 +53,7 @@ export function AgentRunCard({
           setStatus(event.payload.status);
         }
         void loadRun();
+        void loadReviewSummary();
       });
       return () => {
         active = false;
@@ -71,9 +76,23 @@ export function AgentRunCard({
         setEvents(detail.events);
         setStatus(detail.status);
         onRunUpdated(detail);
+        void loadReviewSummary();
       } catch (error) {
         if (active) {
           setStreamError(`Failed to load run: ${errorMessage(error)}`);
+        }
+      }
+    }
+
+    async function loadReviewSummary(): Promise<void> {
+      try {
+        const summary = await agentHubApi.review.getSummary(message.runId);
+        if (active) {
+          setReviewSummary(summary);
+        }
+      } catch {
+        if (active && isTerminalRunStatus(status)) {
+          setReviewSummary(undefined);
         }
       }
     }
@@ -142,7 +161,7 @@ export function AgentRunCard({
           <button
             onClick={(event) => {
               event.stopPropagation();
-              onOpenInspector(message.runId);
+              onOpenInspector(message.runId, "summary");
             }}
           >
             View details
@@ -174,21 +193,15 @@ export function AgentRunCard({
       </div>
 
       <footer className="run-card-pills">
-        {[
-          `${run?.changedFiles.length ?? 0} files`,
-          `tests ${run?.verification.status ?? "pending"}`,
-          `risk ${run?.risk.level ?? "pending"}`,
-          `${run?.memoryProposals.length ?? 0} memory`,
-          `${events.length} events`
-        ].map((label) => (
+        {reviewPills(reviewSummary, events.length, status).map((pill) => (
           <button
-            key={label}
+            key={pill.label}
             onClick={(event) => {
               event.stopPropagation();
-              onOpenInspector(message.runId);
+              onOpenInspector(message.runId, pill.tab);
             }}
           >
-            {label}
+            {pill.label}
           </button>
         ))}
       </footer>
@@ -205,6 +218,30 @@ function appendEvent(events: RunEvent[], event: RunEvent): RunEvent[] {
 
 function latestEventText(events: RunEvent[]): string | undefined {
   return [...events].reverse().map(eventText).find(Boolean);
+}
+
+function reviewPills(
+  summary: ReviewSummary | undefined,
+  eventCount: number,
+  status: RunStatus
+): Array<{ label: string; tab: RunInspectorTab }> {
+  const pending = isTerminalRunStatus(status) ? "unknown" : "pending";
+  const diffLabel = summary
+    ? summary.changedFileCount > 0
+      ? `${summary.changedFileCount} files +${summary.additions}/-${summary.deletions}`
+      : "0 files"
+    : "diff pending";
+  return [
+    { label: `Tests ${summary?.verificationStatus ?? pending}`, tab: "tests" },
+    { label: `Risk ${summary?.riskLevel ?? pending}`, tab: "risk" },
+    { label: `Diff ${diffLabel}`, tab: "diff" },
+    { label: `Memory ${summary?.memoryProposalCount ?? 0}`, tab: "memory" },
+    { label: `${eventCount} logs`, tab: "logs" }
+  ];
+}
+
+function isTerminalRunStatus(status: RunStatus): boolean {
+  return status === "completed" || status === "failed" || status === "cancelled";
 }
 
 function eventText(event: RunEvent): string {

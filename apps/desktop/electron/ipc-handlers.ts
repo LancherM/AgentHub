@@ -52,8 +52,8 @@ export type IpcHandler = (
 export function createDesktopServices(
   context: DesktopServiceContext = createDesktopServiceContext()
 ): DesktopServices {
-  const review = createReviewService(context);
   const memory = createMemoryService(context);
+  const review = createReviewService(context, { memoryService: memory });
   const projects = createProjectService(context);
   const runs = createRunService(context, {
     reviewService: review,
@@ -76,7 +76,7 @@ export function createIpcHandlers(
     Map<string, () => void>
   >();
 
-  return {
+  return safeHandlers({
     [IPC_CHANNELS.projectsList]: async () => services.projects.list(),
     [IPC_CHANNELS.projectsOpen]: async (_event, input) =>
       services.projects.open(parsePath(input)),
@@ -113,19 +113,52 @@ export function createIpcHandlers(
       services.threads.createThread(parseCreateThreadInput(input)),
     [IPC_CHANNELS.threadsSendMessage]: async (_event, input) =>
       services.threads.sendMessage(parseSendThreadMessageInput(input)),
+    [IPC_CHANNELS.reviewSummary]: async (_event, input) =>
+      services.review.getSummary(parseId(input, "runId")),
     [IPC_CHANNELS.reviewDiff]: async (_event, input) =>
       services.review.getDiff(parseId(input, "runId")),
     [IPC_CHANNELS.reviewRisk]: async (_event, input) =>
       services.review.getRisk(parseId(input, "runId")),
     [IPC_CHANNELS.reviewVerification]: async (_event, input) =>
       services.review.getVerification(parseId(input, "runId")),
+    [IPC_CHANNELS.reviewLogs]: async (_event, input) =>
+      services.review.getLogs(parseId(input, "runId")),
+    [IPC_CHANNELS.reviewAccept]: async (_event, input) =>
+      services.review.acceptRun(parseId(input, "runId")),
+    [IPC_CHANNELS.reviewReject]: async (_event, input) => {
+      const parsed = parseRejectReviewInput(input);
+      return services.review.rejectRun(parsed.runId, parsed.reason);
+    },
+    [IPC_CHANNELS.reviewRefresh]: async (_event, input) =>
+      services.review.refreshReview(parseId(input, "runId")),
     [IPC_CHANNELS.memoryListProposals]: async (_event, input) =>
       services.memory.listProposals(parseId(input, "runId")),
+    [IPC_CHANNELS.memoryGenerateProposals]: async (_event, input) =>
+      services.memory.generateProposalsForRun(parseId(input, "runId")),
     [IPC_CHANNELS.memoryApprove]: async (_event, input) =>
       services.memory.approve(parseIdList(input, "memory ids")),
     [IPC_CHANNELS.memoryIgnore]: async (_event, input) =>
       services.memory.ignore(parseIdList(input, "memory ids"))
-  };
+  });
+}
+
+function safeHandlers(handlers: Record<string, IpcHandler>): Record<string, IpcHandler> {
+  return Object.fromEntries(
+    Object.entries(handlers).map(([channel, handler]) => [
+      channel,
+      async (event: { sender: IpcEventSender }, input?: unknown) => {
+        try {
+          return await handler(event, input);
+        } catch (error) {
+          const safeMessage = safeErrorMessage(error);
+          if (safeMessage === GENERIC_IPC_ERROR) {
+            console.error(`IPC handler failed on ${channel}`, error);
+          }
+          throw new Error(safeMessage);
+        }
+      }
+    ])
+  );
 }
 
 function sendRunEvent(
@@ -176,6 +209,28 @@ function parseIdList(input: unknown, label: string): string[] {
     throw new Error(`${label} must be an array`);
   }
   return input.map((entry) => parseId(entry, label));
+}
+
+function parseRejectReviewInput(input: unknown): {
+  runId: string;
+  reason?: string;
+} {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    throw new Error("review rejection input is required");
+  }
+  const value = input as { runId?: unknown; reason?: unknown };
+  const runId = parseId(value.runId, "runId");
+  if (value.reason === undefined || value.reason === null || value.reason === "") {
+    return { runId };
+  }
+  if (typeof value.reason !== "string") {
+    throw new Error("reject reason must be a string");
+  }
+  const reason = value.reason.trim();
+  if (reason.length > 1_000) {
+    throw new Error("reject reason must be 1000 characters or fewer");
+  }
+  return { runId, reason };
 }
 
 function parseCreateRunInput(input: unknown): CreateRunInput {
@@ -281,6 +336,16 @@ function parseAgentList(input: unknown): AgentId[] {
     }
   }
   return agents;
+}
+
+const GENERIC_IPC_ERROR = "Agent Hub could not complete that local desktop request.";
+
+function safeErrorMessage(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  if (/not found|required|must be|cannot be|already|deliveryMode|agentId|contextMode|reason|projectId|runId|threadId|prompt|text/i.test(message)) {
+    return message;
+  }
+  return GENERIC_IPC_ERROR;
 }
 
 type _ApiShapeCheck = AgentHubApi;

@@ -58,6 +58,25 @@ run lifecycle logic. If the project list is empty, renderer onboarding forms
 submit a local path through the same project-open IPC service before creating a
 starter thread through the thread service.
 
+Desktop review inspection is split across narrow Electron main-process
+services. `ReviewService` aggregates run summary, verification, logs, memory
+proposal counts, and local accept/reject decision artifacts. `DiffService`
+uses persisted diff artifacts when available and can read retained worktrees
+with read-only Git commands through `DiffCollector`, `NodeShellExecutor`, and
+safe Git configuration. `RiskService` is deterministic and evidence based; it
+classifies changed paths, verification failures, large diffs, dependency/config
+changes, generated files, and source-without-tests conditions without calling
+an LLM. `MemoryService` lists and generates a small number of conservative
+pending proposals, then maps approve/ignore to the existing local memory item
+states. All of these services sit behind preload IPC methods, so the renderer
+still has no Node.js, filesystem, SQLite, shell, child-process, or Git access.
+
+Run review decisions are stored as local `run_artifacts` entries of kind
+`review_decision`. They are not execution status transitions and they do not
+mutate branches, merge output, push code, clean worktrees, delete files, or
+write repository-side context files. This keeps Phase 4 review auditable while
+leaving any explicit apply/merge workflow for a later phase.
+
 `apps/desktop/electron/services/thread-service.ts` is the Phase 3 conversation
 facade. It keeps thread/message state in an isolated in-memory store with TODO
 markers around the persistence boundary, synthesizes existing SQLite-backed
@@ -81,7 +100,9 @@ events over time and responds to `AbortController` cancellation. The runner
 does not read or write target repository files. `RunService` persists
 task/run rows, run events, simulated verification rows, and placeholder
 diff/risk review rows through the existing local repositories, then broadcasts
-each event through an in-memory emitter. The renderer can mention `@codex` and
+each event through an in-memory emitter. Phase 4 adds a real inspector over
+that persisted evidence plus retained-worktree diffs when present, but it does
+not change execution semantics. The renderer can mention `@codex` and
 `@claude` so multi-agent thread flows are visible, but those runs are safe
 main-process placeholders that fail with an explicit "not wired yet" event and
 do not invoke adapters, create worktrees, or modify repositories. Real Codex
@@ -418,4 +439,6 @@ proposal data from local SQLite repositories. It does not add an API server.
 Its first real streaming path remains fake-agent backed, while Codex and Claude
 mentions are represented by safe unavailable-adapter run records until real
 TaskRunner, CodexAdapter, and ClaudeCodeAdapter execution are wired behind the
-same IPC boundary.
+same IPC boundary. The inspector accept/reject flow records review decisions
+only; merge, push, PR creation, worktree cleanup, repository context export,
+and code application remain explicit future workflows.
