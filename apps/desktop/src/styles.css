@@ -73,8 +73,10 @@ textarea:disabled {
 .sidebar {
   display: flex;
   min-width: 0;
+  min-height: 0;
   flex-direction: column;
   gap: 18px;
+  overflow: hidden;
   padding: 18px 14px;
   border-right: 1px solid var(--line);
   background: rgba(18, 19, 16, 0.94);
@@ -145,11 +147,13 @@ textarea:disabled {
 }
 
 .nav-section {
+  display: flex;
   min-height: 0;
+  flex-direction: column;
 }
 
 .nav-section.grow {
-  flex: 1;
+  flex: 1 1 0;
 }
 
 .section-label,
@@ -166,10 +170,15 @@ textarea:disabled {
 .thread-list,
 .project-list {
   display: flex;
+  flex: 0 1 auto;
   min-height: 0;
   flex-direction: column;
   gap: 8px;
   overflow: auto;
+}
+
+.thread-list {
+  flex: 1 1 auto;
 }
 
 .thread-row,
@@ -331,7 +340,9 @@ textarea:disabled {
 }
 
 .center-pane {
+  height: 100%;
   min-width: 0;
+  min-height: 0;
   overflow: hidden;
 }
 
@@ -340,6 +351,8 @@ textarea:disabled {
   grid-template-rows: auto minmax(0, 1fr) auto;
   height: 100%;
   min-width: 0;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .chat-header {
@@ -676,9 +689,12 @@ textarea:disabled {
 
 .chat-composer {
   display: grid;
+  align-self: end;
   width: min(100% - 56px, 1060px);
+  max-height: calc(100vh - 120px);
   margin: 0 auto 18px;
   gap: 10px;
+  overflow: auto;
   padding: 12px;
   border: 1px solid rgba(216, 255, 87, 0.62);
   border-radius: 8px;
