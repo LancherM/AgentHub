@@ -49,6 +49,8 @@ export interface VerificationSuiteResult {
   durationMs: number;
 }
 
+export const DEFAULT_VERIFICATION_COMMAND_TIMEOUT_MS = 10 * 60 * 1000;
+
 export class VerificationRunner {
   constructor(private readonly shellExecutor: ShellExecutor) {}
 
@@ -85,7 +87,7 @@ export class VerificationRunner {
         assertSafeShellCommand(shellCommand);
         const shellResult = await this.shellExecutor.execute(shellCommand, {
           cwd: input.cwd,
-          timeoutMs: command.timeoutMs,
+          timeoutMs: command.timeoutMs ?? DEFAULT_VERIFICATION_COMMAND_TIMEOUT_MS,
           dryRun: input.dryRun
         });
         result = toVerificationResult(command, shellResult, input.dryRun ?? false);

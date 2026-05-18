@@ -381,9 +381,11 @@ An existing target worktree path fails before invoking Git, and an existing
 deterministic task/agent branch fails with a clear workspace error instead of
 attempting automatic cleanup, branch deletion, merge, push, or acceptance.
 Verification commands run with the isolated worktree as cwd. Dangerous command
-rejection is represented as a failed verification command, and shell results
-carry timeout and signal metadata so callers can distinguish command failures
-from process termination.
+rejection is represented as a failed verification command. `VerificationRunner`
+passes a 10-minute timeout to `ShellExecutor` when a command omits `timeoutMs`,
+while explicit command timeouts remain overrides. Shell results carry timeout
+and signal metadata so callers can distinguish command failures from process
+termination.
 
 The physical package split is present and now includes both user-facing app
 packages. Cross-package contracts flow through `packages/shared` and
