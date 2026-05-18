@@ -263,6 +263,13 @@ external store path is:
   skills/<skill-name>/SKILL.md
 ```
 
+Context-store skills are loaded only when `SKILL.md` contains simple
+frontmatter with `name` and `description`. The declared metadata drives skill
+section titles, summaries, context-pack skill references, and exported or
+overlay skill paths. Empty files and malformed metadata are reported as
+warnings and skipped, so invalid skills are not silently treated as generic
+context text.
+
 Repo-local context stores remain opt-in through `--mode repo_local`. Repository
 export remains opt-in through `context export --dry-run` or
 `context export --write`; dry-run produces previews without writing, while

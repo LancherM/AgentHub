@@ -70,6 +70,11 @@ Supported store files are:
 - `memory/approved.md`
 - `skills/<skill-name>/SKILL.md`
 
+Skill files in the context store must include simple frontmatter with
+`name` and `description`. Valid skills are summarized in context packs using
+their declared metadata. Empty or malformed skill files are skipped with
+warnings and are not exported or materialized into worktree overlays.
+
 `context export --dry-run` previews repository writes. `context export --write`
 uses Agent Hub managed blocks in `AGENTS.md` and optionally `CLAUDE.md`,
 preserves user-authored content outside those blocks, and ignores marker

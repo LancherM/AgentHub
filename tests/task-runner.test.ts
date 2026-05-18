@@ -42,6 +42,18 @@ import type {
 } from "@agent-hub/task-runner";
 import { createTestDirectory, MockProcessRunner, MockShellExecutor } from "./helpers";
 
+const reviewSkillContent = [
+  "---",
+  "name: review",
+  "description: Review changes carefully.",
+  "---",
+  "",
+  "# Review",
+  "",
+  "Review carefully.",
+  ""
+].join("\n");
+
 describe("task runner", () => {
   it("runs the fake adapter in an isolated directory without modifying the project root", async () => {
     const projectRoot = await createTestDirectory("agent-hub-project");
@@ -664,7 +676,7 @@ describe("task runner", () => {
     });
     await fs.writeFile(
       path.join(initialized.storeRoot, "skills", "review", "SKILL.md"),
-      "Generated skill.\n",
+      reviewSkillContent,
       "utf8"
     );
     const diffCollector = new RecordingDiffCollector();
