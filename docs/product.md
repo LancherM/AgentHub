@@ -70,6 +70,10 @@ Supported store files are:
 - `memory/approved.md`
 - `skills/<skill-name>/SKILL.md`
 
+Skill files must include YAML-style frontmatter with `name` and `description`.
+Malformed or empty skills are skipped and surfaced as build/export warnings
+instead of being silently injected as generic text.
+
 `context export --dry-run` previews repository writes. `context export --write`
 uses Agent Hub managed blocks in `AGENTS.md` and optionally `CLAUDE.md`,
 preserves user-authored content outside those blocks, and ignores marker

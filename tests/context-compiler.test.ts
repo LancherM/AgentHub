@@ -28,6 +28,22 @@ const baseInput = {
   }
 };
 
+function skillMarkdown(input: {
+  name: string;
+  description: string;
+  body?: string;
+}): string {
+  return [
+    "---",
+    `name: ${input.name}`,
+    `description: ${input.description}`,
+    "---",
+    "",
+    input.body ?? "Generated skill.",
+    ""
+  ].join("\n");
+}
+
 describe("ContextCompiler", () => {
   it("compiles task-only context", async () => {
     const bundle = await new DefaultContextCompiler().compile(baseInput);
@@ -179,7 +195,11 @@ describe("ContextCompiler", () => {
     });
     await fs.writeFile(
       path.join(initialized.storeRoot, "skills", "review", "SKILL.md"),
-      "Review carefully.\n",
+      skillMarkdown({
+        name: "review",
+        description: "Review carefully.",
+        body: "Use the review checklist."
+      }),
       "utf8"
     );
 
@@ -201,6 +221,95 @@ describe("ContextCompiler", () => {
       "Compile task context"
     );
     expect(built.contextPack.skillReferences).toEqual(["review"]);
+  });
+
+  it("loads file skills from declared metadata", async () => {
+    const projectRoot = await createTestDirectory("context-skill-metadata-project");
+    const agentHubHome = await createTestDirectory("context-skill-metadata-home");
+    const initialized = await initContextStore({
+      projectRoot,
+      projectId: "project_skill_metadata",
+      agentHubHome
+    });
+    await fs.mkdir(path.join(initialized.storeRoot, "skills", "review"), {
+      recursive: true
+    });
+    await fs.writeFile(
+      path.join(initialized.storeRoot, "skills", "review", "SKILL.md"),
+      skillMarkdown({
+        name: "review-flow",
+        description: "Use the declared review flow.",
+        body: "Check the diff and tests."
+      }),
+      "utf8"
+    );
+
+    const built = await buildContextArtifacts({
+      projectRoot,
+      projectId: "project_skill_metadata",
+      taskId: "task_skill_metadata",
+      title: "Build skill context",
+      prompt: "Compile task context",
+      selectedAgentId: "fake",
+      agentHubHome
+    });
+
+    const skillSection = built.bundle.sections.find(
+      (section) => section.source.kind === "skill"
+    );
+    expect(skillSection?.title).toBe("Skill: review-flow");
+    expect(skillSection?.body).toContain("Use the declared review flow.");
+    expect(skillSection?.body).toContain("Check the diff and tests.");
+    expect(skillSection?.body).not.toContain("---");
+    expect(built.contextPack.skillReferences).toEqual(["review"]);
+    expect(built.warnings).toEqual([]);
+  });
+
+  it("warns and skips malformed file skills", async () => {
+    const projectRoot = await createTestDirectory("context-malformed-skill-project");
+    const agentHubHome = await createTestDirectory("context-malformed-skill-home");
+    const initialized = await initContextStore({
+      projectRoot,
+      projectId: "project_malformed_skill",
+      agentHubHome
+    });
+    await fs.mkdir(path.join(initialized.storeRoot, "skills", "empty"), {
+      recursive: true
+    });
+    await fs.writeFile(
+      path.join(initialized.storeRoot, "skills", "empty", "SKILL.md"),
+      "\n",
+      "utf8"
+    );
+    await fs.mkdir(path.join(initialized.storeRoot, "skills", "legacy"), {
+      recursive: true
+    });
+    await fs.writeFile(
+      path.join(initialized.storeRoot, "skills", "legacy", "SKILL.md"),
+      "# Legacy Skill\n\nNo metadata here.\n",
+      "utf8"
+    );
+
+    const built = await buildContextArtifacts({
+      projectRoot,
+      projectId: "project_malformed_skill",
+      taskId: "task_malformed_skill",
+      title: "Build skill context",
+      prompt: "Compile task context",
+      selectedAgentId: "fake",
+      agentHubHome
+    });
+
+    expect(built.warnings).toEqual(
+      expect.arrayContaining([
+        "skill skipped: skills/empty/SKILL.md is empty",
+        "skill skipped: skills/legacy/SKILL.md missing required metadata: name, description"
+      ])
+    );
+    expect(built.contextPack.skillReferences).toEqual([]);
+    expect(
+      built.bundle.sections.some((section) => section.source.kind === "skill")
+    ).toBe(false);
   });
 
   it("warns when optional context store files are missing", async () => {
@@ -395,7 +504,11 @@ describe("ContextCompiler", () => {
     });
     await fs.writeFile(
       path.join(initialized.storeRoot, "skills", "review", "SKILL.md"),
-      "Generated skill.\n",
+      skillMarkdown({
+        name: "review",
+        description: "Review generated output.",
+        body: "Generated skill."
+      }),
       "utf8"
     );
     const existingSkillPath = path.join(
@@ -437,7 +550,59 @@ describe("ContextCompiler", () => {
         path.join(worktreePath, ".agents", "skills", "review", "SKILL.md"),
         "utf8"
       )
-    ).resolves.toBe("Generated skill.\n");
+    ).resolves.toBe(
+      skillMarkdown({
+        name: "review",
+        description: "Review generated output.",
+        body: "Generated skill."
+      })
+    );
+  });
+
+  it("skips malformed skills during repository export", async () => {
+    const projectRoot = await createTestDirectory("context-export-skill-project");
+    const agentHubHome = await createTestDirectory("context-export-skill-home");
+    const initialized = await initContextStore({
+      projectRoot,
+      projectId: "project_export_skill",
+      agentHubHome
+    });
+    await fs.mkdir(path.join(initialized.storeRoot, "skills", "review"), {
+      recursive: true
+    });
+    await fs.writeFile(
+      path.join(initialized.storeRoot, "skills", "review", "SKILL.md"),
+      skillMarkdown({
+        name: "review",
+        description: "Review exported output.",
+        body: "Generated skill."
+      }),
+      "utf8"
+    );
+    await fs.mkdir(path.join(initialized.storeRoot, "skills", "legacy"), {
+      recursive: true
+    });
+    await fs.writeFile(
+      path.join(initialized.storeRoot, "skills", "legacy", "SKILL.md"),
+      "Generated skill without metadata.\n",
+      "utf8"
+    );
+
+    const preview = await exportContextToRepository({
+      projectRoot,
+      projectId: "project_export_skill",
+      agentHubHome,
+      includeSkills: true,
+      dryRun: true
+    });
+
+    expect(preview.warnings).toContain(
+      "skill skipped: skills/legacy/SKILL.md missing required metadata: name, description"
+    );
+    expect(preview.changedFiles).toContain(".claude/skills/review/SKILL.md");
+    expect(preview.changedFiles).toContain(".agents/skills/review/SKILL.md");
+    expect(preview.changedFiles).not.toContain(".claude/skills/legacy/SKILL.md");
+    expect(preview.changedFiles).not.toContain(".agents/skills/legacy/SKILL.md");
   });
 
   it("rejects symlink paths for runtime artifacts", async () => {
