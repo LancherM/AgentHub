@@ -2,6 +2,11 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
+import {
+  validateRiskReport,
+  validateTask,
+  validateTaskRun
+} from "@agent-hub/core";
 import { createSqliteRepositories } from "@agent-hub/db";
 import {
   createDesktopServiceContext,
@@ -98,6 +103,77 @@ describe("desktop services", () => {
         expect.objectContaining({ runId: run.id, level: "info" })
       ])
     );
+  });
+
+  it("preserves persisted blocking risk reports for real review inspection", async () => {
+    const fixture = await createFixture();
+    const context = createDesktopServiceContext(fixture.repositories);
+    const projects = createProjectService(context);
+    const review = createReviewService(context);
+    const project = await projects.open(fixture.projectRoot);
+    const now = context.now();
+    const task = await fixture.repositories.taskRepository.create(
+      validateTask({
+        id: "task_blocking",
+        projectId: project.id,
+        title: "Inspect blocking risk",
+        status: "completed",
+        createdAt: now,
+        updatedAt: now
+      })
+    );
+    const run = await fixture.repositories.taskRunRepository.create(
+      validateTaskRun({
+        id: "run_blocking",
+        taskId: task.id,
+        agentKind: "codex",
+        status: "succeeded",
+        createdAt: now,
+        updatedAt: now,
+        startedAt: now,
+        completedAt: now
+      })
+    );
+    await fixture.repositories.riskReportRepository.create(
+      validateRiskReport({
+        id: "risk_blocking",
+        taskRunId: run.id,
+        level: "blocking",
+        summary: "Blocking safety report from TaskRunner.",
+        changedFiles: [".env"],
+        verificationSummary: "Verification skipped.",
+        failedChecks: [],
+        riskFactors: ["Sensitive path changed: .env"],
+        manualReviewChecklist: ["Inspect the sensitive file change before acceptance."],
+        acceptanceRecommendation: "Do not accept automatically.",
+        findings: [
+          {
+            level: "blocking",
+            summary: "Sensitive path changed",
+            details: ".env was modified by the agent run."
+          }
+        ],
+        createdAt: now
+      })
+    );
+
+    await expect(review.getRisk(run.id)).resolves.toMatchObject({
+      level: "blocking",
+      findings: expect.arrayContaining([
+        expect.objectContaining({
+          severity: "blocking",
+          title: "Sensitive path changed",
+          description: ".env was modified by the agent run."
+        }),
+        expect.objectContaining({
+          severity: "blocking",
+          description: "Sensitive path changed: .env"
+        })
+      ])
+    });
+    await expect(review.getSummary(run.id)).resolves.toMatchObject({
+      riskLevel: "blocking"
+    });
   });
 
   it("records accept and reject as review decisions only", async () => {

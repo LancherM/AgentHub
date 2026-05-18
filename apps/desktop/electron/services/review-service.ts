@@ -3,6 +3,8 @@ import {
   type MemoryItemRepository,
   type RunArtifactRepository,
   type RunEvent as CoreRunEvent,
+  type RiskReport as CoreRiskReport,
+  type RiskReportRepository,
   type RunEventRepository,
   type Task,
   type TaskRepository,
@@ -16,7 +18,9 @@ import type {
   DiffSummary,
   ReviewStatus,
   ReviewSummary,
+  RiskCategory,
   RiskReport,
+  RiskSeverity,
   RunLog,
   RunLogLevel,
   RunStatus,
@@ -64,6 +68,7 @@ class RepositoryReviewService implements ReviewService {
   private readonly artifacts: RunArtifactRepository;
   private readonly verification: VerificationResultRepository;
   private readonly memory: MemoryItemRepository;
+  private readonly risks: RiskReportRepository;
 
   constructor(
     private readonly context: DesktopServiceContext,
@@ -79,6 +84,7 @@ class RepositoryReviewService implements ReviewService {
     this.artifacts = context.repositories.runArtifactRepository;
     this.verification = context.repositories.verificationResultRepository;
     this.memory = context.repositories.memoryItemRepository;
+    this.risks = context.repositories.riskReportRepository;
   }
 
   async getSummary(runId: string): Promise<ReviewSummary> {
@@ -123,7 +129,14 @@ class RepositoryReviewService implements ReviewService {
   }
 
   async getRisk(runId: string): Promise<RiskReport> {
-    await this.requireRunAndTask(runId);
+    const { run } = await this.requireRunAndTask(runId);
+    if (run.status !== "queued" && run.status !== "running") {
+      const persistedRisk = await this.risks.getLatestByRunId(runId);
+      if (persistedRisk && !isDesktopPlaceholderRisk(persistedRisk)) {
+        return toDesktopRiskReport(persistedRisk);
+      }
+    }
+
     const [diff, verification] = await Promise.all([
       this.getDiff(runId),
       this.getVerification(runId)
@@ -280,6 +293,132 @@ class RepositoryReviewService implements ReviewService {
     }
     return { reviewStatus: "pending" };
   }
+}
+
+function toDesktopRiskReport(report: CoreRiskReport): RiskReport {
+  return {
+    runId: report.taskRunId,
+    level: report.level,
+    findings: persistedRiskFindings(report),
+    generatedAt: report.createdAt,
+    message: [report.summary, report.acceptanceRecommendation]
+      .filter((value) => value.trim().length > 0)
+      .join(" ")
+  };
+}
+
+function persistedRiskFindings(report: CoreRiskReport): RiskReport["findings"] {
+  const findings = report.findings.map((finding, index) => ({
+    id: `persisted_finding_${index + 1}`,
+    severity: toDesktopRiskSeverity(finding.level),
+    title: finding.summary,
+    description: finding.details ?? finding.summary,
+    evidence: finding.details,
+    category: riskCategoryFromText(`${finding.summary} ${finding.details ?? ""}`)
+  }));
+
+  const existingEvidence = new Set(
+    findings
+      .flatMap((finding) => [
+        finding.title,
+        finding.description,
+        finding.evidence
+      ])
+      .filter((value): value is string => typeof value === "string")
+  );
+
+  for (const [index, factor] of report.riskFactors.entries()) {
+    if (existingEvidence.has(factor)) {
+      continue;
+    }
+    findings.push({
+      id: `persisted_risk_factor_${index + 1}`,
+      severity: toDesktopRiskSeverity(report.level),
+      title: "Persisted risk factor",
+      description: factor,
+      evidence: factor,
+      category: riskCategoryFromText(factor)
+    });
+    existingEvidence.add(factor);
+  }
+
+  for (const [index, failedCheck] of report.failedChecks.entries()) {
+    if (existingEvidence.has(failedCheck)) {
+      continue;
+    }
+    findings.push({
+      id: `persisted_failed_check_${index + 1}`,
+      severity: report.level === "blocking" ? "blocking" : "high",
+      title: "Persisted failed check",
+      description: failedCheck,
+      evidence: failedCheck,
+      category: "test"
+    });
+    existingEvidence.add(failedCheck);
+  }
+
+  return findings;
+}
+
+function toDesktopRiskSeverity(level: CoreRiskReport["level"]): RiskSeverity {
+  return level;
+}
+
+function riskCategoryFromText(text: string): RiskCategory {
+  const lower = text.toLowerCase();
+  if (lower.includes("auth")) {
+    return "auth";
+  }
+  if (
+    lower.includes("secret") ||
+    lower.includes("token") ||
+    lower.includes("key") ||
+    lower.includes(".env") ||
+    lower.includes("credential") ||
+    lower.includes("dangerous")
+  ) {
+    return "security";
+  }
+  if (lower.includes("database") || lower.includes("data")) {
+    return "data";
+  }
+  if (lower.includes("migration")) {
+    return "migration";
+  }
+  if (
+    lower.includes("dependency") ||
+    lower.includes("lockfile") ||
+    lower.includes("package")
+  ) {
+    return "dependency";
+  }
+  if (
+    lower.includes("test") ||
+    lower.includes("verification") ||
+    lower.includes("check")
+  ) {
+    return "test";
+  }
+  if (lower.includes("config")) {
+    return "config";
+  }
+  if (lower.includes("generated")) {
+    return "generated";
+  }
+  if (lower.includes("large")) {
+    return "large_change";
+  }
+  return "unknown";
+}
+
+function isDesktopPlaceholderRisk(report: CoreRiskReport): boolean {
+  return (
+    report.changedFiles.length === 0 &&
+    report.findings.length === 0 &&
+    report.riskFactors.includes(
+      "This desktop execution path did not modify project files."
+    )
+  );
 }
 
 function toRunLog(event: CoreRunEvent): RunLog {

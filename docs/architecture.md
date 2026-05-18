@@ -60,16 +60,22 @@ starter thread through the thread service.
 
 Desktop review inspection is split across narrow Electron main-process
 services. `ReviewService` aggregates run summary, verification, logs, memory
-proposal counts, and local accept/reject decision artifacts. `DiffService`
-uses persisted diff artifacts when available and can read retained worktrees
-with read-only Git commands through `DiffCollector`, `NodeShellExecutor`, and
-safe Git configuration. `RiskService` is deterministic and evidence based; it
-classifies changed paths, verification failures, large diffs, dependency/config
-changes, generated files, and source-without-tests conditions without calling
-an LLM. `MemoryService` lists and generates a small number of conservative
-pending proposals, then maps approve/ignore to the existing local memory item
-states. All of these services sit behind preload IPC methods, so the renderer
-still has no Node.js, filesystem, SQLite, shell, child-process, or Git access.
+proposal counts, local accept/reject decision artifacts, and the latest
+persisted TaskRunner safety report when one exists. Persisted non-placeholder
+risk reports take precedence over the deterministic desktop fallback, including
+`blocking` levels and mapped finding/risk-factor evidence, so desktop review
+does not downgrade scanner output from sensitive path changes or dangerous
+instructions. `DiffService` uses persisted diff artifacts when available and
+can read retained worktrees with read-only Git commands through
+`DiffCollector`, `NodeShellExecutor`, and safe Git configuration. `RiskService`
+is deterministic and evidence based; it classifies changed paths, verification
+failures, large diffs, dependency/config changes, generated files, and
+source-without-tests conditions without calling an LLM when no persisted
+safety report is available. `MemoryService` lists and generates a small number
+of conservative pending proposals, then maps approve/ignore to the existing
+local memory item states. All of these services sit behind preload IPC methods,
+so the renderer still has no Node.js, filesystem, SQLite, shell, child-process,
+or Git access.
 
 Run review decisions are stored as local `run_artifacts` entries of kind
 `review_decision`. They are not execution status transitions and they do not

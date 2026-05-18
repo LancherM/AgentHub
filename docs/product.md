@@ -223,13 +223,17 @@ diffs, and risk review rows remain SQLite-backed.
 
 The run inspector is the desktop drill-down surface for review evidence. It
 loads review summaries, changed-file stats, bounded unified diffs, captured
-verification rows, deterministic risk findings, conservative memory proposals,
-and bounded raw logs through `window.agentHub.review.*` and
-`window.agentHub.memory.*` IPC methods. Fake desktop runs explicitly show that
-no real repository files were modified and do not invent changed files. When a
-retained worktree exists, desktop diff loading uses read-only Git inspection
-from the Electron main process only; renderer code never receives shell,
-filesystem, SQLite, or Git access.
+verification rows, persisted TaskRunner safety reports when present,
+deterministic fallback risk findings, conservative memory proposals, and
+bounded raw logs through `window.agentHub.review.*` and
+`window.agentHub.memory.*` IPC methods. Blocking persisted safety reports keep
+their `blocking` level and mapped evidence in the inspector so sensitive-path
+or dangerous-instruction findings are not downgraded by the desktop fallback
+risk classifier. Fake desktop runs explicitly show that no real repository
+files were modified and do not invent changed files. When a retained worktree
+exists, desktop diff loading uses read-only Git inspection from the Electron
+main process only; renderer code never receives shell, filesystem, SQLite, or
+Git access.
 
 Inspector accept/reject actions are audit decisions only. Accepting a run
 records `accepted` review state and shows "Accepted for record. No merge was

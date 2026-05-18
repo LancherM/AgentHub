@@ -5,8 +5,14 @@ export type MemoryCategory =
   | "workflow_rule"
   | "user_preference"
   | "temporary_note";
-export type ReviewRiskLevel = "none" | "low" | "medium" | "high" | "unknown";
-export type RiskSeverity = "low" | "medium" | "high";
+export type ReviewRiskLevel =
+  | "none"
+  | "low"
+  | "medium"
+  | "high"
+  | "blocking"
+  | "unknown";
+export type RiskSeverity = "low" | "medium" | "high" | "blocking";
 export type RunEventType =
   | "run_started"
   | "context_compiled"

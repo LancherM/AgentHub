@@ -4,7 +4,7 @@ interface RiskReportProps {
   report: RiskReportType;
 }
 
-const severities = ["high", "medium", "low"] as const;
+const severities = ["blocking", "high", "medium", "low"] as const;
 
 export function RiskReport({ report }: RiskReportProps): JSX.Element {
   return (
