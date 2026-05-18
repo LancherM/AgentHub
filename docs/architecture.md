@@ -242,7 +242,8 @@ runs move through `queued -> running -> succeeded` or `failed`, with
 cancellation from `queued` or `running`; memory items move only from `proposed`
 to `approved` or `rejected`. Repeating the same status remains idempotent, but
 invalid terminal transitions are rejected in both SQLite and in-memory
-repositories.
+repositories, including the in-memory task-run `updateStatus()` path used by
+focused runner tests and injected runtimes.
 
 When the CLI executes an ad-hoc SQLite-backed run, it first looks up a project
 by the resolved repository root. The first legacy ad-hoc root can keep the

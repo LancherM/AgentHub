@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   DomainValidationError,
   DomainStateTransitionError,
+  InMemoryTaskRunRepository,
   nowIso,
   parseAgentKind,
   validateMemoryItem,
@@ -13,6 +14,9 @@ import {
   validateTaskRunStatusTransition,
   validateTaskStatusTransition
 } from "@agent-hub/core";
+
+const createdAt = "2026-01-01T00:00:00.000Z";
+const updatedAt = "2026-01-01T00:00:01.000Z";
 
 describe("domain model validation", () => {
   it("preserves valid project input", () => {
@@ -112,5 +116,67 @@ describe("domain model validation", () => {
     expect(() => validateMemoryStatusTransition("proposed", "approved")).not.toThrow();
     expect(() => validateMemoryStatusTransition("rejected", "approved"))
       .toThrow(DomainStateTransitionError);
+  });
+
+  it("enforces imported task run transitions in in-memory storage", async () => {
+    const repository = new InMemoryTaskRunRepository();
+    await repository.create({
+      id: "run_in_memory",
+      taskId: "task_1",
+      agentKind: "fake",
+      status: "queued",
+      createdAt,
+      updatedAt: createdAt
+    });
+
+    await expect(
+      repository.updateStatus("run_in_memory", "running", updatedAt)
+    ).resolves.toMatchObject({
+      status: "running",
+      startedAt: updatedAt
+    });
+    await expect(
+      repository.updateStatus("run_in_memory", "running", "2026-01-01T00:00:02.000Z")
+    ).resolves.toMatchObject({
+      status: "running",
+      startedAt: updatedAt
+    });
+    await expect(
+      repository.updateStatus("run_in_memory", "succeeded", "2026-01-01T00:00:03.000Z")
+    ).resolves.toMatchObject({
+      status: "succeeded",
+      completedAt: "2026-01-01T00:00:03.000Z"
+    });
+    await expect(repository.getStatusTransitions("run_in_memory")).resolves.toEqual([
+      { runId: "run_in_memory", status: "queued", at: createdAt },
+      { runId: "run_in_memory", status: "running", at: updatedAt },
+      {
+        runId: "run_in_memory",
+        status: "succeeded",
+        at: "2026-01-01T00:00:03.000Z"
+      }
+    ]);
+  });
+
+  it("rejects invalid task run transitions in in-memory storage", async () => {
+    const repository = new InMemoryTaskRunRepository();
+    await repository.create({
+      id: "run_invalid_transition",
+      taskId: "task_1",
+      agentKind: "fake",
+      status: "queued",
+      createdAt,
+      updatedAt: createdAt
+    });
+
+    await expect(
+      repository.updateStatus("run_invalid_transition", "failed", updatedAt)
+    ).rejects.toThrow("invalid task run status transition queued -> failed");
+    await expect(repository.get("run_invalid_transition")).resolves.toMatchObject({
+      status: "queued"
+    });
+    await expect(repository.getStatusTransitions("run_invalid_transition")).resolves.toEqual([
+      { runId: "run_invalid_transition", status: "queued", at: createdAt }
+    ]);
   });
 });

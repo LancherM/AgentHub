@@ -288,6 +288,7 @@ export class InMemoryTaskRunRepository implements TaskRunRepository {
     if (!run) {
       throw new Error(`task run ${runId} not found`);
     }
+    validateTaskRunStatusTransition(run.status, status);
     const updated: TaskRun = {
       ...run,
       status,

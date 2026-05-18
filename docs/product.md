@@ -248,10 +248,11 @@ also backfill missing legacy task project rows, including pre-change ad-hoc
 tasks, before adding the stricter task foreign key.
 
 Task, task-run, and memory status changes follow the imported lifecycle rather
-than arbitrary enum changes. Failed task runs remain inspectable and return the
-parent task from `running` back to `open` so task lists and later `--task` runs
-reflect that no run is currently active. A later successful run can complete the
-task, or the user can cancel it.
+than arbitrary enum changes in both SQLite and injected in-memory
+repositories. Same-status updates remain idempotent. Failed task runs remain
+inspectable and return the parent task from `running` back to `open` so task
+lists and later `--task` runs reflect that no run is currently active. A later
+successful run can complete the task, or the user can cancel it.
 
 The product remains local-only. This rebuild does not add cloud sync, accounts,
 team features, hosted dashboards, automatic pull requests, automatic merges, or
