@@ -32,7 +32,7 @@ agent-hub [--db <path>] task history --task-id <task-id>
 agent-hub context init --project-root <path> --project-id <project-id>
 agent-hub context show --project-root <path> --project-id <project-id>
 agent-hub context build --project-root <path> --project-id <project-id> --task-id <task-id> --title <title> --prompt <prompt>
-agent-hub context export --project-root <path> --project-id <project-id> --dry-run|--write
+agent-hub context export --project-root <path> --project-id <project-id> [--target repo] --dry-run|--write
 agent-hub [--db <path>] run --task <task-id> --agent fake|codex|claude-code
 agent-hub run [--repo <path>] [--workspace-base <path>] [--retain-on-failure] "@fake|@codex|@claude-code <task>"
 agent-hub [--db <path>] run event add --run-id <run-id> --type <type> --message <message>
@@ -70,14 +70,19 @@ Supported store files are:
 - `memory/approved.md`
 - `skills/<skill-name>/SKILL.md`
 
-`context export --dry-run` previews repository writes. `context export --write`
-uses Agent Hub managed blocks in `AGENTS.md` and optionally `CLAUDE.md`,
-preserves user-authored content outside those blocks, and ignores marker
-examples inside fenced code blocks. Runtime context files are generated in
-Agent Hub-owned artifacts or inside isolated worktrees; default context build
-does not write repository-level agent files. `context build --delivery-mode`
-accepts only `runtime_injection` and `worktree_overlay`; `repo_export` remains
-exclusive to `context export`.
+`context export --target repo --dry-run` previews repository writes.
+`context export --target repo --write` uses Agent Hub managed blocks in
+`AGENTS.md` and optionally `CLAUDE.md`, preserves user-authored content
+outside those blocks, and ignores marker examples inside fenced code blocks.
+If `--target` is provided, its only supported value is `repo`; omitting it
+keeps the same repo-export default for compatibility. Approved memory from the
+Agent Hub-owned context store is included in the managed context block when it
+contains non-placeholder content, and `--include-approved-memory` is accepted
+as an explicit acknowledgement of that default. Runtime context files are
+generated in Agent Hub-owned artifacts or inside isolated worktrees; default
+context build does not write repository-level agent files. The context build
+`--delivery-mode` flag accepts only `runtime_injection` and
+`worktree_overlay`; `repo_export` remains exclusive to `context export`.
 
 The run command validates the task input, compiles non-invasive context, routes
 to the selected adapter, rejects unsafe repository-local Git config before any

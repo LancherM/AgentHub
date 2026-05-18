@@ -299,6 +299,11 @@ describe("ContextCompiler", () => {
       "utf8"
     );
     await fs.writeFile(
+      path.join(initialized.storeRoot, "memory", "approved.md"),
+      "# Approved Memory\n\nKeep context export memory visible.\n",
+      "utf8"
+    );
+    await fs.writeFile(
       path.join(projectRoot, "AGENTS.md"),
       [
         "# User Notes",
@@ -317,9 +322,14 @@ describe("ContextCompiler", () => {
       projectRoot,
       projectId: "project_1",
       agentHubHome,
+      target: "repo",
       dryRun: true
     });
+    expect(preview.target).toBe("repo");
+    expect(preview.approvedMemoryPolicy).toBe("included_when_present");
     expect(preview.changedFiles).toContain("AGENTS.md");
+    expect(preview.previews.find((item) => item.path === "AGENTS.md")?.content)
+      .toContain("Keep context export memory visible.");
     await expect(fs.readFile(path.join(projectRoot, "AGENTS.md"), "utf8"))
       .resolves.toContain("example only");
 
@@ -343,6 +353,26 @@ describe("ContextCompiler", () => {
     ].join("\n"));
     expect(replaced).toContain("example only");
     expect(replaced).toContain("replacement");
+  });
+
+  it("rejects unsupported repository export targets", async () => {
+    const projectRoot = await createTestDirectory("context-export-invalid-target-project");
+    const agentHubHome = await createTestDirectory("context-export-invalid-target-home");
+    await initContextStore({
+      projectRoot,
+      projectId: "project_1",
+      agentHubHome
+    });
+
+    await expect(
+      exportContextToRepository({
+        projectRoot,
+        projectId: "project_1",
+        agentHubHome,
+        target: "workspace" as never,
+        dryRun: true
+      })
+    ).rejects.toThrow("context export target must be repo");
   });
 
   it("materializes worktree overlay only in the worktree and records baselines", async () => {

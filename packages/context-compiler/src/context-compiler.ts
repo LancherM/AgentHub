@@ -80,7 +80,11 @@ export interface WorktreeOverlayResult {
   warnings: string[];
 }
 
+export type ContextExportTarget = "repo";
+export type ApprovedMemoryExportPolicy = "included_when_present";
+
 export interface ContextExportInput extends ContextStoreInitInput {
+  target?: ContextExportTarget;
   includeAgentsMd?: boolean;
   includeClaudeMd?: boolean;
   includeSkills?: boolean;
@@ -91,6 +95,8 @@ export interface ContextExportInput extends ContextStoreInitInput {
 
 export interface ContextExportResult {
   config: ContextStoreConfig;
+  target: ContextExportTarget;
+  approvedMemoryPolicy: ApprovedMemoryExportPolicy;
   dryRun: boolean;
   changedFiles: string[];
   warnings: string[];
@@ -481,6 +487,7 @@ export async function materializeWorktreeOverlay(input: {
 export async function exportContextToRepository(
   input: ContextExportInput
 ): Promise<ContextExportResult> {
+  const target = resolveContextExportTarget(input.target);
   const config = resolveContextStoreConfig(input);
   const dryRun = input.dryRun !== false || input.write !== true;
   const warnings: string[] = [];
@@ -526,10 +533,20 @@ export async function exportContextToRepository(
   }
 
   if (input.includeApprovedMemory) {
-    warnings.push("approved memory is included in the managed context block");
+    warnings.push(
+      "--include-approved-memory is already the default for repo context export"
+    );
   }
 
-  return { config, dryRun, changedFiles, warnings, previews };
+  return {
+    config,
+    target,
+    approvedMemoryPolicy: "included_when_present",
+    dryRun,
+    changedFiles,
+    warnings,
+    previews
+  };
 }
 
 export async function appendApprovedMemory(
@@ -685,6 +702,13 @@ function resolveContextStoreConfig(input: ContextStoreInitInput): ContextStoreCo
     mode,
     storeRoot
   };
+}
+
+function resolveContextExportTarget(target: ContextExportInput["target"]): ContextExportTarget {
+  if (target === undefined || target === "repo") {
+    return "repo";
+  }
+  throw new Error("context export target must be repo");
 }
 
 function resolveAgentHubHome(agentHubHome?: string): string {
