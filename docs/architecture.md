@@ -276,7 +276,8 @@ uses `lstat` to avoid dereferencing symlinks, records symlink targets via
 and omits synthetic content for oversized files. Binary files are represented
 with metadata such as binary status and byte size. CLI debug rendering redacts
 the raw diff preview when the risk report contains a blocking sensitive-path
-finding.
+finding, or when the diff changed-file metadata itself matches a sensitive path
+before a risk report is available.
 
 Shell usage is limited to `ShellExecutor` and `ProcessRunner` implementations.
 Git worktree, git diff, verification commands, and real agent processes use

@@ -37,6 +37,7 @@ import {
   type RunTaskInput,
   type TaskRunnerDependencies
 } from "@agent-hub/task-runner";
+import { scanSensitivePaths } from "@agent-hub/safety";
 import { createSqliteRepositories } from "@agent-hub/db";
 import {
   InMemoryAgentProfileRepository,
@@ -1602,7 +1603,7 @@ function truncateText(value: string, maxLength = 2_000): string {
 }
 
 function renderDebugDiffPreview(result: CliRunResult): string {
-  if (hasBlockingSensitivePathFinding(result)) {
+  if (hasBlockingSensitivePathFinding(result) || hasSensitiveChangedFile(result)) {
     return "(redacted: sensitive file path changed; review run artifacts with care)";
   }
   return truncateText(result.diff?.diff ?? "") || "(empty)";
@@ -1617,6 +1618,10 @@ function hasBlockingSensitivePathFinding(result: CliRunResult): boolean {
         finding.summary.toLowerCase().includes("sensitive file path"))
     );
   }) ?? false;
+}
+
+function hasSensitiveChangedFile(result: CliRunResult): boolean {
+  return scanSensitivePaths(result.diff?.changedFiles ?? []).length > 0;
 }
 
 function indentBlock(value: string, spaces: number): string {

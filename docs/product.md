@@ -163,7 +163,9 @@ and common shell-wrapped variants of `sudo`, `rm -rf /`, `chmod -R 777`,
 findings remain `blocking` in the aggregated risk level and are surfaced in
 `risks show`; they are not downgraded to high. Agent Hub still does not
 automatically accept, merge, or push any run output. Debug run output redacts
-the raw diff preview when a blocking sensitive-path finding exists.
+the raw diff preview when a blocking sensitive-path finding exists, or when
+changed-file metadata identifies a sensitive path before a risk report is
+available.
 
 The memory workflow is explicit and user-approved. `memory propose` creates a
 SQLite memory item in `proposed` state, `memory list` shows project memory
