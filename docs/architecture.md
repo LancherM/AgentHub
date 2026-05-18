@@ -32,11 +32,17 @@ Current workspace boundaries:
 - `apps/cli`: command parsing, interactive console input, command dispatch,
   output rendering, debug rendering, and manual run-event recording. The CLI is
   thin over local package APIs and does not own orchestration logic.
+- `apps/desktop`: Electron main/preload plus React renderer for the first
+  local desktop shell. Main process services call the existing local
+  repositories and review helpers; the renderer calls only `window.agentHub`
+  and does not import Node.js, shell, filesystem, SQLite, git, or privileged
+  Agent Hub packages directly.
 
-Desktop remains architectural only and deferred until these CLI, core, and
-package boundaries are stable. No desktop app, Electron/Tauri shell, browser
-UI, web server, login, cloud backend, or remote execution path is introduced in
-this phase.
+Desktop remains a thin local shell. It does not add a web server, login, cloud
+backend, remote execution path, automatic merge, automatic push, or automatic
+repository export. All Electron IPC handlers are registered from
+`apps/desktop/electron/ipc.ts`, and preload uses `contextBridge` rather than
+exposing `ipcRenderer`.
 
 Child process environment policy is explicit by default. `ProcessRunner` and
 `ShellExecutor` build child environments from a small inherited allowlist
@@ -273,6 +279,17 @@ summary includes changed-file overlap, per-run diff stats, verification
 summaries, per-command verification outcomes, failed checks, risk levels, risk
 factors, and summary tradeoffs. Comparison is review-only and performs no
 accept, merge, branch delete, or push action.
+
+The first desktop runtime integration is deliberately narrow. `apps/desktop`
+uses SQLite-backed services for project registration, run listing/detail,
+review tabs, verification rows, risk reports, and memory proposal decisions.
+`runs.create` records a fake-agent-backed desktop run through repository
+interfaces, emits IPC run events, persists a placeholder diff artifact,
+persists a skipped verification row, and persists a low-risk report. It does not call
+TaskRunner yet, create worktrees, invoke Codex or Claude Code, run verification
+commands, export repository context, merge, push, or write files into the
+target repository. Real TaskRunner and adapter execution can be wired behind
+the same IPC/service interfaces in a later slice.
 
 All adapters run against an isolated worktree and refuse to run when that
 directory is the original project root or when the generated task brief is
