@@ -25,7 +25,12 @@ describe("SQLite storage", () => {
       database.query<{ version: number }>(
         "SELECT version FROM schema_migrations ORDER BY version ASC;"
       )
-    ).resolves.toEqual([{ version: 1 }, { version: 2 }, { version: 3 }]);
+    ).resolves.toEqual([
+      { version: 1 },
+      { version: 2 },
+      { version: 3 },
+      { version: 4 }
+    ]);
     await expect(
       database.query<{ name: string }>(
         "SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name ASC;"
@@ -40,6 +45,8 @@ describe("SQLite storage", () => {
         { name: "run_artifacts" },
         { name: "verification_results" },
         { name: "risk_reports" },
+        { name: "conversation_threads" },
+        { name: "conversation_messages" },
         { name: "memory_items" },
         { name: "comparison_reports" },
         { name: "skills" },
@@ -103,6 +110,36 @@ describe("SQLite storage", () => {
       updatedAt
     );
     await first.taskRunRepository.updateStatus("run_1", "running", updatedAt);
+    await first.conversationThreadRepository.create({
+      id: "thread_1",
+      projectId: "project_1",
+      title: "Persist conversation",
+      metadata: { source: "desktop" },
+      createdAt,
+      updatedAt
+    });
+    await first.conversationMessageRepository.create({
+      id: "message_2",
+      threadId: "thread_1",
+      sequence: 1,
+      role: "tool",
+      kind: "run_card",
+      content: "Fake run queued.",
+      agentKind: "fake",
+      runId: "run_1",
+      status: "running",
+      metadata: { card: true },
+      createdAt: updatedAt
+    });
+    await first.conversationMessageRepository.create({
+      id: "message_1",
+      threadId: "thread_1",
+      sequence: 0,
+      role: "user",
+      kind: "text",
+      content: "Persist this thread.",
+      createdAt
+    });
     await first.runMetadataRepository.save({
       runId: "run_1",
       workspace: workspace(baseDirectory),
@@ -229,6 +266,31 @@ describe("SQLite storage", () => {
         riskReport: expect.objectContaining({ level: "low" })
       })
     );
+    await expect(second.conversationThreadRepository.list("project_1")).resolves.toEqual([
+      expect.objectContaining({
+        id: "thread_1",
+        projectId: "project_1",
+        metadata: { source: "desktop" }
+      })
+    ]);
+    await expect(
+      second.conversationMessageRepository.listByThreadId("thread_1")
+    ).resolves.toEqual([
+      expect.objectContaining({
+        id: "message_1",
+        sequence: 0,
+        role: "user",
+        content: "Persist this thread."
+      }),
+      expect.objectContaining({
+        id: "message_2",
+        sequence: 1,
+        kind: "run_card",
+        runId: "run_1",
+        status: "running",
+        metadata: { card: true }
+      })
+    ]);
     await expect(second.runEventRepository.listByRunId("run_1")).resolves.toEqual([
       expect.objectContaining({ id: "event_1", sequence: 0, metadata: { stream: "stdout" } }),
       expect.objectContaining({ id: "event_2", sequence: 1, metadata: { exitCode: 0 } })
@@ -343,6 +405,22 @@ describe("SQLite storage", () => {
       metadata: {},
       createdAt
     });
+    await repositories.conversationThreadRepository.create({
+      id: "thread_constraints",
+      projectId: "project_constraints",
+      title: "Thread constraints",
+      createdAt,
+      updatedAt: createdAt
+    });
+    await repositories.conversationMessageRepository.create({
+      id: "message_constraints_1",
+      threadId: "thread_constraints",
+      sequence: 0,
+      role: "user",
+      kind: "text",
+      content: "first",
+      createdAt
+    });
 
     await expect(repositories.database.execute(`
 INSERT INTO tasks (id, project_id, title, status, created_at, updated_at)
@@ -377,6 +455,25 @@ VALUES ('event_bad_json', 'run_constraints', 1, 'stdout', 'bad json', '{bad', '$
       metadata: {},
       createdAt
     })).rejects.toThrow();
+    await expect(repositories.database.execute(`
+INSERT INTO conversation_threads (id, project_id, title, created_at, updated_at)
+VALUES ('thread_missing_project', 'missing_project', 'Missing', '${createdAt}', '${createdAt}');
+`)).rejects.toThrow();
+    await expect(repositories.database.execute(`
+INSERT INTO conversation_messages (id, thread_id, sequence, role, kind, content, created_at)
+VALUES ('message_bad_role', 'thread_constraints', 1, 'narrator', 'text', 'bad', '${createdAt}');
+`)).rejects.toThrow();
+    await expect(
+      repositories.conversationMessageRepository.create({
+        id: "message_duplicate_sequence",
+        threadId: "thread_constraints",
+        sequence: 0,
+        role: "assistant",
+        kind: "text",
+        content: "duplicate",
+        createdAt
+      })
+    ).rejects.toThrow();
   });
 
   it("cascades project deletion through tasks and task runs", async () => {
@@ -539,7 +636,12 @@ VALUES (
       repositories.database.query<{ version: number }>(
         "SELECT version FROM schema_migrations ORDER BY version ASC;"
       )
-    ).resolves.toEqual([{ version: 1 }, { version: 2 }, { version: 3 }]);
+    ).resolves.toEqual([
+      { version: 1 },
+      { version: 2 },
+      { version: 3 },
+      { version: 4 }
+    ]);
   });
 
   it("rebuilds version 2 task tables with new constraints while preserving rows", async () => {
@@ -578,7 +680,12 @@ VALUES (
       repositories.database.query<{ version: number }>(
         "SELECT version FROM schema_migrations ORDER BY version ASC;"
       )
-    ).resolves.toEqual([{ version: 1 }, { version: 2 }, { version: 3 }]);
+    ).resolves.toEqual([
+      { version: 1 },
+      { version: 2 },
+      { version: 3 },
+      { version: 4 }
+    ]);
     await expect(repositories.database.execute(`
 INSERT INTO tasks (id, project_id, title, status, created_at, updated_at)
 VALUES ('task_after_migration_bad', 'project_legacy', 'Bad', 'invalid', '${createdAt}', '${createdAt}');

@@ -2,6 +2,8 @@ import path from "node:path";
 import {
   DomainValidationError,
   agentKinds,
+  conversationMessageKinds,
+  conversationMessageRoles,
   contextDeliveryModes,
   memoryCategories,
   memoryStatuses,
@@ -12,6 +14,8 @@ import {
   verificationStatuses,
   type AgentProfile,
   type ComparisonReport,
+  type ConversationMessage,
+  type ConversationThread,
   type ContextPack,
   type MemoryItem,
   type MemoryStatus,
@@ -136,6 +140,44 @@ export function validateRunArtifact(input: RunArtifact): RunArtifact {
   required(input.content, "runArtifact.content", issues);
   objectValue(input.metadata, "runArtifact.metadata", issues);
   timestamp(input.createdAt, "runArtifact.createdAt", issues);
+  return finish(input, issues);
+}
+
+export function validateConversationThread(
+  input: ConversationThread
+): ConversationThread {
+  const issues: string[] = [];
+  required(input.id, "conversationThread.id", issues);
+  required(input.projectId, "conversationThread.projectId", issues);
+  required(input.title, "conversationThread.title", issues);
+  optionalObject(input.metadata, "conversationThread.metadata", issues);
+  optionalTimestamp(input.archivedAt, "conversationThread.archivedAt", issues);
+  timestamp(input.createdAt, "conversationThread.createdAt", issues);
+  timestamp(input.updatedAt, "conversationThread.updatedAt", issues);
+  return finish(input, issues);
+}
+
+export function validateConversationMessage(
+  input: ConversationMessage
+): ConversationMessage {
+  const issues: string[] = [];
+  required(input.id, "conversationMessage.id", issues);
+  required(input.threadId, "conversationMessage.threadId", issues);
+  if (!Number.isInteger(input.sequence) || input.sequence < 0) {
+    issues.push("conversationMessage.sequence must be a non-negative integer");
+  }
+  enumValue(input.role, conversationMessageRoles, "conversationMessage.role", issues);
+  enumValue(input.kind, conversationMessageKinds, "conversationMessage.kind", issues);
+  required(input.content, "conversationMessage.content", issues);
+  if (input.agentKind !== undefined) {
+    enumValue(input.agentKind, agentKinds, "conversationMessage.agentKind", issues);
+  }
+  optionalString(input.runId, "conversationMessage.runId", issues);
+  if (input.status !== undefined) {
+    enumValue(input.status, taskRunStatuses, "conversationMessage.status", issues);
+  }
+  optionalObject(input.metadata, "conversationMessage.metadata", issues);
+  timestamp(input.createdAt, "conversationMessage.createdAt", issues);
   return finish(input, issues);
 }
 
@@ -297,6 +339,12 @@ function objectValue(value: unknown, field: string, issues: string[]): void {
     Array.isArray(value)
   ) {
     issues.push(`${field} must be an object`);
+  }
+}
+
+function optionalObject(value: unknown, field: string, issues: string[]): void {
+  if (value !== undefined) {
+    objectValue(value, field, issues);
   }
 }
 

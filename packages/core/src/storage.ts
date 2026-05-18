@@ -7,6 +7,8 @@ import type {
 import {
   validateAgentProfile,
   validateComparisonReport,
+  validateConversationMessage,
+  validateConversationThread,
   validateMemoryItem,
   validateProject,
   validateRiskReport,
@@ -22,6 +24,8 @@ import {
   validateTaskStatusTransition,
   type AgentProfile,
   type ComparisonReport,
+  type ConversationMessage,
+  type ConversationThread,
   type MemoryItem,
   type Project,
   type RiskReport,
@@ -107,6 +111,19 @@ export interface RunArtifactRepository {
     runId: string,
     kind: string
   ): Promise<RunArtifact | undefined>;
+}
+
+export interface ConversationThreadRepository {
+  create(thread: ConversationThread): Promise<ConversationThread>;
+  get(threadId: string): Promise<ConversationThread | undefined>;
+  list(projectId?: string): Promise<ConversationThread[]>;
+}
+
+export interface ConversationMessageRepository {
+  create(message: ConversationMessage): Promise<ConversationMessage>;
+  createMany(messages: ConversationMessage[]): Promise<ConversationMessage[]>;
+  listByThreadId(threadId: string): Promise<ConversationMessage[]>;
+  countByThreadId(threadId: string): Promise<number>;
 }
 
 export interface VerificationResultRepository {
@@ -411,6 +428,87 @@ export class InMemoryRunArtifactRepository implements RunArtifactRepository {
   }
 }
 
+export class InMemoryConversationThreadRepository
+  implements ConversationThreadRepository
+{
+  private readonly threads = new Map<string, ConversationThread>();
+
+  async create(thread: ConversationThread): Promise<ConversationThread> {
+    const validThread = validateConversationThread(thread);
+    if (this.threads.has(validThread.id)) {
+      throw new Error(`conversation thread ${validThread.id} already exists`);
+    }
+    this.threads.set(validThread.id, cloneConversationThread(validThread));
+    return cloneConversationThread(validThread);
+  }
+
+  async get(threadId: string): Promise<ConversationThread | undefined> {
+    const thread = this.threads.get(threadId);
+    return thread ? cloneConversationThread(thread) : undefined;
+  }
+
+  async list(projectId?: string): Promise<ConversationThread[]> {
+    return [...this.threads.values()]
+      .filter((thread) => projectId === undefined || thread.projectId === projectId)
+      .sort((left, right) =>
+        left.createdAt === right.createdAt
+          ? left.id.localeCompare(right.id)
+          : left.createdAt.localeCompare(right.createdAt)
+      )
+      .map(cloneConversationThread);
+  }
+}
+
+export class InMemoryConversationMessageRepository
+  implements ConversationMessageRepository
+{
+  private readonly messages = new Map<string, ConversationMessage>();
+
+  async create(message: ConversationMessage): Promise<ConversationMessage> {
+    const validMessage = validateConversationMessage(message);
+    if (this.messages.has(validMessage.id)) {
+      throw new Error(`conversation message ${validMessage.id} already exists`);
+    }
+    const existingSequence = [...this.messages.values()].find(
+      (entry) =>
+        entry.threadId === validMessage.threadId &&
+        entry.sequence === validMessage.sequence
+    );
+    if (existingSequence) {
+      throw new Error(
+        `conversation message sequence ${validMessage.sequence} already exists for thread ${validMessage.threadId}`
+      );
+    }
+    this.messages.set(validMessage.id, cloneConversationMessage(validMessage));
+    return cloneConversationMessage(validMessage);
+  }
+
+  async createMany(
+    messages: ConversationMessage[]
+  ): Promise<ConversationMessage[]> {
+    const created: ConversationMessage[] = [];
+    for (const message of messages) {
+      created.push(await this.create(message));
+    }
+    return created;
+  }
+
+  async listByThreadId(threadId: string): Promise<ConversationMessage[]> {
+    return [...this.messages.values()]
+      .filter((message) => message.threadId === threadId)
+      .sort((left, right) =>
+        left.sequence === right.sequence
+          ? left.id.localeCompare(right.id)
+          : left.sequence - right.sequence
+      )
+      .map(cloneConversationMessage);
+  }
+
+  async countByThreadId(threadId: string): Promise<number> {
+    return (await this.listByThreadId(threadId)).length;
+  }
+}
+
 export class InMemoryVerificationResultRepository
   implements VerificationResultRepository
 {
@@ -614,6 +712,22 @@ function cloneRunArtifact(artifact: RunArtifact): RunArtifact {
   return {
     ...artifact,
     metadata: cloneJsonObject(artifact.metadata)
+  };
+}
+
+function cloneConversationThread(thread: ConversationThread): ConversationThread {
+  return {
+    ...thread,
+    metadata: thread.metadata ? cloneJsonObject(thread.metadata) : undefined
+  };
+}
+
+function cloneConversationMessage(
+  message: ConversationMessage
+): ConversationMessage {
+  return {
+    ...message,
+    metadata: message.metadata ? cloneJsonObject(message.metadata) : undefined
   };
 }
 

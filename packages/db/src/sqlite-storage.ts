@@ -5,6 +5,8 @@ import path from "node:path";
 import {
   validateAgentProfile,
   validateComparisonReport,
+  validateConversationMessage,
+  validateConversationThread,
   validateMemoryItem,
   validateProject,
   validateRiskReport,
@@ -21,6 +23,8 @@ import {
   type AgentKind,
   type AgentProfile,
   type ComparisonReport,
+  type ConversationMessage,
+  type ConversationThread,
   type MemoryItem,
   type Project,
   type RiskReport,
@@ -41,6 +45,8 @@ import {
   cloneRunMetadata,
   type AgentProfileRepository,
   type ComparisonReportRepository,
+  type ConversationMessageRepository,
+  type ConversationThreadRepository,
   type MemoryItemRepository,
   type ProjectRepository,
   type RiskReportRepository,
@@ -71,6 +77,8 @@ export interface SqliteRepositories {
   verificationResultRepository: VerificationResultRepository;
   riskReportRepository: RiskReportRepository;
   runMetadataRepository: RunMetadataRepository;
+  conversationThreadRepository: ConversationThreadRepository;
+  conversationMessageRepository: ConversationMessageRepository;
   memoryItemRepository: MemoryItemRepository;
   comparisonReportRepository: ComparisonReportRepository;
   skillRepository: SkillRepository;
@@ -460,6 +468,46 @@ COMMIT;
 PRAGMA legacy_alter_table = OFF;
 PRAGMA foreign_keys = ON;
 `
+  },
+  {
+    version: 4,
+    sql: `
+	CREATE TABLE IF NOT EXISTS conversation_threads (
+	  id TEXT PRIMARY KEY,
+	  project_id TEXT NOT NULL,
+	  title TEXT NOT NULL,
+	  metadata_json TEXT CHECK (metadata_json IS NULL OR json_valid(metadata_json)),
+	  archived_at TEXT,
+	  created_at TEXT NOT NULL,
+	  updated_at TEXT NOT NULL,
+	  FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+	);
+
+	CREATE INDEX IF NOT EXISTS idx_conversation_threads_project_updated
+	  ON conversation_threads(project_id, updated_at);
+
+	CREATE TABLE IF NOT EXISTS conversation_messages (
+	  id TEXT PRIMARY KEY,
+	  thread_id TEXT NOT NULL,
+	  sequence INTEGER NOT NULL CHECK (sequence >= 0),
+	  role TEXT NOT NULL CHECK (role IN ('user', 'assistant', 'system', 'tool')),
+	  kind TEXT NOT NULL CHECK (kind IN ('text', 'run_card')),
+	  content TEXT NOT NULL,
+	  agent_kind TEXT CHECK (agent_kind IS NULL OR agent_kind IN ('fake', 'codex', 'claude-code')),
+	  run_id TEXT,
+	  status TEXT CHECK (status IS NULL OR status IN ('queued', 'running', 'succeeded', 'failed', 'cancelled')),
+	  metadata_json TEXT CHECK (metadata_json IS NULL OR json_valid(metadata_json)),
+	  created_at TEXT NOT NULL,
+	  FOREIGN KEY (thread_id) REFERENCES conversation_threads(id) ON DELETE CASCADE,
+	  FOREIGN KEY (run_id) REFERENCES task_runs(id) ON DELETE SET NULL,
+	  UNIQUE (thread_id, sequence)
+	);
+
+	CREATE INDEX IF NOT EXISTS idx_conversation_messages_thread_sequence
+	  ON conversation_messages(thread_id, sequence);
+	CREATE INDEX IF NOT EXISTS idx_conversation_messages_run
+	  ON conversation_messages(run_id);
+	`
   }
 ];
 
@@ -480,6 +528,8 @@ export function createSqliteRepositories(
     verificationResultRepository: new SQLiteVerificationResultRepository(database),
     riskReportRepository: new SQLiteRiskReportRepository(database),
     runMetadataRepository: new SQLiteRunMetadataRepository(database),
+    conversationThreadRepository: new SQLiteConversationThreadRepository(database),
+    conversationMessageRepository: new SQLiteConversationMessageRepository(database),
     memoryItemRepository: new SQLiteMemoryItemRepository(database),
     comparisonReportRepository: new SQLiteComparisonReportRepository(database),
     skillRepository: new SQLiteSkillRepository(database),
@@ -1224,6 +1274,127 @@ LIMIT 1;
   }
 }
 
+export class SQLiteConversationThreadRepository
+  implements ConversationThreadRepository
+{
+  constructor(private readonly database: SqliteDatabase) {}
+
+  async create(thread: ConversationThread): Promise<ConversationThread> {
+    const validThread = validateConversationThread(thread);
+    await this.database.execute(`
+INSERT INTO conversation_threads (
+  id,
+  project_id,
+  title,
+  metadata_json,
+  archived_at,
+  created_at,
+  updated_at
+) VALUES (
+  ${sqlString(validThread.id)},
+  ${sqlString(validThread.projectId)},
+  ${sqlString(validThread.title)},
+  ${sqlJson(validThread.metadata)},
+  ${sqlNullableString(validThread.archivedAt)},
+  ${sqlString(validThread.createdAt)},
+  ${sqlString(validThread.updatedAt)}
+);
+`);
+    return cloneConversationThread(validThread);
+  }
+
+  async get(threadId: string): Promise<ConversationThread | undefined> {
+    const rows = await this.database.query<ConversationThreadRow>(`
+SELECT
+  id,
+  project_id AS projectId,
+  title,
+  metadata_json AS metadataJson,
+  archived_at AS archivedAt,
+  created_at AS createdAt,
+  updated_at AS updatedAt
+FROM conversation_threads
+WHERE id = ${sqlString(threadId)}
+LIMIT 1;
+`);
+    const row = rows[0];
+    return row ? conversationThreadFromRow(row) : undefined;
+  }
+
+  async list(projectId?: string): Promise<ConversationThread[]> {
+    const whereClause =
+      projectId === undefined ? "" : `WHERE project_id = ${sqlString(projectId)}`;
+    const rows = await this.database.query<ConversationThreadRow>(`
+SELECT
+  id,
+  project_id AS projectId,
+  title,
+  metadata_json AS metadataJson,
+  archived_at AS archivedAt,
+  created_at AS createdAt,
+  updated_at AS updatedAt
+FROM conversation_threads
+${whereClause}
+ORDER BY created_at ASC, id ASC;
+`);
+    return rows.map(conversationThreadFromRow);
+  }
+}
+
+export class SQLiteConversationMessageRepository
+  implements ConversationMessageRepository
+{
+  constructor(private readonly database: SqliteDatabase) {}
+
+  async create(message: ConversationMessage): Promise<ConversationMessage> {
+    const validMessage = validateConversationMessage(message);
+    await this.database.execute(conversationMessageInsertSql(validMessage));
+    return cloneConversationMessage(validMessage);
+  }
+
+  async createMany(
+    messages: ConversationMessage[]
+  ): Promise<ConversationMessage[]> {
+    if (messages.length === 0) {
+      return [];
+    }
+    await this.database.execute(messages.map(conversationMessageInsertSql).join("\n"));
+    return messages.map((message) =>
+      cloneConversationMessage(validateConversationMessage(message))
+    );
+  }
+
+  async listByThreadId(threadId: string): Promise<ConversationMessage[]> {
+    const rows = await this.database.query<ConversationMessageRow>(`
+SELECT
+  id,
+  thread_id AS threadId,
+  sequence,
+  role,
+  kind,
+  content,
+  agent_kind AS agentKind,
+  run_id AS runId,
+  status,
+  metadata_json AS metadataJson,
+  created_at AS createdAt
+FROM conversation_messages
+WHERE thread_id = ${sqlString(threadId)}
+ORDER BY sequence ASC, id ASC;
+`);
+    return rows.map(conversationMessageFromRow);
+  }
+
+  async countByThreadId(threadId: string): Promise<number> {
+    const rows = await this.database.query<{ count: number }>(`
+SELECT COUNT(*) AS count
+FROM conversation_messages
+WHERE thread_id = ${sqlString(threadId)};
+`);
+    return rows[0]?.count ?? 0;
+  }
+}
+
 export class SQLiteVerificationResultRepository
   implements VerificationResultRepository
 {
@@ -1669,6 +1840,30 @@ interface RunArtifactRow extends Record<string, unknown> {
   createdAt: string;
 }
 
+interface ConversationThreadRow extends Record<string, unknown> {
+  id: string;
+  projectId: string;
+  title: string;
+  metadataJson: string | null;
+  archivedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface ConversationMessageRow extends Record<string, unknown> {
+  id: string;
+  threadId: string;
+  sequence: number;
+  role: string;
+  kind: string;
+  content: string;
+  agentKind: string | null;
+  runId: string | null;
+  status: string | null;
+  metadataJson: string | null;
+  createdAt: string;
+}
+
 interface VerificationResultRow extends Record<string, unknown> {
   id: string;
   taskRunId: string;
@@ -1817,6 +2012,38 @@ function runArtifactFromRow(row: RunArtifactRow): RunArtifact {
   });
 }
 
+function conversationThreadFromRow(
+  row: ConversationThreadRow
+): ConversationThread {
+  return validateConversationThread({
+    id: row.id,
+    projectId: row.projectId,
+    title: row.title,
+    metadata: parseJson(row.metadataJson),
+    archivedAt: nullToUndefined(row.archivedAt),
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt
+  });
+}
+
+function conversationMessageFromRow(
+  row: ConversationMessageRow
+): ConversationMessage {
+  return validateConversationMessage({
+    id: row.id,
+    threadId: row.threadId,
+    sequence: row.sequence,
+    role: row.role as ConversationMessage["role"],
+    kind: row.kind as ConversationMessage["kind"],
+    content: row.content,
+    agentKind: nullToUndefined(row.agentKind) as ConversationMessage["agentKind"],
+    runId: nullToUndefined(row.runId),
+    status: nullToUndefined(row.status) as ConversationMessage["status"],
+    metadata: parseJson(row.metadataJson),
+    createdAt: row.createdAt
+  });
+}
+
 function verificationResultFromRow(row: VerificationResultRow): VerificationResult {
   return validateVerificationResult({
     id: row.id,
@@ -1893,6 +2120,36 @@ function settingFromRow(row: SettingRow): Setting {
   });
 }
 
+function conversationMessageInsertSql(message: ConversationMessage): string {
+  const validMessage = validateConversationMessage(message);
+  return `
+INSERT INTO conversation_messages (
+  id,
+  thread_id,
+  sequence,
+  role,
+  kind,
+  content,
+  agent_kind,
+  run_id,
+  status,
+  metadata_json,
+  created_at
+) VALUES (
+  ${sqlString(validMessage.id)},
+  ${sqlString(validMessage.threadId)},
+  ${validMessage.sequence},
+  ${sqlString(validMessage.role)},
+  ${sqlString(validMessage.kind)},
+  ${sqlString(validMessage.content)},
+  ${sqlNullableString(validMessage.agentKind)},
+  ${sqlNullableString(validMessage.runId)},
+  ${sqlNullableString(validMessage.status)},
+  ${sqlJson(validMessage.metadata)},
+  ${sqlString(validMessage.createdAt)}
+);`;
+}
+
 function verificationInsertSql(result: VerificationResult): string {
   const validResult = validateVerificationResult(result);
   return `
@@ -1932,6 +2189,22 @@ function cloneRunArtifact(artifact: RunArtifact): RunArtifact {
   return {
     ...artifact,
     metadata: cloneJsonObject(artifact.metadata)
+  };
+}
+
+function cloneConversationThread(thread: ConversationThread): ConversationThread {
+  return {
+    ...thread,
+    metadata: thread.metadata ? cloneJsonObject(thread.metadata) : undefined
+  };
+}
+
+function cloneConversationMessage(
+  message: ConversationMessage
+): ConversationMessage {
+  return {
+    ...message,
+    metadata: message.metadata ? cloneJsonObject(message.metadata) : undefined
   };
 }
 

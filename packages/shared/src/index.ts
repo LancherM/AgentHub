@@ -43,6 +43,20 @@ export const runEventTypes = [
 ] as const;
 export type RunEventType = (typeof runEventTypes)[number];
 
+export const conversationMessageRoles = [
+  "user",
+  "assistant",
+  "system",
+  "tool"
+] as const;
+export type ConversationMessageRole = (typeof conversationMessageRoles)[number];
+
+export const conversationMessageKinds = [
+  "text",
+  "run_card"
+] as const;
+export type ConversationMessageKind = (typeof conversationMessageKinds)[number];
+
 export const verificationStatuses = ["passed", "failed", "skipped"] as const;
 export type VerificationStatus = (typeof verificationStatuses)[number];
 
@@ -120,6 +134,30 @@ export interface RunArtifact {
   kind: string;
   content: string;
   metadata: JsonObject;
+  createdAt: string;
+}
+
+export interface ConversationThread {
+  id: string;
+  projectId: string;
+  title: string;
+  metadata?: JsonObject;
+  archivedAt?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ConversationMessage {
+  id: string;
+  threadId: string;
+  sequence: number;
+  role: ConversationMessageRole;
+  kind: ConversationMessageKind;
+  content: string;
+  agentKind?: AgentKind;
+  runId?: string;
+  status?: TaskRunStatus;
+  metadata?: JsonObject;
   createdAt: string;
 }
 
