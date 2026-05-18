@@ -46,6 +46,8 @@ export interface RunDiffReview {
   originalPatchLength: number;
   truncated: boolean;
   limit: number;
+  redacted: boolean;
+  redactedPaths: string[];
 }
 
 export interface ComparisonSummaryInput {
@@ -110,7 +112,13 @@ export async function loadRunDiffReview(
     changedFiles;
   const rawPatch = artifact?.content ?? diff?.diff ?? "";
   const limit = options.patchLimit ?? DEFAULT_DIFF_PATCH_LIMIT;
-  const patch = options.fullPatch ? rawPatch : truncate(rawPatch, limit);
+  const redactedPaths = sensitivePatchPaths(rawPatch, changedFiles);
+  const redacted = redactedPaths.length > 0;
+  const patch = redacted
+    ? `Patch redacted because sensitive file path changed: ${redactedPaths.join(", ")}`
+    : options.fullPatch
+      ? rawPatch
+      : truncate(rawPatch, limit);
 
   return {
     run,
@@ -120,8 +128,10 @@ export async function loadRunDiffReview(
     stat,
     patch,
     originalPatchLength: rawPatch.length,
-    truncated: patch.length < rawPatch.length,
-    limit
+    truncated: !redacted && patch.length < rawPatch.length,
+    limit,
+    redacted,
+    redactedPaths
   };
 }
 
@@ -385,4 +395,42 @@ function truncate(value: string, limit: number): string {
     return value;
   }
   return value.length > limit ? value.slice(0, limit) : value;
+}
+
+function sensitivePatchPaths(patch: string, changedPaths: string[]): string[] {
+  const paths = new Set<string>();
+  for (const filePath of changedPaths) {
+    if (isSensitiveFilePath(filePath)) {
+      paths.add(filePath);
+    }
+  }
+
+  for (const line of patch.split(/\r?\n/)) {
+    const pathFromHeader = diffPathFromHeader(line);
+    if (pathFromHeader && isSensitiveFilePath(pathFromHeader)) {
+      paths.add(pathFromHeader);
+    }
+  }
+
+  return [...paths].sort();
+}
+
+function diffPathFromHeader(line: string): string | undefined {
+  const gitMatch = line.match(/^diff --git a\/(.+?) b\/(.+)$/);
+  if (gitMatch) {
+    return gitMatch[2];
+  }
+  const markerMatch = line.match(/^(?:---|\+\+\+) [ab]\/(.+)$/);
+  return markerMatch?.[1];
+}
+
+function isSensitiveFilePath(filePath: string): boolean {
+  return /(^|\/)\.env(?:\.|$)/i.test(filePath) ||
+    /\.pem$/i.test(filePath) ||
+    /\.key$/i.test(filePath) ||
+    /(^|\/)id_rsa$/i.test(filePath) ||
+    /(^|\/)id_ed25519$/i.test(filePath) ||
+    /(^|\/)secrets?\./i.test(filePath) ||
+    /(^|\/)credentials?\./i.test(filePath) ||
+    /(^|\/)tokens?\./i.test(filePath);
 }

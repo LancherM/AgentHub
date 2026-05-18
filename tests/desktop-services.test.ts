@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import {
+  validateRunArtifact,
   validateRiskReport,
   validateTask,
   validateTaskRun
@@ -174,6 +175,64 @@ describe("desktop services", () => {
     await expect(review.getSummary(run.id)).resolves.toMatchObject({
       riskLevel: "blocking"
     });
+  });
+
+  it("redacts sensitive persisted diff patches in desktop review", async () => {
+    const fixture = await createFixture();
+    const context = createDesktopServiceContext(fixture.repositories);
+    const projects = createProjectService(context);
+    const review = createReviewService(context);
+    const project = await projects.open(fixture.projectRoot);
+    const now = context.now();
+    const task = await fixture.repositories.taskRepository.create(
+      validateTask({
+        id: "task_sensitive_diff",
+        projectId: project.id,
+        title: "Inspect sensitive diff",
+        status: "completed",
+        createdAt: now,
+        updatedAt: now
+      })
+    );
+    const run = await fixture.repositories.taskRunRepository.create(
+      validateTaskRun({
+        id: "run_sensitive_diff",
+        taskId: task.id,
+        agentKind: "codex",
+        status: "succeeded",
+        createdAt: now,
+        updatedAt: now,
+        startedAt: now,
+        completedAt: now
+      })
+    );
+    await fixture.repositories.runArtifactRepository.create(
+      validateRunArtifact({
+        id: "artifact_sensitive_diff",
+        taskRunId: run.id,
+        kind: "git_diff",
+        content: [
+          "diff --git a/.env.local b/.env.local",
+          "--- a/.env.local",
+          "+++ b/.env.local",
+          "+API_TOKEN=secret-value",
+          ""
+        ].join("\n"),
+        metadata: {
+          changedFiles: [{ path: ".env.local", status: "modified" }],
+          fileSummaries: [".env.local: modified +1/-0"]
+        },
+        createdAt: now
+      })
+    );
+
+    await expect(review.getDiff(run.id)).resolves.toMatchObject({
+      files: [expect.objectContaining({ path: ".env.local" })],
+      patch: expect.stringContaining("Patch redacted because sensitive file path changed")
+    });
+    const diff = await review.getDiff(run.id);
+    expect(diff.patch).toContain(".env.local");
+    expect(diff.patch).not.toContain("API_TOKEN=secret-value");
   });
 
   it("records accept and reject as review decisions only", async () => {
