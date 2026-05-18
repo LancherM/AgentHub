@@ -9,6 +9,7 @@ import type {
   ContextMode,
   ProjectSummary,
   RunDetail,
+  RunInspectorTab,
   ThreadDetail,
   ThreadMessage,
   ThreadSummary
@@ -21,8 +22,8 @@ export function App(): JSX.Element {
   const [runDetails, setRunDetails] = useState<Record<string, RunDetail>>({});
   const [selectedThreadId, setSelectedThreadId] = useState<string | undefined>();
   const [selectedProjectId, setSelectedProjectId] = useState<string | undefined>();
-  const [selectedInspectorRunId, setSelectedInspectorRunId] = useState<
-    string | undefined
+  const [selectedInspector, setSelectedInspector] = useState<
+    { runId: string; tab?: RunInspectorTab } | undefined
   >();
   const [lastUsedAgents, setLastUsedAgents] = useState<AgentId[]>(["fake"]);
   const [isBusy, setIsBusy] = useState(true);
@@ -196,16 +197,17 @@ export function App(): JSX.Element {
           error={error}
           onSubmit={submitMessage}
           onRunUpdated={handleRunUpdated}
-          onOpenInspector={setSelectedInspectorRunId}
+          onOpenInspector={(runId, tab) => setSelectedInspector({ runId, tab })}
           onCancelRun={cancelRun}
           onRegisterProject={registerProject}
         />
       </main>
-      {selectedInspectorRunId ? (
+      {selectedInspector ? (
         <RunInspectorModal
-          runId={selectedInspectorRunId}
-          initialRun={runDetails[selectedInspectorRunId]}
-          onClose={() => setSelectedInspectorRunId(undefined)}
+          runId={selectedInspector.runId}
+          initialRun={runDetails[selectedInspector.runId]}
+          initialTab={selectedInspector.tab}
+          onClose={() => setSelectedInspector(undefined)}
         />
       ) : null}
     </div>

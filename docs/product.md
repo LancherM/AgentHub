@@ -223,6 +223,29 @@ remains inspectable. Thread/message persistence is an isolated in-memory Phase
 3 boundary for now; run records, events, simulated verification, placeholder
 diffs, and risk review rows remain SQLite-backed.
 
+The run inspector is the desktop drill-down surface for review evidence. It
+loads review summaries, changed-file stats, bounded unified diffs, captured
+verification rows, persisted TaskRunner safety reports when present,
+deterministic fallback risk findings, conservative memory proposals, and
+bounded raw logs through `window.agentHub.review.*` and
+`window.agentHub.memory.*` IPC methods. Blocking persisted safety reports keep
+their `blocking` level and mapped evidence in the inspector so sensitive-path
+or dangerous-instruction findings are not downgraded by the desktop fallback
+risk classifier. Fake desktop runs explicitly show that no real repository
+files were modified and do not invent changed files. When a retained worktree
+exists, desktop diff loading uses read-only Git inspection from the Electron
+main process only; renderer code never receives shell, filesystem, SQLite, or
+Git access.
+
+Inspector accept/reject actions are audit decisions only. Accepting a run
+records `accepted` review state and shows "Accepted for record. No merge was
+performed." Rejecting records `rejected` review state and shows "Rejected for
+record. No files were deleted or reverted." Neither action merges, pushes,
+resets, cleans, deletes worktrees, reverts files, writes repository context
+files, or creates pull requests. Memory proposals remain pending until the
+user approves or ignores them, and desktop approval updates Agent Hub local
+storage only.
+
 The selected run timeline receives live semantic events such as `run_started`,
 `context_compiled`, `agent_step`, `agent_output`, `verification_started`,
 `verification_finished`, `run_completed`, `run_failed`, and `run_cancelled`.
@@ -249,9 +272,9 @@ repository and does not export Agent Hub context files. Mentioned `@codex` and
 `@claude` desktop runs currently create safe placeholder run records that fail
 with an explicit "not wired yet" message instead of launching real adapters.
 CodexAdapter, ClaudeCodeAdapter, real TaskRunner streaming/cancellation, real
-diff scanning from retained worktrees, verification command configuration,
-accept/reject review workflows, and approved-memory context-store writeback
-remain follow-up desktop wiring tasks.
+verification command configuration, approved-memory context-store writeback,
+multi-agent comparison review, worktree lifecycle management, and explicit
+merge/apply workflows remain follow-up desktop wiring tasks.
 
 SQLite is stored in Agent Hub-owned application data by default, not in the
 target project repository. `AGENT_HUB_HOME` can point Agent Hub at an alternate

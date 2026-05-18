@@ -174,7 +174,7 @@ class RepositoryRunService implements RunService {
     return {
       ...this.toRunSummary(run, task, project, events),
       events: events.map(toRunEvent),
-      changedFiles: diff.changedFiles,
+      changedFiles: diff.files.map((file) => file.path),
       verification,
       risk,
       memoryProposals,

@@ -4,6 +4,7 @@ import type {
   ContextMode,
   ProjectSummary,
   RunDetail,
+  RunInspectorTab,
   ThreadDetail,
   ThreadMessage
 } from "../../lib/types";
@@ -21,7 +22,7 @@ interface ChatViewProps {
   error?: string;
   onSubmit(input: string, contextMode: ContextMode): Promise<void>;
   onRunUpdated(run: RunDetail): void;
-  onOpenInspector(runId: string): void;
+  onOpenInspector(runId: string, tab?: RunInspectorTab): void;
   onCancelRun(runId: string): Promise<void>;
   onRegisterProject(projectPath: string): Promise<void>;
 }

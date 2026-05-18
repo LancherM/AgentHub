@@ -1,4 +1,4 @@
-import type { RunDetail, ThreadMessage } from "../../lib/types";
+import type { RunDetail, RunInspectorTab, ThreadMessage } from "../../lib/types";
 import { AgentRunCard } from "./AgentRunCard";
 import { SystemMessage } from "./SystemMessage";
 import { UserMessageBubble } from "./UserMessageBubble";
@@ -7,7 +7,7 @@ interface MessageListProps {
   messages: ThreadMessage[];
   runDetails: Record<string, RunDetail>;
   onRunUpdated(run: RunDetail): void;
-  onOpenInspector(runId: string): void;
+  onOpenInspector(runId: string, tab?: RunInspectorTab): void;
   onCancelRun(runId: string): Promise<void>;
 }
 

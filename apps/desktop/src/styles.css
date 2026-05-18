@@ -635,6 +635,11 @@ textarea:disabled {
   color: var(--text);
 }
 
+.run-card-pills button:focus-visible {
+  outline: 2px solid rgba(216, 255, 87, 0.8);
+  outline-offset: 2px;
+}
+
 .system-message,
 .inline-error,
 .form-error,
@@ -756,6 +761,7 @@ textarea:disabled {
 }
 
 .status-badge.completed,
+.risk-level.none,
 .risk-level.low,
 .verification-head.passed span {
   background: rgba(103, 216, 196, 0.16);
@@ -774,6 +780,8 @@ textarea:disabled {
 .status-badge.running,
 .status-badge.verifying,
 .risk-level.medium,
+.risk-level.unknown,
+.verification-head.unknown span,
 .verification-head.skipped span {
   background: rgba(245, 189, 90, 0.16);
   color: var(--amber);
@@ -801,7 +809,7 @@ textarea:disabled {
 
 .run-inspector {
   display: grid;
-  width: min(600px, 100%);
+  width: min(860px, 100%);
   height: 100%;
   grid-template-rows: auto auto minmax(0, 1fr);
   border-left: 1px solid var(--line-strong);
@@ -822,6 +830,55 @@ textarea:disabled {
   margin: 0;
   overflow-wrap: anywhere;
   font-size: 20px;
+}
+
+.inspector-status-row,
+.inspector-actions,
+.review-section-head,
+.memory-toolbar,
+.log-filter-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.inspector-status-row {
+  margin-top: 9px;
+}
+
+.inspector-actions {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.inspector-actions .danger {
+  border-color: rgba(255, 125, 107, 0.36);
+  color: #ffd6cf;
+}
+
+.review-state,
+.warning-pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 2px 8px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.review-state.accepted {
+  border-color: rgba(103, 216, 196, 0.38);
+  color: var(--cyan);
+}
+
+.review-state.rejected,
+.warning-pill {
+  border-color: rgba(255, 125, 107, 0.38);
+  color: var(--red);
 }
 
 .review-tabs {
@@ -850,6 +907,16 @@ textarea:disabled {
   padding: 16px;
 }
 
+.decision-strip {
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border: 1px solid rgba(103, 216, 196, 0.32);
+  border-radius: 8px;
+  background: rgba(103, 216, 196, 0.08);
+  color: #dffbf3;
+  font-size: 13px;
+}
+
 .summary-stack,
 .diff-viewer,
 .verification-panel,
@@ -873,6 +940,10 @@ textarea:disabled {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
+}
+
+.summary-metrics.wide {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
 .summary-metrics span {
@@ -912,6 +983,50 @@ textarea:disabled {
   background: rgba(255, 255, 255, 0.025);
 }
 
+.file-list li {
+  display: grid;
+  grid-template-columns: 78px minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+}
+
+.file-list strong {
+  overflow-wrap: anywhere;
+  font-weight: 750;
+}
+
+.file-list em {
+  color: var(--muted);
+  font-style: normal;
+  font-family: "SFMono-Regular", "Cascadia Code", Consolas, monospace;
+  font-size: 11px;
+}
+
+.file-status {
+  display: inline-flex;
+  justify-content: center;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 2px 7px;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.file-status.added {
+  color: var(--cyan);
+}
+
+.file-status.deleted {
+  color: var(--red);
+}
+
+.file-status.modified,
+.file-status.renamed {
+  color: var(--amber);
+}
+
 .diff-stat {
   color: var(--muted);
   font-size: 12px;
@@ -940,6 +1055,11 @@ textarea:disabled {
   background: rgba(255, 255, 255, 0.025);
 }
 
+.verification-head strong {
+  display: block;
+  margin-top: 8px;
+}
+
 .verification-head span,
 .risk-level {
   display: inline-flex;
@@ -961,6 +1081,18 @@ textarea:disabled {
   text-transform: uppercase;
 }
 
+.finding-list span {
+  display: block;
+  margin-top: 4px;
+}
+
+.finding-list p {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-family: "SFMono-Regular", "Cascadia Code", Consolas, monospace;
+  font-size: 11px;
+}
+
 .memory-actions {
   display: flex;
   gap: 8px;
@@ -969,6 +1101,68 @@ textarea:disabled {
 
 .memory-actions button {
   flex: 1;
+}
+
+.memory-toolbar {
+  justify-content: flex-end;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.memory-toolbar span {
+  margin-right: auto;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.memory-group {
+  display: grid;
+  gap: 10px;
+}
+
+.memory-item label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.memory-item p {
+  margin: 8px 0 0;
+}
+
+.memory-item small {
+  display: block;
+  margin-top: 8px;
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.log-filter-row {
+  margin-bottom: 10px;
+}
+
+.log-filter-row button {
+  min-height: 26px;
+  padding: 0 10px;
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+.log-filter-row button.active {
+  border-color: rgba(216, 255, 87, 0.42);
+  color: var(--text);
+}
+
+.logs-panel .log-view {
+  max-height: 70vh;
+  overflow: auto;
+}
+
+.run-event-line.stderr p,
+.run-event-line.error p {
+  color: #ffd6cf;
 }
 
 .empty-review {

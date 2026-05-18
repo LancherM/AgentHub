@@ -5,7 +5,14 @@ export type MemoryCategory =
   | "workflow_rule"
   | "user_preference"
   | "temporary_note";
-export type RiskLevel = "low" | "medium" | "high" | "blocking";
+export type ReviewRiskLevel =
+  | "none"
+  | "low"
+  | "medium"
+  | "high"
+  | "blocking"
+  | "unknown";
+export type RiskSeverity = "low" | "medium" | "high" | "blocking";
 export type RunEventType =
   | "run_started"
   | "context_compiled"
@@ -24,7 +31,7 @@ export type RunStatus =
   | "failed"
   | "cancelled";
 export type TaskRunStatus = RunStatus;
-export type VerificationStatus = "passed" | "failed" | "skipped";
+export type VerificationStatus = "passed" | "failed" | "skipped" | "unknown";
 export type EventPhase =
   | "lifecycle"
   | "context"
@@ -33,13 +40,36 @@ export type EventPhase =
   | "verification"
   | "final";
 
-export interface RiskFinding {
-  level: RiskLevel;
-  summary: string;
-  details?: string;
-}
-
 export type ContextMode = "auto" | "minimal" | "full" | "workspace";
+export type RunInspectorTab =
+  | "summary"
+  | "diff"
+  | "tests"
+  | "risk"
+  | "memory"
+  | "logs";
+
+export type ReviewStatus = "pending" | "accepted" | "rejected";
+export type ChangedFileStatus =
+  | "added"
+  | "modified"
+  | "deleted"
+  | "renamed"
+  | "unknown";
+export type RiskCategory =
+  | "auth"
+  | "security"
+  | "data"
+  | "migration"
+  | "dependency"
+  | "test"
+  | "config"
+  | "generated"
+  | "large_change"
+  | "unknown";
+export type MemoryProposalSource = "run" | "diff" | "verification" | "manual";
+export type MemoryProposalStatus = "pending" | "approved" | "ignored";
+export type RunLogLevel = "info" | "stdout" | "stderr" | "error" | "debug";
 
 export interface ProjectSummary {
   id: string;
@@ -156,60 +186,102 @@ export interface CreateRunInput {
   deliveryMode?: "runtime_injection" | "worktree_overlay";
 }
 
-export interface DiffSummary {
+export interface ReviewSummary {
   runId: string;
-  changedFiles: string[];
-  fileSummaries: string[];
-  stat: {
-    filesChanged: number;
-    insertions: number;
-    deletions: number;
-    text?: string;
-  };
-  unifiedDiff: string;
-  truncated: boolean;
-  isPlaceholder: boolean;
+  agentId: AgentId;
+  status: RunStatus;
+  task: string;
+  summary: string;
+  startedAt?: string;
+  completedAt?: string;
+  durationMs?: number;
+  changedFileCount: number;
+  additions: number;
+  deletions: number;
+  verificationStatus: VerificationStatus;
+  riskLevel: ReviewRiskLevel;
+  memoryProposalCount: number;
+  acceptedAt?: string;
+  rejectedAt?: string;
+  reviewStatus: ReviewStatus;
+  message?: string;
 }
 
-export interface VerificationItem {
-  id: string;
+export interface ChangedFile {
+  path: string;
+  status: ChangedFileStatus;
+  additions: number;
+  deletions: number;
+  isGenerated?: boolean;
+  isTest?: boolean;
+  isConfig?: boolean;
+  isMigration?: boolean;
+}
+
+export interface DiffSummary {
+  runId: string;
+  baseRef?: string;
+  headRef?: string;
+  files: ChangedFile[];
+  patch?: string;
+  empty: boolean;
+  message?: string;
+  truncated?: boolean;
+  originalPatchBytes?: number;
+  patchBytes?: number;
+}
+
+export interface VerificationCommandResult {
   command: string;
-  status: VerificationStatus;
+  status: Exclude<VerificationStatus, "unknown">;
   exitCode?: number;
+  durationMs?: number;
   stdout?: string;
   stderr?: string;
-  createdAt: string;
 }
 
 export interface VerificationReport {
   runId: string;
   status: VerificationStatus;
-  summary: string;
-  results: VerificationItem[];
+  commands: VerificationCommandResult[];
+  message?: string;
 }
 
 export interface RiskReport {
-  id: string;
   runId: string;
-  level: RiskLevel;
-  summary: string;
-  changedFiles: string[];
-  verificationSummary: string;
-  failedChecks: string[];
-  riskFactors: string[];
-  manualReviewChecklist: string[];
-  acceptanceRecommendation: string;
+  level: ReviewRiskLevel;
   findings: RiskFinding[];
-  createdAt: string;
+  generatedAt: string;
+  message?: string;
+}
+
+export interface RiskFinding {
+  id: string;
+  severity: RiskSeverity;
+  title: string;
+  description: string;
+  evidence?: string;
+  filePath?: string;
+  category: RiskCategory;
 }
 
 export interface MemoryProposal {
   id: string;
-  projectId: string;
-  taskId?: string;
-  category: MemoryCategory;
+  runId: string;
   content: string;
+  rationale?: string;
+  source: MemoryProposalSource;
+  status: MemoryProposalStatus;
   createdAt: string;
+  decidedAt?: string;
+}
+
+export interface RunLog {
+  id: string;
+  runId: string;
+  timestamp: string;
+  level: RunLogLevel;
+  message: string;
 }
 
 export type Unsubscribe = () => void;
@@ -233,12 +305,18 @@ export interface AgentHubApi {
     sendMessage(input: SendThreadMessageInput): Promise<ThreadDetail>;
   };
   review: {
+    getSummary(runId: string): Promise<ReviewSummary>;
     getDiff(runId: string): Promise<DiffSummary>;
     getRisk(runId: string): Promise<RiskReport>;
     getVerification(runId: string): Promise<VerificationReport>;
+    getLogs(runId: string): Promise<RunLog[]>;
+    accept(runId: string): Promise<ReviewSummary>;
+    reject(runId: string, reason?: string): Promise<ReviewSummary>;
+    refresh(runId: string): Promise<ReviewSummary>;
   };
   memory: {
     listProposals(runId: string): Promise<MemoryProposal[]>;
+    generateProposalsForRun(runId: string): Promise<MemoryProposal[]>;
     approve(ids: string[]): Promise<void>;
     ignore(ids: string[]): Promise<void>;
   };

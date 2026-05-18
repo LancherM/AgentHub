@@ -2,6 +2,11 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
+import {
+  validateRiskReport,
+  validateTask,
+  validateTaskRun
+} from "@agent-hub/core";
 import { createSqliteRepositories } from "@agent-hub/db";
 import {
   createDesktopServiceContext,
@@ -23,8 +28,8 @@ describe("desktop services", () => {
     const fixture = await createFixture();
     const context = createDesktopServiceContext(fixture.repositories);
     const projects = createProjectService(context);
-    const review = createReviewService(context);
     const memory = createMemoryService(context);
+    const review = createReviewService(context, { memoryService: memory });
     const runs = createRunService(context, {
       reviewService: review,
       memoryService: memory,
@@ -64,23 +69,156 @@ describe("desktop services", () => {
     ]);
     expect(liveEvents.some((event) => event.type === "agent_output")).toBe(true);
     await expect(review.getDiff(run.id)).resolves.toMatchObject({
-      changedFiles: [],
-      isPlaceholder: true
+      files: [],
+      empty: true,
+      message: "No real repository files were modified in fake mode."
     });
     await expect(review.getVerification(run.id)).resolves.toMatchObject({
       status: "passed"
     });
     await expect(review.getRisk(run.id)).resolves.toMatchObject({
-      level: "low"
+      level: "none",
+      findings: []
     });
+    await expect(review.getSummary(run.id)).resolves.toMatchObject({
+      changedFileCount: 0,
+      memoryProposalCount: expect.any(Number),
+      reviewStatus: "pending"
+    });
+    const proposals = await memory.listProposals(run.id);
+    expect(proposals.length).toBeGreaterThan(0);
+    expect(proposals[0]).toMatchObject({
+      runId: run.id,
+      status: "pending"
+    });
+    await memory.approve([proposals[0].id]);
+    await expect(memory.listProposals(run.id)).resolves.toContainEqual(
+      expect.objectContaining({
+        id: proposals[0].id,
+        status: "approved"
+      })
+    );
+    await expect(review.getLogs(run.id)).resolves.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ runId: run.id, level: "info" })
+      ])
+    );
+  });
+
+  it("preserves persisted blocking risk reports for real review inspection", async () => {
+    const fixture = await createFixture();
+    const context = createDesktopServiceContext(fixture.repositories);
+    const projects = createProjectService(context);
+    const review = createReviewService(context);
+    const project = await projects.open(fixture.projectRoot);
+    const now = context.now();
+    const task = await fixture.repositories.taskRepository.create(
+      validateTask({
+        id: "task_blocking",
+        projectId: project.id,
+        title: "Inspect blocking risk",
+        status: "completed",
+        createdAt: now,
+        updatedAt: now
+      })
+    );
+    const run = await fixture.repositories.taskRunRepository.create(
+      validateTaskRun({
+        id: "run_blocking",
+        taskId: task.id,
+        agentKind: "codex",
+        status: "succeeded",
+        createdAt: now,
+        updatedAt: now,
+        startedAt: now,
+        completedAt: now
+      })
+    );
+    await fixture.repositories.riskReportRepository.create(
+      validateRiskReport({
+        id: "risk_blocking",
+        taskRunId: run.id,
+        level: "blocking",
+        summary: "Blocking safety report from TaskRunner.",
+        changedFiles: [".env"],
+        verificationSummary: "Verification skipped.",
+        failedChecks: [],
+        riskFactors: ["Sensitive path changed: .env"],
+        manualReviewChecklist: ["Inspect the sensitive file change before acceptance."],
+        acceptanceRecommendation: "Do not accept automatically.",
+        findings: [
+          {
+            level: "blocking",
+            summary: "Sensitive path changed",
+            details: ".env was modified by the agent run."
+          }
+        ],
+        createdAt: now
+      })
+    );
+
+    await expect(review.getRisk(run.id)).resolves.toMatchObject({
+      level: "blocking",
+      findings: expect.arrayContaining([
+        expect.objectContaining({
+          severity: "blocking",
+          title: "Sensitive path changed",
+          description: ".env was modified by the agent run."
+        }),
+        expect.objectContaining({
+          severity: "blocking",
+          description: "Sensitive path changed: .env"
+        })
+      ])
+    });
+    await expect(review.getSummary(run.id)).resolves.toMatchObject({
+      riskLevel: "blocking"
+    });
+  });
+
+  it("records accept and reject as review decisions only", async () => {
+    const fixture = await createFixture();
+    const context = createDesktopServiceContext(fixture.repositories);
+    const projects = createProjectService(context);
+    const memory = createMemoryService(context);
+    const review = createReviewService(context, { memoryService: memory });
+    const runs = createRunService(context, {
+      reviewService: review,
+      memoryService: memory,
+      fakeDelayMs: 5
+    });
+    const before = await fs.readdir(fixture.projectRoot);
+    const project = await projects.open(fixture.projectRoot);
+    const run = await runs.createRun({
+      projectId: project.id,
+      prompt: "Review decision only.",
+      agentId: "fake",
+      contextMode: "auto"
+    });
+    await waitForRun(runs, run.id, "completed");
+
+    const accepted = await review.acceptRun(run.id);
+    expect(accepted).toMatchObject({
+      reviewStatus: "accepted",
+      message: "Accepted for record. No merge was performed."
+    });
+    expect(accepted.acceptedAt).toBeDefined();
+
+    const rejected = await review.rejectRun(run.id, "not needed");
+    expect(rejected).toMatchObject({
+      reviewStatus: "rejected",
+      message: "Rejected for record. No files were deleted or reverted."
+    });
+    expect(rejected.rejectedAt).toBeDefined();
+    await expect(fs.readdir(fixture.projectRoot)).resolves.toEqual(before);
   });
 
   it("cancels a running fake desktop run and emits run_cancelled", async () => {
     const fixture = await createFixture();
     const context = createDesktopServiceContext(fixture.repositories);
     const projects = createProjectService(context);
-    const review = createReviewService(context);
     const memory = createMemoryService(context);
+    const review = createReviewService(context, { memoryService: memory });
     const runs = createRunService(context, {
       reviewService: review,
       memoryService: memory,
@@ -134,8 +272,8 @@ describe("desktop services", () => {
     const fixture = await createFixture();
     const context = createDesktopServiceContext(fixture.repositories);
     const projects = createProjectService(context);
-    const review = createReviewService(context);
     const memory = createMemoryService(context);
+    const review = createReviewService(context, { memoryService: memory });
     const runs = createRunService(context, {
       reviewService: review,
       memoryService: memory,
@@ -158,8 +296,9 @@ describe("desktop services", () => {
     expect(failed.events.map((event) => event.type)).toContain("run_failed");
     expect(failed.summary).toContain("not wired yet");
     await expect(review.getDiff(run.id)).resolves.toMatchObject({
-      changedFiles: [],
-      isPlaceholder: true
+      files: [],
+      empty: true,
+      message: "No real repository files were modified."
     });
   });
 
@@ -167,8 +306,8 @@ describe("desktop services", () => {
     const fixture = await createFixture();
     const context = createDesktopServiceContext(fixture.repositories);
     const projects = createProjectService(context);
-    const review = createReviewService(context);
     const memory = createMemoryService(context);
+    const review = createReviewService(context, { memoryService: memory });
     const runs = createRunService(context, {
       reviewService: review,
       memoryService: memory,
@@ -225,8 +364,8 @@ describe("desktop services", () => {
     const fixture = await createFixture();
     const context = createDesktopServiceContext(fixture.repositories);
     const projects = createProjectService(context);
-    const review = createReviewService(context);
     const memory = createMemoryService(context);
+    const review = createReviewService(context, { memoryService: memory });
     const runs = createRunService(context, {
       reviewService: review,
       memoryService: memory,
@@ -263,6 +402,29 @@ describe("desktop services", () => {
       (summary as { id: string }).id
     );
     await waitForRun(runs, (summary as { id: string }).id, "completed");
+    await expect(
+      handlers[IPC_CHANNELS.reviewSummary](
+        { sender } as never,
+        (summary as { id: string }).id
+      )
+    ).resolves.toMatchObject({
+      reviewStatus: "pending",
+      changedFileCount: 0
+    });
+    await expect(
+      handlers[IPC_CHANNELS.reviewReject]({ sender } as never, {
+        runId: (summary as { id: string }).id,
+        reason: "x".repeat(1_001)
+      })
+    ).rejects.toThrow(/1000/);
+    await expect(
+      handlers[IPC_CHANNELS.reviewAccept](
+        { sender } as never,
+        (summary as { id: string }).id
+      )
+    ).resolves.toMatchObject({
+      reviewStatus: "accepted"
+    });
     expect(sender.send).toHaveBeenCalled();
     await handlers[IPC_CHANNELS.runsUnsubscribe](
       { sender } as never,
@@ -312,6 +474,11 @@ async function createFixture(): Promise<{
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "agent-hub-desktop-"));
   const projectRoot = path.join(root, "repo");
   await fs.mkdir(projectRoot);
+  await fs.writeFile(
+    path.join(projectRoot, "package.json"),
+    JSON.stringify({ packageManager: "pnpm@10.10.0" }, null, 2),
+    "utf8"
+  );
   const repositories = createSqliteRepositories({
     databasePath: path.join(root, "agent-hub.sqlite")
   });

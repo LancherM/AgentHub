@@ -11,10 +11,16 @@ export const IPC_CHANNELS = {
   threadsGet: "agent-hub:threads:get",
   threadsCreate: "agent-hub:threads:create",
   threadsSendMessage: "agent-hub:threads:send-message",
+  reviewSummary: "agent-hub:review:summary",
   reviewDiff: "agent-hub:review:diff",
   reviewRisk: "agent-hub:review:risk",
   reviewVerification: "agent-hub:review:verification",
+  reviewLogs: "agent-hub:review:logs",
+  reviewAccept: "agent-hub:review:accept",
+  reviewReject: "agent-hub:review:reject",
+  reviewRefresh: "agent-hub:review:refresh",
   memoryListProposals: "agent-hub:memory:list-proposals",
+  memoryGenerateProposals: "agent-hub:memory:generate-proposals",
   memoryApprove: "agent-hub:memory:approve",
   memoryIgnore: "agent-hub:memory:ignore"
 } as const;
