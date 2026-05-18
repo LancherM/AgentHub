@@ -194,20 +194,34 @@ failed checks, risk levels, risk factors, and summary tradeoffs from persisted
 run artifacts and reports, then stores the summary in `comparison_reports`. It
 is a review aid only; it does not accept, merge, or push changes.
 
-Agent Hub Desktop is now available as a local run console under `apps/desktop`.
-It starts with `pnpm --filter desktop dev` and presents a three-pane local
-review surface: projects and recent runs on the left, a live run timeline and
-composer in the center, and summary/diff/tests/risk/memory review tabs on the
-right. The New Run modal creates a queued run for a registered project or local
-path, supports `@fake` as the enabled agent, exposes auto/minimal/full context
-mode selection, and returns immediately while the Electron main process starts
-the run. The selected run timeline receives live semantic events such as
-`run_started`, `context_compiled`, `agent_step`, `agent_output`,
-`verification_started`, `verification_finished`, `run_completed`,
-`run_failed`, and `run_cancelled`. Sidebar and detail status update through
-the desktop status sequence `queued -> running -> verifying -> completed`, or
-to `failed`/`cancelled` for terminal interruptions. Running fake runs can be
-cancelled from the center pane.
+Agent Hub Desktop is now available as a local conversation console under
+`apps/desktop`. It starts with `pnpm --filter desktop dev` and presents a
+thread-first shell: threads and projects on the left, a conversation timeline
+in the center, and a bottom composer as the primary interaction surface. When
+there are no registered projects, the desktop renders local project path
+registration controls in the project sidebar and the empty conversation pane;
+submitting either control calls the existing `window.agentHub.projects.open`
+IPC path and seeds a new conversation for the registered project. The composer
+accepts mention-based prompts such as `@fake ...` or multi-agent mentions,
+strips those mentions from the task body, records one user message in the
+active thread, and creates one run card per mentioned agent. If no agent is
+mentioned, the renderer falls back to the last-used agent set or `@fake`.
+
+Each inline run card subscribes to the existing desktop run event stream and
+shows agent identity, status, the latest streamed line, compact review pills,
+and an expandable event log. Diff, tests, risk, memory proposals, summary, and
+full logs are hidden by default and open through an on-demand run inspector
+drawer. Existing persisted run records are synthesized into thread-shaped
+conversations in the renderer so old desktop run data remains inspectable, but
+thread persistence itself is not implemented yet.
+
+The selected run timeline receives live semantic events such as `run_started`,
+`context_compiled`, `agent_step`, `agent_output`, `verification_started`,
+`verification_finished`, `run_completed`, `run_failed`, and `run_cancelled`.
+Sidebar and card status update through the desktop status sequence
+`queued -> running -> verifying -> completed`, or to `failed`/`cancelled` for
+terminal interruptions. Running fake runs can be cancelled from their inline
+cards.
 
 The renderer only calls the safe `window.agentHub` preload API. It has no
 direct Node.js, shell, filesystem, SQLite, or git access; privileged
@@ -217,16 +231,19 @@ operations go through Electron main-process IPC registered in
 subscription behavior remain testable in the root Vitest suite without loading
 Electron.
 
-The current desktop execution path is intentionally fake-agent backed. The
-main process `RunService` creates SQLite task/run rows, streams live events
-through an in-memory emitter, persists run events as the DB layer supports
-them, records simulated verification output, and stores placeholder diff/risk
-review rows that explicitly say no real files were modified in fake mode. The
-fake runner never writes files into the selected target repository and does
-not export Agent Hub context files. CodexAdapter, ClaudeCodeAdapter, real
-TaskRunner streaming/cancellation, real diff scanning from retained worktrees,
-verification command configuration, accept/reject review workflows, and
-approved-memory context-store writeback remain follow-up desktop wiring tasks.
+The current desktop execution path is intentionally fake-agent backed for real
+streaming work. The main process `RunService` creates SQLite task/run rows,
+streams live events through an in-memory emitter, persists run events as the DB
+layer supports them, records simulated verification output, and stores
+placeholder diff/risk review rows that explicitly say no real files were
+modified. The fake runner never writes files into the selected target
+repository and does not export Agent Hub context files. Mentioned `@codex` and
+`@claude` desktop runs currently create safe placeholder run records that fail
+with an explicit "not wired yet" message instead of launching real adapters.
+CodexAdapter, ClaudeCodeAdapter, real TaskRunner streaming/cancellation, real
+diff scanning from retained worktrees, verification command configuration,
+accept/reject review workflows, and approved-memory context-store writeback
+remain follow-up desktop wiring tasks.
 
 SQLite is stored in Agent Hub-owned application data by default, not in the
 target project repository. `AGENT_HUB_HOME` can point Agent Hub at an alternate

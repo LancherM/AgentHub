@@ -48,6 +48,46 @@ export interface ProjectSummary {
   updatedAt: string;
 }
 
+export interface Thread {
+  id: string;
+  title: string;
+  projectId: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ThreadSummary extends Thread {
+  lastMessage: string;
+  runCount: number;
+  activeRunCount: number;
+}
+
+interface BaseThreadMessage {
+  id: string;
+  threadId: string;
+  createdAt: string;
+}
+
+export interface UserMessage extends BaseThreadMessage {
+  type: "user";
+  text: string;
+  mentions: AgentId[];
+}
+
+export interface AgentRunMessage extends BaseThreadMessage {
+  type: "agent_run";
+  runId: string;
+  agentId: AgentId;
+  status: RunStatus;
+}
+
+export interface SystemMessage extends BaseThreadMessage {
+  type: "system";
+  text: string;
+}
+
+export type ThreadMessage = UserMessage | AgentRunMessage | SystemMessage;
+
 export interface RunSummary {
   id: string;
   projectId: string;
