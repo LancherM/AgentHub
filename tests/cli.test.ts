@@ -889,6 +889,47 @@ describe("CLI", () => {
     expect(envDebugOutput.join("")).toContain("debug:");
   });
 
+  it("keeps missing-verification warnings out of normal output and in debug output", async () => {
+    const projectRoot = await createTestDirectory("cli-missing-verification-project");
+    const runRoot = path.join(
+      await createTestDirectory("cli-missing-verification-runs"),
+      "runs"
+    );
+    const runtime = createCliRuntime({
+      storageMode: "memory",
+      defaultRunRoot: runRoot,
+      workspaceManager: new TestWorkspaceManager(runRoot),
+      diffCollector: new StaticDiffCollector(),
+      verificationRunner: new VerificationRunner(new MockShellExecutor()),
+      idGenerator: new SequenceIdGenerator(),
+      clock: new FixedClock("2026-01-01T00:00:00.000Z")
+    });
+    const normalOutput: string[] = [];
+    const debugOutput: string[] = [];
+    const errors: string[] = [];
+    const normalIo = {
+      stdout: { write: (chunk: string) => { normalOutput.push(chunk); return true; } },
+      stderr: { write: (chunk: string) => { errors.push(chunk); return true; } }
+    };
+    const debugIo = {
+      stdout: { write: (chunk: string) => { debugOutput.push(chunk); return true; } },
+      stderr: { write: (chunk: string) => { errors.push(chunk); return true; } }
+    };
+
+    await expect(
+      main(["run", "@fake", "missing verification"], normalIo, projectRoot, runtime)
+    ).resolves.toBe(0);
+    await expect(
+      main(["--debug", "run", "@fake", "missing verification"], debugIo, projectRoot, runtime)
+    ).resolves.toBe(0);
+
+    const warning = "No verification commands were configured; verification was skipped.";
+    expect(errors.join("")).toBe("");
+    expect(normalOutput.join("")).toContain("# Fake Agent Output");
+    expect(normalOutput.join("")).not.toContain(warning);
+    expect(debugOutput.join("")).toContain(`- warnings: ${warning}`);
+  });
+
   it("redacts debug diff previews when sensitive paths are changed", async () => {
     const projectRoot = await createTestDirectory("cli-debug-sensitive-project");
     const runRoot = path.join(await createTestDirectory("cli-debug-sensitive-runs"), "runs");

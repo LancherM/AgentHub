@@ -129,6 +129,9 @@ export interface RunResult {
 
 export type TaskRunResult = RunResult;
 
+const MISSING_VERIFICATION_COMMANDS_WARNING =
+  "No verification commands were configured; verification was skipped.";
+
 export interface TaskRunnerDependencies {
   contextCompiler?: ContextCompiler;
   contextFormatter?: ContextFormatter;
@@ -539,6 +542,9 @@ export class TaskRunner {
         error,
         input.verificationCommands
       );
+    }
+    if (verification.missingCommandConfig) {
+      warnings.push(MISSING_VERIFICATION_COMMANDS_WARNING);
     }
 
     try {

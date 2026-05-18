@@ -109,6 +109,9 @@ reported as failed verification results instead of bypassing finalization;
 verification commands receive a 10-minute default timeout unless an explicit
 command timeout is configured, and timeout or process signal details are
 preserved in the command result.
+Runs without configured verification commands still record skipped verification
+and include a run warning so the missing validation is visible in run metadata
+and debug output without opening the risk report.
 Task brief artifacts are persisted from Agent Hub's generated brief content,
 not by rereading worktree paths after materialization, so malicious symlinks in
 an untrusted worktree cannot be captured as task brief artifact contents.

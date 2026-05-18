@@ -114,6 +114,9 @@ pnpm lint
 
 ### 4. Make missing verification commands a run warning
 
+Status: done
+Done: 2026-05-18 via codex/todo-4-missing-verification-warning; PR: https://github.com/LancherM/AgentHub/pull/39
+
 Prompt:
 
 You are working in `/Users/lan/agent-hub`. When a task run has no configured
