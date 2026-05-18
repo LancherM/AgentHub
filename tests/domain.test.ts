@@ -210,9 +210,17 @@ describe("domain model validation", () => {
 
     for (const key of [
       "api_key",
+      "openaiApiKey",
+      "authToken",
+      "github.accessToken",
+      "github.refreshToken",
+      "clientSecret",
       "token",
+      "secret",
       "password",
+      "passwordPrompt",
       "private_key",
+      "privateKey",
       "credentials.github"
     ]) {
       expect(() =>
@@ -227,7 +235,7 @@ describe("domain model validation", () => {
     expect(() =>
       validateSetting({
         key: "ui.banner",
-        value: "token=redacted-value",
+        value: "openaiApiKey=redacted-value",
         updatedAt
       })
     ).toThrow("setting.value must not store secret-like string values");
