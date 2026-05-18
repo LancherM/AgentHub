@@ -442,6 +442,17 @@ VALUES ('event_bad_json', 'run_constraints', 1, 'stdout', 'bad json', '{bad', '$
     await expect(
       repositories.taskRunRepository.updateStatus("run_lifecycle", "failed", updatedAt)
     ).rejects.toThrow("invalid task run status transition queued -> failed");
+    await expect(
+      repositories.taskRunRepository.updateStatus("run_lifecycle", "queued", updatedAt)
+    ).resolves.toMatchObject({ status: "queued" });
+    await repositories.taskRunRepository.updateStatus("run_lifecycle", "running", updatedAt);
+    await expect(
+      repositories.taskRunRepository.updateStatus(
+        "run_lifecycle",
+        "succeeded",
+        "2026-01-01T00:00:02.000Z"
+      )
+    ).resolves.toMatchObject({ status: "succeeded" });
     await repositories.memoryItemRepository.updateStatus(
       "memory_lifecycle",
       "rejected",

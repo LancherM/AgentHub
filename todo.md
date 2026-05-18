@@ -12,6 +12,9 @@ tests. For behavior changes, update both `docs/product.md` and
 
 ### 1. Enforce in-memory task-run lifecycle transitions
 
+Status: done
+Done: 2026-05-18 via codex/todo-1-inmemory-run-lifecycle; PR: https://github.com/LancherM/AgentHub/pull/31
+
 Prompt:
 
 You are working in `/Users/lan/agent-hub`. Align
