@@ -305,6 +305,14 @@ export class StaticProjectContextProvider implements ProjectContextProvider {
   }
 }
 
+interface StoredSkill {
+  id: string;
+  name: string;
+  description: string;
+  content: string;
+  body: string;
+}
+
 export class MarkdownContextFormatter implements ContextFormatter {
   format(bundle: ContextBundle): string {
     const lines = [
@@ -454,9 +462,10 @@ export async function materializeWorktreeOverlay(input: {
 
   if (input.storeRoot) {
     const skills = await readSkillsFromStore(input.storeRoot);
-    for (const skill of skills) {
+    warnings.push(...(skills.warnings ?? []));
+    for (const skill of skills.items) {
       for (const base of [".claude/skills", ".agents/skills"]) {
-        const relativePath = path.join(base, sanitizePathSegment(skill.name), "SKILL.md");
+        const relativePath = path.join(base, sanitizePathSegment(skill.id), "SKILL.md");
         const targetPath = path.join(worktreePath, relativePath);
         const existing = await readFileIfExists(targetPath);
         if (existing !== undefined && existing.trim().length > 0 && existing !== skill.content) {
@@ -512,9 +521,10 @@ export async function exportContextToRepository(
 
   if (input.includeSkills) {
     const skills = await readSkillsFromStore(config.storeRoot);
-    for (const skill of skills) {
+    pushUniqueWarnings(warnings, skills.warnings ?? []);
+    for (const skill of skills.items) {
       for (const base of [".claude/skills", ".agents/skills"]) {
-        const relativePath = path.join(base, sanitizePathSegment(skill.name), "SKILL.md");
+        const relativePath = path.join(base, sanitizePathSegment(skill.id), "SKILL.md");
         const targetPath = path.join(config.projectRoot, relativePath);
         changedFiles.push(normalizeRelativePath(relativePath));
         previews.push({ path: normalizeRelativePath(relativePath), content: skill.content });
@@ -662,12 +672,13 @@ class FileSkillProvider implements SkillProvider {
   async getRelevantSkills(): Promise<ContextProviderResult<SkillContextItem>> {
     const skills = await readSkillsFromStore(this.storeRoot);
     return {
-      items: skills.map((skill) => ({
-        id: skill.name,
+      items: skills.items.map((skill) => ({
+        id: skill.id,
         name: skill.name,
-        description: firstNonEmptyLine(skill.content) ?? `Skill ${skill.name}`,
-        content: skill.content
-      }))
+        description: skill.description,
+        content: skill.body
+      })),
+      warnings: skills.warnings
     };
   }
 }
@@ -758,29 +769,46 @@ async function ensureFile(filePath: string, content: string): Promise<void> {
   }
 }
 
-async function readSkillsFromStore(storeRoot: string): Promise<Array<{ name: string; content: string }>> {
+async function readSkillsFromStore(
+  storeRoot: string
+): Promise<ContextProviderResult<StoredSkill>> {
   const skillsRoot = path.join(storeRoot, "skills");
   let entries: Array<import("node:fs").Dirent>;
   try {
     entries = await fs.readdir(skillsRoot, { withFileTypes: true });
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-      return [];
+      return { items: [] };
     }
     throw error;
   }
-  const skills: Array<{ name: string; content: string }> = [];
+  const skills: StoredSkill[] = [];
+  const warnings: string[] = [];
   for (const entry of entries) {
     if (!entry.isDirectory()) {
       continue;
     }
     const skillPath = path.join(skillsRoot, entry.name, "SKILL.md");
+    const relativePath = normalizeRelativePath(path.relative(storeRoot, skillPath));
     const content = await readFileIfExists(skillPath);
-    if (content?.trim()) {
-      skills.push({ name: entry.name, content });
+    if (content === undefined) {
+      warnings.push(skillWarning(entry.name, relativePath, "SKILL.md is missing"));
+      continue;
+    }
+    const parsed = parseSkillFile(entry.name, relativePath, content);
+    if (parsed.warning) {
+      warnings.push(parsed.warning);
+      continue;
+    }
+    if (parsed.skill) {
+      skills.push(parsed.skill);
     }
   }
-  return skills.sort((left, right) => left.name.localeCompare(right.name));
+  const sortedSkills = skills.sort((left, right) => left.id.localeCompare(right.id));
+  return {
+    items: sortedSkills,
+    ...(warnings.length === 0 ? {} : { warnings })
+  };
 }
 
 async function renderStoreContextMarkdown(
@@ -911,8 +939,109 @@ function approvedMemoryContent(content: string): string {
   return normalized.replace(/^# Approved Memory[ \t]*\n+/, "").trim();
 }
 
-function firstNonEmptyLine(content: string): string | undefined {
-  return content.split(/\r?\n/).find((line) => line.trim().length > 0)?.trim();
+function parseSkillFile(
+  id: string,
+  relativePath: string,
+  content: string
+): { skill: StoredSkill; warning?: undefined } | { skill?: undefined; warning: string } {
+  const normalized = content.replace(/\r\n/g, "\n");
+  if (normalized.trim().length === 0) {
+    return { warning: skillWarning(id, relativePath, "SKILL.md is empty") };
+  }
+
+  const lines = normalized.split("\n");
+  if (lines[0]?.trim() !== "---") {
+    return {
+      warning: skillWarning(
+        id,
+        relativePath,
+        "missing metadata frontmatter with name and description"
+      )
+    };
+  }
+
+  const endIndex = lines.findIndex((line, index) => index > 0 && line.trim() === "---");
+  if (endIndex === -1) {
+    return {
+      warning: skillWarning(
+        id,
+        relativePath,
+        "metadata frontmatter is not closed"
+      )
+    };
+  }
+
+  const metadata = parseSkillMetadata(lines.slice(1, endIndex));
+  if (!metadata.name) {
+    return {
+      warning: skillWarning(id, relativePath, "missing required metadata field name")
+    };
+  }
+  if (!metadata.description) {
+    return {
+      warning: skillWarning(
+        id,
+        relativePath,
+        "missing required metadata field description"
+      )
+    };
+  }
+
+  return {
+    skill: {
+      id,
+      name: metadata.name,
+      description: metadata.description,
+      content: normalized,
+      body: lines.slice(endIndex + 1).join("\n").trim()
+    }
+  };
+}
+
+function parseSkillMetadata(lines: string[]): { name?: string; description?: string } {
+  const metadata: { name?: string; description?: string } = {};
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) {
+      continue;
+    }
+    const match = /^([A-Za-z0-9_-]+)\s*:\s*(.*)$/.exec(trimmed);
+    if (!match) {
+      continue;
+    }
+    const key = match[1];
+    if (key !== "name" && key !== "description") {
+      continue;
+    }
+    const value = stripYamlScalarQuotes(match[2].trim());
+    if (value) {
+      metadata[key] = value;
+    }
+  }
+  return metadata;
+}
+
+function stripYamlScalarQuotes(value: string): string {
+  if (
+    value.length >= 2 &&
+    ((value.startsWith("\"") && value.endsWith("\"")) ||
+      (value.startsWith("'") && value.endsWith("'")))
+  ) {
+    return value.slice(1, -1).trim();
+  }
+  return value.trim();
+}
+
+function skillWarning(id: string, relativePath: string, reason: string): string {
+  return `skill ${id} skipped: ${reason} (${relativePath})`;
+}
+
+function pushUniqueWarnings(target: string[], nextWarnings: string[]): void {
+  for (const warning of nextWarnings) {
+    if (!target.includes(warning)) {
+      target.push(warning);
+    }
+  }
 }
 
 function normalizeRelativePath(value: string): string {

@@ -271,6 +271,14 @@ external store path is:
   skills/<skill-name>/SKILL.md
 ```
 
+Skill loading treats `skills/<skill-name>/SKILL.md` as a metadata-bearing file,
+not arbitrary text. The compiler parses simple frontmatter for required `name`
+and `description` fields, keeps `<skill-name>` as the stable context-pack skill
+reference ID, and injects only valid skills into task briefs. Missing, empty,
+or malformed skill files are skipped with warnings, and the same valid-skill
+set is used for repository export previews/writes and worktree overlay skill
+copies.
+
 Repo-local context stores remain opt-in through `--mode repo_local`. Repository
 export remains opt-in through `context export --dry-run` or
 `context export --write`; dry-run produces previews without writing, while

@@ -70,6 +70,13 @@ Supported store files are:
 - `memory/approved.md`
 - `skills/<skill-name>/SKILL.md`
 
+Skill files must start with simple frontmatter that declares both `name` and
+`description`. Context builds use the containing folder as the stable skill
+reference ID, then use the declared metadata for the task brief section title
+and summary. Empty skill files or files missing required metadata are skipped
+with warnings during context build, repository export, and worktree overlay
+materialization rather than being injected as unstructured text.
+
 `context export --dry-run` previews repository writes. `context export --write`
 uses Agent Hub managed blocks in `AGENTS.md` and optionally `CLAUDE.md`,
 preserves user-authored content outside those blocks, and ignores marker

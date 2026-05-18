@@ -179,7 +179,15 @@ describe("ContextCompiler", () => {
     });
     await fs.writeFile(
       path.join(initialized.storeRoot, "skills", "review", "SKILL.md"),
-      "Review carefully.\n",
+      [
+        "---",
+        "name: Review workflow",
+        "description: Review generated diffs carefully.",
+        "---",
+        "",
+        "Review carefully.",
+        ""
+      ].join("\n"),
       "utf8"
     );
 
@@ -201,6 +209,77 @@ describe("ContextCompiler", () => {
       "Compile task context"
     );
     expect(built.contextPack.skillReferences).toEqual(["review"]);
+    expect(built.taskBrief.renderedContent).toContain("Skill: Review workflow");
+    expect(built.taskBrief.renderedContent).toContain(
+      "Review generated diffs carefully."
+    );
+  });
+
+  it("loads skill metadata and skips malformed skill files with warnings", async () => {
+    const projectRoot = await createTestDirectory("context-skill-metadata-project");
+    const agentHubHome = await createTestDirectory("context-skill-metadata-home");
+    const initialized = await initContextStore({
+      projectRoot,
+      projectId: "project_skills",
+      agentHubHome
+    });
+    await fs.mkdir(path.join(initialized.storeRoot, "skills", "review"), {
+      recursive: true
+    });
+    await fs.writeFile(
+      path.join(initialized.storeRoot, "skills", "review", "SKILL.md"),
+      [
+        "---",
+        "name: Review workflow",
+        "description: Inspect diffs and tests before accepting output.",
+        "---",
+        "",
+        "1. Read changed files.",
+        "2. Run focused tests.",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+    await fs.mkdir(path.join(initialized.storeRoot, "skills", "missing-metadata"), {
+      recursive: true
+    });
+    await fs.writeFile(
+      path.join(initialized.storeRoot, "skills", "missing-metadata", "SKILL.md"),
+      "Review carefully.\n",
+      "utf8"
+    );
+    await fs.mkdir(path.join(initialized.storeRoot, "skills", "empty"), {
+      recursive: true
+    });
+    await fs.writeFile(
+      path.join(initialized.storeRoot, "skills", "empty", "SKILL.md"),
+      "",
+      "utf8"
+    );
+
+    const built = await buildContextArtifacts({
+      projectRoot,
+      projectId: "project_skills",
+      taskId: "task_skills",
+      title: "Build skills",
+      prompt: "Compile task context with skills",
+      selectedAgentId: "fake",
+      agentHubHome
+    });
+
+    expect(built.contextPack.skillReferences).toEqual(["review"]);
+    expect(built.taskBrief.renderedContent).toContain("Skill: Review workflow");
+    expect(built.taskBrief.renderedContent).toContain(
+      "Inspect diffs and tests before accepting output."
+    );
+    expect(built.taskBrief.renderedContent).toContain("1. Read changed files.");
+    expect(built.taskBrief.renderedContent).not.toContain("Skill: missing-metadata");
+    expect(built.warnings).toEqual(
+      expect.arrayContaining([
+        "skill missing-metadata skipped: missing metadata frontmatter with name and description (skills/missing-metadata/SKILL.md)",
+        "skill empty skipped: SKILL.md is empty (skills/empty/SKILL.md)"
+      ])
+    );
   });
 
   it("warns when optional context store files are missing", async () => {
@@ -395,7 +474,15 @@ describe("ContextCompiler", () => {
     });
     await fs.writeFile(
       path.join(initialized.storeRoot, "skills", "review", "SKILL.md"),
-      "Generated skill.\n",
+      [
+        "---",
+        "name: Review workflow",
+        "description: Review generated diffs carefully.",
+        "---",
+        "",
+        "Generated skill.",
+        ""
+      ].join("\n"),
       "utf8"
     );
     const existingSkillPath = path.join(
@@ -437,7 +524,64 @@ describe("ContextCompiler", () => {
         path.join(worktreePath, ".agents", "skills", "review", "SKILL.md"),
         "utf8"
       )
-    ).resolves.toBe("Generated skill.\n");
+    ).resolves.toContain("Generated skill.\n");
+  });
+
+  it("skips malformed skill files during export and worktree overlay", async () => {
+    const worktreePath = await createTestDirectory("context-malformed-skill-worktree");
+    const projectRoot = await createTestDirectory("context-malformed-skill-project");
+    const agentHubHome = await createTestDirectory("context-malformed-skill-home");
+    const initialized = await initContextStore({
+      projectRoot,
+      projectId: "project_bad_skill",
+      agentHubHome
+    });
+    await fs.mkdir(path.join(initialized.storeRoot, "skills", "bad"), {
+      recursive: true
+    });
+    await fs.writeFile(
+      path.join(initialized.storeRoot, "skills", "bad", "SKILL.md"),
+      ["---", "name: Bad Skill", "---", "", "Missing description.", ""].join("\n"),
+      "utf8"
+    );
+    const warning =
+      "skill bad skipped: missing required metadata field description (skills/bad/SKILL.md)";
+
+    const exported = await exportContextToRepository({
+      projectRoot,
+      projectId: "project_bad_skill",
+      includeSkills: true,
+      dryRun: true,
+      agentHubHome
+    });
+
+    expect(exported.warnings).toContain(warning);
+    expect(exported.previews.map((preview) => preview.path)).not.toContain(
+      ".agents/skills/bad/SKILL.md"
+    );
+
+    const built = await buildContextArtifacts({
+      projectRoot,
+      projectId: "project_bad_skill",
+      taskId: "task_bad_skill",
+      title: "Overlay",
+      prompt: "Write overlay",
+      selectedAgentId: "fake",
+      deliveryMode: "worktree_overlay",
+      agentHubHome
+    });
+    const overlay = await materializeWorktreeOverlay({
+      worktreePath,
+      taskId: "task_bad_skill",
+      contextPack: built.contextPack,
+      taskBrief: built.taskBrief,
+      contextMarkdown: new MarkdownContextFormatter().format(built.bundle),
+      includeAgentFiles: true,
+      storeRoot: initialized.storeRoot
+    });
+
+    expect(overlay.warnings).toContain(warning);
+    expect(overlay.writtenFiles).not.toContain(".agents/skills/bad/SKILL.md");
   });
 
   it("rejects symlink paths for runtime artifacts", async () => {

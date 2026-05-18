@@ -664,7 +664,15 @@ describe("task runner", () => {
     });
     await fs.writeFile(
       path.join(initialized.storeRoot, "skills", "review", "SKILL.md"),
-      "Generated skill.\n",
+      [
+        "---",
+        "name: Review workflow",
+        "description: Review generated diffs carefully.",
+        "---",
+        "",
+        "Generated skill.",
+        ""
+      ].join("\n"),
       "utf8"
     );
     const diffCollector = new RecordingDiffCollector();
