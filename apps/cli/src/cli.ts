@@ -37,6 +37,7 @@ import {
   type RunTaskInput,
   type TaskRunnerDependencies
 } from "@agent-hub/task-runner";
+import { scanSensitivePaths } from "@agent-hub/safety";
 import { createSqliteRepositories } from "@agent-hub/db";
 import {
   InMemoryAgentProfileRepository,
@@ -1586,7 +1587,7 @@ function renderRunDebug(
         ? ["    - none"]
         : result.diff.fileSummaries.map((summary) => `    - ${summary}`)),
       "  diff_preview:",
-      indentBlock(truncateText(result.diff.diff) || "(empty)", 4)
+      indentBlock(renderDebugDiffPreview(result), 4)
     );
   }
 
@@ -1599,6 +1600,28 @@ function truncateText(value: string, maxLength = 2_000): string {
     return value;
   }
   return `${value.slice(0, maxLength)}\n... truncated ${value.length - maxLength} chars`;
+}
+
+function renderDebugDiffPreview(result: CliRunResult): string {
+  if (hasBlockingSensitivePathFinding(result) || hasSensitiveChangedFile(result)) {
+    return "(redacted: sensitive file path changed; review run artifacts with care)";
+  }
+  return truncateText(result.diff?.diff ?? "") || "(empty)";
+}
+
+function hasBlockingSensitivePathFinding(result: CliRunResult): boolean {
+  return result.riskReport?.findings.some((finding) => {
+    const category = (finding as { category?: unknown }).category;
+    return (
+      finding.level === "blocking" &&
+      (category === "sensitive_path" ||
+        finding.summary.toLowerCase().includes("sensitive file path"))
+    );
+  }) ?? false;
+}
+
+function hasSensitiveChangedFile(result: CliRunResult): boolean {
+  return scanSensitivePaths(result.diff?.changedFiles ?? []).length > 0;
 }
 
 function indentBlock(value: string, spaces: number): string {
