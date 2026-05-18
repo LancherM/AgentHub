@@ -184,9 +184,6 @@ class RepositoryRunService implements RunService {
 
   async createRun(input: CreateRunInput): Promise<RunSummary> {
     const parsed = parseCreateRunInput(input);
-    if (parsed.agentId !== "fake") {
-      throw new Error("Desktop Phase 2 supports @fake runs only.");
-    }
     const project = await this.projects.get(parsed.projectId);
     if (!project) {
       throw new Error(`project ${parsed.projectId} not found`);
@@ -245,9 +242,6 @@ class RepositoryRunService implements RunService {
       throw new Error(`task ${run.taskId} not found`);
     }
     const agentId = toAgentId(run.agentKind);
-    if (agentId !== "fake") {
-      throw new Error("Desktop Phase 2 supports @fake runs only.");
-    }
 
     const controller = new AbortController();
     const active: ActiveRun = {
@@ -257,7 +251,9 @@ class RepositoryRunService implements RunService {
     };
     this.activeRuns.set(runId, active);
 
-    active.promise = this.executeFakeRun(run, task, active)
+    active.promise = (agentId === "fake"
+      ? this.executeFakeRun(run, task, active)
+      : this.executeUnavailableAgentRun(run.id, agentId, active))
       .catch((error) => this.failActiveRun(runId, error))
       .finally(() => {
         this.activeRuns.delete(runId);
@@ -322,6 +318,41 @@ class RepositoryRunService implements RunService {
         await this.applyRunnerEvent(run.id, event);
       }
     );
+  }
+
+  private async executeUnavailableAgentRun(
+    runId: string,
+    agentId: Exclude<AgentId, "fake">,
+    active: ActiveRun
+  ): Promise<void> {
+    if (active.controller.signal.aborted) {
+      await this.applyRunnerEvent(runId, {
+        type: "run_cancelled",
+        payload: {
+          phase: "final",
+          status: "cancelled",
+          message: `@${agentId} was cancelled before desktop execution started.`
+        }
+      });
+      return;
+    }
+
+    await this.applyRunnerEvent(runId, {
+      type: "run_started",
+      payload: {
+        phase: "lifecycle",
+        status: "running",
+        message: `Desktop received @${agentId}, but real adapter execution is not wired yet.`
+      }
+    });
+    await this.applyRunnerEvent(runId, {
+      type: "run_failed",
+      payload: {
+        phase: "final",
+        status: "failed",
+        message: `@${agentId} desktop execution is not wired yet. No repository files were modified.`
+      }
+    });
   }
 
   private async applyRunnerEvent(
@@ -466,7 +497,7 @@ class RepositoryRunService implements RunService {
         id: this.context.nextId("artifact"),
         taskRunId: runId,
         kind: "git_diff",
-        content: "No real files were modified in fake mode.\n",
+        content: "No real files were modified by this desktop run.\n",
         metadata: {
           changedFiles: [],
           fileSummaries: [],
@@ -491,22 +522,22 @@ class RepositoryRunService implements RunService {
         level: status === "failed" ? "medium" : "low",
         summary:
           status === "completed"
-            ? "Fake run completed without repository changes."
+            ? "Desktop run completed without repository changes."
             : status === "cancelled"
-              ? "Fake run was cancelled without repository changes."
-              : "Fake run failed before making repository changes.",
+              ? "Desktop run was cancelled without repository changes."
+              : "Desktop run failed before making repository changes.",
         changedFiles: [],
         verificationSummary:
           status === "completed"
             ? "Simulated verification passed."
             : "No completed verification output is available.",
         failedChecks: status === "failed" ? ["desktop fake run failed"] : [],
-        riskFactors: ["Fake mode does not modify project files."],
+        riskFactors: ["This desktop execution path did not modify project files."],
         manualReviewChecklist: [
-          "No code was generated or applied by this fake desktop run."
+          "No code was generated or applied by this desktop run."
         ],
         acceptanceRecommendation:
-          "Review only. Fake desktop runs do not produce changes to accept, merge, push, or export.",
+          "Review only. This desktop run did not produce changes to accept, merge, push, or export.",
         findings: [],
         createdAt: now
       })

@@ -129,6 +129,39 @@ describe("desktop services", () => {
     expect(events).toEqual(["run_started", "run_cancelled"]);
   });
 
+  it("records unavailable real-agent desktop mentions without launching adapters", async () => {
+    const fixture = await createFixture();
+    const context = createDesktopServiceContext(fixture.repositories);
+    const projects = createProjectService(context);
+    const review = createReviewService(context);
+    const memory = createMemoryService(context);
+    const runs = createRunService(context, {
+      reviewService: review,
+      memoryService: memory,
+      fakeDelayMs: 5
+    });
+    const before = await fs.readdir(fixture.projectRoot);
+    const project = await projects.open(fixture.projectRoot);
+
+    const run = await runs.createRun({
+      projectId: project.id,
+      prompt: "Compare desktop orchestration approaches.",
+      agentId: "codex",
+      contextMode: "auto"
+    });
+    const failed = await waitForRun(runs, run.id, "failed");
+    const after = await fs.readdir(fixture.projectRoot);
+
+    expect(after).toEqual(before);
+    expect(failed.agentId).toBe("codex");
+    expect(failed.events.map((event) => event.type)).toContain("run_failed");
+    expect(failed.summary).toContain("not wired yet");
+    await expect(review.getDiff(run.id)).resolves.toMatchObject({
+      changedFiles: [],
+      isPlaceholder: true
+    });
+  });
+
   it("validates IPC run creation and rejects repo_export delivery", async () => {
     const fixture = await createFixture();
     const context = createDesktopServiceContext(fixture.repositories);

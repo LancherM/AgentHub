@@ -46,28 +46,37 @@ repository export. Electron IPC registration stays in
 tested without loading Electron. Preload uses `contextBridge` rather than
 exposing `ipcRenderer`.
 
-The desktop run console now has a main-process `RunService` boundary for run
-creation, live event streaming, cancellation, and repository-backed review
-loading. Renderer components use only `window.agentHub.runs.create/list/get/
-cancel/onEvent`; the preload hides channel names and returns unsubscribe
+The desktop conversation console keeps the main-process `RunService` boundary
+for run creation, live event streaming, cancellation, and repository-backed
+review loading. Renderer components use only `window.agentHub.runs.create/list/
+get/cancel/onEvent`; the preload hides channel names and returns unsubscribe
 functions for live event listeners. IPC handlers validate inputs and manage
-per-window subscriptions, but do not own run lifecycle logic. The service maps
-desktop-facing agent IDs (`fake`, `codex`, `claude`) and run statuses
-(`queued`, `running`, `verifying`, `completed`, `failed`, `cancelled`) onto the
-existing core/SQLite contracts where possible. SQLite still stores the core
-run status enum, so the desktop-only `verifying` phase is represented by live
-run events while the persisted core run remains `running`; core `succeeded`
-is exposed to the desktop renderer as `completed`.
+per-window subscriptions, but do not own run lifecycle logic. The renderer adds
+thread and message view models over persisted task/run data, synthesizing
+existing runs into thread-shaped conversations and keeping new thread state
+renderer-local until a persistence slice is added. Run cards subscribe to the
+same `RunService` stream as the earlier run-detail view and open review data
+through an on-demand inspector instead of a permanent right-hand panel.
 
-Desktop Phase 2 execution is fake-agent only. The main process starts
+The service maps desktop-facing agent IDs (`fake`, `codex`, `claude`) and run
+statuses (`queued`, `running`, `verifying`, `completed`, `failed`,
+`cancelled`) onto the existing core/SQLite contracts where possible. SQLite
+still stores the core run status enum, so the desktop-only `verifying` phase
+is represented by live run events while the persisted core run remains
+`running`; core `succeeded` is exposed to the desktop renderer as `completed`.
+
+Desktop Phase 2 real execution is fake-agent only. The main process starts
 `apps/desktop/electron/services/fake-agent-runner.ts`, which emits semantic
 events over time and responds to `AbortController` cancellation. The runner
 does not read or write target repository files. `RunService` persists
 task/run rows, run events, simulated verification rows, and placeholder
 diff/risk review rows through the existing local repositories, then broadcasts
-each event through an in-memory emitter. Codex and Claude Code remain disabled
-in the renderer until real TaskRunner integration is wired behind the same IPC
-boundary.
+each event through an in-memory emitter. The renderer can mention `@codex` and
+`@claude` so multi-agent thread flows are visible, but those runs are safe
+main-process placeholders that fail with an explicit "not wired yet" event and
+do not invoke adapters, create worktrees, or modify repositories. Real Codex
+and Claude Code execution remains behind the same IPC boundary as follow-up
+TaskRunner integration.
 
 Desktop packaging is a local release concern layered over that shell. The
 workspace keeps Electron/Vite bundling in `apps/desktop`, then uses
@@ -319,14 +328,17 @@ accept, merge, branch delete, or push action.
 
 The first desktop runtime integration is deliberately narrow. `apps/desktop`
 uses SQLite-backed services for project registration, run listing/detail,
-review tabs, verification rows, risk reports, and memory proposal decisions.
-`runs.create` records a fake-agent-backed desktop run through repository
-interfaces, emits IPC run events, persists a placeholder diff artifact,
-persists a skipped verification row, and persists a low-risk report. It does not call
-TaskRunner yet, create worktrees, invoke Codex or Claude Code, run verification
-commands, export repository context, merge, push, or write files into the
-target repository. Real TaskRunner and adapter execution can be wired behind
-the same IPC/service interfaces in a later slice.
+inspector review tabs, verification rows, risk reports, and memory proposal
+decisions. `runs.create` records a desktop run through repository interfaces,
+emits IPC run events, persists a placeholder diff artifact, persists simulated
+or unavailable verification state, and persists a local review risk report.
+For `@fake`, the run streams semantic fake-agent events. For `@codex` and
+`@claude`, the run records a safe unavailable-adapter event instead of
+launching a process. It does not call TaskRunner yet, create worktrees, invoke
+Codex or Claude Code, run real verification commands, export repository
+context, merge, push, or write files into the target repository. Real
+TaskRunner and adapter execution can be wired behind the same IPC/service
+interfaces in a later slice.
 
 All adapters run against an isolated worktree and refuse to run when that
 directory is the original project root or when the generated task brief is
@@ -391,8 +403,9 @@ in the CI/CD path.
 
 Desktop is no longer architectural only. The first shell lives under
 `apps/desktop`, calls local services through Electron IPC, and renders projects,
-runs, diffs, verification, risk, and memory proposal data from local SQLite
-repositories. It does not add an API server, and its first run path records
-fake-agent-backed review rows only. Real TaskRunner, CodexAdapter, and
-ClaudeCodeAdapter execution remain follow-up desktop integration work behind
-the same IPC boundary.
+conversation threads, inline run cards, diffs, verification, risk, and memory
+proposal data from local SQLite repositories. It does not add an API server.
+Its first real streaming path remains fake-agent backed, while Codex and Claude
+mentions are represented by safe unavailable-adapter run records until real
+TaskRunner, CodexAdapter, and ClaudeCodeAdapter execution are wired behind the
+same IPC boundary.
