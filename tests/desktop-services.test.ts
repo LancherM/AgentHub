@@ -3,11 +3,17 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { createSqliteRepositories } from "@agent-hub/db";
-import { createDesktopServiceContext, createProjectService } from "../apps/desktop/electron/services/project-service";
+import {
+  createDesktopServiceContext,
+  createProjectService
+} from "../apps/desktop/electron/services/project-service";
 import { createReviewService } from "../apps/desktop/electron/services/review-service";
 import { createMemoryService } from "../apps/desktop/electron/services/memory-service";
 import { createRunService } from "../apps/desktop/electron/services/run-service";
-import { createIpcHandlers, IPC_CHANNELS } from "../apps/desktop/electron/ipc";
+import {
+  createIpcHandlers,
+  IPC_CHANNELS
+} from "../apps/desktop/electron/ipc-handlers";
 
 describe("desktop services", () => {
   it("registers a project and creates a fake desktop run without repository writes", async () => {

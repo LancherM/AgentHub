@@ -200,7 +200,10 @@ surface: projects and recent runs on the left, run timeline and composer in the
 center, and summary/diff/tests/risk/memory review tabs on the right. The
 renderer only calls the safe `window.agentHub` preload API. It has no direct
 Node.js, shell, filesystem, SQLite, or git access; privileged operations go
-through Electron main-process IPC in `apps/desktop/electron/ipc.ts`.
+through Electron main-process IPC registered in `apps/desktop/electron/ipc.ts`.
+The IPC handler factory is kept in `apps/desktop/electron/ipc-handlers.ts` so
+service-level validation remains testable in the root Vitest suite without
+loading Electron.
 
 The first desktop run path is intentionally fake-agent backed. It records
 SQLite task/run/event/artifact/verification/risk rows through the local

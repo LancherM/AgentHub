@@ -40,8 +40,10 @@ Current workspace boundaries:
 
 Desktop remains a thin local shell. It does not add a web server, login, cloud
 backend, remote execution path, automatic merge, automatic push, or automatic
-repository export. All Electron IPC handlers are registered from
-`apps/desktop/electron/ipc.ts`, and preload uses `contextBridge` rather than
+repository export. Electron IPC registration stays in
+`apps/desktop/electron/ipc.ts`, while the pure handler factory lives in
+`apps/desktop/electron/ipc-handlers.ts` so shared service validation can be
+tested without loading Electron. Preload uses `contextBridge` rather than
 exposing `ipcRenderer`.
 
 Child process environment policy is explicit by default. `ProcessRunner` and
