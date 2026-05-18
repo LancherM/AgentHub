@@ -6,6 +6,7 @@ import { createCliRuntime, main } from "@agent-hub/cli";
 import type { DiffCollectionResult, DiffCollectorService } from "@agent-hub/task-runner";
 import type { RiskReport } from "@agent-hub/core";
 import { createSqliteRepositories } from "@agent-hub/db";
+import { RiskReportGenerator, type RiskReportInput } from "@agent-hub/safety";
 import { SequenceIdGenerator, FixedClock } from "@agent-hub/task-runner";
 import { VerificationRunner } from "@agent-hub/task-runner";
 import type {
@@ -774,6 +775,81 @@ describe("CLI", () => {
     expect(envDebugOutput.join("")).toContain("debug:");
   });
 
+  it("redacts debug diff previews when sensitive paths are changed", async () => {
+    const projectRoot = await createTestDirectory("cli-debug-sensitive-project");
+    const runRoot = path.join(await createTestDirectory("cli-debug-sensitive-runs"), "runs");
+    const runtime = createCliRuntime({
+      storageMode: "memory",
+      defaultRunRoot: runRoot,
+      workspaceManager: new TestWorkspaceManager(runRoot),
+      diffCollector: new StaticDiffCollector(
+        "diff --git a/.env.local b/.env.local\n+API_TOKEN=secret-value\n",
+        [{ path: ".env.local", status: "untracked" }],
+        [".env.local: untracked"]
+      ),
+      verificationRunner: new VerificationRunner(new MockShellExecutor()),
+      idGenerator: new SequenceIdGenerator(),
+      clock: new FixedClock("2026-01-01T00:00:00.000Z")
+    });
+    const output: string[] = [];
+    const errors: string[] = [];
+    const io = {
+      stdout: { write: (chunk: string) => { output.push(chunk); return true; } },
+      stderr: { write: (chunk: string) => { errors.push(chunk); return true; } }
+    };
+
+    await expect(
+      main(["--debug", "run", "@fake", "debug sensitive diff"], io, projectRoot, runtime)
+    ).resolves.toBe(0);
+
+    const rendered = output.join("");
+    expect(errors.join("")).toBe("");
+    expect(rendered).toContain("risk: blocking");
+    expect(rendered).toContain("diff_preview:");
+    expect(rendered).toContain("redacted: sensitive file path changed");
+    expect(rendered).not.toContain("API_TOKEN=secret-value");
+  });
+
+  it("redacts debug diff previews when risk report generation fails", async () => {
+    const projectRoot = await createTestDirectory("cli-debug-sensitive-risk-failure-project");
+    const runRoot = path.join(
+      await createTestDirectory("cli-debug-sensitive-risk-failure-runs"),
+      "runs"
+    );
+    const runtime = createCliRuntime({
+      storageMode: "memory",
+      defaultRunRoot: runRoot,
+      workspaceManager: new TestWorkspaceManager(runRoot),
+      diffCollector: new StaticDiffCollector(
+        "diff --git a/.env.local b/.env.local\n+API_TOKEN=secret-value\n",
+        [{ path: ".env.local", status: "untracked" }],
+        [".env.local: untracked"]
+      ),
+      verificationRunner: new VerificationRunner(new MockShellExecutor()),
+      riskReportGenerator: new ThrowingRiskReportGenerator(),
+      idGenerator: new SequenceIdGenerator(),
+      clock: new FixedClock("2026-01-01T00:00:00.000Z")
+    });
+    const output: string[] = [];
+    const errors: string[] = [];
+    const io = {
+      stdout: { write: (chunk: string) => { output.push(chunk); return true; } },
+      stderr: { write: (chunk: string) => { errors.push(chunk); return true; } }
+    };
+
+    await expect(
+      main(["--debug", "run", "@fake", "debug sensitive diff"], io, projectRoot, runtime)
+    ).resolves.toBe(1);
+
+    const rendered = output.join("");
+    expect(errors.join("")).toBe("");
+    expect(rendered).toContain("risk: not available");
+    expect(rendered).toContain("risk report generation failed: risk backend unavailable");
+    expect(rendered).toContain("diff_preview:");
+    expect(rendered).toContain("redacted: sensitive file path changed");
+    expect(rendered).not.toContain("API_TOKEN=secret-value");
+  });
+
   it("supports memory propose, list, approve, and reject without injecting rejected memory", async () => {
     const projectRoot = await createTestDirectory("cli-memory-project");
     const databasePath = path.join(
@@ -1167,23 +1243,35 @@ class TestWorkspaceManager implements WorkspaceManager {
 }
 
 class StaticDiffCollector implements DiffCollectorService {
-  constructor(private readonly diffText = "") {}
+  constructor(
+    private readonly diffText = "",
+    private readonly changedFiles: DiffCollectionResult["changedFiles"] = [
+      { path: "fake-agent-output.md", status: "untracked" }
+    ],
+    private readonly fileSummaries = ["fake-agent-output.md: untracked"]
+  ) {}
 
   async collect(input: { workspacePath: string }): Promise<DiffCollectionResult> {
     return {
       ok: true,
       workspacePath: input.workspacePath,
       isClean: false,
-      changedFiles: [{ path: "fake-agent-output.md", status: "untracked" }],
+      changedFiles: this.changedFiles,
       stat: {
-        filesChanged: 1,
+        filesChanged: this.changedFiles.length,
         insertions: 1,
         deletions: 0,
-        text: "1 file changed, 1 insertion(+)"
+        text: `${this.changedFiles.length} file changed, 1 insertion(+)`
       },
       diff: this.diffText,
-      fileSummaries: ["fake-agent-output.md: untracked"],
+      fileSummaries: this.fileSummaries,
       commands: []
     };
+  }
+}
+
+class ThrowingRiskReportGenerator extends RiskReportGenerator {
+  override generate(_input: RiskReportInput): never {
+    throw new Error("risk backend unavailable");
   }
 }

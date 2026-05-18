@@ -248,8 +248,9 @@ content to the Agent Hub-owned context store under `memory/approved.md`.
 Approved-memory writeback uses the same context store path resolution as
 context init/build, so the default destination is app data rather than the
 project repository. The context compiler reads approved memory only from that
-file provider; proposed and rejected database rows are not injected into context
-packs.
+file provider and treats the default `# Approved Memory` heading as an empty
+placeholder; proposed and rejected database rows are not injected, and
+placeholder content does not become a context-pack memory section.
 
 Comparison reports are generated from persisted run data rather than process
 memory or UI state. The CLI loads each selected run, diff artifacts or legacy
@@ -273,7 +274,10 @@ files get synthetic patch content. Before reading untracked files, the collector
 uses `lstat` to avoid dereferencing symlinks, records symlink targets via
 `readlink`, verifies readable real paths remain inside the isolated worktree,
 and omits synthetic content for oversized files. Binary files are represented
-with metadata such as binary status and byte size.
+with metadata such as binary status and byte size. CLI debug rendering redacts
+the raw diff preview when the risk report contains a blocking sensitive-path
+finding, or when the diff changed-file metadata itself matches a sensitive path
+before a risk report is available.
 
 Shell usage is limited to `ShellExecutor` and `ProcessRunner` implementations.
 Git worktree, git diff, verification commands, and real agent processes use
