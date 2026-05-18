@@ -27,7 +27,8 @@ Current workspace boundaries:
   repository interfaces.
 - `packages/task-runner`: worktree management, shell execution, git safety,
   diff collection, verification command execution, risk report orchestration,
-  and task-run orchestration.
+  persisted run review aggregation, comparison summary generation, and task-run
+  orchestration.
 - `apps/cli`: command parsing, interactive console input, command dispatch,
   output rendering, debug rendering, and manual run-event recording. The CLI is
   thin over local package APIs and does not own orchestration logic.
@@ -94,6 +95,13 @@ runner behavior. `run event add` loads the target run through
 the event through `RunEventRepository`, and derives the next sequence number
 from existing events for that run. This keeps manual notes in the same ordered
 event stream as adapter-captured output while avoiding any task execution.
+
+Persisted run review aggregation lives in `packages/task-runner`. The CLI
+parses `runs events <run-id>` and `runs diff <run-id> [--stat|--patch]`, then
+delegates repository-backed loading of ordered events, latest `git_diff`
+artifacts, changed-file metadata, diff stats, and patch truncation to the local
+package. This keeps review commands read-only and process-independent while
+avoiding comparison or artifact aggregation logic in the CLI layer.
 
 Safety review is separated from report rendering. `SafetyScanner` scans the
 collected diff, changed-file metadata, verification command text, and captured
@@ -252,12 +260,13 @@ file provider; proposed and rejected database rows are not injected into context
 packs.
 
 Comparison reports are generated from persisted run data rather than process
-memory or UI state. The CLI loads each selected run, diff artifacts or legacy
-metadata, verification rows, and latest risk reports, then writes a textual
-summary to `comparison_reports`. The summary includes changed-file overlap,
-per-run diff stats, verification summaries, per-command verification outcomes,
-failed checks, risk levels, risk factors, and summary tradeoffs. Comparison is
-review-only and performs no accept, merge, branch delete, or push action.
+memory or UI state. `packages/task-runner` loads each selected run, diff
+artifacts or legacy metadata, verification rows, and latest risk reports, then
+returns a textual summary that the CLI stores in `comparison_reports`. The
+summary includes changed-file overlap, per-run diff stats, verification
+summaries, per-command verification outcomes, failed checks, risk levels, risk
+factors, and summary tradeoffs. Comparison is review-only and performs no
+accept, merge, branch delete, or push action.
 
 All adapters run against an isolated worktree and refuse to run when that
 directory is the original project root or when the generated task brief is

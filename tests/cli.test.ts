@@ -203,6 +203,120 @@ describe("CLI", () => {
     expect(queryOutput.join("")).toContain("acceptance:");
   });
 
+  it("reviews persisted run events and diff artifacts across SQLite runtimes", async () => {
+    const projectRoot = await createTestDirectory("cli-review-project");
+    const databasePath = path.join(
+      await createTestDirectory("cli-review-db"),
+      "agent-hub.sqlite"
+    );
+    const repositories = createSqliteRepositories({ databasePath });
+    const longPatch = `diff --git a/src/a.ts b/src/a.ts\n${"x".repeat(12_020)}`;
+    await repositories.projectRepository.create({
+      id: "project_review",
+      name: "Review Project",
+      rootPath: projectRoot,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z"
+    });
+    await repositories.taskRepository.create({
+      id: "task_review",
+      projectId: "project_review",
+      title: "Review persisted evidence",
+      status: "open",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z"
+    });
+    await repositories.taskRunRepository.create({
+      id: "run_review",
+      taskId: "task_review",
+      agentKind: "fake",
+      status: "succeeded",
+      createdAt: "2026-01-01T00:00:01.000Z",
+      updatedAt: "2026-01-01T00:00:01.000Z"
+    });
+    await repositories.runEventRepository.createMany([
+      {
+        id: "event_review_1",
+        taskRunId: "run_review",
+        sequence: 1,
+        type: "exit",
+        message: "done",
+        metadata: { exitCode: 0 },
+        createdAt: "2026-01-01T00:00:03.000Z"
+      },
+      {
+        id: "event_review_0",
+        taskRunId: "run_review",
+        sequence: 0,
+        type: "message",
+        message: "agent output\nsecond line",
+        metadata: {},
+        createdAt: "2026-01-01T00:00:02.000Z"
+      }
+    ]);
+    await repositories.runArtifactRepository.create({
+      id: "artifact_review_diff",
+      taskRunId: "run_review",
+      kind: "git_diff",
+      content: longPatch,
+      metadata: {
+        changedFiles: [{ path: "src/a.ts", status: "modified" }],
+        stat: {
+          filesChanged: 1,
+          insertions: 2,
+          deletions: 1,
+          text: "1 file changed, 2 insertions(+), 1 deletion(-)"
+        },
+        fileSummaries: ["src/a.ts: modified"]
+      },
+      createdAt: "2026-01-01T00:00:04.000Z"
+    });
+
+    const eventOutput: string[] = [];
+    const statOutput: string[] = [];
+    const patchOutput: string[] = [];
+    const errors: string[] = [];
+    const eventIo = {
+      stdout: { write: (chunk: string) => { eventOutput.push(chunk); return true; } },
+      stderr: { write: (chunk: string) => { errors.push(chunk); return true; } }
+    };
+    const statIo = {
+      stdout: { write: (chunk: string) => { statOutput.push(chunk); return true; } },
+      stderr: { write: (chunk: string) => { errors.push(chunk); return true; } }
+    };
+    const patchIo = {
+      stdout: { write: (chunk: string) => { patchOutput.push(chunk); return true; } },
+      stderr: { write: (chunk: string) => { errors.push(chunk); return true; } }
+    };
+
+    await expect(
+      main(["--db", databasePath, "runs", "events", "run_review"], eventIo, projectRoot)
+    ).resolves.toBe(0);
+    await expect(
+      main(["--db", databasePath, "runs", "diff", "run_review", "--stat"], statIo, projectRoot)
+    ).resolves.toBe(0);
+    await expect(
+      main(["--db", databasePath, "runs", "diff", "run_review", "--patch"], patchIo, projectRoot)
+    ).resolves.toBe(0);
+
+    const events = eventOutput.join("");
+    expect(errors.join("")).toBe("");
+    expect(events).toContain("run_id: run_review");
+    expect(events).toContain("events: 2");
+    expect(events.indexOf("0\t2026-01-01T00:00:02.000Z\tmessage")).toBeLessThan(
+      events.indexOf("1\t2026-01-01T00:00:03.000Z\texit")
+    );
+    expect(events).toContain("agent output\\nsecond line");
+    expect(statOutput.join("")).toContain("files_changed: 1");
+    expect(statOutput.join("")).toContain("insertions: 2");
+    expect(statOutput.join("")).toContain("- src/a.ts");
+    expect(statOutput.join("")).toContain("- src/a.ts: modified");
+    expect(patchOutput.join("")).toContain("patch_bytes: ");
+    expect(patchOutput.join("")).toContain("truncated: true");
+    expect(patchOutput.join("")).toContain("diff --git a/src/a.ts b/src/a.ts");
+    expect(patchOutput.join("")).toContain("rerun with --full");
+  });
+
   it("supports --db project, task, and registered fake run commands across runtimes", async () => {
     const projectRoot = await createTestDirectory("cli-registered-project");
     const runRoot = path.join(await createTestDirectory("cli-registered-runs"), "runs");
