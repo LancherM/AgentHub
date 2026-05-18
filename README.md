@@ -2,14 +2,15 @@
 
 Agent Hub is a local-first, CLI-first developer tool for orchestrating coding
 agents in isolated git worktrees. The current implementation uses the imported
-workspace shape: `apps/cli` is a thin CLI over local packages in `packages/`.
-The desktop shell is intentionally deferred until the CLI, core APIs, and
-package boundaries are stable.
+workspace shape: `apps/cli` is a thin CLI over local packages in `packages/`,
+and `apps/desktop` is the first Electron + React shell over the same local
+storage and review services.
 
 ## Repository Layout
 
 ```text
 apps/cli                 CLI parser, interactive shell, command rendering
+apps/desktop             Electron + React desktop shell
 packages/shared          Shared types, enums, and utility contracts
 packages/core            Domain validation and repository interfaces
 packages/db              SQLite schema, migrations, and repositories
@@ -20,9 +21,10 @@ packages/safety          Dangerous-command, sensitive-path, and risk scanning
 tests                    Cross-package Vitest coverage
 ```
 
-There is no desktop app yet. Future desktop work should live under
-`apps/desktop` and call the same local core/task-runner APIs rather than adding
-a web server or duplicating orchestration logic.
+The desktop app is local-first. The renderer only calls the safe
+`window.agentHub` preload API; privileged local operations go through Electron
+main-process IPC. It does not add a web server, login, cloud sync, remote
+execution, automatic merge, automatic push, or automatic pull request behavior.
 
 ## Commands
 
@@ -55,6 +57,8 @@ agent-hub [--db <path>] compare --task-id <task-id> --baseline <run-id> --candid
 
 ## Current Capabilities
 
+- Provides a first desktop shell with project/run navigation, a run timeline,
+  New Run modal, and Summary/Diff/Tests/Risk/Memory review tabs.
 - Uses SQLite by default for local project, task, run, event, artifact,
   verification, risk, memory, comparison, skill, and settings persistence.
 - Keeps in-memory repositories available for injected tests and focused runner
@@ -80,7 +84,9 @@ agent-hub [--db <path>] compare --task-id <task-id> --baseline <run-id> --candid
 
 ## Current Gaps
 
-- Desktop app.
+- Desktop TaskRunner integration for real Codex/Claude/fake execution,
+  streaming, cancellation, verification configuration, retained-worktree diff
+  review, and approved-memory writeback confirmation.
 - Automatic memory proposal generation from completed runs.
 - Richer comparison scoring beyond the persisted textual summary.
 
@@ -99,4 +105,10 @@ If global `pnpm` is unavailable, use the repo-local binary:
 ./node_modules/.bin/pnpm typecheck
 ./node_modules/.bin/pnpm test
 ./node_modules/.bin/pnpm lint
+```
+
+Run the desktop shell locally with:
+
+```sh
+./node_modules/.bin/pnpm --filter desktop dev
 ```

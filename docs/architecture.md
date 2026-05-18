@@ -334,13 +334,13 @@ rejection is represented as a failed verification command, and shell results
 carry timeout and signal metadata so callers can distinguish command failures
 from process termination.
 
-The physical package split is present, but it is still an MVP boundary rather
-than a desktop platform boundary. Cross-package contracts flow through
-`packages/shared` and `packages/core`; task-runner consumes context compiler,
-agent adapters, safety, and core repositories; apps/cli calls the local package
-APIs instead of duplicating orchestration. Future restructuring should preserve
-that direction and keep desktop work separate until these boundaries remain
-stable under feature work.
+The physical package split is present and now includes both user-facing app
+packages. Cross-package contracts flow through `packages/shared` and
+`packages/core`; task-runner consumes context compiler, agent adapters, safety,
+and core repositories; `apps/cli` and `apps/desktop` call local package APIs or
+main-process services instead of duplicating orchestration. Future
+restructuring should preserve that direction and keep desktop orchestration
+logic outside the renderer.
 
 Repository CI/CD lives in `.github/workflows/ci-cd.yml` and stays outside the
 Agent Hub runtime. The workflow installs the pinned pnpm and Node versions from
@@ -354,8 +354,10 @@ extraction. Release publishing uses the repository-scoped `GITHUB_TOKEN` with
 external backend, custom secret, remote task execution, or automatic code push
 in the CI/CD path.
 
-Desktop preparation remains architectural only. The future desktop app should
-live under `apps/desktop`, call local core/task-runner APIs through Electron
-IPC or Tauri commands, and render projects, tasks, runs, diffs, verification,
-risk, memory, and comparison data from local repositories. No API server or
-desktop UI implementation is present in this slice.
+Desktop is no longer architectural only. The first shell lives under
+`apps/desktop`, calls local services through Electron IPC, and renders projects,
+runs, diffs, verification, risk, and memory proposal data from local SQLite
+repositories. It does not add an API server, and its first run path records
+fake-agent-backed review rows only. Real TaskRunner, CodexAdapter, and
+ClaudeCodeAdapter execution remain follow-up desktop integration work behind
+the same IPC boundary.

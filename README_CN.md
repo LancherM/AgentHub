@@ -4,13 +4,15 @@
 
 Agent Hub 是一个本地优先、CLI 优先的开发者工具，用于在隔离的 Git
 worktree 中编排 Codex、Claude Code 等编码代理。当前实现采用导入规格中的
-workspace 形态：`apps/cli` 是薄 CLI，底层复用 `packages/` 中的本地核心包。
-桌面端 shell 仍然延后，等 CLI、核心 API 和包边界稳定后再实现。
+workspace 形态：`apps/cli` 是薄 CLI，底层复用 `packages/` 中的本地核心包；
+`apps/desktop` 是第一版 Electron + React 桌面 shell，复用同一套本地存储和
+review 服务。
 
 ## 仓库结构
 
 ```text
 apps/cli                 CLI 解析、交互式 shell、命令输出渲染
+apps/desktop             Electron + React 桌面 shell
 packages/shared          共享类型、枚举和工具契约
 packages/core            领域校验和仓储接口
 packages/db              SQLite schema、迁移和仓储实现
@@ -21,8 +23,9 @@ packages/safety          危险命令、敏感路径和风险扫描
 tests                    跨包 Vitest 覆盖
 ```
 
-当前还没有桌面应用。未来桌面端应放在 `apps/desktop`，并调用同一套本地
-core/task-runner API；不要因此引入 Web 服务器或复制编排逻辑。
+桌面应用保持本地优先。renderer 只能调用安全的 `window.agentHub` preload API；
+所有有权限的本地操作都必须经过 Electron main process IPC。桌面端不引入 Web
+服务器、登录、云同步、远程执行、自动 merge、自动 push 或自动 PR。
 
 ## 命令
 
@@ -42,6 +45,8 @@ agent-hub run [--repo <path>] [--workspace-base <path>] [--retain-on-failure] "@
 agent-hub [--db <path>] run event add --run-id <run-id> --type <type> --message <message>
 agent-hub tasks list
 agent-hub runs list
+agent-hub runs events <run-id>
+agent-hub runs diff <run-id> [--stat|--patch] [--full]
 agent-hub runs show <run-id>
 agent-hub risks show <run-id>
 agent-hub [--db <path>] memory list --project-id <project-id>
@@ -53,6 +58,8 @@ agent-hub [--db <path>] compare --task-id <task-id> --baseline <run-id> --candid
 
 ## 当前能力
 
+- 提供第一版桌面 shell，包括 project/run 导航、run timeline、New Run modal，
+  以及 Summary/Diff/Tests/Risk/Memory review tabs。
 - 默认使用 SQLite 在本地持久化 project、task、run、event、artifact、
   verification、risk、memory、comparison、skill 和 settings。
 - 保留内存仓储，便于注入式测试和聚焦的 runner 验证。
@@ -70,7 +77,8 @@ agent-hub [--db <path>] compare --task-id <task-id> --baseline <run-id> --candid
 
 ## 当前缺口
 
-- 桌面应用。
+- 桌面端接入真实 TaskRunner、Codex/Claude/fake 执行、流式事件、取消、
+  验证配置、保留 worktree 的 diff review，以及 approved-memory 写回确认。
 - 从已完成 run 自动生成 memory proposal。
 - 比当前持久化文本 summary 更丰富的 comparison scoring。
 
@@ -89,4 +97,10 @@ pnpm build
 ./node_modules/.bin/pnpm typecheck
 ./node_modules/.bin/pnpm test
 ./node_modules/.bin/pnpm lint
+```
+
+本地运行桌面 shell：
+
+```sh
+./node_modules/.bin/pnpm --filter desktop dev
 ```

@@ -289,5 +289,5 @@ service or change Agent Hub's local-first product model.
 
 Deferred product capabilities include richer Codex/Claude structured event
 mapping, automatic memory proposal generation from completed runs, richer
-comparison scoring, and the desktop shell after the CLI/core/package
-boundaries are stable.
+comparison scoring, and real desktop TaskRunner/adapter execution beyond the
+current fake-agent-backed desktop run path.
