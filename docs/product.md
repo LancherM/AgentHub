@@ -168,9 +168,9 @@ The memory workflow is explicit and user-approved. `memory propose` creates a
 SQLite memory item in `proposed` state, `memory list` shows project memory
 items, `memory approve` marks an item approved and appends it to the Agent
 Hub-owned context store at `memory/approved.md`, and `memory reject` marks it
-rejected. Context builds read approved memory only from the context store, so
-proposed and rejected SQLite memory items are not injected into future task
-briefs.
+rejected. Context builds read approved memory only from the context store and
+ignore the default `# Approved Memory` placeholder, so proposed, rejected, and
+empty placeholder memory items are not injected into future task briefs.
 
 The compare workflow generates a persisted comparison report for two runs of a
 task. `compare --task-id ... --baseline ... --candidate ...` compares changed

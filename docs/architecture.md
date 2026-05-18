@@ -248,8 +248,9 @@ content to the Agent Hub-owned context store under `memory/approved.md`.
 Approved-memory writeback uses the same context store path resolution as
 context init/build, so the default destination is app data rather than the
 project repository. The context compiler reads approved memory only from that
-file provider; proposed and rejected database rows are not injected into context
-packs.
+file provider and treats the default `# Approved Memory` heading as an empty
+placeholder; proposed and rejected database rows are not injected, and
+placeholder content does not become a context-pack memory section.
 
 Comparison reports are generated from persisted run data rather than process
 memory or UI state. The CLI loads each selected run, diff artifacts or legacy
