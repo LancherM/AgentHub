@@ -185,7 +185,7 @@ pnpm lint
 ### 6. Parse skill metadata and warn on malformed skills
 
 Status: done
-Done: 2026-05-19 via codex/todo-6-skill-metadata; PR: pending
+Done: 2026-05-19 via codex/todo-6-skill-metadata; PR: https://github.com/LancherM/AgentHub/pull/45
 
 Prompt:
 
