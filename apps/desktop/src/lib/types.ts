@@ -1,38 +1,140 @@
-export type AgentKind = "fake" | "codex" | "claude-code";
+export type AgentId = "fake" | "codex" | "claude";
+export type AgentKind = AgentId;
 export type MemoryCategory =
   | "project_fact"
   | "workflow_rule"
   | "user_preference"
   | "temporary_note";
-export type RiskLevel = "low" | "medium" | "high" | "blocking";
+export type ReviewRiskLevel =
+  | "none"
+  | "low"
+  | "medium"
+  | "high"
+  | "blocking"
+  | "unknown";
+export type RiskSeverity = "low" | "medium" | "high" | "blocking";
 export type RunEventType =
-  | "stdout"
-  | "stderr"
-  | "message"
-  | "status"
-  | "error"
-  | "exit";
-export type TaskRunStatus =
+  | "run_started"
+  | "context_compiled"
+  | "agent_step"
+  | "agent_output"
+  | "verification_started"
+  | "verification_finished"
+  | "run_completed"
+  | "run_failed"
+  | "run_cancelled";
+export type RunStatus =
   | "queued"
   | "running"
-  | "succeeded"
+  | "verifying"
+  | "completed"
   | "failed"
   | "cancelled";
-export type VerificationStatus = "passed" | "failed" | "skipped";
+export type TaskRunStatus = RunStatus;
+export type VerificationStatus = "passed" | "failed" | "skipped" | "unknown";
+export type EventPhase =
+  | "lifecycle"
+  | "context"
+  | "agent"
+  | "logs"
+  | "verification"
+  | "final";
 
-export interface RiskFinding {
-  level: RiskLevel;
-  summary: string;
-  details?: string;
-}
+export type ContextMode = "auto" | "minimal" | "full" | "workspace";
+export type RunInspectorTab =
+  | "summary"
+  | "diff"
+  | "tests"
+  | "risk"
+  | "memory"
+  | "logs";
 
-export type ContextMode = "auto" | "minimal" | "full";
+export type ReviewStatus = "pending" | "accepted" | "rejected";
+export type ChangedFileStatus =
+  | "added"
+  | "modified"
+  | "deleted"
+  | "renamed"
+  | "unknown";
+export type RiskCategory =
+  | "auth"
+  | "security"
+  | "data"
+  | "migration"
+  | "dependency"
+  | "test"
+  | "config"
+  | "generated"
+  | "large_change"
+  | "unknown";
+export type MemoryProposalSource = "run" | "diff" | "verification" | "manual";
+export type MemoryProposalStatus = "pending" | "approved" | "ignored";
+export type RunLogLevel = "info" | "stdout" | "stderr" | "error" | "debug";
 
 export interface ProjectSummary {
   id: string;
   name: string;
   rootPath: string;
   updatedAt: string;
+}
+
+export interface ThreadSummary {
+  id: string;
+  title: string;
+  projectId?: string;
+  createdAt: string;
+  updatedAt: string;
+  lastMessagePreview?: string;
+  activeRunCount?: number;
+  runCount?: number;
+}
+
+export interface ThreadDetail {
+  id: string;
+  title: string;
+  projectId?: string;
+  createdAt: string;
+  updatedAt: string;
+  messages: ThreadMessage[];
+}
+
+interface BaseThreadMessage {
+  id: string;
+  threadId: string;
+  createdAt: string;
+}
+
+export interface UserMessage extends BaseThreadMessage {
+  type: "user";
+  text: string;
+  mentions: AgentId[];
+}
+
+export interface AgentRunMessage extends BaseThreadMessage {
+  type: "agent_run";
+  runId: string;
+  agentId: AgentId;
+  status: RunStatus;
+}
+
+export interface SystemMessage extends BaseThreadMessage {
+  type: "system";
+  text: string;
+}
+
+export type ThreadMessage = UserMessage | AgentRunMessage | SystemMessage;
+
+export interface CreateThreadInput {
+  projectId?: string;
+  title?: string;
+}
+
+export interface SendThreadMessageInput {
+  threadId?: string;
+  projectId?: string;
+  text: string;
+  contextMode?: ContextMode;
+  agents?: AgentId[];
 }
 
 export interface RunSummary {
@@ -42,10 +144,19 @@ export interface RunSummary {
   taskId: string;
   title: string;
   taskPrompt: string;
-  agentKind: AgentKind;
-  status: TaskRunStatus;
+  agentId: AgentId;
+  status: RunStatus;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface RunEventPayload extends Record<string, unknown> {
+  message?: string;
+  phase?: EventPhase;
+  status?: RunStatus;
+  command?: string;
+  passed?: boolean;
+  summary?: string;
 }
 
 export interface RunEvent {
@@ -53,9 +164,8 @@ export interface RunEvent {
   runId: string;
   sequence: number;
   type: RunEventType;
-  message: string;
-  metadata: Record<string, unknown>;
-  createdAt: string;
+  timestamp: string;
+  payload: RunEventPayload;
 }
 
 export interface RunDetail extends RunSummary {
@@ -71,65 +181,107 @@ export interface CreateRunInput {
   projectId: string;
   prompt: string;
   title?: string;
-  agentKind: AgentKind;
+  agentId: AgentId;
   contextMode: ContextMode;
   deliveryMode?: "runtime_injection" | "worktree_overlay";
 }
 
-export interface DiffSummary {
+export interface ReviewSummary {
   runId: string;
-  changedFiles: string[];
-  fileSummaries: string[];
-  stat: {
-    filesChanged: number;
-    insertions: number;
-    deletions: number;
-    text?: string;
-  };
-  unifiedDiff: string;
-  truncated: boolean;
-  isPlaceholder: boolean;
+  agentId: AgentId;
+  status: RunStatus;
+  task: string;
+  summary: string;
+  startedAt?: string;
+  completedAt?: string;
+  durationMs?: number;
+  changedFileCount: number;
+  additions: number;
+  deletions: number;
+  verificationStatus: VerificationStatus;
+  riskLevel: ReviewRiskLevel;
+  memoryProposalCount: number;
+  acceptedAt?: string;
+  rejectedAt?: string;
+  reviewStatus: ReviewStatus;
+  message?: string;
 }
 
-export interface VerificationItem {
-  id: string;
+export interface ChangedFile {
+  path: string;
+  status: ChangedFileStatus;
+  additions: number;
+  deletions: number;
+  isGenerated?: boolean;
+  isTest?: boolean;
+  isConfig?: boolean;
+  isMigration?: boolean;
+}
+
+export interface DiffSummary {
+  runId: string;
+  baseRef?: string;
+  headRef?: string;
+  files: ChangedFile[];
+  patch?: string;
+  empty: boolean;
+  message?: string;
+  truncated?: boolean;
+  originalPatchBytes?: number;
+  patchBytes?: number;
+}
+
+export interface VerificationCommandResult {
   command: string;
-  status: VerificationStatus;
+  status: Exclude<VerificationStatus, "unknown">;
   exitCode?: number;
+  durationMs?: number;
   stdout?: string;
   stderr?: string;
-  createdAt: string;
 }
 
 export interface VerificationReport {
   runId: string;
   status: VerificationStatus;
-  summary: string;
-  results: VerificationItem[];
+  commands: VerificationCommandResult[];
+  message?: string;
 }
 
 export interface RiskReport {
-  id: string;
   runId: string;
-  level: RiskLevel;
-  summary: string;
-  changedFiles: string[];
-  verificationSummary: string;
-  failedChecks: string[];
-  riskFactors: string[];
-  manualReviewChecklist: string[];
-  acceptanceRecommendation: string;
+  level: ReviewRiskLevel;
   findings: RiskFinding[];
-  createdAt: string;
+  generatedAt: string;
+  message?: string;
+}
+
+export interface RiskFinding {
+  id: string;
+  severity: RiskSeverity;
+  title: string;
+  description: string;
+  evidence?: string;
+  filePath?: string;
+  category: RiskCategory;
 }
 
 export interface MemoryProposal {
   id: string;
-  projectId: string;
-  taskId?: string;
-  category: MemoryCategory;
+  runId: string;
   content: string;
+  rationale?: string;
+  source: MemoryProposalSource;
+  status: MemoryProposalStatus;
   createdAt: string;
+  decidedAt?: string;
+}
+
+export interface RunLog {
+  id: string;
+  runId: string;
+  timestamp: string;
+  level: RunLogLevel;
+  message: string;
 }
 
 export type Unsubscribe = () => void;
@@ -146,13 +298,25 @@ export interface AgentHubApi {
     cancel(runId: string): Promise<void>;
     onEvent(runId: string, callback: (event: RunEvent) => void): Unsubscribe;
   };
+  threads: {
+    list(): Promise<ThreadSummary[]>;
+    create(input?: CreateThreadInput): Promise<ThreadSummary>;
+    get(threadId: string): Promise<ThreadDetail>;
+    sendMessage(input: SendThreadMessageInput): Promise<ThreadDetail>;
+  };
   review: {
+    getSummary(runId: string): Promise<ReviewSummary>;
     getDiff(runId: string): Promise<DiffSummary>;
     getRisk(runId: string): Promise<RiskReport>;
     getVerification(runId: string): Promise<VerificationReport>;
+    getLogs(runId: string): Promise<RunLog[]>;
+    accept(runId: string): Promise<ReviewSummary>;
+    reject(runId: string, reason?: string): Promise<ReviewSummary>;
+    refresh(runId: string): Promise<ReviewSummary>;
   };
   memory: {
     listProposals(runId: string): Promise<MemoryProposal[]>;
+    generateProposalsForRun(runId: string): Promise<MemoryProposal[]>;
     approve(ids: string[]): Promise<void>;
     ignore(ids: string[]): Promise<void>;
   };

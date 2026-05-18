@@ -46,6 +46,83 @@ repository export. Electron IPC registration stays in
 tested without loading Electron. Preload uses `contextBridge` rather than
 exposing `ipcRenderer`.
 
+The desktop conversation console keeps the main-process `RunService` boundary
+for run creation, live event streaming, cancellation, and repository-backed
+review loading. Renderer components call `window.agentHub.projects.list/open`
+for local project registration, `window.agentHub.threads.*` for conversation
+orchestration, and `window.agentHub.runs.get/cancel/onEvent` for inline card
+hydration, cancellation, and live stream subscriptions; the preload hides
+channel names and returns unsubscribe functions for live event listeners. IPC
+handlers validate inputs and manage per-window subscriptions, but do not own
+run lifecycle logic. If the project list is empty, renderer onboarding forms
+submit a local path through the same project-open IPC service before creating a
+starter thread through the thread service.
+
+Desktop review inspection is split across narrow Electron main-process
+services. `ReviewService` aggregates run summary, verification, logs, memory
+proposal counts, local accept/reject decision artifacts, and the latest
+persisted TaskRunner safety report when one exists. Persisted non-placeholder
+risk reports take precedence over the deterministic desktop fallback, including
+`blocking` levels and mapped finding/risk-factor evidence, so desktop review
+does not downgrade scanner output from sensitive path changes or dangerous
+instructions. `DiffService` uses persisted diff artifacts when available and
+can read retained worktrees with read-only Git commands through
+`DiffCollector`, `NodeShellExecutor`, and safe Git configuration. `RiskService`
+is deterministic and evidence based; it classifies changed paths, verification
+failures, large diffs, dependency/config changes, generated files, and
+source-without-tests conditions without calling an LLM when no persisted
+safety report is available. `MemoryService` lists and generates a small number
+of conservative pending proposals, then maps approve/ignore to the existing
+local memory item states. All of these services sit behind preload IPC methods,
+so the renderer still has no Node.js, filesystem, SQLite, shell, child-process,
+or Git access.
+
+Run review decisions are stored as local `run_artifacts` entries of kind
+`review_decision`. They are not execution status transitions and they do not
+mutate branches, merge output, push code, clean worktrees, delete files, or
+write repository-side context files. This keeps Phase 4 review auditable while
+leaving any explicit apply/merge workflow for a later phase.
+
+`apps/desktop/electron/services/thread-service.ts` is the Phase 3 conversation
+facade. It keeps thread/message state in an isolated in-memory store with TODO
+markers around the persistence boundary, synthesizes existing SQLite-backed
+runs into thread-shaped conversations on startup, parses safe `@fake`,
+`@codex`, and `@claude` mentions, and implements `sendMessage` by appending one
+user message, creating one run per selected agent through `RunService`, and
+appending one agent-run message per run. Run cards subscribe to the same
+`RunService` stream as the earlier run-detail view and open review data through
+an on-demand inspector instead of a permanent right-hand panel.
+
+`docs/multiturn-conversation-prompts.md` defines the staged architecture route
+for replacing that Phase 3 facade with real multi-turn support. The target
+separates persisted thread/message repositories from task runs, adds a bounded
+conversation context builder, and persists per-run context snapshots as audit
+artifacts. Project context, thread context, current-turn context, and run
+context remain distinct layers so thread-local decisions do not automatically
+promote into project approved memory.
+
+The service maps desktop-facing agent IDs (`fake`, `codex`, `claude`) and run
+statuses (`queued`, `running`, `verifying`, `completed`, `failed`,
+`cancelled`) onto the existing core/SQLite contracts where possible. SQLite
+still stores the core run status enum, so the desktop-only `verifying` phase
+is represented by live run events while the persisted core run remains
+`running`; core `succeeded` is exposed to the desktop renderer as `completed`.
+
+Desktop Phase 3 real execution remains fake-agent only. The main process starts
+`apps/desktop/electron/services/fake-agent-runner.ts`, which emits semantic
+events over time and responds to `AbortController` cancellation. The runner
+does not read or write target repository files. `RunService` persists
+task/run rows, run events, simulated verification rows, and placeholder
+diff/risk review rows through the existing local repositories, then broadcasts
+each event through an in-memory emitter. Phase 4 adds a real inspector over
+that persisted evidence plus retained-worktree diffs when present, but it does
+not change execution semantics. The renderer can mention `@codex` and
+`@claude` so multi-agent thread flows are visible, but those runs are safe
+main-process placeholders that fail with an explicit "not wired yet" event and
+do not invoke adapters, create worktrees, or modify repositories. Real Codex
+and Claude Code execution remains behind the same IPC boundary as follow-up
+TaskRunner integration.
+
 Desktop packaging is a local release concern layered over that shell. The
 workspace keeps Electron/Vite bundling in `apps/desktop`, then uses
 Electron Builder through `scripts/build-macos-dmg.sh` to package the generated
@@ -264,6 +341,13 @@ invalid terminal transitions are rejected in both SQLite and in-memory
 repositories, including the in-memory task-run `updateStatus()` path used by
 focused runner tests and injected runtimes.
 
+Settings use the same domain validation before repository writes. Both
+in-memory and SQLite settings repositories reject secret-like key names such as
+API keys, tokens, passwords, private keys, and credentials, and they also reject
+string values that look like embedded secret assignments, bearer tokens, common
+service tokens, or private key blocks. Safe local UI and behavior flags remain
+valid setting values.
+
 When the CLI executes an ad-hoc SQLite-backed run, it first looks up a project
 by the resolved repository root. The first legacy ad-hoc root can keep the
 `adhoc_project` id for compatibility; if that id already belongs to a different
@@ -296,14 +380,17 @@ accept, merge, branch delete, or push action.
 
 The first desktop runtime integration is deliberately narrow. `apps/desktop`
 uses SQLite-backed services for project registration, run listing/detail,
-review tabs, verification rows, risk reports, and memory proposal decisions.
-`runs.create` records a fake-agent-backed desktop run through repository
-interfaces, emits IPC run events, persists a placeholder diff artifact,
-persists a skipped verification row, and persists a low-risk report. It does not call
-TaskRunner yet, create worktrees, invoke Codex or Claude Code, run verification
-commands, export repository context, merge, push, or write files into the
-target repository. Real TaskRunner and adapter execution can be wired behind
-the same IPC/service interfaces in a later slice.
+inspector review tabs, verification rows, risk reports, and memory proposal
+decisions. `runs.create` records a desktop run through repository interfaces,
+emits IPC run events, persists a placeholder diff artifact, persists simulated
+or unavailable verification state, and persists a local review risk report.
+For `@fake`, the run streams semantic fake-agent events. For `@codex` and
+`@claude`, the run records a safe unavailable-adapter event instead of
+launching a process. It does not call TaskRunner yet, create worktrees, invoke
+Codex or Claude Code, run real verification commands, export repository
+context, merge, push, or write files into the target repository. Real
+TaskRunner and adapter execution can be wired behind the same IPC/service
+interfaces in a later slice.
 
 All adapters run against an isolated worktree and refuse to run when that
 directory is the original project root or when the generated task brief is
@@ -343,11 +430,14 @@ deterministic task/agent branch fails with a clear workspace error instead of
 attempting automatic cleanup, branch deletion, merge, push, or acceptance.
 Verification commands run with the isolated worktree as cwd. Dangerous command
 rejection is represented as a failed verification command, and shell results
-carry timeout and signal metadata so callers can distinguish command failures
-from process termination. If a run has no configured verification commands,
-the verification suite remains skipped and the task runner adds a warning to
-`RunResult.warnings`; normal CLI output stays agent-facing, while debug output
-renders the warning through the existing run-summary path.
+rejection is represented as a failed verification command. `VerificationRunner`
+passes a 10-minute timeout to `ShellExecutor` when a command omits `timeoutMs`,
+while explicit command timeouts remain overrides. Shell results carry timeout
+and signal metadata so callers can distinguish command failures from process
+termination. If a run has no configured verification commands, the verification
+suite remains skipped and the task runner adds a warning to `RunResult.warnings`;
+normal CLI output stays agent-facing, while debug output renders the warning
+through the existing run-summary path.
 
 The physical package split is present and now includes both user-facing app
 packages. Cross-package contracts flow through `packages/shared` and
@@ -371,8 +461,11 @@ in the CI/CD path.
 
 Desktop is no longer architectural only. The first shell lives under
 `apps/desktop`, calls local services through Electron IPC, and renders projects,
-runs, diffs, verification, risk, and memory proposal data from local SQLite
-repositories. It does not add an API server, and its first run path records
-fake-agent-backed review rows only. Real TaskRunner, CodexAdapter, and
-ClaudeCodeAdapter execution remain follow-up desktop integration work behind
-the same IPC boundary.
+conversation threads, inline run cards, diffs, verification, risk, and memory
+proposal data from local SQLite repositories. It does not add an API server.
+Its first real streaming path remains fake-agent backed, while Codex and Claude
+mentions are represented by safe unavailable-adapter run records until real
+TaskRunner, CodexAdapter, and ClaudeCodeAdapter execution are wired behind the
+same IPC boundary. The inspector accept/reject flow records review decisions
+only; merge, push, PR creation, worktree cleanup, repository context export,
+and code application remain explicit future workflows.

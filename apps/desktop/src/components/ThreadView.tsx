@@ -1,5 +1,6 @@
-import { useMemo, useState } from "react";
-import type { AgentKind, ContextMode, RunDetail, RunEvent } from "../lib/types";
+import { useEffect, useMemo, useState } from "react";
+import { agentHubApi } from "../lib/agentHubApi";
+import type { AgentId, ContextMode, RunDetail, RunEvent, RunStatus } from "../lib/types";
 import { RunStatusBadge } from "./RunStatusBadge";
 
 interface ThreadViewProps {
@@ -7,14 +8,17 @@ interface ThreadViewProps {
   isBusy: boolean;
   onCreateRun(
     prompt: string,
-    agentKind: AgentKind,
+    agentId: AgentId,
     contextMode: ContextMode
   ): Promise<void>;
+  onCancelRun(runId: string): Promise<void>;
+  onRunEvent(runId: string, event: RunEvent): void;
 }
 
 const timeline = [
+  { key: "lifecycle", label: "Lifecycle" },
   { key: "context", label: "Context" },
-  { key: "plan", label: "Agent Plan" },
+  { key: "agent", label: "Agent Steps" },
   { key: "logs", label: "Logs" },
   { key: "verification", label: "Verification" },
   { key: "final", label: "Final Summary" }
@@ -23,21 +27,67 @@ const timeline = [
 export function ThreadView({
   run,
   isBusy,
-  onCreateRun
+  onCreateRun,
+  onCancelRun,
+  onRunEvent
 }: ThreadViewProps): JSX.Element {
   const [prompt, setPrompt] = useState("");
-  const [agentKind, setAgentKind] = useState<AgentKind>("fake");
+  const [agentId, setAgentId] = useState<AgentId>("fake");
   const [contextMode, setContextMode] = useState<ContextMode>("auto");
+  const [events, setEvents] = useState<RunEvent[]>(run?.events ?? []);
+  const [liveStatus, setLiveStatus] = useState<RunStatus | undefined>(run?.status);
+  const [streamError, setStreamError] = useState<string | undefined>();
+  const [cancelError, setCancelError] = useState<string | undefined>();
 
-  const eventsByPhase = useMemo(() => groupEventsByPhase(run?.events ?? []), [run]);
+  useEffect(() => {
+    setEvents(run?.events ?? []);
+    setLiveStatus(run?.status);
+    setStreamError(undefined);
+    setCancelError(undefined);
+  }, [run?.id, run?.events, run?.status]);
+
+  useEffect(() => {
+    if (!run) {
+      return undefined;
+    }
+    try {
+      const unsubscribe = agentHubApi.runs.onEvent(run.id, (event) => {
+        setEvents((current) => appendEvent(current, event));
+        if (event.payload.status) {
+          setLiveStatus(event.payload.status);
+        }
+        onRunEvent(run.id, event);
+      });
+      return unsubscribe;
+    } catch (error) {
+      setStreamError(`Failed to subscribe to run events: ${errorMessage(error)}`);
+      return undefined;
+    }
+  }, [run?.id]);
+
+  const currentStatus = liveStatus ?? run?.status;
+  const eventsByPhase = useMemo(() => groupEventsByPhase(events), [events]);
+  const canCancel = currentStatus === "running" || currentStatus === "verifying";
 
   async function submit(): Promise<void> {
     const trimmed = prompt.trim();
     if (!trimmed || isBusy) {
       return;
     }
-    await onCreateRun(trimmed, agentKind, contextMode);
+    await onCreateRun(trimmed, agentId, contextMode);
     setPrompt("");
+  }
+
+  async function cancel(): Promise<void> {
+    if (!run || !canCancel) {
+      return;
+    }
+    setCancelError(undefined);
+    try {
+      await onCancelRun(run.id);
+    } catch (error) {
+      setCancelError(`Cancel failed: ${errorMessage(error)}`);
+    }
   }
 
   return (
@@ -47,8 +97,23 @@ export function ThreadView({
           <div className="eyebrow">Selected Run</div>
           <h1>{run?.title ?? "No run selected"}</h1>
         </div>
-        {run ? <RunStatusBadge status={run.status} /> : null}
+        <div className="thread-actions">
+          {run && currentStatus ? <RunStatusBadge status={currentStatus} /> : null}
+          {run && canCancel ? (
+            <button
+              className="danger-button"
+              onClick={() => void cancel()}
+              disabled={isBusy}
+            >
+              Cancel
+            </button>
+          ) : null}
+        </div>
       </header>
+
+      {streamError || cancelError ? (
+        <div className="inline-error">{streamError ?? cancelError}</div>
+      ) : null}
 
       <div className="prompt-panel">
         <div className="panel-label">Task Prompt</div>
@@ -68,13 +133,17 @@ export function ThreadView({
 
       <div className="composer">
         <select
-          value={agentKind}
-          onChange={(event) => setAgentKind(event.target.value as AgentKind)}
+          value={agentId}
+          onChange={(event) => setAgentId(event.target.value as AgentId)}
           aria-label="Agent"
         >
-          <option value="codex">@codex</option>
-          <option value="claude-code">@claude</option>
           <option value="fake">@fake</option>
+          <option value="codex" disabled>
+            @codex
+          </option>
+          <option value="claude" disabled>
+            @claude
+          </option>
         </select>
         <select
           value={contextMode}
@@ -118,8 +187,8 @@ function TimelineBlock({
         ) : (
           events.map((event) => (
             <div className={`event-line ${event.type}`} key={event.id}>
-              <span>{event.type}</span>
-              <p>{event.message}</p>
+              <span>{eventLabel(event.type)}</span>
+              <p>{event.payload.message ?? event.payload.summary ?? event.type}</p>
             </div>
           ))
         )}
@@ -131,7 +200,7 @@ function TimelineBlock({
 function groupEventsByPhase(events: RunEvent[]): Record<string, RunEvent[]> {
   return events.reduce<Record<string, RunEvent[]>>((groups, event) => {
     const phase =
-      typeof event.metadata.phase === "string" ? event.metadata.phase : "logs";
+      typeof event.payload.phase === "string" ? event.payload.phase : "logs";
     groups[phase] = [...(groups[phase] ?? []), event];
     return groups;
   }, {});
@@ -139,10 +208,12 @@ function groupEventsByPhase(events: RunEvent[]): Record<string, RunEvent[]> {
 
 function fallbackText(phase: string): string {
   switch (phase) {
+    case "lifecycle":
+      return "Waiting for the run to start.";
     case "context":
       return "Waiting for a context pack.";
-    case "plan":
-      return "No agent plan has been recorded.";
+    case "agent":
+      return "No agent steps have been recorded.";
     case "logs":
       return "No adapter output has been recorded.";
     case "verification":
@@ -152,4 +223,19 @@ function fallbackText(phase: string): string {
     default:
       return "No events.";
   }
+}
+
+function appendEvent(events: RunEvent[], event: RunEvent): RunEvent[] {
+  if (events.some((entry) => entry.id === event.id)) {
+    return events;
+  }
+  return [...events, event].sort((left, right) => left.sequence - right.sequence);
+}
+
+function eventLabel(type: RunEvent["type"]): string {
+  return type.replaceAll("_", " ");
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }

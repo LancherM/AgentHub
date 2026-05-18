@@ -1,63 +1,118 @@
-import { useEffect, useState } from "react";
+import { useMemo, useState } from "react";
 import { agentHubApi } from "../lib/agentHubApi";
 import type { MemoryProposal } from "../lib/types";
 
 interface MemoryProposalsProps {
   runId: string;
   proposals: MemoryProposal[];
+  onReload(proposals: MemoryProposal[]): void;
 }
 
 export function MemoryProposals({
   runId,
-  proposals
+  proposals,
+  onReload
 }: MemoryProposalsProps): JSX.Element {
-  const [items, setItems] = useState(proposals);
-  const [busyIds, setBusyIds] = useState<Set<string>>(new Set());
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [busy, setBusy] = useState(false);
+  const grouped = useMemo(() => groupProposals(proposals), [proposals]);
+  const selected = [...selectedIds];
+  const hasPendingSelection = proposals.some(
+    (item) => selectedIds.has(item.id) && item.status === "pending"
+  );
 
-  useEffect(() => {
-    setItems(proposals);
-  }, [proposals]);
-
-  async function decide(id: string, action: "approve" | "ignore"): Promise<void> {
-    setBusyIds((current) => new Set([...current, id]));
-    if (action === "approve") {
-      await agentHubApi.memory.approve([id]);
-    } else {
-      await agentHubApi.memory.ignore([id]);
+  async function decide(action: "approve" | "ignore"): Promise<void> {
+    setBusy(true);
+    try {
+      const ids = proposals
+        .filter((item) => selectedIds.has(item.id) && item.status === "pending")
+        .map((item) => item.id);
+      if (ids.length === 0) {
+        return;
+      }
+      if (action === "approve") {
+        await agentHubApi.memory.approve(ids);
+      } else {
+        await agentHubApi.memory.ignore(ids);
+      }
+      const next = await agentHubApi.memory.listProposals(runId);
+      setSelectedIds(new Set());
+      onReload(next);
+    } finally {
+      setBusy(false);
     }
-    const next = await agentHubApi.memory.listProposals(runId);
-    setItems(next);
-    setBusyIds(new Set());
   }
 
-  if (items.length === 0) {
+  if (proposals.length === 0) {
     return <p className="muted-copy">No memory proposals for this run.</p>;
   }
 
   return (
     <div className="memory-list">
-      {items.map((item) => (
-        <article className="memory-item" key={item.id}>
-          <div>
-            <span>{item.category}</span>
-            <p>{item.content}</p>
-          </div>
-          <div className="memory-actions">
-            <button
-              onClick={() => void decide(item.id, "approve")}
-              disabled={busyIds.has(item.id)}
-            >
-              Approve
-            </button>
-            <button
-              onClick={() => void decide(item.id, "ignore")}
-              disabled={busyIds.has(item.id)}
-            >
-              Ignore
-            </button>
-          </div>
-        </article>
-      ))}
+      <div className="memory-toolbar">
+        <span>{selected.length} selected</span>
+        <button
+          onClick={() => void decide("approve")}
+          disabled={busy || !hasPendingSelection}
+        >
+          Approve selected
+        </button>
+        <button
+          onClick={() => void decide("ignore")}
+          disabled={busy || !hasPendingSelection}
+        >
+          Ignore selected
+        </button>
+      </div>
+      {(["pending", "approved", "ignored"] as const).map((status) => {
+        const items = grouped[status];
+        if (items.length === 0) {
+          return null;
+        }
+        return (
+          <section key={status} className="memory-group">
+            <div className="panel-label">{status}</div>
+            {items.map((item) => (
+              <article className={`memory-item ${item.status}`} key={item.id}>
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={selectedIds.has(item.id)}
+                    disabled={item.status !== "pending"}
+                    onChange={(event) => {
+                      setSelectedIds((current) => {
+                        const next = new Set(current);
+                        if (event.target.checked) {
+                          next.add(item.id);
+                        } else {
+                          next.delete(item.id);
+                        }
+                        return next;
+                      });
+                    }}
+                  />
+                  <span>{item.source}</span>
+                </label>
+                <p>{item.content}</p>
+                {item.rationale ? (
+                  <small>{item.rationale}</small>
+                ) : null}
+              </article>
+            ))}
+          </section>
+        );
+      })}
     </div>
   );
+}
+
+function groupProposals(proposals: MemoryProposal[]): Record<
+  MemoryProposal["status"],
+  MemoryProposal[]
+> {
+  return {
+    pending: proposals.filter((item) => item.status === "pending"),
+    approved: proposals.filter((item) => item.status === "approved"),
+    ignored: proposals.filter((item) => item.status === "ignored")
+  };
 }

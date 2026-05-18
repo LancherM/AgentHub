@@ -1,5 +1,5 @@
+import { EventEmitter } from "node:events";
 import {
-  createId,
   validateRiskReport,
   validateRunArtifact,
   validateRunEvent,
@@ -11,32 +11,79 @@ import {
   type RunArtifactRepository,
   type RunEvent as CoreRunEvent,
   type RunEventRepository,
+  type Task,
   type TaskRepository,
+  type TaskRun,
   type TaskRunRepository,
   type VerificationResultRepository
 } from "@agent-hub/core";
-import type { AgentKind, JsonObject } from "@agent-hub/shared";
 import type {
+  AgentKind as CoreAgentKind,
+  JsonObject,
+  RunEventType as CoreRunEventType,
+  TaskRunStatus as CoreRunStatus
+} from "@agent-hub/shared";
+import type {
+  AgentId,
   CreateRunInput,
   RunDetail,
   RunEvent,
+  RunEventPayload,
+  RunEventType,
+  RunStatus,
   RunSummary
 } from "../../src/lib/types";
-import type { DesktopServiceContext } from "./project-service";
+import {
+  runFakeAgent,
+  type FakeAgentRunnerEvent
+} from "./fake-agent-runner";
 import type { MemoryService } from "./memory-service";
+import type { DesktopServiceContext } from "./project-service";
 import type { ReviewService } from "./review-service";
 
 export interface RunService {
-  list(projectId?: string): Promise<RunSummary[]>;
-  get(runId: string): Promise<RunDetail>;
-  create(input: CreateRunInput): Promise<RunSummary>;
-  cancel(runId: string): Promise<void>;
+  createRun(input: CreateRunInput): Promise<RunSummary>;
+  getRun(runId: string): Promise<RunDetail>;
+  listRuns(projectId?: string): Promise<RunSummary[]>;
+  startRun(runId: string): Promise<void>;
+  cancelRun(runId: string): Promise<void>;
+  subscribe(runId: string, listener: (event: RunEvent) => void): () => void;
 }
 
 export interface RunServiceDependencies {
   reviewService: ReviewService;
   memoryService: MemoryService;
+  fakeDelayMs?: number;
 }
+
+interface ActiveRun {
+  controller: AbortController;
+  status: RunStatus;
+  promise: Promise<void>;
+}
+
+interface ParsedCreateRunInput extends Required<CreateRunInput> {}
+
+const desktopStatusTransitions: Record<RunStatus, readonly RunStatus[]> = {
+  queued: ["running", "cancelled"],
+  running: ["verifying", "failed", "cancelled"],
+  verifying: ["completed", "failed", "cancelled"],
+  completed: [],
+  failed: [],
+  cancelled: []
+};
+
+const semanticRunEventTypes: readonly RunEventType[] = [
+  "run_started",
+  "context_compiled",
+  "agent_step",
+  "agent_output",
+  "verification_started",
+  "verification_finished",
+  "run_completed",
+  "run_failed",
+  "run_cancelled"
+] as const;
 
 export function createRunService(
   context: DesktopServiceContext,
@@ -53,6 +100,12 @@ class RepositoryRunService implements RunService {
   private readonly artifacts: RunArtifactRepository;
   private readonly verification: VerificationResultRepository;
   private readonly risks: RiskReportRepository;
+  private readonly emitter = new EventEmitter();
+  private readonly activeRuns = new Map<string, ActiveRun>();
+  private readonly runInputs = new Map<
+    string,
+    { prompt: string; contextMode: CreateRunInput["contextMode"] }
+  >();
 
   constructor(
     private readonly context: DesktopServiceContext,
@@ -67,7 +120,7 @@ class RepositoryRunService implements RunService {
     this.risks = context.repositories.riskReportRepository;
   }
 
-  async list(projectId?: string): Promise<RunSummary[]> {
+  async listRuns(projectId?: string): Promise<RunSummary[]> {
     const tasks = projectId
       ? await this.tasks.listByProjectId(projectId)
       : await this.tasks.list();
@@ -87,7 +140,8 @@ class RepositoryRunService implements RunService {
         if (!project) {
           return undefined;
         }
-        return toRunSummary(run, task, project);
+        const events = await this.events.listByRunId(run.id);
+        return this.toRunSummary(run, task, project, events);
       })
     );
     return summaries
@@ -95,7 +149,7 @@ class RepositoryRunService implements RunService {
       .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
   }
 
-  async get(runId: string): Promise<RunDetail> {
+  async getRun(runId: string): Promise<RunDetail> {
     const run = await this.runs.get(runId);
     if (!run) {
       throw new Error(`run ${runId} not found`);
@@ -116,11 +170,11 @@ class RepositoryRunService implements RunService {
         this.dependencies.reviewService.getRisk(runId),
         this.dependencies.memoryService.listProposals(runId)
       ]);
-    const summary = finalSummary(events) ?? risk.summary;
+    const summary = finalSummary(events) ?? statusSummary(run);
     return {
-      ...toRunSummary(run, task, project),
+      ...this.toRunSummary(run, task, project, events),
       events: events.map(toRunEvent),
-      changedFiles: diff.changedFiles,
+      changedFiles: diff.files.map((file) => file.path),
       verification,
       risk,
       memoryProposals,
@@ -128,7 +182,7 @@ class RepositoryRunService implements RunService {
     };
   }
 
-  async create(input: CreateRunInput): Promise<RunSummary> {
+  async createRun(input: CreateRunInput): Promise<RunSummary> {
     const parsed = parseCreateRunInput(input);
     const project = await this.projects.get(parsed.projectId);
     if (!project) {
@@ -140,7 +194,7 @@ class RepositoryRunService implements RunService {
       validateTask({
         id: this.context.nextId("task"),
         projectId: project.id,
-        title: parsed.title ?? titleFromPrompt(parsed.prompt),
+        title: parsed.title,
         description: parsed.prompt,
         status: "open",
         createdAt,
@@ -151,35 +205,299 @@ class RepositoryRunService implements RunService {
       validateTaskRun({
         id: this.context.nextId("run"),
         taskId: task.id,
-        agentKind: parsed.agentKind,
+        agentKind: toCoreAgentKind(parsed.agentId),
         status: "queued",
         createdAt,
         updatedAt: createdAt
       })
     );
+    this.runInputs.set(run.id, {
+      prompt: parsed.prompt,
+      contextMode: parsed.contextMode
+    });
 
-    await this.tasks.updateStatus(task.id, "running", this.context.now());
-    await this.runs.updateStatus(run.id, "running", this.context.now());
+    queueMicrotask(() => {
+      void this.startRun(run.id).catch((error) => {
+        void this.failActiveRun(run.id, error);
+      });
+    });
 
-    const persistedEvents = await this.events.createMany(
-      desktopRunEvents({
-        runId: run.id,
-        taskId: task.id,
-        agentKind: parsed.agentKind,
-        prompt: parsed.prompt,
-        contextMode: parsed.contextMode,
-        deliveryMode: parsed.deliveryMode,
-        now: () => this.context.now(),
-        nextId: (prefix) => this.context.nextId(prefix)
+    return this.toRunSummary(run, task, project);
+  }
+
+  async startRun(runId: string): Promise<void> {
+    if (this.activeRuns.has(runId)) {
+      throw new Error(`run ${runId} is already running`);
+    }
+
+    const run = await this.runs.get(runId);
+    if (!run) {
+      throw new Error(`run ${runId} not found`);
+    }
+    if (run.status !== "queued") {
+      throw new Error(`run ${runId} cannot be started from ${run.status}`);
+    }
+    const task = await this.tasks.get(run.taskId);
+    if (!task) {
+      throw new Error(`task ${run.taskId} not found`);
+    }
+    const agentId = toAgentId(run.agentKind);
+
+    const controller = new AbortController();
+    const active: ActiveRun = {
+      controller,
+      status: "queued",
+      promise: Promise.resolve()
+    };
+    this.activeRuns.set(runId, active);
+
+    active.promise = (agentId === "fake"
+      ? this.executeFakeRun(run, task, active)
+      : this.executeUnavailableAgentRun(run.id, agentId, active))
+      .catch((error) => this.failActiveRun(runId, error))
+      .finally(() => {
+        this.activeRuns.delete(runId);
+        this.runInputs.delete(runId);
+      });
+  }
+
+  async cancelRun(runId: string): Promise<void> {
+    const run = await this.runs.get(runId);
+    if (!run) {
+      throw new Error(`run ${runId} not found`);
+    }
+    const currentStatus = this.currentDesktopStatus(run);
+    if (isTerminalStatus(currentStatus)) {
+      throw new Error(`run ${runId} is already ${currentStatus}`);
+    }
+
+    const active = this.activeRuns.get(runId);
+    if (!active) {
+      await this.transitionRunStatus(runId, "cancelled");
+      const event = await this.persistRunnerEvent(runId, {
+        type: "run_cancelled",
+        payload: {
+          phase: "final",
+          status: "cancelled",
+          message: "Run cancelled before the fake agent started."
+        }
+      });
+      this.emitLiveEvent(event);
+      await this.persistTerminalReview(runId, "cancelled");
+      return;
+    }
+
+    active.controller.abort();
+    await active.promise;
+  }
+
+  subscribe(runId: string, listener: (event: RunEvent) => void): () => void {
+    const channel = eventChannel(runId);
+    this.emitter.on(channel, listener);
+    return () => {
+      this.emitter.off(channel, listener);
+    };
+  }
+
+  private async executeFakeRun(
+    run: TaskRun,
+    task: Task,
+    active: ActiveRun
+  ): Promise<void> {
+    await runFakeAgent(
+      {
+        prompt: task.description ?? task.title,
+        contextMode: this.runInputs.get(run.id)?.contextMode ?? "auto",
+        signal: active.controller.signal,
+        delayMs: this.dependencies.fakeDelayMs
+      },
+      async (event) => {
+        if (isTerminalStatus(active.status)) {
+          return;
+        }
+        await this.applyRunnerEvent(run.id, event);
+      }
+    );
+  }
+
+  private async executeUnavailableAgentRun(
+    runId: string,
+    agentId: Exclude<AgentId, "fake">,
+    active: ActiveRun
+  ): Promise<void> {
+    if (active.controller.signal.aborted) {
+      await this.applyRunnerEvent(runId, {
+        type: "run_cancelled",
+        payload: {
+          phase: "final",
+          status: "cancelled",
+          message: `@${agentId} was cancelled before desktop execution started.`
+        }
+      });
+      return;
+    }
+
+    await this.applyRunnerEvent(runId, {
+      type: "run_started",
+      payload: {
+        phase: "lifecycle",
+        status: "running",
+        message: `Desktop received @${agentId}, but real adapter execution is not wired yet.`
+      }
+    });
+    await this.applyRunnerEvent(runId, {
+      type: "run_failed",
+      payload: {
+        phase: "final",
+        status: "failed",
+        message: `@${agentId} desktop execution is not wired yet. No repository files were modified.`
+      }
+    });
+  }
+
+  private async applyRunnerEvent(
+    runId: string,
+    event: FakeAgentRunnerEvent
+  ): Promise<void> {
+    if (isTerminalEvent(event.type)) {
+      const persisted = await this.persistRunnerEvent(runId, event);
+      if (event.type === "run_completed") {
+        await this.transitionRunStatus(runId, "completed");
+        await this.persistTerminalReview(runId, "completed");
+      } else if (event.type === "run_failed") {
+        await this.transitionRunStatus(runId, "failed");
+        await this.persistTerminalReview(runId, "failed");
+      } else {
+        await this.transitionRunStatus(runId, "cancelled");
+        await this.persistTerminalReview(runId, "cancelled");
+      }
+      this.emitLiveEvent(persisted);
+      return;
+    }
+
+    if (event.type === "run_started") {
+      await this.transitionRunStatus(runId, "running");
+    } else if (event.type === "verification_started") {
+      await this.transitionRunStatus(runId, "verifying");
+    } else if (event.type === "verification_finished") {
+      await this.persistVerification(runId, event.payload);
+    }
+
+    const persisted = await this.persistRunnerEvent(runId, event);
+    this.emitLiveEvent(persisted);
+  }
+
+  private async transitionRunStatus(
+    runId: string,
+    nextStatus: RunStatus
+  ): Promise<void> {
+    const run = await this.runs.get(runId);
+    if (!run) {
+      throw new Error(`run ${runId} not found`);
+    }
+    const task = await this.tasks.get(run.taskId);
+    if (!task) {
+      throw new Error(`task ${run.taskId} not found`);
+    }
+
+    const active = this.activeRuns.get(runId);
+    const currentStatus = active?.status ?? toDesktopRunStatus(run.status);
+    if (currentStatus === nextStatus) {
+      return;
+    }
+    if (!desktopStatusTransitions[currentStatus].includes(nextStatus)) {
+      throw new Error(
+        `invalid desktop run status transition ${currentStatus} -> ${nextStatus}`
+      );
+    }
+
+    const updatedAt = this.context.now();
+    if (nextStatus === "running") {
+      await this.tasks.updateStatus(task.id, "running", updatedAt);
+      await this.runs.updateStatus(runId, "running", updatedAt);
+    } else if (nextStatus === "verifying") {
+      await this.runs.updateStatus(runId, "running", updatedAt);
+    } else if (nextStatus === "completed") {
+      await this.runs.updateStatus(runId, "succeeded", updatedAt);
+      await this.tasks.updateStatus(task.id, "completed", updatedAt);
+    } else if (nextStatus === "failed") {
+      await this.runs.updateStatus(runId, "failed", updatedAt);
+      if (task.status === "running") {
+        await this.tasks.updateStatus(task.id, "open", updatedAt);
+      }
+    } else if (nextStatus === "cancelled") {
+      await this.runs.updateStatus(runId, "cancelled", updatedAt);
+      if (task.status === "running") {
+        await this.tasks.updateStatus(task.id, "open", updatedAt);
+      }
+    }
+
+    if (active) {
+      active.status = nextStatus;
+    }
+  }
+
+  private async persistRunnerEvent(
+    runId: string,
+    event: FakeAgentRunnerEvent
+  ): Promise<RunEvent> {
+    const sequence = await this.events.countByRunId(runId);
+    const createdAt = this.context.now();
+    const message = eventMessage(event);
+    const coreEvent = await this.events.create(
+      validateRunEvent({
+        id: this.context.nextId("event"),
+        taskRunId: runId,
+        sequence,
+        type: toCoreRunEventType(event.type),
+        message,
+        metadata: {
+          ...event.payload,
+          desktopEventType: event.type
+        },
+        createdAt
       })
     );
+    return toRunEvent(coreEvent);
+  }
 
+  private async persistVerification(
+    runId: string,
+    payload: RunEventPayload
+  ): Promise<void> {
+    const now = this.context.now();
+    await this.verification.create(
+      validateVerificationResult({
+        id: this.context.nextId("verification"),
+        taskRunId: runId,
+        command:
+          typeof payload.command === "string"
+            ? payload.command
+            : "pnpm test -- simulated",
+        status: payload.passed === false ? "failed" : "passed",
+        exitCode: payload.passed === false ? 1 : 0,
+        stdout:
+          typeof payload.message === "string"
+            ? payload.message
+            : "Simulated verification completed.",
+        startedAt: now,
+        completedAt: now,
+        createdAt: now
+      })
+    );
+  }
+
+  private async persistTerminalReview(
+    runId: string,
+    status: "completed" | "failed" | "cancelled"
+  ): Promise<void> {
+    const now = this.context.now();
     await this.artifacts.create(
       validateRunArtifact({
         id: this.context.nextId("artifact"),
-        taskRunId: run.id,
+        taskRunId: runId,
         kind: "git_diff",
-        content: "Unified diff is not available for the desktop fake run.\n",
+        content: "No real files were modified by this desktop run.\n",
         metadata: {
           changedFiles: [],
           fileSummaries: [],
@@ -190,161 +508,88 @@ class RepositoryRunService implements RunService {
             deletions: 0,
             text: "0 files changed"
           },
-          source: "desktop_fake_run"
+          source: "desktop_fake_run",
+          terminalStatus: status
         },
-        createdAt: this.context.now()
-      })
-    );
-
-    await this.verification.create(
-      validateVerificationResult({
-        id: this.context.nextId("verification"),
-        taskRunId: run.id,
-        command: "desktop fake run",
-        status: "skipped",
-        stdout: "No verification command was configured for the first desktop shell.",
-        createdAt: this.context.now()
+        createdAt: now
       })
     );
 
     await this.risks.create(
       validateRiskReport({
         id: this.context.nextId("risk"),
-        taskRunId: run.id,
-        level: "low",
-        summary: "Desktop fake run recorded no repository changes.",
+        taskRunId: runId,
+        level: status === "failed" ? "medium" : "low",
+        summary:
+          status === "completed"
+            ? "Desktop run completed without repository changes."
+            : status === "cancelled"
+              ? "Desktop run was cancelled without repository changes."
+              : "Desktop run failed before making repository changes.",
         changedFiles: [],
-        verificationSummary: "Verification was skipped.",
-        failedChecks: [],
-        riskFactors: ["Real adapter execution is not wired in this desktop slice."],
+        verificationSummary:
+          status === "completed"
+            ? "Simulated verification passed."
+            : "No completed verification output is available.",
+        failedChecks: status === "failed" ? ["desktop fake run failed"] : [],
+        riskFactors: ["This desktop execution path did not modify project files."],
         manualReviewChecklist: [
-          "Inspect run events before acting on any future generated changes."
+          "No code was generated or applied by this desktop run."
         ],
         acceptanceRecommendation:
-          "Review only. This desktop slice does not accept, merge, push, or export repository context.",
+          "Review only. This desktop run did not produce changes to accept, merge, push, or export.",
         findings: [],
-        createdAt: this.context.now()
+        createdAt: now
       })
     );
-
-    const completedAt = this.context.now();
-    const completedRun = await this.runs.updateStatus(
-      run.id,
-      "succeeded",
-      completedAt
-    );
-    const completedTask = await this.tasks.updateStatus(
-      task.id,
-      "completed",
-      completedAt
-    );
-    return toRunSummary(completedRun, completedTask, project, persistedEvents);
   }
 
-  async cancel(runId: string): Promise<void> {
+  private emitLiveEvent(event: RunEvent): void {
+    this.emitter.emit(eventChannel(event.runId), event);
+  }
+
+  private currentDesktopStatus(run: TaskRun): RunStatus {
+    return this.activeRuns.get(run.id)?.status ?? toDesktopRunStatus(run.status);
+  }
+
+  private async failActiveRun(runId: string, error: unknown): Promise<void> {
     const run = await this.runs.get(runId);
-    if (!run) {
-      throw new Error(`run ${runId} not found`);
-    }
-    if (["succeeded", "failed", "cancelled"].includes(run.status)) {
+    if (!run || isTerminalStatus(this.currentDesktopStatus(run))) {
       return;
     }
-    const cancelledAt = this.context.now();
-    await this.runs.updateStatus(run.id, "cancelled", cancelledAt);
-    const task = await this.tasks.get(run.taskId);
-    if (task?.status === "running") {
-      await this.tasks.updateStatus(task.id, "open", cancelledAt);
-    }
-    const sequence = await this.events.countByRunId(run.id);
-    await this.events.create(
-      validateRunEvent({
-        id: this.context.nextId("event"),
-        taskRunId: run.id,
-        sequence,
-        type: "status",
-        message: "Run cancelled from Agent Hub Desktop.",
-        metadata: { phase: "final" },
-        createdAt: cancelledAt
-      })
-    );
+    await this.applyRunnerEvent(runId, {
+      type: "run_failed",
+      payload: {
+        phase: "final",
+        status: "failed",
+        message: error instanceof Error ? error.message : String(error)
+      }
+    });
+  }
+
+  private toRunSummary(
+    run: TaskRun,
+    task: Task,
+    project: { id: string; name: string },
+    events: CoreRunEvent[] = []
+  ): RunSummary {
+    const eventUpdatedAt = events.at(-1)?.createdAt;
+    return {
+      id: run.id,
+      projectId: project.id,
+      projectName: project.name,
+      taskId: task.id,
+      title: task.title,
+      taskPrompt: task.description ?? "",
+      agentId: toAgentId(run.agentKind),
+      status: this.currentDesktopStatus(run),
+      createdAt: run.createdAt,
+      updatedAt: eventUpdatedAt ?? run.updatedAt
+    };
   }
 }
 
-interface DesktopRunEventInput {
-  runId: string;
-  taskId: string;
-  agentKind: AgentKind;
-  prompt: string;
-  contextMode: string;
-  deliveryMode: "runtime_injection" | "worktree_overlay";
-  now(): string;
-  nextId(prefix: string): string;
-}
-
-function desktopRunEvents(input: DesktopRunEventInput): CoreRunEvent[] {
-  const base: Array<{
-    type: CoreRunEvent["type"];
-    message: string;
-    metadata: JsonObject;
-  }> = [
-    {
-      type: "status",
-      message: `Context prepared with ${input.deliveryMode}.`,
-      metadata: { phase: "context", contextMode: input.contextMode }
-    },
-    {
-      type: "message",
-      message: agentPlan(input.agentKind),
-      metadata: { phase: "plan" }
-    },
-    {
-      type: "stdout",
-      message: "Desktop fake run completed without modifying repository files.",
-      metadata: { phase: "logs", adapter: "desktop-fake" }
-    },
-    {
-      type: "status",
-      message: "Verification skipped because no command was configured.",
-      metadata: { phase: "verification" }
-    },
-    {
-      type: "message",
-      message:
-        "Final summary: first desktop shell recorded a local run review record and left the target repository unchanged.",
-      metadata: { phase: "final" }
-    },
-    {
-      type: "exit",
-      message: "desktop fake run completed",
-      metadata: { phase: "final", exitCode: 0 }
-    }
-  ];
-
-  return base.map((event, sequence) =>
-    validateRunEvent({
-      id: input.nextId("event"),
-      taskRunId: input.runId,
-      sequence,
-      type: event.type,
-      message: event.message,
-      metadata: {
-        ...event.metadata,
-        taskId: input.taskId,
-        promptPreview: input.prompt.slice(0, 160)
-      },
-      createdAt: input.now()
-    })
-  );
-}
-
-function agentPlan(agentKind: AgentKind): string {
-  if (agentKind === "fake") {
-    return "Use the local fake path to validate Desktop review surfaces without changing the repository.";
-  }
-  return `${agentLabel(agentKind)} process execution is intentionally deferred in Desktop; this first shell records the request through the fake local path.`;
-}
-
-function parseCreateRunInput(input: CreateRunInput): Required<CreateRunInput> {
+function parseCreateRunInput(input: CreateRunInput): ParsedCreateRunInput {
   if (!input || typeof input !== "object") {
     throw new Error("run input is required");
   }
@@ -352,7 +597,7 @@ function parseCreateRunInput(input: CreateRunInput): Required<CreateRunInput> {
   if (!prompt) {
     throw new Error("run prompt is required");
   }
-  const agentKind = parseAgentKind(input.agentKind);
+  const agentId = parseAgentId(input.agentId);
   const contextMode = parseContextMode(input.contextMode);
   const deliveryMode = input.deliveryMode ?? "runtime_injection";
   if (deliveryMode !== "runtime_injection" && deliveryMode !== "worktree_overlay") {
@@ -365,72 +610,116 @@ function parseCreateRunInput(input: CreateRunInput): Required<CreateRunInput> {
     projectId: input.projectId,
     prompt,
     title: input.title?.trim() || titleFromPrompt(prompt),
-    agentKind,
+    agentId,
     contextMode,
     deliveryMode
   };
 }
 
-function parseAgentKind(value: unknown): AgentKind {
-  if (value === "fake" || value === "codex" || value === "claude-code") {
+function parseAgentId(value: unknown): AgentId {
+  if (value === "fake" || value === "codex" || value === "claude") {
     return value;
   }
-  throw new Error("agentKind must be fake, codex, or claude-code");
+  throw new Error("agentId must be fake, codex, or claude");
 }
 
-function parseContextMode(value: unknown): "auto" | "minimal" | "full" {
-  if (value === "auto" || value === "minimal" || value === "full") {
+function parseContextMode(value: unknown): CreateRunInput["contextMode"] {
+  if (
+    value === "auto" ||
+    value === "minimal" ||
+    value === "full" ||
+    value === "workspace"
+  ) {
     return value;
   }
-  throw new Error("contextMode must be auto, minimal, or full");
+  throw new Error("contextMode must be auto, minimal, full, or workspace");
 }
 
-function toRunSummary(
-  run: {
-    id: string;
-    taskId: string;
-    agentKind: AgentKind;
-    status: RunSummary["status"];
-    createdAt: string;
-    updatedAt: string;
-  },
-  task: {
-    id: string;
-    projectId: string;
-    title: string;
-    description?: string;
-  },
-  project: {
-    id: string;
-    name: string;
-  },
-  events: CoreRunEvent[] = []
-): RunSummary {
-  const eventUpdatedAt = events.at(-1)?.createdAt;
-  return {
-    id: run.id,
-    projectId: project.id,
-    projectName: project.name,
-    taskId: task.id,
-    title: task.title,
-    taskPrompt: task.description ?? "",
-    agentKind: run.agentKind,
-    status: run.status,
-    createdAt: run.createdAt,
-    updatedAt: eventUpdatedAt ?? run.updatedAt
-  };
+function toCoreAgentKind(agentId: AgentId): CoreAgentKind {
+  return agentId === "claude" ? "claude-code" : agentId;
+}
+
+function toAgentId(agentKind: CoreAgentKind): AgentId {
+  return agentKind === "claude-code" ? "claude" : agentKind;
+}
+
+function toDesktopRunStatus(status: CoreRunStatus): RunStatus {
+  if (status === "succeeded") {
+    return "completed";
+  }
+  return status;
+}
+
+function toCoreRunEventType(type: RunEventType): CoreRunEventType {
+  switch (type) {
+    case "agent_output":
+      return "stdout";
+    case "agent_step":
+      return "message";
+    case "run_failed":
+      return "error";
+    case "run_completed":
+      return "exit";
+    default:
+      return "status";
+  }
 }
 
 function toRunEvent(event: CoreRunEvent): RunEvent {
+  const metadata = event.metadata as JsonObject;
+  const type = parseSemanticEventType(metadata.desktopEventType) ?? toSemanticType(event);
+  const payload: RunEventPayload = {
+    ...metadata,
+    message:
+      typeof metadata.message === "string" ? metadata.message : event.message
+  };
+  delete (payload as Record<string, unknown>).desktopEventType;
   return {
     id: event.id,
     runId: event.taskRunId,
     sequence: event.sequence,
-    type: event.type,
-    message: event.message,
-    metadata: event.metadata,
-    createdAt: event.createdAt
+    type,
+    timestamp: event.createdAt,
+    payload
   };
+}
+
+function parseSemanticEventType(value: unknown): RunEventType | undefined {
+  return typeof value === "string" &&
+    semanticRunEventTypes.includes(value as RunEventType)
+    ? (value as RunEventType)
+    : undefined;
+}
+
+function toSemanticType(event: CoreRunEvent): RunEventType {
+  if (event.type === "stdout" || event.type === "stderr") {
+    return "agent_output";
+  }
+  if (event.type === "error") {
+    return "run_failed";
+  }
+  if (event.type === "exit") {
+    return "run_completed";
+  }
+  const phase =
+    typeof event.metadata.phase === "string" ? event.metadata.phase : undefined;
+  if (phase === "context") {
+    return "context_compiled";
+  }
+  if (phase === "verification") {
+    return "verification_finished";
+  }
+  return "agent_step";
+}
+
+function eventMessage(event: FakeAgentRunnerEvent): string {
+  if (typeof event.payload.message === "string") {
+    return event.payload.message;
+  }
+  if (typeof event.payload.summary === "string") {
+    return event.payload.summary;
+  }
+  return event.type.replaceAll("_", " ");
 }
 
 function titleFromPrompt(prompt: string): string {
@@ -441,19 +730,38 @@ function titleFromPrompt(prompt: string): string {
 function finalSummary(events: CoreRunEvent[]): string | undefined {
   return [...events]
     .reverse()
-    .find((event) => event.metadata.phase === "final" && event.type === "message")
-    ?.message.replace(/^Final summary:\s*/, "");
+    .map(toRunEvent)
+    .find((event) =>
+      ["run_completed", "run_failed", "run_cancelled"].includes(event.type)
+    )?.payload.message;
 }
 
-function agentLabel(agentKind: AgentKind): string {
-  switch (agentKind) {
-    case "codex":
-      return "Codex";
-    case "claude-code":
-      return "Claude Code";
-    case "fake":
-      return "Fake";
+function statusSummary(run: TaskRun): string {
+  const status = toDesktopRunStatus(run.status);
+  switch (status) {
+    case "queued":
+      return "Run is queued.";
+    case "running":
+      return "Run is in progress.";
+    case "completed":
+      return "Run completed.";
+    case "failed":
+      return "Run failed.";
+    case "cancelled":
+      return "Run was cancelled.";
     default:
-      return String(agentKind);
+      return "Run is being verified.";
   }
+}
+
+function isTerminalStatus(status: RunStatus): boolean {
+  return status === "completed" || status === "failed" || status === "cancelled";
+}
+
+function isTerminalEvent(type: RunEventType): boolean {
+  return type === "run_completed" || type === "run_failed" || type === "run_cancelled";
+}
+
+function eventChannel(runId: string): string {
+  return `run:${runId}`;
 }

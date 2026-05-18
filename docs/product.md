@@ -106,10 +106,12 @@ finalized as `failed`, the task is returned to `open`, partial structured
 outputs are returned when available, and workspace cleanup is still attempted
 according to the selected cleanup policy. Dangerous verification commands are
 reported as failed verification results instead of bypassing finalization;
-verification timeouts and process signals are preserved in the command result.
+verification commands receive a 10-minute default timeout unless an explicit
+command timeout is configured, and timeout or process signal details are
+preserved in the command result.
 Runs without configured verification commands still record skipped verification
-and now include a run warning so the missing validation is visible in run
-metadata and debug output without opening the risk report.
+and include a run warning so the missing validation is visible in run metadata
+and debug output without opening the risk report.
 Task brief artifacts are persisted from Agent Hub's generated brief content,
 not by rereading worktree paths after materialization, so malicious symlinks in
 an untrusted worktree cannot be captured as task brief artifact contents.
@@ -197,23 +199,94 @@ failed checks, risk levels, risk factors, and summary tradeoffs from persisted
 run artifacts and reports, then stores the summary in `comparison_reports`. It
 is a review aid only; it does not accept, merge, or push changes.
 
-Agent Hub Desktop is now available as an MVP shell under `apps/desktop`. It
-starts with `pnpm --filter desktop dev` and presents a three-pane local review
-surface: projects and recent runs on the left, run timeline and composer in the
-center, and summary/diff/tests/risk/memory review tabs on the right. The
-renderer only calls the safe `window.agentHub` preload API. It has no direct
-Node.js, shell, filesystem, SQLite, or git access; privileged operations go
-through Electron main-process IPC registered in `apps/desktop/electron/ipc.ts`.
-The IPC handler factory is kept in `apps/desktop/electron/ipc-handlers.ts` so
-service-level validation remains testable in the root Vitest suite without
-loading Electron.
+Agent Hub Desktop is now available as a local conversation console under
+`apps/desktop`. It starts with `pnpm --filter desktop dev` and presents a
+thread-first shell: threads and projects on the left, a conversation timeline
+in the center, and a bottom composer as the primary interaction surface. When
+there are no registered projects, the desktop renders local project path
+registration controls in the project sidebar and the empty conversation pane;
+submitting either control calls the existing `window.agentHub.projects.open`
+IPC path and seeds a new conversation for the registered project.
 
-The first desktop run path is intentionally fake-agent backed. It records
-SQLite task/run/event/artifact/verification/risk rows through the local
-repositories and never writes files into the selected target repository.
+The composer accepts mention-based prompts such as `@fake ...` or multi-agent
+mentions. The renderer sends prompt text through the safe
+`window.agentHub.threads.sendMessage` preload API; the Electron main-process
+thread service strips known agent mentions from the task body, records one
+user message in the active thread, creates one run per selected agent through
+`RunService`, and appends one inline run card message per run. If no agent is
+mentioned or supplied by the caller, desktop falls back to `@fake`.
+
+Each inline run card subscribes to the existing desktop run event stream and
+shows agent identity, status, the latest streamed line, compact review pills,
+and an expandable event log. Diff, tests, risk, memory proposals, summary, and
+full logs are hidden by default and open through an on-demand run inspector
+drawer. Existing persisted run records are synthesized into thread-shaped
+conversations by the main-process thread service so old desktop run data
+remains inspectable. Thread/message persistence is an isolated in-memory Phase
+3 boundary for now; run records, events, simulated verification, placeholder
+diffs, and risk review rows remain SQLite-backed.
+
+The planned real multi-turn conversation route is captured in
+`docs/multiturn-conversation-prompts.md`. It keeps project context, thread
+context, current-turn context, and per-run context snapshots as separate
+layers, then replaces the current in-memory thread facade with persisted
+threads/messages and bounded runtime injection of prior conversation context.
+Until that route is implemented, desktop threads are a conversation UI and run
+review surface, not a guarantee that each new agent run sees the previous
+messages.
+
+The run inspector is the desktop drill-down surface for review evidence. It
+loads review summaries, changed-file stats, bounded unified diffs, captured
+verification rows, persisted TaskRunner safety reports when present,
+deterministic fallback risk findings, conservative memory proposals, and
+bounded raw logs through `window.agentHub.review.*` and
+`window.agentHub.memory.*` IPC methods. Blocking persisted safety reports keep
+their `blocking` level and mapped evidence in the inspector so sensitive-path
+or dangerous-instruction findings are not downgraded by the desktop fallback
+risk classifier. Fake desktop runs explicitly show that no real repository
+files were modified and do not invent changed files. When a retained worktree
+exists, desktop diff loading uses read-only Git inspection from the Electron
+main process only; renderer code never receives shell, filesystem, SQLite, or
+Git access.
+
+Inspector accept/reject actions are audit decisions only. Accepting a run
+records `accepted` review state and shows "Accepted for record. No merge was
+performed." Rejecting records `rejected` review state and shows "Rejected for
+record. No files were deleted or reverted." Neither action merges, pushes,
+resets, cleans, deletes worktrees, reverts files, writes repository context
+files, or creates pull requests. Memory proposals remain pending until the
+user approves or ignores them, and desktop approval updates Agent Hub local
+storage only.
+
+The selected run timeline receives live semantic events such as `run_started`,
+`context_compiled`, `agent_step`, `agent_output`, `verification_started`,
+`verification_finished`, `run_completed`, `run_failed`, and `run_cancelled`.
+Sidebar and card status update through the desktop status sequence
+`queued -> running -> verifying -> completed`, or to `failed`/`cancelled` for
+terminal interruptions. Running fake runs can be cancelled from their inline
+cards.
+
+The renderer only calls the safe `window.agentHub` preload API. It has no
+direct Node.js, shell, filesystem, SQLite, or git access; privileged
+operations go through Electron main-process IPC registered in
+`apps/desktop/electron/ipc.ts`. The IPC handler factory is kept in
+`apps/desktop/electron/ipc-handlers.ts` so service-level validation and
+subscription behavior remain testable in the root Vitest suite without loading
+Electron.
+
+The current desktop execution path is intentionally fake-agent backed for real
+streaming work. The main process `RunService` creates SQLite task/run rows,
+streams live events through an in-memory emitter, persists run events as the DB
+layer supports them, records simulated verification output, and stores
+placeholder diff/risk review rows that explicitly say no real files were
+modified. The fake runner never writes files into the selected target
+repository and does not export Agent Hub context files. Mentioned `@codex` and
+`@claude` desktop runs currently create safe placeholder run records that fail
+with an explicit "not wired yet" message instead of launching real adapters.
 CodexAdapter, ClaudeCodeAdapter, real TaskRunner streaming/cancellation, real
-diff scanning from retained worktrees, verification command configuration, and
-approved-memory context-store writeback remain follow-up desktop wiring tasks.
+verification command configuration, approved-memory context-store writeback,
+multi-agent comparison review, worktree lifecycle management, and explicit
+merge/apply workflows remain follow-up desktop wiring tasks.
 
 SQLite is stored in Agent Hub-owned application data by default, not in the
 target project repository. `AGENT_HUB_HOME` can point Agent Hub at an alternate
@@ -262,13 +335,15 @@ SQLite now enforces the important imported storage constraints at the database
 boundary. Tasks reference projects with cascade delete, task runs reference
 agent profiles when one is selected, task and run status values are checked,
 agent kinds are checked, JSON columns reject invalid JSON, and run event
-sequence numbers remain unique per run. Ad-hoc CLI runs reuse an existing
-project for the same repository root. The first legacy ad-hoc root may still
-use `adhoc_project` for compatibility; additional ad-hoc roots get
-deterministic root-scoped project ids so tasks and later memory writeback stay
-attached to the correct local repository. Upgrades from older SQLite databases
-also backfill missing legacy task project rows, including pre-change ad-hoc
-tasks, before adding the stricter task foreign key.
+sequence numbers remain unique per run. Local settings reject secret-like keys
+and string values before they can be stored in SQLite or in-memory test
+repositories, so settings remain limited to safe local behavior preferences.
+Ad-hoc CLI runs reuse an existing project for the same repository root. The
+first legacy ad-hoc root may still use `adhoc_project` for compatibility;
+additional ad-hoc roots get deterministic root-scoped project ids so tasks and
+later memory writeback stay attached to the correct local repository. Upgrades
+from older SQLite databases also backfill missing legacy task project rows,
+including pre-change ad-hoc tasks, before adding the stricter task foreign key.
 
 Task, task-run, and memory status changes follow the imported lifecycle rather
 than arbitrary enum changes in both SQLite and injected in-memory

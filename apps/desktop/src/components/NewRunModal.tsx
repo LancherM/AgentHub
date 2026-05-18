@@ -1,12 +1,12 @@
 import { useState } from "react";
-import type { AgentKind, ContextMode, ProjectSummary } from "../lib/types";
+import type { AgentId, ContextMode, ProjectSummary } from "../lib/types";
 
 export interface NewRunDraft {
   projectId?: string;
   projectPath: string;
   title: string;
   prompt: string;
-  agentKind: AgentKind;
+  agentId: AgentId;
   contextMode: ContextMode;
 }
 
@@ -29,16 +29,26 @@ export function NewRunModal({
   const [projectPath, setProjectPath] = useState("");
   const [title, setTitle] = useState("");
   const [prompt, setPrompt] = useState("");
-  const [agentKind, setAgentKind] = useState<AgentKind>("fake");
+  const [agentId, setAgentId] = useState<AgentId>("fake");
   const [contextMode, setContextMode] = useState<ContextMode>("auto");
+  const [validationError, setValidationError] = useState<string | undefined>();
 
   async function submit(): Promise<void> {
+    if (!prompt.trim()) {
+      setValidationError("Task is required.");
+      return;
+    }
+    if (!projectId && !projectPath.trim()) {
+      setValidationError("Choose a project or enter a local path.");
+      return;
+    }
+    setValidationError(undefined);
     await onCreate({
       projectId: projectId || undefined,
       projectPath,
       title,
       prompt,
-      agentKind,
+      agentId,
       contextMode
     });
   }
@@ -89,7 +99,7 @@ export function NewRunModal({
           />
         </label>
         <label>
-          <span>Prompt</span>
+          <span>Task</span>
           <textarea
             value={prompt}
             onChange={(event) => setPrompt(event.target.value)}
@@ -101,12 +111,16 @@ export function NewRunModal({
           <label>
             <span>Agent</span>
             <select
-              value={agentKind}
-              onChange={(event) => setAgentKind(event.target.value as AgentKind)}
+              value={agentId}
+              onChange={(event) => setAgentId(event.target.value as AgentId)}
             >
-              <option value="codex">@codex</option>
-              <option value="claude-code">@claude</option>
               <option value="fake">@fake</option>
+              <option value="codex" disabled>
+                @codex - coming soon
+              </option>
+              <option value="claude" disabled>
+                @claude - coming soon
+              </option>
             </select>
           </label>
           <label>
@@ -123,6 +137,11 @@ export function NewRunModal({
             </select>
           </label>
         </div>
+        {validationError ? (
+          <div className="form-error" role="alert">
+            {validationError}
+          </div>
+        ) : null}
         <div className="modal-actions">
           <button className="ghost-button" onClick={onClose}>
             Cancel

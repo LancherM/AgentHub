@@ -31,7 +31,10 @@ import {
   TaskRunner,
   TaskRunnerError
 } from "@agent-hub/task-runner";
-import { VerificationRunner } from "@agent-hub/task-runner";
+import {
+  DEFAULT_VERIFICATION_COMMAND_TIMEOUT_MS,
+  VerificationRunner
+} from "@agent-hub/task-runner";
 import type {
   WorkspaceConfig,
   WorkspaceManager,
@@ -427,6 +430,9 @@ describe("task runner", () => {
 
     expect(result.status).toBe("succeeded");
     expect(shell.calls[0].options.cwd).toBe(result.worktreePath);
+    expect(shell.calls[0].options.timeoutMs).toBe(
+      DEFAULT_VERIFICATION_COMMAND_TIMEOUT_MS
+    );
     expect(result.warnings).not.toContain(
       "No verification commands were configured; verification was skipped."
     );

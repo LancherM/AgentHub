@@ -1,67 +1,112 @@
-import { useEffect, useMemo, useState } from "react";
-import { Sidebar } from "./components/Sidebar";
-import { ThreadView } from "./components/ThreadView";
-import { ReviewPanel } from "./components/ReviewPanel";
-import { NewRunModal, type NewRunDraft } from "./components/NewRunModal";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { ChatView } from "./components/chat/ChatView";
+import { RunInspectorModal } from "./components/inspector/RunInspectorModal";
+import { Sidebar } from "./components/sidebar/Sidebar";
 import { agentHubApi } from "./lib/agentHubApi";
 import type {
-  AgentKind,
+  AgentId,
+  AgentRunMessage,
   ContextMode,
   ProjectSummary,
   RunDetail,
-  RunSummary
+  RunInspectorTab,
+  ThreadDetail,
+  ThreadMessage,
+  ThreadSummary
 } from "./lib/types";
 
 export function App(): JSX.Element {
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
-  const [runs, setRuns] = useState<RunSummary[]>([]);
-  const [selectedRunId, setSelectedRunId] = useState<string | undefined>();
-  const [selectedRun, setSelectedRun] = useState<RunDetail | undefined>();
-  const [isNewRunOpen, setIsNewRunOpen] = useState(false);
+  const [threads, setThreads] = useState<ThreadSummary[]>([]);
+  const [currentThread, setCurrentThread] = useState<ThreadDetail | undefined>();
+  const [runDetails, setRunDetails] = useState<Record<string, RunDetail>>({});
+  const [selectedThreadId, setSelectedThreadId] = useState<string | undefined>();
+  const [selectedProjectId, setSelectedProjectId] = useState<string | undefined>();
+  const [selectedInspector, setSelectedInspector] = useState<
+    { runId: string; tab?: RunInspectorTab } | undefined
+  >();
+  const [lastUsedAgents, setLastUsedAgents] = useState<AgentId[]>(["fake"]);
   const [isBusy, setIsBusy] = useState(true);
   const [error, setError] = useState<string | undefined>();
 
-  const selectedProjectId = useMemo(
-    () => selectedRun?.projectId ?? projects[0]?.id,
-    [projects, selectedRun]
+  const activeProjectId = currentThread?.projectId ?? selectedProjectId;
+  const selectedProject = useMemo(
+    () => projects.find((project) => project.id === activeProjectId),
+    [activeProjectId, projects]
   );
+  const selectedMessages = currentThread?.messages ?? [];
 
   useEffect(() => {
     void refreshShell();
   }, []);
 
-  useEffect(() => {
-    if (!selectedRunId) {
-      setSelectedRun(undefined);
-      return;
-    }
-    let active = true;
-    const unsubscribe = agentHubApi.runs.onEvent(selectedRunId, () => {
-      void loadRun(selectedRunId);
-    });
-    void loadRun(selectedRunId).finally(() => {
-      if (!active) {
-        unsubscribe();
+  const refreshThreadList = useCallback(async (): Promise<void> => {
+    const threadList = await agentHubApi.threads.list();
+    setThreads(threadList);
+  }, []);
+
+  const loadThread = useCallback(
+    async (threadId: string): Promise<void> => {
+      setError(undefined);
+      setIsBusy(true);
+      try {
+        const detail = await agentHubApi.threads.get(threadId);
+        setCurrentThread(detail);
+        setSelectedThreadId(detail.id);
+        setSelectedProjectId((current) => detail.projectId ?? current);
+        await refreshThreadList();
+      } catch (err) {
+        setError(errorMessage(err));
+      } finally {
+        setIsBusy(false);
       }
-    });
-    return () => {
-      active = false;
-      unsubscribe();
-    };
-  }, [selectedRunId]);
+    },
+    [refreshThreadList]
+  );
+
+  const handleRunUpdated = useCallback(
+    (detail: RunDetail): void => {
+      setRunDetails((current) => ({ ...current, [detail.id]: detail }));
+      setCurrentThread((thread) =>
+        thread ? updateAgentRunStatus(thread, detail.id, detail.status) : thread
+      );
+      void refreshThreadList().catch((err: unknown) => {
+        setError(errorMessage(err));
+      });
+    },
+    [refreshThreadList]
+  );
+
+  const cancelRun = useCallback(
+    async (runId: string): Promise<void> => {
+      await agentHubApi.runs.cancel(runId);
+      const detail = await agentHubApi.runs.get(runId);
+      handleRunUpdated(detail);
+    },
+    [handleRunUpdated]
+  );
 
   async function refreshShell(): Promise<void> {
     setIsBusy(true);
     setError(undefined);
     try {
-      const [projectList, runList] = await Promise.all([
+      const [projectList, threadList] = await Promise.all([
         agentHubApi.projects.list(),
-        agentHubApi.runs.list()
+        agentHubApi.threads.list()
       ]);
       setProjects(projectList);
-      setRuns(runList);
-      if (!selectedRunId && runList[0]) {
-        setSelectedRunId(runList[0].id);
+      setThreads(threadList);
+      const latestThread = threadList[0];
+      setSelectedProjectId(
+        (current) => current ?? latestThread?.projectId ?? projectList[0]?.id
+      );
+      if (latestThread) {
+        const detail = await agentHubApi.threads.get(latestThread.id);
+        setCurrentThread(detail);
+        setSelectedThreadId(detail.id);
+      } else {
+        setCurrentThread(undefined);
+        setSelectedThreadId(undefined);
       }
     } catch (err) {
       setError(errorMessage(err));
@@ -70,37 +115,21 @@ export function App(): JSX.Element {
     }
   }
 
-  async function loadRun(runId: string): Promise<void> {
-    try {
-      const detail = await agentHubApi.runs.get(runId);
-      setSelectedRun(detail);
-    } catch (err) {
-      setError(errorMessage(err));
-    }
-  }
-
-  async function createRun(draft: NewRunDraft): Promise<void> {
+  async function registerProject(projectPath: string): Promise<void> {
     setIsBusy(true);
     setError(undefined);
     try {
-      let projectId = draft.projectId;
-      if (!projectId && draft.projectPath.trim()) {
-        const project = await agentHubApi.projects.open(draft.projectPath);
-        projectId = project.id;
-      }
-      if (!projectId) {
-        throw new Error("Choose a project or enter a local path.");
-      }
-      const summary = await agentHubApi.runs.create({
-        projectId,
-        prompt: draft.prompt,
-        title: draft.title,
-        agentKind: draft.agentKind,
-        contextMode: draft.contextMode
+      const project = await agentHubApi.projects.open(projectPath);
+      setProjects((current) => upsertProjectSummary(current, project));
+      setSelectedProjectId(project.id);
+      const thread = await agentHubApi.threads.create({
+        projectId: project.id,
+        title: "New Chat"
       });
-      await refreshShell();
-      setSelectedRunId(summary.id);
-      setIsNewRunOpen(false);
+      const detail = await agentHubApi.threads.get(thread.id);
+      setCurrentThread(detail);
+      setSelectedThreadId(detail.id);
+      await refreshThreadList();
     } catch (err) {
       setError(errorMessage(err));
     } finally {
@@ -108,54 +137,114 @@ export function App(): JSX.Element {
     }
   }
 
-  async function createInlineRun(
-    prompt: string,
-    agentKind: AgentKind,
+  function createNewThread(): void {
+    setError(undefined);
+    setCurrentThread(undefined);
+    setSelectedThreadId(undefined);
+    setSelectedProjectId((current) => current ?? projects[0]?.id);
+  }
+
+  async function submitMessage(
+    input: string,
     contextMode: ContextMode
   ): Promise<void> {
-    if (!selectedProjectId) {
-      setIsNewRunOpen(true);
-      return;
+    setError(undefined);
+    setIsBusy(true);
+    try {
+      const detail = await agentHubApi.threads.sendMessage({
+        threadId: selectedThreadId,
+        projectId: activeProjectId ?? projects[0]?.id,
+        text: input,
+        contextMode
+      });
+      setCurrentThread(detail);
+      setSelectedThreadId(detail.id);
+      setSelectedProjectId((current) => detail.projectId ?? current);
+      const mentions = lastUserMentions(detail.messages);
+      if (mentions) {
+        setLastUsedAgents(mentions);
+      }
+      await refreshThreadList();
+    } catch (err) {
+      setError(errorMessage(err));
+      throw err;
+    } finally {
+      setIsBusy(false);
     }
-    await createRun({
-      projectId: selectedProjectId,
-      projectPath: "",
-      title: "",
-      prompt,
-      agentKind,
-      contextMode
-    });
   }
 
   return (
     <div className="app-shell">
       <Sidebar
         projects={projects}
-        runs={runs}
-        selectedRunId={selectedRunId}
-        onNewRun={() => setIsNewRunOpen(true)}
-        onSelectRun={setSelectedRunId}
+        threads={threads}
+        selectedThreadId={selectedThreadId}
+        selectedProjectId={selectedProject?.id ?? selectedProjectId}
+        onNewThread={createNewThread}
+        onSelectThread={(threadId) => void loadThread(threadId)}
+        onSelectProject={setSelectedProjectId}
+        onRegisterProject={registerProject}
+        isBusy={isBusy}
       />
       <main className="center-pane">
-        {error ? <div className="error-strip">{error}</div> : null}
-        <ThreadView
-          run={selectedRun}
+        <ChatView
+          thread={currentThread}
+          project={selectedProject}
+          messages={selectedMessages}
+          runDetails={runDetails}
           isBusy={isBusy}
-          onCreateRun={createInlineRun}
+          lastUsedAgents={lastUsedAgents}
+          error={error}
+          onSubmit={submitMessage}
+          onRunUpdated={handleRunUpdated}
+          onOpenInspector={(runId, tab) => setSelectedInspector({ runId, tab })}
+          onCancelRun={cancelRun}
+          onRegisterProject={registerProject}
         />
       </main>
-      <ReviewPanel run={selectedRun} />
-      {isNewRunOpen ? (
-        <NewRunModal
-          projects={projects}
-          defaultProjectId={selectedProjectId}
-          isBusy={isBusy}
-          onCreate={createRun}
-          onClose={() => setIsNewRunOpen(false)}
+      {selectedInspector ? (
+        <RunInspectorModal
+          runId={selectedInspector.runId}
+          initialRun={runDetails[selectedInspector.runId]}
+          initialTab={selectedInspector.tab}
+          onClose={() => setSelectedInspector(undefined)}
         />
       ) : null}
     </div>
   );
+}
+
+function updateAgentRunStatus(
+  thread: ThreadDetail,
+  runId: string,
+  status: AgentRunMessage["status"]
+): ThreadDetail {
+  return {
+    ...thread,
+    messages: thread.messages.map((message) =>
+      message.type === "agent_run" && message.runId === runId
+        ? { ...message, status }
+        : message
+    )
+  };
+}
+
+function lastUserMentions(messages: ThreadMessage[]): AgentId[] | undefined {
+  const userMessage = [...messages]
+    .reverse()
+    .find((message) => message.type === "user");
+  if (userMessage?.type === "user" && userMessage.mentions.length > 0) {
+    return userMessage.mentions;
+  }
+  return undefined;
+}
+
+function upsertProjectSummary(
+  projects: ProjectSummary[],
+  summary: ProjectSummary
+): ProjectSummary[] {
+  const next = [summary, ...projects.filter((project) => project.id !== summary.id)];
+  return next.sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
 }
 
 function errorMessage(error: unknown): string {

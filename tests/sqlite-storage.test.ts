@@ -261,6 +261,43 @@ describe("SQLite storage", () => {
     );
   });
 
+  it("rejects secret-like local settings before persisting to SQLite", async () => {
+    const databasePath = path.join(
+      await createTestDirectory("sqlite-settings-secret-guard"),
+      "agent-hub.sqlite"
+    );
+    const repositories = createSqliteRepositories({ databasePath });
+
+    await expect(
+      repositories.settingsRepository.set({
+        key: "ui.theme",
+        value: { theme: "system" },
+        updatedAt
+      })
+    ).resolves.toEqual({
+      key: "ui.theme",
+      value: { theme: "system" },
+      updatedAt
+    });
+    await expect(
+      repositories.settingsRepository.set({
+        key: "private_key",
+        value: "redacted",
+        updatedAt
+      })
+    ).rejects.toThrow("setting.key must not store secrets");
+    await expect(
+      repositories.settingsRepository.set({
+        key: "ui.notice",
+        value: "credentials=redacted-value",
+        updatedAt
+      })
+    ).rejects.toThrow("setting.value must not store secret-like string values");
+    await expect(repositories.settingsRepository.list()).resolves.toEqual([
+      { key: "ui.theme", value: { theme: "system" }, updatedAt }
+    ]);
+  });
+
   it("enforces imported SQLite constraints for relationships, enums, JSON, and event order", async () => {
     const baseDirectory = await createTestDirectory("sqlite-constraints");
     const databasePath = path.join(baseDirectory, "agent-hub.sqlite");
