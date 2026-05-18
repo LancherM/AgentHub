@@ -93,6 +93,14 @@ appending one agent-run message per run. Run cards subscribe to the same
 `RunService` stream as the earlier run-detail view and open review data through
 an on-demand inspector instead of a permanent right-hand panel.
 
+`docs/multiturn-conversation-prompts.md` defines the staged architecture route
+for replacing that Phase 3 facade with real multi-turn support. The target
+separates persisted thread/message repositories from task runs, adds a bounded
+conversation context builder, and persists per-run context snapshots as audit
+artifacts. Project context, thread context, current-turn context, and run
+context remain distinct layers so thread-local decisions do not automatically
+promote into project approved memory.
+
 The service maps desktop-facing agent IDs (`fake`, `codex`, `claude`) and run
 statuses (`queued`, `running`, `verifying`, `completed`, `failed`,
 `cancelled`) onto the existing core/SQLite contracts where possible. SQLite
