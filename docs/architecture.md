@@ -48,15 +48,19 @@ exposing `ipcRenderer`.
 
 The desktop conversation console keeps the main-process `RunService` boundary
 for run creation, live event streaming, cancellation, and repository-backed
-review loading. Renderer components use only `window.agentHub.runs.create/list/
-get/cancel/onEvent`; the preload hides channel names and returns unsubscribe
-functions for live event listeners. IPC handlers validate inputs and manage
-per-window subscriptions, but do not own run lifecycle logic. The renderer adds
-thread and message view models over persisted task/run data, synthesizing
-existing runs into thread-shaped conversations and keeping new thread state
-renderer-local until a persistence slice is added. Run cards subscribe to the
-same `RunService` stream as the earlier run-detail view and open review data
-through an on-demand inspector instead of a permanent right-hand panel.
+review loading. Renderer components use only `window.agentHub.projects.list/
+open` for project registration and `window.agentHub.runs.create/list/get/
+cancel/onEvent` for runs; the preload hides channel names and returns
+unsubscribe functions for live event listeners. IPC handlers validate inputs
+and manage per-window subscriptions, but do not own run lifecycle logic. The
+renderer adds thread and message view models over persisted task/run data,
+synthesizing existing runs into thread-shaped conversations and keeping new
+thread state renderer-local until a persistence slice is added. If the project
+list is empty, renderer-local onboarding forms submit a local path through the
+same project-open IPC service before creating a renderer-local starter thread.
+Run cards subscribe to the same `RunService` stream as the earlier run-detail
+view and open review data through an on-demand inspector instead of a permanent
+right-hand panel.
 
 The service maps desktop-facing agent IDs (`fake`, `codex`, `claude`) and run
 statuses (`queued`, `running`, `verifying`, `completed`, `failed`,

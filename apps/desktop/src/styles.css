@@ -251,6 +251,57 @@ textarea:disabled {
   min-width: 0;
 }
 
+
+.project-registration-form {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.project-registration-form label {
+  display: grid;
+  gap: 6px;
+}
+
+.project-registration-form label span {
+  color: var(--muted-2);
+  font-size: 11px;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.project-registration-form input {
+  width: 100%;
+  min-height: 36px;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(8, 9, 7, 0.72);
+  color: var(--text);
+  outline: 0;
+  padding: 0 10px;
+}
+
+.project-registration-form input:focus {
+  border-color: rgba(216, 255, 87, 0.62);
+}
+
+.project-registration-form .primary-button {
+  width: 100%;
+  min-height: 36px;
+  font-size: 12px;
+}
+
+.project-onboarding .project-registration-form {
+  width: min(100%, 520px);
+  margin: 22px auto 0;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.03);
+  text-align: left;
+}
+
 .placeholder-nav {
   display: grid;
   grid-template-columns: 1fr 1fr;

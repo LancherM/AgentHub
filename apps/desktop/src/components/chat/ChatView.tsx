@@ -6,6 +6,7 @@ import type {
   ThreadMessage,
   ThreadSummary
 } from "../../lib/types";
+import { ProjectRegistrationForm } from "../projects/ProjectRegistrationForm";
 import { Composer } from "./Composer";
 import { MessageList } from "./MessageList";
 
@@ -21,6 +22,7 @@ interface ChatViewProps {
   onRunUpdated(run: RunDetail): void;
   onOpenInspector(runId: string): void;
   onCancelRun(runId: string): Promise<void>;
+  onRegisterProject(projectPath: string): Promise<void>;
 }
 
 export function ChatView({
@@ -34,7 +36,8 @@ export function ChatView({
   onSubmit,
   onRunUpdated,
   onOpenInspector,
-  onCancelRun
+  onCancelRun,
+  onRegisterProject
 }: ChatViewProps): JSX.Element {
   const disabledReason = project
     ? undefined
@@ -56,13 +59,31 @@ export function ChatView({
       {error ? <div className="error-strip inline">{error}</div> : null}
 
       <div className="chat-scroll">
-        <MessageList
-          messages={messages}
-          runDetails={runDetails}
-          onRunUpdated={onRunUpdated}
-          onOpenInspector={onOpenInspector}
-          onCancelRun={onCancelRun}
-        />
+        {project ? (
+          <MessageList
+            messages={messages}
+            runDetails={runDetails}
+            onRunUpdated={onRunUpdated}
+            onOpenInspector={onOpenInspector}
+            onCancelRun={onCancelRun}
+          />
+        ) : (
+          <div className="empty-chat project-onboarding">
+            <div>
+              <p className="eyebrow">First run setup</p>
+              <h2>Register a local project to start chatting</h2>
+              <p>
+                Agent Hub Desktop stays local-first. Enter a repository path to
+                add it through the existing project IPC flow, then start a new
+                agent conversation.
+              </p>
+              <ProjectRegistrationForm
+                isBusy={isBusy}
+                onRegister={onRegisterProject}
+              />
+            </div>
+          </div>
+        )}
       </div>
 
       <Composer

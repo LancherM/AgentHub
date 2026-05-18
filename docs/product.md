@@ -197,12 +197,15 @@ is a review aid only; it does not accept, merge, or push changes.
 Agent Hub Desktop is now available as a local conversation console under
 `apps/desktop`. It starts with `pnpm --filter desktop dev` and presents a
 thread-first shell: threads and projects on the left, a conversation timeline
-in the center, and a bottom composer as the primary interaction surface. The
-composer accepts mention-based prompts such as `@fake ...` or multi-agent
-mentions, strips those mentions from the task body, records one user message
-in the active thread, and creates one run card per mentioned agent. If no
-agent is mentioned, the renderer falls back to the last-used agent set or
-`@fake`.
+in the center, and a bottom composer as the primary interaction surface. When
+there are no registered projects, the desktop renders local project path
+registration controls in the project sidebar and the empty conversation pane;
+submitting either control calls the existing `window.agentHub.projects.open`
+IPC path and seeds a new conversation for the registered project. The composer
+accepts mention-based prompts such as `@fake ...` or multi-agent mentions,
+strips those mentions from the task body, records one user message in the
+active thread, and creates one run card per mentioned agent. If no agent is
+mentioned, the renderer falls back to the last-used agent set or `@fake`.
 
 Each inline run card subscribes to the existing desktop run event stream and
 shows agent identity, status, the latest streamed line, compact review pills,

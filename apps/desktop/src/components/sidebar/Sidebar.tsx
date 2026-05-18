@@ -1,3 +1,4 @@
+import { ProjectRegistrationForm } from "../projects/ProjectRegistrationForm";
 import type { ProjectSummary, ThreadSummary } from "../../lib/types";
 
 interface SidebarProps {
@@ -8,6 +9,8 @@ interface SidebarProps {
   onNewThread(): void;
   onSelectThread(threadId: string): void;
   onSelectProject(projectId: string): void;
+  onRegisterProject(projectPath: string): Promise<void>;
+  isBusy: boolean;
 }
 
 export function Sidebar({
@@ -17,7 +20,9 @@ export function Sidebar({
   selectedProjectId,
   onNewThread,
   onSelectThread,
-  onSelectProject
+  onSelectProject,
+  onRegisterProject,
+  isBusy
 }: SidebarProps): JSX.Element {
   return (
     <aside className="sidebar">
@@ -68,6 +73,10 @@ export function Sidebar({
 
       <section className="nav-section">
         <div className="section-label">Projects</div>
+        <ProjectRegistrationForm
+          isBusy={isBusy}
+          onRegister={onRegisterProject}
+        />
         <div className="project-list">
           {projects.length === 0 ? (
             <div className="muted-row">No projects registered</div>

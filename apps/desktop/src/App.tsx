@@ -104,6 +104,30 @@ export function App(): JSX.Element {
     }
   }
 
+  async function registerProject(projectPath: string): Promise<void> {
+    setIsBusy(true);
+    setError(undefined);
+    try {
+      const project = await agentHubApi.projects.open(projectPath);
+      setProjects((current) => upsertProjectSummary(current, project));
+      setSelectedProjectId(project.id);
+
+      const existingThread = threads.find((thread) => thread.projectId === project.id);
+      if (existingThread) {
+        setSelectedThreadId(existingThread.id);
+      } else {
+        const thread = createThread(project.id, "New conversation");
+        setThreads((current) => [thread, ...current]);
+        setMessagesByThread((current) => ({ ...current, [thread.id]: [] }));
+        setSelectedThreadId(thread.id);
+      }
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setIsBusy(false);
+    }
+  }
+
   function createNewThread(): void {
     setError(undefined);
     const projectId = selectedProjectId ?? projects[0]?.id;
@@ -267,6 +291,8 @@ export function App(): JSX.Element {
         onNewThread={createNewThread}
         onSelectThread={setSelectedThreadId}
         onSelectProject={setSelectedProjectId}
+        onRegisterProject={registerProject}
+        isBusy={isBusy}
       />
       <main className="center-pane">
         <ChatView
@@ -281,6 +307,7 @@ export function App(): JSX.Element {
           onRunUpdated={handleRunUpdated}
           onOpenInspector={setSelectedInspectorRunId}
           onCancelRun={cancelRun}
+          onRegisterProject={registerProject}
         />
       </main>
       {selectedInspectorRunId ? (
@@ -410,6 +437,14 @@ function updateAgentRunStatus(
     );
   });
   return next;
+}
+
+function upsertProjectSummary(
+  projects: ProjectSummary[],
+  summary: ProjectSummary
+): ProjectSummary[] {
+  const next = [summary, ...projects.filter((project) => project.id !== summary.id)];
+  return next.sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
 }
 
 function upsertRunSummary(runs: RunSummary[], summary: RunSummary): RunSummary[] {
