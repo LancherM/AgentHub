@@ -3,12 +3,14 @@ import { describe, expect, it } from "vitest";
 import {
   DomainValidationError,
   DomainStateTransitionError,
+  InMemorySettingsRepository,
   InMemoryTaskRunRepository,
   nowIso,
   parseAgentKind,
   validateMemoryItem,
   validateMemoryStatusTransition,
   validateProject,
+  validateSetting,
   validateTask,
   validateTaskRun,
   validateTaskRunStatusTransition,
@@ -94,6 +96,63 @@ describe("domain model validation", () => {
         updatedAt: now
       })
     ).toThrow(DomainValidationError);
+  });
+
+  it("rejects secret-like local settings at the domain boundary", async () => {
+    const safeSetting = {
+      key: "ui.theme",
+      value: { theme: "system", compact: true },
+      updatedAt
+    };
+    expect(validateSetting(safeSetting)).toBe(safeSetting);
+
+    for (const key of [
+      "api_key",
+      "token",
+      "password",
+      "private_key",
+      "credentials.github"
+    ]) {
+      expect(() =>
+        validateSetting({
+          key,
+          value: "redacted",
+          updatedAt
+        })
+      ).toThrow("setting.key must not store secrets");
+    }
+
+    expect(() =>
+      validateSetting({
+        key: "ui.banner",
+        value: "token=redacted-value",
+        updatedAt
+      })
+    ).toThrow("setting.value must not store secret-like string values");
+    expect(() =>
+      validateSetting({
+        key: "ui.local",
+        value: { apiKey: "redacted-value" },
+        updatedAt
+      })
+    ).toThrow("setting.value.apiKey must not store secrets");
+
+    const repository = new InMemorySettingsRepository();
+    await expect(repository.set(safeSetting)).resolves.toEqual(safeSetting);
+    await expect(
+      repository.set({
+        key: "local.token",
+        value: "redacted",
+        updatedAt
+      })
+    ).rejects.toThrow("setting.key must not store secrets");
+    await expect(
+      repository.set({
+        key: "ui.footer",
+        value: "api_key=redacted-value",
+        updatedAt
+      })
+    ).rejects.toThrow("setting.value must not store secret-like string values");
   });
 
   it("parses supported agent kinds", () => {

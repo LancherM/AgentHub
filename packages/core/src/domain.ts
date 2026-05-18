@@ -224,8 +224,11 @@ export function validateSkill(input: Skill): Skill {
 export function validateSetting(input: Setting): Setting {
   const issues: string[] = [];
   required(input.key, "setting.key", issues);
+  secretFreeSettingKey(input.key, "setting.key", issues);
   if (input.value === undefined) {
     issues.push("setting.value is required");
+  } else {
+    secretFreeSettingValue(input.value, "setting.value", issues, new WeakSet<object>());
   }
   timestamp(input.updatedAt, "setting.updatedAt", issues);
   return finish(input, issues);
@@ -303,6 +306,50 @@ function stringArray(value: unknown, field: string, issues: string[]): void {
   }
 }
 
+function secretFreeSettingKey(value: unknown, field: string, issues: string[]): void {
+  if (typeof value !== "string") {
+    return;
+  }
+  if (secretLikeSettingKeyPattern.test(value)) {
+    issues.push(`${field} must not store secrets`);
+  }
+}
+
+function secretFreeSettingValue(
+  value: unknown,
+  field: string,
+  issues: string[],
+  seen: WeakSet<object>
+): void {
+  if (typeof value === "string") {
+    if (secretLikeSettingValuePatterns.some((pattern) => pattern.test(value))) {
+      issues.push(`${field} must not store secret-like string values`);
+    }
+    return;
+  }
+
+  if (value === null || typeof value !== "object") {
+    return;
+  }
+
+  if (seen.has(value)) {
+    return;
+  }
+  seen.add(value);
+
+  if (Array.isArray(value)) {
+    value.forEach((entry, index) => {
+      secretFreeSettingValue(entry, `${field}.${index}`, issues, seen);
+    });
+    return;
+  }
+
+  Object.entries(value as Record<string, unknown>).forEach(([key, entry]) => {
+    secretFreeSettingKey(key, `${field}.${key}`, issues);
+    secretFreeSettingValue(entry, `${field}.${key}`, issues, seen);
+  });
+}
+
 function enumValue<T extends readonly string[]>(
   value: unknown,
   values: T,
@@ -334,6 +381,16 @@ const memoryStatusTransitions: Record<MemoryStatus, readonly MemoryStatus[]> = {
   approved: [],
   rejected: []
 };
+
+const secretLikeSettingKeyPattern =
+  /(^|[._:-])(api[_-]?key|token|password|private[_-]?key|credentials?)([._:-]|$)/i;
+
+const secretLikeSettingValuePatterns = [
+  /-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----/i,
+  /\b(api[_-]?key|token|password|private[_-]?key|credentials?)\b\s*[:=]\s*["']?[^"'\s]+/i,
+  /\bBearer\s+[A-Za-z0-9._~+/=-]{20,}/i,
+  /\b(?:gh[pousr]_[A-Za-z0-9_]{20,}|xox[baprs]-[A-Za-z0-9-]{20,}|sk-[A-Za-z0-9]{20,})\b/i
+];
 
 function validateStatusTransition<T extends string>(
   from: T,

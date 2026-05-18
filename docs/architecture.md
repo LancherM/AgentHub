@@ -306,6 +306,13 @@ invalid terminal transitions are rejected in both SQLite and in-memory
 repositories, including the in-memory task-run `updateStatus()` path used by
 focused runner tests and injected runtimes.
 
+Settings use the same domain validation before repository writes. Both
+in-memory and SQLite settings repositories reject secret-like key names such as
+API keys, tokens, passwords, private keys, and credentials, and they also reject
+string values that look like embedded secret assignments, bearer tokens, common
+service tokens, or private key blocks. Safe local UI and behavior flags remain
+valid setting values.
+
 When the CLI executes an ad-hoc SQLite-backed run, it first looks up a project
 by the resolved repository root. The first legacy ad-hoc root can keep the
 `adhoc_project` id for compatibility; if that id already belongs to a different
