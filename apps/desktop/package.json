@@ -2,11 +2,14 @@
   "name": "desktop",
   "version": "0.0.0",
   "private": true,
+  "description": "Local-first desktop shell for Agent Hub.",
+  "author": "Agent Hub",
   "type": "commonjs",
   "main": "out/main/main.js",
   "scripts": {
     "dev": "electron-vite dev",
     "build": "electron-vite build",
+    "package:mac": "electron-builder --mac dmg --publish never",
     "typecheck": "tsc --pretty false -p tsconfig.typecheck.json",
     "lint": "tsc --pretty false -p tsconfig.typecheck.json",
     "preview": "electron-vite preview"
@@ -14,8 +17,8 @@
   "dependencies": {
     "@agent-hub/core": "workspace:*",
     "@agent-hub/db": "workspace:*",
-    "@agent-hub/task-runner": "workspace:*",
     "@agent-hub/shared": "workspace:*",
+    "@agent-hub/task-runner": "workspace:*",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },
@@ -24,6 +27,7 @@
     "@types/react-dom": "^18.3.5",
     "@vitejs/plugin-react": "^4.3.4",
     "electron": "^31.7.7",
+    "electron-builder": "^26.8.1",
     "electron-vite": "^2.3.0",
     "vite": "^5.4.11"
   }

@@ -1,0 +1,21 @@
+appId: dev.agenthub.desktop
+productName: Agent Hub
+artifactName: Agent-Hub-${version}-${arch}.${ext}
+asar: true
+npmRebuild: false
+
+directories:
+  output: release
+
+files:
+  - out/**/*
+  - package.json
+
+mac:
+  category: public.app-category.developer-tools
+  identity: "-"
+  target:
+    - target: dmg
+
+dmg:
+  title: Agent Hub

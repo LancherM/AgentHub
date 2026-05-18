@@ -279,14 +279,17 @@ team features, hosted dashboards, automatic pull requests, automatic merges, or
 automatic pushes.
 
 GitHub CI/CD is available for repository maintenance. Pull requests to `main`
-run the validation suite (`pnpm typecheck`, `pnpm lint`, `pnpm test`, and
-`pnpm build`). Pushes to `main` and manual workflow runs build a packaged CLI
-artifact from the workspace app/package directories, tests, the CI workflow,
-root package metadata, `README.md`, workspace/lock files, and root TypeScript/
-Vitest config files needed by those advertised validation scripts. Version tags
-that match `v*.*.*` create or update a GitHub Release with that artifact. The
-workflow publishes local CLI release assets only; it does not deploy a hosted
-service or change Agent Hub's local-first product model.
+run the validation suite (`pnpm typecheck`, `pnpm lint`, `pnpm test`,
+`pnpm build`, and the desktop Electron/Vite bundle build). Pushes to `main`
+and manual workflow runs build a packaged CLI artifact from the workspace app/
+package directories, tests, the CI workflow, root package metadata, `README.md`,
+workspace/lock files, and root TypeScript/Vitest config files needed by those
+advertised validation scripts. They also build ad-hoc signed macOS desktop DMG
+artifacts for x64 and arm64 on GitHub-hosted macOS runners. Version tags that
+match `v*.*.*` create or update a GitHub Release with both the workspace
+package artifact and the DMG artifacts. The workflow publishes local release
+assets only; it does not deploy a hosted service, notarize the desktop app, or
+change Agent Hub's local-first product model.
 
 Deferred product capabilities include richer Codex/Claude structured event
 mapping, automatic memory proposal generation from completed runs, richer

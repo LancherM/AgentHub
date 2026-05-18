@@ -46,6 +46,17 @@ repository export. Electron IPC registration stays in
 tested without loading Electron. Preload uses `contextBridge` rather than
 exposing `ipcRenderer`.
 
+Desktop packaging is a local release concern layered over that shell. The
+workspace keeps Electron/Vite bundling in `apps/desktop`, then uses
+Electron Builder through `scripts/build-macos-dmg.sh` to package the generated
+`out/` application into macOS DMG artifacts under `apps/desktop/release/`.
+Local `@agent-hub/*` packages are bundled into the Electron main/preload output
+so the packaged app does not depend on pnpm workspace symlinks at runtime. The
+GitHub workflow builds x64 and arm64 DMG artifacts on macOS runners with
+signing auto-discovery disabled and ad-hoc signing enabled; certificate-backed
+signing and notarization are separate distribution configuration, not a
+requirement for the local-first MVP packaging path.
+
 Child process environment policy is explicit by default. `ProcessRunner` and
 `ShellExecutor` build child environments from a small inherited allowlist
 needed for local CLI execution: path lookup, home/config/cache locations,
