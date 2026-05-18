@@ -36,6 +36,8 @@ agent-hub run [--repo <path>] [--workspace-base <path>] [--retain-on-failure] "@
 agent-hub [--db <path>] run event add --run-id <run-id> --type <type> --message <message>
 agent-hub tasks list
 agent-hub runs list
+agent-hub runs events <run-id>
+agent-hub runs diff <run-id> [--stat|--patch] [--full]
 agent-hub runs show <run-id>
 agent-hub risks show <run-id>
 agent-hub [--db <path>] memory list --project-id <project-id>
@@ -121,14 +123,20 @@ the run exists, validates the event type, appends through the
 `RunEventRepository`, and assigns the next sequence number after existing
 events for that run.
 
+Persisted run review is explicit and read-only. `runs events <run-id>` prints
+the ordered adapter/manual event stream stored in `run_events` across CLI
+processes. `runs diff <run-id> --stat` prints stored changed-file and diff-stat
+metadata, while `runs diff <run-id> --patch` prints the stored git diff artifact
+with default truncation and an explicit `--full` flag for complete local output.
+These commands inspect SQLite-backed evidence only; they do not rerun agents,
+modify worktrees, accept output, merge branches, or push code.
+
 `--debug` is opt-in and does not change run behavior. For supported run
 commands it appends the detailed run summary, selected `context_delivery` mode,
 `branch_name`, run boundary details, context artifact paths, verification
 stdout/stderr, changed-file summaries, warnings, and a truncated diff preview
-to the normal agent output. If the risk report contains sensitive-path
-findings, the debug diff preview is redacted rather than printing potentially
-sensitive diff contents. `AGENT_HUB_DEBUG=1` or `AGENT_HUB_DEBUG=true` enables
-the same debug rendering for local troubleshooting.
+to the normal agent output. `AGENT_HUB_DEBUG=1` or `AGENT_HUB_DEBUG=true`
+enables the same debug rendering for local troubleshooting.
 
 The process-backed adapters use direct executable-plus-args spawning:
 
@@ -164,16 +172,18 @@ and common shell-wrapped variants of `sudo`, `rm -rf /`, `chmod -R 777`,
 `curl | sh`, `wget | sh`, `git push --force`, and `git clean -fdx`. Blocking
 findings remain `blocking` in the aggregated risk level and are surfaced in
 `risks show`; they are not downgraded to high. Agent Hub still does not
-automatically accept, merge, or push any run output.
+automatically accept, merge, or push any run output. Debug run output redacts
+the raw diff preview when a blocking sensitive-path finding exists, or when
+changed-file metadata identifies a sensitive path before a risk report is
+available.
 
 The memory workflow is explicit and user-approved. `memory propose` creates a
 SQLite memory item in `proposed` state, `memory list` shows project memory
 items, `memory approve` marks an item approved and appends it to the Agent
 Hub-owned context store at `memory/approved.md`, and `memory reject` marks it
-rejected. Context builds read approved memory only from the context store, so
-proposed and rejected SQLite memory items are not injected into future task
-briefs. The initialized `# Approved Memory` placeholder is treated as empty
-and is not injected into task briefs until an approved memory entry is written.
+rejected. Context builds read approved memory only from the context store and
+ignore the default `# Approved Memory` placeholder, so proposed, rejected, and
+empty placeholder memory items are not injected into future task briefs.
 
 The compare workflow generates a persisted comparison report for two runs of a
 task. `compare --task-id ... --baseline ... --candidate ...` compares changed
@@ -201,14 +211,14 @@ Persisted run metadata currently covers:
 Diff collection records binary file metadata, synthesizes reviewable patches
 for bounded untracked text files, and excludes generated overlay files only
 while they still match their Agent Hub baseline. Untracked symlinks are recorded
-as symlinks without dereferencing, storing, or rendering their targets,
-oversized untracked files have their contents omitted, and synthetic untracked
-file reads are constrained to real paths inside the isolated worktree. If an
-agent modifies generated overlay files, those files are included in the diff.
-Git worktree and diff operations apply hardened Git invocation defaults and
-reject repository-local Git config keys that can execute helpers, hooks,
-filters, external diff commands, or included config before Agent Hub invokes
-Git in the selected repository or generated worktree.
+as symlinks without dereferencing their targets, oversized untracked files have
+their contents omitted, and synthetic untracked file reads are constrained to
+real paths inside the isolated worktree. If an agent modifies generated overlay
+files, those files are included in the diff. Git worktree and diff operations
+apply hardened Git invocation defaults and reject repository-local Git config
+keys that can execute helpers, hooks, filters, external diff commands, or
+included config before Agent Hub invokes Git in the selected repository or
+generated worktree.
 
 Structured run data is now also persisted in first-class SQLite tables:
 

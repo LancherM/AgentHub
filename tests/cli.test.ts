@@ -6,6 +6,7 @@ import { createCliRuntime, main } from "@agent-hub/cli";
 import type { DiffCollectionResult, DiffCollectorService } from "@agent-hub/task-runner";
 import type { RiskReport } from "@agent-hub/core";
 import { createSqliteRepositories } from "@agent-hub/db";
+import { RiskReportGenerator, type RiskReportInput } from "@agent-hub/safety";
 import { SequenceIdGenerator, FixedClock } from "@agent-hub/task-runner";
 import { VerificationRunner } from "@agent-hub/task-runner";
 import type {
@@ -201,6 +202,120 @@ describe("CLI", () => {
     expect(queryOutput.join("")).toContain("changed_files: 1");
     expect(queryOutput.join("")).toContain("risk: medium");
     expect(queryOutput.join("")).toContain("acceptance:");
+  });
+
+  it("reviews persisted run events and diff artifacts across SQLite runtimes", async () => {
+    const projectRoot = await createTestDirectory("cli-review-project");
+    const databasePath = path.join(
+      await createTestDirectory("cli-review-db"),
+      "agent-hub.sqlite"
+    );
+    const repositories = createSqliteRepositories({ databasePath });
+    const longPatch = `diff --git a/src/a.ts b/src/a.ts\n${"x".repeat(12_020)}`;
+    await repositories.projectRepository.create({
+      id: "project_review",
+      name: "Review Project",
+      rootPath: projectRoot,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z"
+    });
+    await repositories.taskRepository.create({
+      id: "task_review",
+      projectId: "project_review",
+      title: "Review persisted evidence",
+      status: "open",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z"
+    });
+    await repositories.taskRunRepository.create({
+      id: "run_review",
+      taskId: "task_review",
+      agentKind: "fake",
+      status: "succeeded",
+      createdAt: "2026-01-01T00:00:01.000Z",
+      updatedAt: "2026-01-01T00:00:01.000Z"
+    });
+    await repositories.runEventRepository.createMany([
+      {
+        id: "event_review_1",
+        taskRunId: "run_review",
+        sequence: 1,
+        type: "exit",
+        message: "done",
+        metadata: { exitCode: 0 },
+        createdAt: "2026-01-01T00:00:03.000Z"
+      },
+      {
+        id: "event_review_0",
+        taskRunId: "run_review",
+        sequence: 0,
+        type: "message",
+        message: "agent output\nsecond line",
+        metadata: {},
+        createdAt: "2026-01-01T00:00:02.000Z"
+      }
+    ]);
+    await repositories.runArtifactRepository.create({
+      id: "artifact_review_diff",
+      taskRunId: "run_review",
+      kind: "git_diff",
+      content: longPatch,
+      metadata: {
+        changedFiles: [{ path: "src/a.ts", status: "modified" }],
+        stat: {
+          filesChanged: 1,
+          insertions: 2,
+          deletions: 1,
+          text: "1 file changed, 2 insertions(+), 1 deletion(-)"
+        },
+        fileSummaries: ["src/a.ts: modified"]
+      },
+      createdAt: "2026-01-01T00:00:04.000Z"
+    });
+
+    const eventOutput: string[] = [];
+    const statOutput: string[] = [];
+    const patchOutput: string[] = [];
+    const errors: string[] = [];
+    const eventIo = {
+      stdout: { write: (chunk: string) => { eventOutput.push(chunk); return true; } },
+      stderr: { write: (chunk: string) => { errors.push(chunk); return true; } }
+    };
+    const statIo = {
+      stdout: { write: (chunk: string) => { statOutput.push(chunk); return true; } },
+      stderr: { write: (chunk: string) => { errors.push(chunk); return true; } }
+    };
+    const patchIo = {
+      stdout: { write: (chunk: string) => { patchOutput.push(chunk); return true; } },
+      stderr: { write: (chunk: string) => { errors.push(chunk); return true; } }
+    };
+
+    await expect(
+      main(["--db", databasePath, "runs", "events", "run_review"], eventIo, projectRoot)
+    ).resolves.toBe(0);
+    await expect(
+      main(["--db", databasePath, "runs", "diff", "run_review", "--stat"], statIo, projectRoot)
+    ).resolves.toBe(0);
+    await expect(
+      main(["--db", databasePath, "runs", "diff", "run_review", "--patch"], patchIo, projectRoot)
+    ).resolves.toBe(0);
+
+    const events = eventOutput.join("");
+    expect(errors.join("")).toBe("");
+    expect(events).toContain("run_id: run_review");
+    expect(events).toContain("events: 2");
+    expect(events.indexOf("0\t2026-01-01T00:00:02.000Z\tmessage")).toBeLessThan(
+      events.indexOf("1\t2026-01-01T00:00:03.000Z\texit")
+    );
+    expect(events).toContain("agent output\\nsecond line");
+    expect(statOutput.join("")).toContain("files_changed: 1");
+    expect(statOutput.join("")).toContain("insertions: 2");
+    expect(statOutput.join("")).toContain("- src/a.ts");
+    expect(statOutput.join("")).toContain("- src/a.ts: modified");
+    expect(patchOutput.join("")).toContain("patch_bytes: ");
+    expect(patchOutput.join("")).toContain("truncated: true");
+    expect(patchOutput.join("")).toContain("diff --git a/src/a.ts b/src/a.ts");
+    expect(patchOutput.join("")).toContain("rerun with --full");
   });
 
   it("supports --db project, task, and registered fake run commands across runtimes", async () => {
@@ -774,22 +889,17 @@ describe("CLI", () => {
     expect(envDebugOutput.join("")).toContain("debug:");
   });
 
-  it("redacts sensitive diff previews from debug output", async () => {
-    const projectRoot = await createTestDirectory("cli-sensitive-debug-project");
-    const runRoot = path.join(await createTestDirectory("cli-sensitive-debug-runs"), "runs");
+  it("redacts debug diff previews when sensitive paths are changed", async () => {
+    const projectRoot = await createTestDirectory("cli-debug-sensitive-project");
+    const runRoot = path.join(await createTestDirectory("cli-debug-sensitive-runs"), "runs");
     const runtime = createCliRuntime({
       storageMode: "memory",
       defaultRunRoot: runRoot,
       workspaceManager: new TestWorkspaceManager(runRoot),
       diffCollector: new StaticDiffCollector(
-        [
-          "diff --git a/.env.local b/.env.local",
-          "new file mode 100644",
-          "--- /dev/null",
-          "+++ b/.env.local",
-          "+AGENTHUB_SECRET_MARKER=1"
-        ].join("\n"),
-        [{ path: ".env.local", status: "untracked" }]
+        "diff --git a/.env.local b/.env.local\n+API_TOKEN=secret-value\n",
+        [{ path: ".env.local", status: "untracked" }],
+        [".env.local: untracked"]
       ),
       verificationRunner: new VerificationRunner(new MockShellExecutor()),
       idGenerator: new SequenceIdGenerator(),
@@ -803,17 +913,55 @@ describe("CLI", () => {
     };
 
     await expect(
-      main(["--debug", "run", "@fake", "sensitive debug task"], io, projectRoot, runtime)
+      main(["--debug", "run", "@fake", "debug sensitive diff"], io, projectRoot, runtime)
     ).resolves.toBe(0);
 
     const rendered = output.join("");
     expect(errors.join("")).toBe("");
-    expect(rendered).toContain("- risk: blocking");
+    expect(rendered).toContain("risk: blocking");
     expect(rendered).toContain("diff_preview:");
-    expect(rendered).toContain(
-      "redacted because the risk report contains sensitive path findings"
+    expect(rendered).toContain("redacted: sensitive file path changed");
+    expect(rendered).not.toContain("API_TOKEN=secret-value");
+  });
+
+  it("redacts debug diff previews when risk report generation fails", async () => {
+    const projectRoot = await createTestDirectory("cli-debug-sensitive-risk-failure-project");
+    const runRoot = path.join(
+      await createTestDirectory("cli-debug-sensitive-risk-failure-runs"),
+      "runs"
     );
-    expect(rendered).not.toContain("AGENTHUB_SECRET_MARKER");
+    const runtime = createCliRuntime({
+      storageMode: "memory",
+      defaultRunRoot: runRoot,
+      workspaceManager: new TestWorkspaceManager(runRoot),
+      diffCollector: new StaticDiffCollector(
+        "diff --git a/.env.local b/.env.local\n+API_TOKEN=secret-value\n",
+        [{ path: ".env.local", status: "untracked" }],
+        [".env.local: untracked"]
+      ),
+      verificationRunner: new VerificationRunner(new MockShellExecutor()),
+      riskReportGenerator: new ThrowingRiskReportGenerator(),
+      idGenerator: new SequenceIdGenerator(),
+      clock: new FixedClock("2026-01-01T00:00:00.000Z")
+    });
+    const output: string[] = [];
+    const errors: string[] = [];
+    const io = {
+      stdout: { write: (chunk: string) => { output.push(chunk); return true; } },
+      stderr: { write: (chunk: string) => { errors.push(chunk); return true; } }
+    };
+
+    await expect(
+      main(["--debug", "run", "@fake", "debug sensitive diff"], io, projectRoot, runtime)
+    ).resolves.toBe(1);
+
+    const rendered = output.join("");
+    expect(errors.join("")).toBe("");
+    expect(rendered).toContain("risk: not available");
+    expect(rendered).toContain("risk report generation failed: risk backend unavailable");
+    expect(rendered).toContain("diff_preview:");
+    expect(rendered).toContain("redacted: sensitive file path changed");
+    expect(rendered).not.toContain("API_TOKEN=secret-value");
   });
 
   it("supports memory propose, list, approve, and reject without injecting rejected memory", async () => {
@@ -1213,7 +1361,8 @@ class StaticDiffCollector implements DiffCollectorService {
     private readonly diffText = "",
     private readonly changedFiles: DiffCollectionResult["changedFiles"] = [
       { path: "fake-agent-output.md", status: "untracked" }
-    ]
+    ],
+    private readonly fileSummaries = ["fake-agent-output.md: untracked"]
   ) {}
 
   async collect(input: { workspacePath: string }): Promise<DiffCollectionResult> {
@@ -1226,11 +1375,17 @@ class StaticDiffCollector implements DiffCollectorService {
         filesChanged: this.changedFiles.length,
         insertions: 1,
         deletions: 0,
-        text: "1 file changed, 1 insertion(+)"
+        text: `${this.changedFiles.length} file changed, 1 insertion(+)`
       },
       diff: this.diffText,
-      fileSummaries: this.changedFiles.map((file) => `${file.path}: ${file.status}`),
+      fileSummaries: this.fileSummaries,
       commands: []
     };
+  }
+}
+
+class ThrowingRiskReportGenerator extends RiskReportGenerator {
+  override generate(_input: RiskReportInput): never {
+    throw new Error("risk backend unavailable");
   }
 }

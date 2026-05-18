@@ -226,29 +226,6 @@ describe("ContextCompiler", () => {
     expect(built.warnings).toContain("context file missing: context/security.md");
   });
 
-  it("does not inject the default approved memory placeholder", async () => {
-    const projectRoot = await createTestDirectory("context-placeholder-memory-project");
-    const agentHubHome = await createTestDirectory("context-placeholder-memory-home");
-    await initContextStore({
-      projectRoot,
-      projectId: "project_placeholder",
-      agentHubHome
-    });
-
-    const built = await buildContextArtifacts({
-      projectRoot,
-      projectId: "project_placeholder",
-      taskId: "task_placeholder",
-      title: "Build context",
-      prompt: "Compile task context",
-      selectedAgentId: "fake",
-      agentHubHome
-    });
-
-    expect(built.contextPack.approvedMemorySections).toEqual([]);
-    expect(built.taskBrief.renderedContent).not.toContain("## Memory: approved");
-  });
-
   it("builds context packs from approved memory written to the context store", async () => {
     const projectRoot = await createTestDirectory("context-approved-memory-project");
     const agentHubHome = await createTestDirectory("context-approved-memory-home");
@@ -282,6 +259,30 @@ describe("ContextCompiler", () => {
     expect(built.taskBrief.renderedContent).toContain(
       "Approved memory is available to future task briefs."
     );
+  });
+
+  it("does not inject the default approved memory placeholder", async () => {
+    const projectRoot = await createTestDirectory("context-placeholder-memory-project");
+    const agentHubHome = await createTestDirectory("context-placeholder-memory-home");
+    await initContextStore({
+      projectRoot,
+      projectId: "project_placeholder",
+      agentHubHome
+    });
+
+    const built = await buildContextArtifacts({
+      projectRoot,
+      projectId: "project_placeholder",
+      taskId: "task_placeholder",
+      title: "Ignore placeholder memory",
+      prompt: "Build context without approved memory",
+      selectedAgentId: "fake",
+      agentHubHome
+    });
+
+    expect(built.contextPack.approvedMemorySections).toEqual([]);
+    expect(built.taskBrief.renderedContent).not.toContain("Memory: approved");
+    expect(built.taskBrief.renderedContent).not.toContain("# Approved Memory");
   });
 
   it("exports managed blocks while preserving user content and fenced examples", async () => {

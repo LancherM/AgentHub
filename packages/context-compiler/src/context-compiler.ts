@@ -648,13 +648,11 @@ class FileMemoryProvider implements MemoryProvider {
     if (content === undefined) {
       return { items: [], warnings: ["context file missing: memory/approved.md"] };
     }
-    if (!content?.trim()) {
+    const approvedMemory = approvedMemoryContent(content);
+    if (!approvedMemory) {
       return { items: [] };
     }
-    if (isApprovedMemoryPlaceholder(content)) {
-      return { items: [] };
-    }
-    return { items: [{ id: "approved", content }] };
+    return { items: [{ id: "approved", content: approvedMemory }] };
   }
 }
 
@@ -905,8 +903,12 @@ function defaultContextFileContent(relativeFile: string): string {
   return `# ${relativeFile.replace(/\.md$/, "")}\n\n`;
 }
 
-function isApprovedMemoryPlaceholder(content: string): boolean {
-  return content.trim() === "# Approved Memory";
+function approvedMemoryContent(content: string): string {
+  const normalized = content.replace(/\r\n/g, "\n").trim();
+  if (normalized === "# Approved Memory") {
+    return "";
+  }
+  return normalized.replace(/^# Approved Memory[ \t]*\n+/, "").trim();
 }
 
 function firstNonEmptyLine(content: string): string | undefined {

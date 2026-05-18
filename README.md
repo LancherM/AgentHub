@@ -42,6 +42,8 @@ agent-hub run [--repo <path>] [--workspace-base <path>] [--retain-on-failure] "@
 agent-hub [--db <path>] run event add --run-id <run-id> --type <type> --message <message>
 agent-hub tasks list
 agent-hub runs list
+agent-hub runs events <run-id>
+agent-hub runs diff <run-id> [--stat|--patch] [--full]
 agent-hub runs show <run-id>
 agent-hub risks show <run-id>
 agent-hub [--db <path>] memory list --project-id <project-id>
@@ -68,6 +70,8 @@ agent-hub [--db <path>] compare --task-id <task-id> --baseline <run-id> --candid
   reports.
 - Allows manual event recording with `run event add`; appended events use the
   next sequence number for the selected run.
+- Shows persisted run event streams and collected git diff artifacts with
+  explicit `runs events` and `runs diff` review commands.
 - Supports explicit memory proposal, approval, rejection, and approved-memory
   writeback.
 - Generates persisted comparison reports for two runs of a task.

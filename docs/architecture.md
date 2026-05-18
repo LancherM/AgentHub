@@ -27,7 +27,8 @@ Current workspace boundaries:
   repository interfaces.
 - `packages/task-runner`: worktree management, shell execution, git safety,
   diff collection, verification command execution, risk report orchestration,
-  and task-run orchestration.
+  persisted run review aggregation, comparison summary generation, and task-run
+  orchestration.
 - `apps/cli`: command parsing, interactive console input, command dispatch,
   output rendering, debug rendering, and manual run-event recording. The CLI is
   thin over local package APIs and does not own orchestration logic.
@@ -85,9 +86,8 @@ mode does not echo prompt dispatch lines unless debug rendering is enabled.
 Debug rendering remains opt-in. `--debug` or `AGENT_HUB_DEBUG=1` appends the
 run summary, run boundaries, context artifact paths, verification
 stdout/stderr, changed file summaries, and a truncated diff preview after the
-normal agent output. When persisted risk findings include a sensitive path,
-the CLI replaces the raw diff preview with a redaction notice. It does not
-alter runner inputs, adapter behavior, persistence, or exit status.
+normal agent output. It does not alter runner inputs, adapter behavior,
+persistence, or exit status.
 
 Manual run-event recording is a CLI persistence operation, not an adapter or
 runner behavior. `run event add` loads the target run through
@@ -95,6 +95,13 @@ runner behavior. `run event add` loads the target run through
 the event through `RunEventRepository`, and derives the next sequence number
 from existing events for that run. This keeps manual notes in the same ordered
 event stream as adapter-captured output while avoiding any task execution.
+
+Persisted run review aggregation lives in `packages/task-runner`. The CLI
+parses `runs events <run-id>` and `runs diff <run-id> [--stat|--patch]`, then
+delegates repository-backed loading of ordered events, latest `git_diff`
+artifacts, changed-file metadata, diff stats, and patch truncation to the local
+package. This keeps review commands read-only and process-independent while
+avoiding comparison or artifact aggregation logic in the CLI layer.
 
 Safety review is separated from report rendering. `SafetyScanner` scans the
 collected diff, changed-file metadata, verification command text, and captured
@@ -147,9 +154,7 @@ initialize and inspect context stores, read external context from Agent
 Hub-owned app data by default, build typed context packs and task briefs, and
 perform explicit repository exports. Missing optional context files are
 reported as warnings rather than causing context builds to fail. The default
-approved-memory heading created during context-store initialization is treated
-as an empty placeholder and is not injected into task context until approved
-memory is appended. The default external store path is:
+external store path is:
 
 ```text
 <agent-hub-app-data>/context-stores/<project-id>/
@@ -256,16 +261,18 @@ content to the Agent Hub-owned context store under `memory/approved.md`.
 Approved-memory writeback uses the same context store path resolution as
 context init/build, so the default destination is app data rather than the
 project repository. The context compiler reads approved memory only from that
-file provider; proposed and rejected database rows are not injected into context
-packs.
+file provider and treats the default `# Approved Memory` heading as an empty
+placeholder; proposed and rejected database rows are not injected, and
+placeholder content does not become a context-pack memory section.
 
 Comparison reports are generated from persisted run data rather than process
-memory or UI state. The CLI loads each selected run, diff artifacts or legacy
-metadata, verification rows, and latest risk reports, then writes a textual
-summary to `comparison_reports`. The summary includes changed-file overlap,
-per-run diff stats, verification summaries, per-command verification outcomes,
-failed checks, risk levels, risk factors, and summary tradeoffs. Comparison is
-review-only and performs no accept, merge, branch delete, or push action.
+memory or UI state. `packages/task-runner` loads each selected run, diff
+artifacts or legacy metadata, verification rows, and latest risk reports, then
+returns a textual summary that the CLI stores in `comparison_reports`. The
+summary includes changed-file overlap, per-run diff stats, verification
+summaries, per-command verification outcomes, failed checks, risk levels, risk
+factors, and summary tradeoffs. Comparison is review-only and performs no
+accept, merge, branch delete, or push action.
 
 All adapters run against an isolated worktree and refuse to run when that
 directory is the original project root or when the generated task brief is
@@ -281,7 +288,10 @@ files get synthetic patch content. Before reading untracked files, the collector
 uses `lstat` to avoid dereferencing symlinks, records symlink targets via
 `readlink`, verifies readable real paths remain inside the isolated worktree,
 and omits synthetic content for oversized files. Binary files are represented
-with metadata such as binary status and byte size.
+with metadata such as binary status and byte size. CLI debug rendering redacts
+the raw diff preview when the risk report contains a blocking sensitive-path
+finding, or when the diff changed-file metadata itself matches a sensitive path
+before a risk report is available.
 
 Shell usage is limited to `ShellExecutor` and `ProcessRunner` implementations.
 Git worktree, git diff, verification commands, and real agent processes use
