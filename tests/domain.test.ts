@@ -3,10 +3,14 @@ import { describe, expect, it } from "vitest";
 import {
   DomainValidationError,
   DomainStateTransitionError,
+  InMemoryConversationMessageRepository,
+  InMemoryConversationThreadRepository,
   InMemorySettingsRepository,
   InMemoryTaskRunRepository,
   nowIso,
   parseAgentKind,
+  validateConversationMessage,
+  validateConversationThread,
   validateMemoryItem,
   validateMemoryStatusTransition,
   validateProject,
@@ -69,6 +73,104 @@ describe("domain model validation", () => {
         updatedAt: now
       })
     ).toThrow(DomainValidationError);
+  });
+
+  it("validates conversation threads and messages", () => {
+    expect(
+      validateConversationThread({
+        id: "thread_1",
+        projectId: "project_1",
+        title: "Persist a thread",
+        metadata: { source: "desktop" },
+        createdAt,
+        updatedAt
+      })
+    ).toMatchObject({
+      id: "thread_1",
+      projectId: "project_1",
+      title: "Persist a thread"
+    });
+
+    expect(
+      validateConversationMessage({
+        id: "message_1",
+        threadId: "thread_1",
+        sequence: 0,
+        role: "tool",
+        kind: "run_card",
+        content: "Fake run queued.",
+        agentKind: "fake",
+        runId: "run_1",
+        status: "queued",
+        metadata: { selected: true },
+        createdAt
+      })
+    ).toMatchObject({
+      id: "message_1",
+      role: "tool",
+      kind: "run_card",
+      runId: "run_1"
+    });
+
+    expect(() =>
+      validateConversationMessage({
+        id: "message_bad",
+        threadId: "thread_1",
+        sequence: -1,
+        role: "narrator" as never,
+        kind: "text",
+        content: "Invalid",
+        createdAt
+      })
+    ).toThrow(DomainValidationError);
+  });
+
+  it("orders conversation messages and rejects duplicate thread sequences in memory", async () => {
+    const threads = new InMemoryConversationThreadRepository();
+    const messages = new InMemoryConversationMessageRepository();
+    await threads.create({
+      id: "thread_memory",
+      projectId: "project_1",
+      title: "Memory thread",
+      createdAt,
+      updatedAt
+    });
+
+    await messages.create({
+      id: "message_second",
+      threadId: "thread_memory",
+      sequence: 1,
+      role: "assistant",
+      kind: "text",
+      content: "Second",
+      createdAt: updatedAt
+    });
+    await messages.create({
+      id: "message_first",
+      threadId: "thread_memory",
+      sequence: 0,
+      role: "user",
+      kind: "text",
+      content: "First",
+      createdAt
+    });
+
+    await expect(messages.listByThreadId("thread_memory")).resolves.toEqual([
+      expect.objectContaining({ id: "message_first", sequence: 0 }),
+      expect.objectContaining({ id: "message_second", sequence: 1 })
+    ]);
+    await expect(messages.countByThreadId("thread_memory")).resolves.toBe(2);
+    await expect(
+      messages.create({
+        id: "message_duplicate_sequence",
+        threadId: "thread_memory",
+        sequence: 1,
+        role: "system",
+        kind: "text",
+        content: "Duplicate",
+        createdAt
+      })
+    ).rejects.toThrow("sequence 1 already exists");
   });
 
   it("validates memory category and status enums", () => {

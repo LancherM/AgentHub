@@ -222,8 +222,10 @@ and an expandable event log. Diff, tests, risk, memory proposals, summary, and
 full logs are hidden by default and open through an on-demand run inspector
 drawer. Existing persisted run records are synthesized into thread-shaped
 conversations by the main-process thread service so old desktop run data
-remains inspectable. Thread/message persistence is an isolated in-memory Phase
-3 boundary for now; run records, events, simulated verification, placeholder
+remains inspectable. Core conversation thread/message storage is now available
+through local repositories and SQLite tables, but the current desktop thread
+service still uses its isolated in-memory facade until the follow-up service
+wiring phase lands. Run records, events, simulated verification, placeholder
 diffs, and risk review rows remain SQLite-backed.
 
 The planned real multi-turn conversation route is captured in
@@ -231,9 +233,10 @@ The planned real multi-turn conversation route is captured in
 context, current-turn context, and per-run context snapshots as separate
 layers, then replaces the current in-memory thread facade with persisted
 threads/messages and bounded runtime injection of prior conversation context.
-Until that route is implemented, desktop threads are a conversation UI and run
-review surface, not a guarantee that each new agent run sees the previous
-messages.
+The first storage slice adds durable conversation tables only; until the desktop
+service and context builder phases are implemented, desktop threads are a
+conversation UI and run review surface, not a guarantee that each new agent run
+sees the previous messages.
 
 The run inspector is the desktop drill-down surface for review evidence. It
 loads review summaries, changed-file stats, bounded unified diffs, captured

@@ -83,10 +83,17 @@ mutate branches, merge output, push code, clean worktrees, delete files, or
 write repository-side context files. This keeps Phase 4 review auditable while
 leaving any explicit apply/merge workflow for a later phase.
 
-`apps/desktop/electron/services/thread-service.ts` is the Phase 3 conversation
-facade. It keeps thread/message state in an isolated in-memory store with TODO
-markers around the persistence boundary, synthesizes existing SQLite-backed
-runs into thread-shaped conversations on startup, parses safe `@fake`,
+`packages/core` and `packages/db` now include durable conversation thread and
+message repositories backed by local SQLite tables. They store thread metadata,
+ordered user/assistant/system/tool messages, optional run-card links, and JSON
+metadata separately from run evidence, so run events, diffs, verification,
+risks, and logs continue to live on the existing task-run model.
+
+`apps/desktop/electron/services/thread-service.ts` is still the current desktop
+conversation facade. It keeps renderer-facing thread/message state in an
+isolated in-memory store until the follow-up repository-backed service phase,
+synthesizes existing SQLite-backed runs into thread-shaped conversations on
+startup, parses safe `@fake`,
 `@codex`, and `@claude` mentions, and implements `sendMessage` by appending one
 user message, creating one run per selected agent through `RunService`, and
 appending one agent-run message per run. Run cards subscribe to the same
@@ -95,8 +102,9 @@ an on-demand inspector instead of a permanent right-hand panel.
 
 `docs/multiturn-conversation-prompts.md` defines the staged architecture route
 for replacing that Phase 3 facade with real multi-turn support. The target
-separates persisted thread/message repositories from task runs, adds a bounded
-conversation context builder, and persists per-run context snapshots as audit
+now has persisted thread/message repositories separated from task runs; later
+phases wire the desktop/CLI services to those repositories, add a bounded
+conversation context builder, and persist per-run context snapshots as audit
 artifacts. Project context, thread context, current-turn context, and run
 context remain distinct layers so thread-local decisions do not automatically
 promote into project approved memory.
