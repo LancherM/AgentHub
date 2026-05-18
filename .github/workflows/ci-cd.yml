@@ -58,6 +58,9 @@ jobs:
       - name: Build
         run: pnpm build
 
+      - name: Build desktop bundle
+        run: pnpm desktop:build
+
   package:
     name: Package
     needs: validate
@@ -97,9 +100,54 @@ jobs:
           path: artifacts/*.tgz
           if-no-files-found: error
 
+  macos-dmg:
+    name: macOS DMG (${{ matrix.arch }})
+    needs: validate
+    runs-on: macos-latest
+    if: github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
+    strategy:
+      fail-fast: false
+      matrix:
+        arch:
+          - x64
+          - arm64
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: "false"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+          run_install: false
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build macOS DMG
+        run: bash scripts/build-macos-dmg.sh ${{ matrix.arch }}
+
+      - name: Upload macOS DMG artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent-hub-macos-dmg-${{ matrix.arch }}
+          path: apps/desktop/release/*.dmg
+          if-no-files-found: error
+
   release:
     name: Release
-    needs: package
+    needs:
+      - package
+      - macos-dmg
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
     permissions:
@@ -112,13 +160,20 @@ jobs:
           name: agent-hub-package
           path: artifacts
 
+      - name: Download macOS DMG artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: agent-hub-macos-dmg-*
+          path: artifacts
+          merge-multiple: true
+
       - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            gh release upload "$GITHUB_REF_NAME" artifacts/*.tgz --clobber
+            gh release upload "$GITHUB_REF_NAME" artifacts/*.tgz artifacts/*.dmg --clobber
           else
-            gh release create "$GITHUB_REF_NAME" artifacts/*.tgz --generate-notes --title "$GITHUB_REF_NAME"
+            gh release create "$GITHUB_REF_NAME" artifacts/*.tgz artifacts/*.dmg --generate-notes --title "$GITHUB_REF_NAME"
           fi
