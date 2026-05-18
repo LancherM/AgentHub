@@ -651,6 +651,20 @@ pnpm lint
 
 If the full suite is expensive, run the targeted package tests and explain what was run.
 
+### UI Verification Requirements
+
+For every change that modifies the desktop UI, renderer behavior, UI styling,
+or visible user workflow:
+
+- Rebuild the desktop app before judging the change.
+- Open the rebuilt Agent Hub desktop app and verify the affected workflow in
+  the running UI.
+- Write a concise UI test summary to disk before finishing. The summary must
+  include the rebuilt app path or launch command, tested workflows, observed
+  results, and any remaining UI risks or gaps.
+- Include the UI test summary file path and the manual UI verification result
+  in the final task summary.
+
 ## Implementation Style
 
 - Prefer small vertical slices.
