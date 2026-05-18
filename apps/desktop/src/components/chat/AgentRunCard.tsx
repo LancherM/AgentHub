@@ -83,8 +83,15 @@ export function AgentRunCard({
     events,
     run?.summary
   ]);
-  const canCancel = status === "running" || status === "verifying";
+  const canCancel = status === "queued" || status === "running" || status === "verifying";
   const visibleEvents = expanded ? events : events.slice(-4);
+  const elapsed = run
+    ? elapsedLabel(run.createdAt, events.at(-1)?.timestamp ?? new Date().toISOString())
+    : "0s";
+  const simulationCopy =
+    message.agentId === "fake"
+      ? "Local simulated run. No real repository files are modified."
+      : `Local placeholder for @${message.agentId}. Real desktop adapter execution is not wired yet.`;
 
   async function cancel(): Promise<void> {
     setCancelError(undefined);
@@ -96,7 +103,10 @@ export function AgentRunCard({
   }
 
   return (
-    <article className={`agent-run-card ${status} ${expanded ? "expanded" : ""}`}>
+    <article
+      className={`agent-run-card ${status} ${expanded ? "expanded" : ""}`}
+      onClick={() => setExpanded((current) => !current)}
+    >
       <header className="run-card-header">
         <div className={`agent-mark ${message.agentId}`}>
           {message.agentId.slice(0, 1).toUpperCase()}
@@ -106,16 +116,37 @@ export function AgentRunCard({
             <strong>@{message.agentId}</strong>
             <RunStatusBadge status={status} compact />
           </div>
-          <span>{run ? `Started ${formatTime(run.createdAt)}` : "Starting..."}</span>
+          <span>
+            {run ? `Started ${formatTime(run.createdAt)} · ${elapsed}` : "Starting..."}
+          </span>
         </div>
         <div className="run-card-actions">
           {canCancel ? (
-            <button onClick={() => void cancel()}>Cancel</button>
+            <button
+              onClick={(event) => {
+                event.stopPropagation();
+                void cancel();
+              }}
+            >
+              Cancel
+            </button>
           ) : null}
-          <button onClick={() => setExpanded((current) => !current)}>
+          <button
+            onClick={(event) => {
+              event.stopPropagation();
+              setExpanded((current) => !current);
+            }}
+          >
             {expanded ? "Collapse" : "Expand"}
           </button>
-          <button onClick={() => onOpenInspector(message.runId)}>Open details</button>
+          <button
+            onClick={(event) => {
+              event.stopPropagation();
+              onOpenInspector(message.runId);
+            }}
+          >
+            View details
+          </button>
         </div>
       </header>
 
@@ -127,6 +158,7 @@ export function AgentRunCard({
         <p className="latest-line">
           {latestLine ?? "Waiting for the first streamed event..."}
         </p>
+        <p className="fake-boundary">{simulationCopy}</p>
         <div className="run-event-strip">
           {visibleEvents.length === 0 ? (
             <span className="muted-copy">No stream events yet.</span>
@@ -139,17 +171,26 @@ export function AgentRunCard({
             ))
           )}
         </div>
-        {status === "completed" && run?.changedFiles.length === 0 ? (
-          <p className="fake-boundary">No real file modifications in this desktop run.</p>
-        ) : null}
       </div>
 
       <footer className="run-card-pills">
-        <span>{run?.changedFiles.length ?? 0} files</span>
-        <span>tests {run?.verification.status ?? "pending"}</span>
-        <span>risk {run?.risk.level ?? "pending"}</span>
-        <span>{run?.memoryProposals.length ?? 0} memory</span>
-        <span>{events.length} events</span>
+        {[
+          `${run?.changedFiles.length ?? 0} files`,
+          `tests ${run?.verification.status ?? "pending"}`,
+          `risk ${run?.risk.level ?? "pending"}`,
+          `${run?.memoryProposals.length ?? 0} memory`,
+          `${events.length} events`
+        ].map((label) => (
+          <button
+            key={label}
+            onClick={(event) => {
+              event.stopPropagation();
+              onOpenInspector(message.runId);
+            }}
+          >
+            {label}
+          </button>
+        ))}
       </footer>
     </article>
   );
@@ -176,6 +217,19 @@ function formatTime(value: string): string {
     minute: "2-digit",
     second: "2-digit"
   }).format(new Date(value));
+}
+
+function elapsedLabel(start: string, end: string): string {
+  const diffSeconds = Math.max(
+    0,
+    Math.round((new Date(end).getTime() - new Date(start).getTime()) / 1000)
+  );
+  if (diffSeconds < 60) {
+    return `${diffSeconds}s`;
+  }
+  const minutes = Math.floor(diffSeconds / 60);
+  const seconds = diffSeconds % 60;
+  return `${minutes}m ${seconds}s`;
 }
 
 function errorMessage(error: unknown): string {

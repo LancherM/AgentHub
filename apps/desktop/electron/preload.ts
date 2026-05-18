@@ -1,8 +1,10 @@
 import { contextBridge, ipcRenderer } from "electron";
 import type {
   AgentHubApi,
+  CreateThreadInput,
   CreateRunInput,
   RunEvent,
+  SendThreadMessageInput,
   Unsubscribe
 } from "../src/lib/types";
 import { IPC_CHANNELS, runEventChannel } from "./ipc-channels";
@@ -33,6 +35,15 @@ const api: AgentHubApi = {
         void ipcRenderer.invoke(IPC_CHANNELS.runsUnsubscribe, runId);
       };
     }
+  },
+  threads: {
+    list: () => ipcRenderer.invoke(IPC_CHANNELS.threadsList),
+    create: (input?: CreateThreadInput) =>
+      ipcRenderer.invoke(IPC_CHANNELS.threadsCreate, input),
+    get: (threadId: string) =>
+      ipcRenderer.invoke(IPC_CHANNELS.threadsGet, threadId),
+    sendMessage: (input: SendThreadMessageInput) =>
+      ipcRenderer.invoke(IPC_CHANNELS.threadsSendMessage, input)
   },
   review: {
     getDiff: (runId: string) =>

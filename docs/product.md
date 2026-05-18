@@ -203,19 +203,25 @@ in the center, and a bottom composer as the primary interaction surface. When
 there are no registered projects, the desktop renders local project path
 registration controls in the project sidebar and the empty conversation pane;
 submitting either control calls the existing `window.agentHub.projects.open`
-IPC path and seeds a new conversation for the registered project. The composer
-accepts mention-based prompts such as `@fake ...` or multi-agent mentions,
-strips those mentions from the task body, records one user message in the
-active thread, and creates one run card per mentioned agent. If no agent is
-mentioned, the renderer falls back to the last-used agent set or `@fake`.
+IPC path and seeds a new conversation for the registered project.
+
+The composer accepts mention-based prompts such as `@fake ...` or multi-agent
+mentions. The renderer sends prompt text through the safe
+`window.agentHub.threads.sendMessage` preload API; the Electron main-process
+thread service strips known agent mentions from the task body, records one
+user message in the active thread, creates one run per selected agent through
+`RunService`, and appends one inline run card message per run. If no agent is
+mentioned or supplied by the caller, desktop falls back to `@fake`.
 
 Each inline run card subscribes to the existing desktop run event stream and
 shows agent identity, status, the latest streamed line, compact review pills,
 and an expandable event log. Diff, tests, risk, memory proposals, summary, and
 full logs are hidden by default and open through an on-demand run inspector
 drawer. Existing persisted run records are synthesized into thread-shaped
-conversations in the renderer so old desktop run data remains inspectable, but
-thread persistence itself is not implemented yet.
+conversations by the main-process thread service so old desktop run data
+remains inspectable. Thread/message persistence is an isolated in-memory Phase
+3 boundary for now; run records, events, simulated verification, placeholder
+diffs, and risk review rows remain SQLite-backed.
 
 The selected run timeline receives live semantic events such as `run_started`,
 `context_compiled`, `agent_step`, `agent_output`, `verification_started`,

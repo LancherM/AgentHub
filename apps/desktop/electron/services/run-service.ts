@@ -623,11 +623,16 @@ function parseAgentId(value: unknown): AgentId {
   throw new Error("agentId must be fake, codex, or claude");
 }
 
-function parseContextMode(value: unknown): "auto" | "minimal" | "full" {
-  if (value === "auto" || value === "minimal" || value === "full") {
+function parseContextMode(value: unknown): CreateRunInput["contextMode"] {
+  if (
+    value === "auto" ||
+    value === "minimal" ||
+    value === "full" ||
+    value === "workspace"
+  ) {
     return value;
   }
-  throw new Error("contextMode must be auto, minimal, or full");
+  throw new Error("contextMode must be auto, minimal, full, or workspace");
 }
 
 function toCoreAgentKind(agentId: AgentId): CoreAgentKind {

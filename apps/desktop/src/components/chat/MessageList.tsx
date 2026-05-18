@@ -1,5 +1,6 @@
 import type { RunDetail, ThreadMessage } from "../../lib/types";
 import { AgentRunCard } from "./AgentRunCard";
+import { SystemMessage } from "./SystemMessage";
 import { UserMessageBubble } from "./UserMessageBubble";
 
 interface MessageListProps {
@@ -20,8 +21,8 @@ export function MessageList({
   if (messages.length === 0) {
     return (
       <div className="empty-chat">
-        <h2>No messages yet</h2>
-        <p>Awaiting first message.</p>
+        <h2>Message an agent to start a local run.</h2>
+        <p>Use @fake, @codex, or @claude from the composer.</p>
       </div>
     );
   }
@@ -41,9 +42,7 @@ export function MessageList({
             onCancelRun={onCancelRun}
           />
         ) : (
-          <div className="system-message" key={message.id}>
-            {message.text}
-          </div>
+          <SystemMessage key={message.id} message={message} />
         )
       )}
     </div>

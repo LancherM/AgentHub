@@ -1,17 +1,18 @@
+import { useEffect, useRef } from "react";
 import type {
   AgentId,
   ContextMode,
   ProjectSummary,
   RunDetail,
-  ThreadMessage,
-  ThreadSummary
+  ThreadDetail,
+  ThreadMessage
 } from "../../lib/types";
 import { ProjectRegistrationForm } from "../projects/ProjectRegistrationForm";
 import { Composer } from "./Composer";
 import { MessageList } from "./MessageList";
 
 interface ChatViewProps {
-  thread?: ThreadSummary;
+  thread?: ThreadDetail;
   project?: ProjectSummary;
   messages: ThreadMessage[];
   runDetails: Record<string, RunDetail>;
@@ -39,9 +40,18 @@ export function ChatView({
   onCancelRun,
   onRegisterProject
 }: ChatViewProps): JSX.Element {
+  const scrollRef = useRef<HTMLDivElement>(null);
   const disabledReason = project
     ? undefined
     : "Select or register a local project before running agents.";
+
+  useEffect(() => {
+    const element = scrollRef.current;
+    if (!element) {
+      return;
+    }
+    element.scrollTo({ top: element.scrollHeight, behavior: "smooth" });
+  }, [messages, runDetails]);
 
   return (
     <section className="chat-view">
@@ -58,7 +68,7 @@ export function ChatView({
 
       {error ? <div className="error-strip inline">{error}</div> : null}
 
-      <div className="chat-scroll">
+      <div className="chat-scroll" ref={scrollRef}>
         {project ? (
           <MessageList
             messages={messages}

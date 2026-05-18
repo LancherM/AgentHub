@@ -8,7 +8,7 @@ describe("desktop mention parsing", () => {
   it("extracts a leading agent mention and strips it from the task", () => {
     expect(parseAgentMentions("@fake implement desktop streaming")).toEqual({
       agents: ["fake"],
-      taskText: "implement desktop streaming"
+      cleanedPrompt: "implement desktop streaming"
     });
   });
 
@@ -17,21 +17,28 @@ describe("desktop mention parsing", () => {
       parseAgentMentions("@fake compare with @codex and @claude-code")
     ).toEqual({
       agents: ["fake", "codex", "claude"],
-      taskText: "compare with and"
+      cleanedPrompt: "compare with and"
     });
   });
 
   it("deduplicates repeated mentions", () => {
     expect(parseAgentMentions("@codex @codex @claude plan")).toEqual({
       agents: ["codex", "claude"],
-      taskText: "plan"
+      cleanedPrompt: "plan"
+    });
+  });
+
+  it("preserves unknown mentions in the cleaned prompt", () => {
+    expect(parseAgentMentions("@reviewer ask @fake to check")).toEqual({
+      agents: ["fake"],
+      cleanedPrompt: "@reviewer ask to check"
     });
   });
 
   it("falls back to the last used agent set when no mention is present", () => {
     expect(resolveMentionedAgents("summarize the run", ["codex"])).toEqual({
       agents: ["codex"],
-      taskText: "summarize the run"
+      cleanedPrompt: "summarize the run"
     });
   });
 });

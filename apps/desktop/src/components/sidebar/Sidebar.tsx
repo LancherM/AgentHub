@@ -54,14 +54,20 @@ export function Sidebar({
                 onClick={() => onSelectThread(thread.id)}
               >
                 <div className="thread-row-main">
-                  <span className="thread-dot" />
+                  <span
+                    className={`thread-dot ${
+                      (thread.activeRunCount ?? 0) > 0 ? "active" : ""
+                    }`}
+                  />
                   <span className="row-title">{thread.title}</span>
                   <span className="thread-time">{relativeTime(thread.updatedAt)}</span>
                 </div>
-                <div className="row-subtitle">{thread.lastMessage}</div>
+                <div className="row-subtitle">
+                  {thread.lastMessagePreview ?? "Ready for a local agent prompt"}
+                </div>
                 <div className="thread-meta">
-                  <span>{thread.runCount} runs</span>
-                  {thread.activeRunCount > 0 ? (
+                  <span>{thread.runCount ?? 0} runs</span>
+                  {(thread.activeRunCount ?? 0) > 0 ? (
                     <span>{thread.activeRunCount} active</span>
                   ) : null}
                 </div>

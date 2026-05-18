@@ -10,6 +10,7 @@ import {
 import { createReviewService } from "../apps/desktop/electron/services/review-service";
 import { createMemoryService } from "../apps/desktop/electron/services/memory-service";
 import { createRunService } from "../apps/desktop/electron/services/run-service";
+import { createThreadService } from "../apps/desktop/electron/services/thread-service";
 import { runFakeAgent } from "../apps/desktop/electron/services/fake-agent-runner";
 import {
   createIpcHandlers,
@@ -162,6 +163,64 @@ describe("desktop services", () => {
     });
   });
 
+  it("thread sendMessage creates one user message and one run card per agent", async () => {
+    const fixture = await createFixture();
+    const context = createDesktopServiceContext(fixture.repositories);
+    const projects = createProjectService(context);
+    const review = createReviewService(context);
+    const memory = createMemoryService(context);
+    const runs = createRunService(context, {
+      reviewService: review,
+      memoryService: memory,
+      fakeDelayMs: 5
+    });
+    const threads = createThreadService({ projects, runs });
+    const project = await projects.open(fixture.projectRoot);
+
+    const detail = await threads.sendMessage({
+      projectId: project.id,
+      text: "@fake @codex compare implementations",
+      contextMode: "workspace"
+    });
+    const runMessages = detail.messages.filter(
+      (message) => message.type === "agent_run"
+    );
+
+    expect(detail.title).toBe("compare implementations");
+    expect(detail.messages[0]).toMatchObject({
+      type: "user",
+      text: "compare implementations",
+      mentions: ["fake", "codex"]
+    });
+    expect(runMessages).toHaveLength(2);
+    expect(runMessages.map((message) => message.agentId)).toEqual([
+      "fake",
+      "codex"
+    ]);
+
+    const fakeRun = runMessages.find((message) => message.agentId === "fake");
+    const codexRun = runMessages.find((message) => message.agentId === "codex");
+    if (!fakeRun || !codexRun) {
+      throw new Error("expected fake and codex run messages");
+    }
+    await waitForRun(runs, fakeRun.runId, "completed");
+    await waitForRun(runs, codexRun.runId, "failed");
+
+    const refreshed = await threads.getThread(detail.id);
+    expect(
+      refreshed.messages
+        .filter((message) => message.type === "agent_run")
+        .map((message) => message.status)
+    ).toEqual(["completed", "failed"]);
+    await expect(threads.listThreads()).resolves.toMatchObject([
+      {
+        id: detail.id,
+        activeRunCount: 0,
+        runCount: 2
+      }
+    ]);
+  });
+
   it("validates IPC run creation and rejects repo_export delivery", async () => {
     const fixture = await createFixture();
     const context = createDesktopServiceContext(fixture.repositories);
@@ -173,7 +232,8 @@ describe("desktop services", () => {
       memoryService: memory,
       fakeDelayMs: 5
     });
-    const handlers = createIpcHandlers({ projects, runs, review, memory });
+    const threads = createThreadService({ projects, runs });
+    const handlers = createIpcHandlers({ projects, runs, threads, review, memory });
     const sender = { send: vi.fn() };
     const project = await projects.open(fixture.projectRoot);
 
