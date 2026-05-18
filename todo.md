@@ -46,6 +46,9 @@ pnpm lint
 
 ### 2. Add a default verification command timeout
 
+Status: done
+Done: 2026-05-18 via codex/todo-2-default-verification-timeout; PR: pending
+
 Prompt:
 
 You are working in `/Users/lan/agent-hub`. Add a conservative default timeout

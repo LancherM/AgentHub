@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { VerificationRunner } from "@agent-hub/task-runner";
+import {
+  DEFAULT_VERIFICATION_COMMAND_TIMEOUT_MS,
+  VerificationRunner
+} from "@agent-hub/task-runner";
 import { createTestDirectory, MockShellExecutor } from "./helpers";
 
 describe("VerificationRunner", () => {
@@ -21,6 +24,25 @@ describe("VerificationRunner", () => {
       stdout: "ok\n"
     });
     expect(shell.calls[0].options.cwd).toBe(cwd);
+    expect(shell.calls[0].options.timeoutMs).toBe(
+      DEFAULT_VERIFICATION_COMMAND_TIMEOUT_MS
+    );
+  });
+
+  it("uses explicit verification command timeouts over the default", async () => {
+    const cwd = await createTestDirectory("verify-explicit-timeout");
+    const shell = new MockShellExecutor([{ stdout: "ok\n", exitCode: 0 }]);
+    const runner = new VerificationRunner(shell);
+
+    const result = await runner.run({
+      cwd,
+      commands: [
+        { id: "test", command: "pnpm", args: ["test"], timeoutMs: 1234 }
+      ]
+    });
+
+    expect(result.status).toBe("passed");
+    expect(shell.calls[0].options.timeoutMs).toBe(1234);
   });
 
   it("records failed verification commands", async () => {
