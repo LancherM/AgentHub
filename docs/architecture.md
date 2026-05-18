@@ -277,6 +277,12 @@ export remains opt-in through `context export --dry-run` or
 write mode updates managed blocks in `AGENTS.md` and optionally `CLAUDE.md`.
 Managed block replacement preserves user-authored content outside the block and
 does not treat fenced code examples of the markers as real blocks.
+File-backed skills under `skills/<skill-name>/SKILL.md` must declare non-empty
+`name` and `description` fields in simple frontmatter. The context compiler uses
+the store directory as the stable skill ID and the declared metadata as the
+user-facing name and description; empty or malformed skill files are skipped
+with warnings that propagate through context builds, repository exports, and
+worktree overlays.
 
 `runtime_injection` is still the default delivery mode. In this mode the runner
 writes only worktree-local runtime files under `.agent-hub/tasks/<task-id>/` and

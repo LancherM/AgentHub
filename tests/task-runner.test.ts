@@ -664,7 +664,7 @@ describe("task runner", () => {
     });
     await fs.writeFile(
       path.join(initialized.storeRoot, "skills", "review", "SKILL.md"),
-      "Generated skill.\n",
+      skillMarkdown("review", "Generated skill.", "Generated skill."),
       "utf8"
     );
     const diffCollector = new RecordingDiffCollector();
@@ -721,6 +721,12 @@ function createTestRunner(runRoot: string): TaskRunner {
     idGenerator: new SequenceIdGenerator(),
     clock: new FixedClock("2026-01-01T00:00:00.000Z")
   });
+}
+
+function skillMarkdown(name: string, description: string, body = "Workflow steps."): string {
+  return ["---", `name: ${name}`, `description: ${description}`, "---", "", body, ""].join(
+    "\n"
+  );
 }
 
 interface TestWorkspaceManagerOptions {

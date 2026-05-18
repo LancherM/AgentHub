@@ -28,6 +28,12 @@ const baseInput = {
   }
 };
 
+function skillMarkdown(name: string, description: string, body = "Workflow steps."): string {
+  return ["---", `name: ${name}`, `description: ${description}`, "---", "", body, ""].join(
+    "\n"
+  );
+}
+
 describe("ContextCompiler", () => {
   it("compiles task-only context", async () => {
     const bundle = await new DefaultContextCompiler().compile(baseInput);
@@ -179,7 +185,7 @@ describe("ContextCompiler", () => {
     });
     await fs.writeFile(
       path.join(initialized.storeRoot, "skills", "review", "SKILL.md"),
-      "Review carefully.\n",
+      skillMarkdown("review", "Review carefully.", "Review carefully."),
       "utf8"
     );
 
@@ -201,6 +207,147 @@ describe("ContextCompiler", () => {
       "Compile task context"
     );
     expect(built.contextPack.skillReferences).toEqual(["review"]);
+  });
+
+  it("loads declared skill metadata and skips malformed skill files", async () => {
+    const projectRoot = await createTestDirectory("context-skill-metadata-project");
+    const agentHubHome = await createTestDirectory("context-skill-metadata-home");
+    const initialized = await initContextStore({
+      projectRoot,
+      projectId: "project_skills",
+      agentHubHome
+    });
+    await fs.mkdir(path.join(initialized.storeRoot, "skills", "review"), {
+      recursive: true
+    });
+    await fs.writeFile(
+      path.join(initialized.storeRoot, "skills", "review", "SKILL.md"),
+      skillMarkdown("Review Workflow", "Use declared metadata.", "Review steps."),
+      "utf8"
+    );
+    await fs.mkdir(path.join(initialized.storeRoot, "skills", "plain"), {
+      recursive: true
+    });
+    await fs.writeFile(
+      path.join(initialized.storeRoot, "skills", "plain", "SKILL.md"),
+      "Review carefully.\n",
+      "utf8"
+    );
+    await fs.mkdir(path.join(initialized.storeRoot, "skills", "empty"), {
+      recursive: true
+    });
+    await fs.writeFile(path.join(initialized.storeRoot, "skills", "empty", "SKILL.md"), "", "utf8");
+    await fs.mkdir(path.join(initialized.storeRoot, "skills", "missing-description"), {
+      recursive: true
+    });
+    await fs.writeFile(
+      path.join(initialized.storeRoot, "skills", "missing-description", "SKILL.md"),
+      ["---", "name: Missing Description", "---", "", "Body.", ""].join("\n"),
+      "utf8"
+    );
+
+    const built = await buildContextArtifacts({
+      projectRoot,
+      projectId: "project_skills",
+      taskId: "task_skills",
+      title: "Build skills",
+      prompt: "Compile skill context",
+      selectedAgentId: "fake",
+      agentHubHome
+    });
+
+    const skillSections = built.bundle.sections.filter(
+      (section) => section.source.kind === "skill"
+    );
+    expect(skillSections.map((section) => section.title)).toEqual([
+      "Skill: Review Workflow"
+    ]);
+    expect(skillSections[0]?.body).toContain("Use declared metadata.");
+    expect(built.contextPack.skillReferences).toEqual(["review"]);
+    expect(built.warnings).toEqual(
+      expect.arrayContaining([
+        "skills/empty/SKILL.md skipped: file is empty",
+        "skills/missing-description/SKILL.md skipped: missing required metadata: description",
+        "skills/plain/SKILL.md skipped: missing metadata frontmatter with name and description"
+      ])
+    );
+  });
+
+  it("skips malformed skills during export and worktree overlay", async () => {
+    const projectRoot = await createTestDirectory("context-skill-export-project");
+    const worktreePath = await createTestDirectory("context-skill-export-worktree");
+    const agentHubHome = await createTestDirectory("context-skill-export-home");
+    const initialized = await initContextStore({
+      projectRoot,
+      projectId: "project_skills",
+      agentHubHome
+    });
+    const validSkillContent = skillMarkdown(
+      "review",
+      "Review exported changes.",
+      "Review generated diffs."
+    );
+    await fs.mkdir(path.join(initialized.storeRoot, "skills", "review"), {
+      recursive: true
+    });
+    await fs.writeFile(
+      path.join(initialized.storeRoot, "skills", "review", "SKILL.md"),
+      validSkillContent,
+      "utf8"
+    );
+    await fs.mkdir(path.join(initialized.storeRoot, "skills", "broken"), {
+      recursive: true
+    });
+    await fs.writeFile(
+      path.join(initialized.storeRoot, "skills", "broken", "SKILL.md"),
+      ["---", "description: Missing a name.", "---", "", "Body.", ""].join("\n"),
+      "utf8"
+    );
+
+    const preview = await exportContextToRepository({
+      projectRoot,
+      projectId: "project_skills",
+      agentHubHome,
+      includeAgentsMd: false,
+      includeClaudeMd: false,
+      includeSkills: true,
+      dryRun: true
+    });
+    expect(preview.warnings).toContain(
+      "skills/broken/SKILL.md skipped: missing required metadata: name"
+    );
+    expect(preview.previews.map((entry) => entry.path)).toEqual([
+      ".claude/skills/review/SKILL.md",
+      ".agents/skills/review/SKILL.md"
+    ]);
+
+    const built = await buildContextArtifacts({
+      projectRoot,
+      projectId: "project_skills",
+      taskId: "task_skills",
+      title: "Overlay skills",
+      prompt: "Overlay skill context",
+      selectedAgentId: "fake",
+      deliveryMode: "worktree_overlay",
+      agentHubHome
+    });
+    const overlay = await materializeWorktreeOverlay({
+      worktreePath,
+      taskId: "task_skills",
+      contextPack: built.contextPack,
+      taskBrief: built.taskBrief,
+      contextMarkdown: new MarkdownContextFormatter().format(built.bundle),
+      storeRoot: initialized.storeRoot
+    });
+
+    expect(overlay.warnings).toContain(
+      "skills/broken/SKILL.md skipped: missing required metadata: name"
+    );
+    expect(overlay.writtenFiles).toContain(".agents/skills/review/SKILL.md");
+    expect(overlay.writtenFiles).not.toContain(".agents/skills/broken/SKILL.md");
+    await expect(
+      fs.readFile(path.join(worktreePath, ".agents", "skills", "review", "SKILL.md"), "utf8")
+    ).resolves.toBe(validSkillContent);
   });
 
   it("warns when optional context store files are missing", async () => {
@@ -395,7 +542,7 @@ describe("ContextCompiler", () => {
     });
     await fs.writeFile(
       path.join(initialized.storeRoot, "skills", "review", "SKILL.md"),
-      "Generated skill.\n",
+      skillMarkdown("review", "Generated skill.", "Generated skill."),
       "utf8"
     );
     const existingSkillPath = path.join(
@@ -437,7 +584,7 @@ describe("ContextCompiler", () => {
         path.join(worktreePath, ".agents", "skills", "review", "SKILL.md"),
         "utf8"
       )
-    ).resolves.toBe("Generated skill.\n");
+    ).resolves.toBe(skillMarkdown("review", "Generated skill.", "Generated skill."));
   });
 
   it("rejects symlink paths for runtime artifacts", async () => {

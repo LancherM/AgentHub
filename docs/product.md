@@ -70,6 +70,11 @@ Supported store files are:
 - `memory/approved.md`
 - `skills/<skill-name>/SKILL.md`
 
+Skill files are loaded only when `SKILL.md` starts with simple frontmatter
+containing non-empty `name` and `description` fields. Valid skills are injected
+with those declared values. Empty files or malformed metadata are skipped and
+reported as context build/export/overlay warnings.
+
 `context export --dry-run` previews repository writes. `context export --write`
 uses Agent Hub managed blocks in `AGENTS.md` and optionally `CLAUDE.md`,
 preserves user-authored content outside those blocks, and ignores marker

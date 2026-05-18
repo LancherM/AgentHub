@@ -146,6 +146,18 @@ export interface ContextCompiler {
   compile(input: ContextCompilerInput): Promise<ContextBundle>;
 }
 
+interface StoreSkill {
+  id: string;
+  name: string;
+  description: string;
+  content: string;
+}
+
+interface StoreSkillLoadResult {
+  skills: StoreSkill[];
+  warnings: string[];
+}
+
 export const contextStoreRelativeFiles = [
   "context/project.md",
   "context/architecture.md",
@@ -453,10 +465,12 @@ export async function materializeWorktreeOverlay(input: {
   }
 
   if (input.storeRoot) {
-    const skills = await readSkillsFromStore(input.storeRoot);
+    const loadedSkills = await readSkillsFromStore(input.storeRoot);
+    warnings.push(...loadedSkills.warnings);
+    const skills = loadedSkills.skills;
     for (const skill of skills) {
       for (const base of [".claude/skills", ".agents/skills"]) {
-        const relativePath = path.join(base, sanitizePathSegment(skill.name), "SKILL.md");
+        const relativePath = path.join(base, sanitizePathSegment(skill.id), "SKILL.md");
         const targetPath = path.join(worktreePath, relativePath);
         const existing = await readFileIfExists(targetPath);
         if (existing !== undefined && existing.trim().length > 0 && existing !== skill.content) {
@@ -511,10 +525,12 @@ export async function exportContextToRepository(
   }
 
   if (input.includeSkills) {
-    const skills = await readSkillsFromStore(config.storeRoot);
+    const loadedSkills = await readSkillsFromStore(config.storeRoot);
+    warnings.push(...loadedSkills.warnings);
+    const skills = loadedSkills.skills;
     for (const skill of skills) {
       for (const base of [".claude/skills", ".agents/skills"]) {
-        const relativePath = path.join(base, sanitizePathSegment(skill.name), "SKILL.md");
+        const relativePath = path.join(base, sanitizePathSegment(skill.id), "SKILL.md");
         const targetPath = path.join(config.projectRoot, relativePath);
         changedFiles.push(normalizeRelativePath(relativePath));
         previews.push({ path: normalizeRelativePath(relativePath), content: skill.content });
@@ -660,14 +676,15 @@ class FileSkillProvider implements SkillProvider {
   constructor(private readonly storeRoot: string) {}
 
   async getRelevantSkills(): Promise<ContextProviderResult<SkillContextItem>> {
-    const skills = await readSkillsFromStore(this.storeRoot);
+    const loadedSkills = await readSkillsFromStore(this.storeRoot);
     return {
-      items: skills.map((skill) => ({
-        id: skill.name,
+      items: loadedSkills.skills.map((skill) => ({
+        id: skill.id,
         name: skill.name,
-        description: firstNonEmptyLine(skill.content) ?? `Skill ${skill.name}`,
+        description: skill.description,
         content: skill.content
-      }))
+      })),
+      warnings: loadedSkills.warnings
     };
   }
 }
@@ -758,29 +775,52 @@ async function ensureFile(filePath: string, content: string): Promise<void> {
   }
 }
 
-async function readSkillsFromStore(storeRoot: string): Promise<Array<{ name: string; content: string }>> {
+async function readSkillsFromStore(storeRoot: string): Promise<StoreSkillLoadResult> {
   const skillsRoot = path.join(storeRoot, "skills");
   let entries: Array<import("node:fs").Dirent>;
   try {
     entries = await fs.readdir(skillsRoot, { withFileTypes: true });
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-      return [];
+      return { skills: [], warnings: [] };
     }
     throw error;
   }
-  const skills: Array<{ name: string; content: string }> = [];
+  const skills: StoreSkill[] = [];
+  const warnings: string[] = [];
   for (const entry of entries) {
     if (!entry.isDirectory()) {
       continue;
     }
     const skillPath = path.join(skillsRoot, entry.name, "SKILL.md");
     const content = await readFileIfExists(skillPath);
-    if (content?.trim()) {
-      skills.push({ name: entry.name, content });
+    const relativeSkillPath = normalizeRelativePath(path.join("skills", entry.name, "SKILL.md"));
+    if (content === undefined) {
+      warnings.push(`${relativeSkillPath} skipped: file is missing`);
+      continue;
     }
+    if (content.trim().length === 0) {
+      warnings.push(`${relativeSkillPath} skipped: file is empty`);
+      continue;
+    }
+    const metadata = parseSkillMetadata(content);
+    if (metadata.warnings.length > 0) {
+      for (const warning of metadata.warnings) {
+        warnings.push(`${relativeSkillPath} skipped: ${warning}`);
+      }
+      continue;
+    }
+    skills.push({
+      id: entry.name,
+      name: metadata.name,
+      description: metadata.description,
+      content
+    });
   }
-  return skills.sort((left, right) => left.name.localeCompare(right.name));
+  return {
+    skills: skills.sort((left, right) => left.name.localeCompare(right.name)),
+    warnings
+  };
 }
 
 async function renderStoreContextMarkdown(
@@ -911,8 +951,72 @@ function approvedMemoryContent(content: string): string {
   return normalized.replace(/^# Approved Memory[ \t]*\n+/, "").trim();
 }
 
-function firstNonEmptyLine(content: string): string | undefined {
-  return content.split(/\r?\n/).find((line) => line.trim().length > 0)?.trim();
+function parseSkillMetadata(content: string): {
+  name: string;
+  description: string;
+  warnings: string[];
+} {
+  const lines = content.replace(/\r\n/g, "\n").split("\n");
+  if (lines[0]?.trim() !== "---") {
+    return {
+      name: "",
+      description: "",
+      warnings: ["missing metadata frontmatter with name and description"]
+    };
+  }
+
+  const endIndex = lines.findIndex((line, index) => index > 0 && line.trim() === "---");
+  if (endIndex === -1) {
+    return {
+      name: "",
+      description: "",
+      warnings: ["metadata frontmatter is not closed"]
+    };
+  }
+
+  const metadata: Partial<Record<"name" | "description", string>> = {};
+  for (const line of lines.slice(1, endIndex)) {
+    const trimmed = line.trim();
+    if (trimmed.length === 0 || trimmed.startsWith("#")) {
+      continue;
+    }
+    const separatorIndex = trimmed.indexOf(":");
+    if (separatorIndex === -1) {
+      continue;
+    }
+    const key = trimmed.slice(0, separatorIndex).trim();
+    if (key !== "name" && key !== "description") {
+      continue;
+    }
+    metadata[key] = stripYamlScalarQuotes(trimmed.slice(separatorIndex + 1).trim());
+  }
+
+  const missing = (["name", "description"] as const).filter(
+    (key) => !metadata[key]?.trim()
+  );
+  if (missing.length > 0) {
+    return {
+      name: "",
+      description: "",
+      warnings: [`missing required metadata: ${missing.join(", ")}`]
+    };
+  }
+
+  return {
+    name: metadata.name!.trim(),
+    description: metadata.description!.trim(),
+    warnings: []
+  };
+}
+
+function stripYamlScalarQuotes(value: string): string {
+  if (
+    (value.startsWith('"') && value.endsWith('"')) ||
+    (value.startsWith("'") && value.endsWith("'"))
+  ) {
+    return value.slice(1, -1);
+  }
+  return value;
 }
 
 function normalizeRelativePath(value: string): string {
