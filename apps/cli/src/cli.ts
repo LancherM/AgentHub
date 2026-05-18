@@ -32,8 +32,12 @@ import {
   type VerificationResult
 } from "@agent-hub/core";
 import {
+  buildComparisonSummary,
   formatShellCommand,
+  loadRunDiffReview,
+  loadRunEventsReview,
   TaskRunner,
+  type RunDiffReview,
   type RunTaskInput,
   type TaskRunnerDependencies
 } from "@agent-hub/task-runner";
@@ -303,6 +307,14 @@ export async function main(
     return listRuns(io, activeRuntime);
   }
 
+  if (command === "runs" && rest[0] === "events") {
+    return showRunEvents(rest.slice(1), io, activeRuntime);
+  }
+
+  if (command === "runs" && rest[0] === "diff") {
+    return showRunDiff(rest.slice(1), io, activeRuntime);
+  }
+
   if (command === "runs" && rest[0] === "show") {
     return showRun(rest.slice(1), io, activeRuntime);
   }
@@ -355,6 +367,8 @@ export function helpText(): string {
     "  agent-hub [--db <path>] run [--repo <path>] [--workspace-base <path>] [--retain-on-failure] \"@fake|@codex|@claude-code <task>\"",
     "  agent-hub [--db <path>] run event add --run-id <run-id> --type <type> --message <message>",
     "  agent-hub runs list",
+    "  agent-hub runs events <run-id>",
+    "  agent-hub runs diff <run-id> [--stat|--patch] [--full]",
     "  agent-hub runs show <run-id>",
     "  agent-hub risks show <run-id>",
     "  agent-hub memory list --project-id <project-id>",
@@ -964,6 +978,82 @@ async function listRuns(io: CliIO, runtime: CliRuntime): Promise<number> {
   return 0;
 }
 
+async function showRunEvents(
+  args: string[],
+  io: CliIO,
+  runtime: CliRuntime
+): Promise<number> {
+  const runId = args[0];
+  if (!runId) {
+    io.stderr.write("error: run id is required\n");
+    return 1;
+  }
+
+  try {
+    const review = await loadRunEventsReview(
+      {
+        taskRunRepository: runtime.taskRunRepository,
+        runEventRepository: runtime.runEventRepository
+      },
+      runId
+    );
+    io.stdout.write(
+      [
+        `run_id: ${review.run.id}`,
+        `events: ${review.events.length}`,
+        ...review.events.map((event) =>
+          [
+            event.sequence,
+            event.createdAt,
+            event.type,
+            inlineText(event.message)
+          ].join("\t")
+        ),
+        ""
+      ].join("\n")
+    );
+    return 0;
+  } catch (error) {
+    io.stderr.write(`error: ${error instanceof Error ? error.message : String(error)}\n`);
+    return 1;
+  }
+}
+
+async function showRunDiff(
+  args: string[],
+  io: CliIO,
+  runtime: CliRuntime
+): Promise<number> {
+  let parsed: { runId: string; mode: "stat" | "patch"; fullPatch: boolean };
+  try {
+    parsed = parseRunDiffArgs(args);
+  } catch (error) {
+    io.stderr.write(`error: ${error instanceof Error ? error.message : String(error)}\n`);
+    return 1;
+  }
+
+  try {
+    const review = await loadRunDiffReview(
+      {
+        taskRunRepository: runtime.taskRunRepository,
+        runArtifactRepository: runtime.runArtifactRepository,
+        runMetadataRepository: runtime.runMetadataRepository
+      },
+      parsed.runId,
+      { fullPatch: parsed.fullPatch }
+    );
+    io.stdout.write(
+      parsed.mode === "patch"
+        ? renderRunDiffPatch(review)
+        : renderRunDiffStat(review)
+    );
+    return 0;
+  } catch (error) {
+    io.stderr.write(`error: ${error instanceof Error ? error.message : String(error)}\n`);
+    return 1;
+  }
+}
+
 async function showRun(
   args: string[],
   io: CliIO,
@@ -1049,6 +1139,69 @@ async function showRisk(
     ].join("\n")
   );
   return 0;
+}
+
+function renderRunDiffStat(review: RunDiffReview): string {
+  return [
+    `run_id: ${review.run.id}`,
+    `files_changed: ${review.stat.filesChanged}`,
+    `insertions: ${review.stat.insertions}`,
+    `deletions: ${review.stat.deletions}`,
+    `stat: ${review.stat.text ?? `${review.stat.filesChanged} files changed`}`,
+    "changed_files:",
+    ...(review.changedFiles.length === 0
+      ? ["- none"]
+      : review.changedFiles.map((file) => `- ${file}`)),
+    "file_summaries:",
+    ...(review.fileSummaries.length === 0
+      ? ["- none"]
+      : review.fileSummaries.map((summary) => `- ${summary}`)),
+    ""
+  ].join("\n");
+}
+
+function renderRunDiffPatch(review: RunDiffReview): string {
+  return [
+    `run_id: ${review.run.id}`,
+    `patch_bytes: ${review.originalPatchLength}`,
+    `truncated: ${review.truncated}`,
+    review.patch,
+    ...(review.truncated
+      ? [
+          `... truncated at ${review.limit} characters; rerun with --full to print the complete persisted patch.`
+        ]
+      : []),
+    ""
+  ].join("\n");
+}
+
+function parseRunDiffArgs(args: string[]): {
+  runId: string;
+  mode: "stat" | "patch";
+  fullPatch: boolean;
+} {
+  const runId = args[0];
+  if (!runId) {
+    throw new Error("run id is required");
+  }
+  const flags = args.slice(1);
+  const unknownFlag = flags.find((flag) => !["--stat", "--patch", "--full"].includes(flag));
+  if (unknownFlag) {
+    throw new Error(`unknown runs diff flag ${unknownFlag}`);
+  }
+  const stat = flags.includes("--stat");
+  const patch = flags.includes("--patch");
+  if (stat && patch) {
+    throw new Error("runs diff accepts only one of --stat or --patch");
+  }
+  if (flags.includes("--full") && !patch) {
+    throw new Error("--full requires --patch");
+  }
+  return {
+    runId,
+    mode: patch ? "patch" : "stat",
+    fullPatch: flags.includes("--full")
+  };
 }
 
 async function listMemory(
@@ -1206,19 +1359,17 @@ async function compareRuns(
     const taskId = requiredFlag(args, "--task-id");
     const baselineRunId = requiredFlag(args, "--baseline");
     const candidateRunId = requiredFlag(args, "--candidate");
-    const task = await runtime.taskRepository.get(taskId);
-    if (!task) {
-      throw new Error(`task ${taskId} not found`);
-    }
-    const baseline = await loadComparisonRun(runtime, baselineRunId);
-    const candidate = await loadComparisonRun(runtime, candidateRunId);
-    if (baseline.taskId !== taskId) {
-      throw new Error(`baseline run ${baselineRunId} does not belong to task ${taskId}`);
-    }
-    if (candidate.taskId !== taskId) {
-      throw new Error(`candidate run ${candidateRunId} does not belong to task ${taskId}`);
-    }
-    const summary = renderComparisonSummary(taskId, baseline, candidate);
+    const summary = await buildComparisonSummary(
+      {
+        taskRepository: runtime.taskRepository,
+        taskRunRepository: runtime.taskRunRepository,
+        runArtifactRepository: runtime.runArtifactRepository,
+        runMetadataRepository: runtime.runMetadataRepository,
+        verificationResultRepository: runtime.verificationResultRepository,
+        riskReportRepository: runtime.riskReportRepository
+      },
+      { taskId, baselineRunId, candidateRunId }
+    );
     const report = await runtime.comparisonReportRepository.create(
       validateComparisonReport({
         id: createId("comparison"),
@@ -1244,228 +1395,12 @@ async function compareRuns(
   }
 }
 
-interface ComparisonRunSnapshot {
-  runId: string;
-  taskId: string;
-  agent: string;
-  status: string;
-  changedFiles: string[];
-  stat: { filesChanged: number; insertions: number; deletions: number };
-  verification: string;
-  verificationOutcomes: string[];
-  risk: string;
-  riskFactors: string[];
-  failedChecks: string[];
-}
-
-async function loadComparisonRun(
-  runtime: CliRuntime,
-  runId: string
-): Promise<ComparisonRunSnapshot> {
-  const run = await runtime.taskRunRepository.get(runId);
-  if (!run) {
-    throw new Error(`run ${runId} not found`);
-  }
-  const metadata = await runtime.runMetadataRepository.get(runId);
-  const diffArtifact = await runtime.runArtifactRepository.getLatestByRunIdAndKind(
-    runId,
-    "git_diff"
-  );
-  const artifactMetadata = diffArtifact?.metadata ?? {};
-  const verificationRows = await runtime.verificationResultRepository.listByRunId(runId);
-  const risk = await runtime.riskReportRepository.getLatestByRunId(runId);
-  const riskReport = risk ?? metadata?.riskReport;
-  const changedFiles =
-    metadata?.diff?.changedFiles.map((file) => file.path) ??
-    changedFilePaths(artifactMetadata.changedFiles);
-  const stat =
-    metadata?.diff?.stat ??
-    diffStat(artifactMetadata.stat, changedFiles.length);
-  const failedChecks =
-    verificationRows.length > 0
-      ? verificationRows
-          .filter((result) => result.status === "failed")
-          .map((result) => result.command)
-      : metadata?.verification?.failedCommands.map((result) => result.label) ?? [];
-  const verificationOutcomes =
-    verificationRows.length > 0
-      ? verificationRows.map((result) => formatVerificationOutcome(
-          result.command,
-          result.status,
-          result.exitCode
-        ))
-      : metadata?.verification?.results.map((result) => formatVerificationOutcome(
-          result.label,
-          result.status,
-          result.exitCode ?? undefined
-        )) ?? [];
-
-  return {
-    runId: run.id,
-    taskId: run.taskId,
-    agent: run.agentKind,
-    status: run.status,
-    changedFiles,
-    stat: {
-      filesChanged: stat.filesChanged,
-      insertions: stat.insertions,
-      deletions: stat.deletions
-    },
-    verification:
-      verificationRows.length > 0
-        ? summarizeVerificationResults(verificationRows)
-        : metadata?.verification?.summary ?? "not available",
-    verificationOutcomes,
-    risk: riskReport?.level ?? "not available",
-    riskFactors: riskReport?.riskFactors ?? [],
-    failedChecks
-  };
-}
-
-function renderComparisonSummary(
-  taskId: string,
-  baseline: ComparisonRunSnapshot,
-  candidate: ComparisonRunSnapshot
-): string {
-  const baselineOnly = difference(baseline.changedFiles, candidate.changedFiles);
-  const candidateOnly = difference(candidate.changedFiles, baseline.changedFiles);
-  const shared = intersection(baseline.changedFiles, candidate.changedFiles);
-  return [
-    `task_id: ${taskId}`,
-    `baseline: ${formatComparisonRun(baseline)}`,
-    `candidate: ${formatComparisonRun(candidate)}`,
-    `baseline_diff_stats: ${formatDiffStat(baseline.stat)}`,
-    `candidate_diff_stats: ${formatDiffStat(candidate.stat)}`,
-    `baseline_only_files: ${formatList(baselineOnly)}`,
-    `candidate_only_files: ${formatList(candidateOnly)}`,
-    `shared_files: ${formatList(shared)}`,
-    `baseline_verification_outcomes: ${formatList(baseline.verificationOutcomes)}`,
-    `candidate_verification_outcomes: ${formatList(candidate.verificationOutcomes)}`,
-    `baseline_risk_factors: ${formatList(baseline.riskFactors)}`,
-    `candidate_risk_factors: ${formatList(candidate.riskFactors)}`,
-    `baseline_failed_checks: ${formatList(baseline.failedChecks)}`,
-    `candidate_failed_checks: ${formatList(candidate.failedChecks)}`,
-    `summary_tradeoffs: ${comparisonTradeoffs(baseline, candidate)}`
-  ].join("\n");
-}
-
-function formatComparisonRun(run: ComparisonRunSnapshot): string {
-  return [
-    run.runId,
-    `agent=${run.agent}`,
-    `status=${run.status}`,
-    `changed_files=${run.changedFiles.length}`,
-    `stat=+${run.stat.insertions}/-${run.stat.deletions}`,
-    `verification=${run.verification}`,
-    `risk=${run.risk}`
-  ].join(" ");
-}
-
-function formatDiffStat(stat: ComparisonRunSnapshot["stat"]): string {
-  return `${stat.filesChanged} files, +${stat.insertions}/-${stat.deletions}`;
-}
-
-function formatVerificationOutcome(
-  label: string,
-  status: string,
-  exitCode: number | undefined
-): string {
-  return exitCode === undefined
-    ? `${label}: ${status}`
-    : `${label}: ${status} (${exitCode})`;
-}
-
-function comparisonTradeoffs(
-  baseline: ComparisonRunSnapshot,
-  candidate: ComparisonRunSnapshot
-): string {
-  const notes: string[] = [];
-  if (candidate.failedChecks.length > baseline.failedChecks.length) {
-    notes.push("candidate has more failed checks");
-  } else if (candidate.failedChecks.length < baseline.failedChecks.length) {
-    notes.push("candidate has fewer failed checks");
-  }
-  if (riskRank(candidate.risk) > riskRank(baseline.risk)) {
-    notes.push("candidate has higher risk");
-  } else if (riskRank(candidate.risk) < riskRank(baseline.risk)) {
-    notes.push("candidate has lower risk");
-  }
-  if (candidate.stat.filesChanged > baseline.stat.filesChanged) {
-    notes.push("candidate changes more files");
-  } else if (candidate.stat.filesChanged < baseline.stat.filesChanged) {
-    notes.push("candidate changes fewer files");
-  }
-  return notes.length === 0
-    ? "no material tradeoff detected from stored run data"
-    : notes.join("; ");
-}
-
-function riskRank(risk: string): number {
-  switch (risk) {
-    case "low":
-      return 1;
-    case "medium":
-      return 2;
-    case "high":
-      return 3;
-    case "blocking":
-      return 4;
-    default:
-      return 0;
-  }
-}
-
-function changedFilePaths(value: unknown): string[] {
-  if (!Array.isArray(value)) {
-    return [];
-  }
-  return value.flatMap((entry) => {
-    if (typeof entry === "string") {
-      return [entry];
-    }
-    if (entry && typeof entry === "object" && "path" in entry) {
-      const filePath = (entry as { path?: unknown }).path;
-      return typeof filePath === "string" ? [filePath] : [];
-    }
-    return [];
-  });
-}
-
-function diffStat(
-  value: unknown,
-  fallbackFilesChanged: number
-): { filesChanged: number; insertions: number; deletions: number } {
-  if (!value || typeof value !== "object") {
-    return { filesChanged: fallbackFilesChanged, insertions: 0, deletions: 0 };
-  }
-  const stat = value as Record<string, unknown>;
-  return {
-    filesChanged: numeric(stat.filesChanged) ?? fallbackFilesChanged,
-    insertions: numeric(stat.insertions) ?? 0,
-    deletions: numeric(stat.deletions) ?? 0
-  };
-}
-
-function difference(left: string[], right: string[]): string[] {
-  const rightSet = new Set(right);
-  return [...new Set(left.filter((entry) => !rightSet.has(entry)))].sort();
-}
-
-function intersection(left: string[], right: string[]): string[] {
-  const rightSet = new Set(right);
-  return [...new Set(left.filter((entry) => rightSet.has(entry)))].sort();
-}
-
-function formatList(values: string[]): string {
-  return values.length === 0 ? "none" : values.join(", ");
-}
-
 function firstLine(value: string): string {
   return value.split(/\r?\n/).find((line) => line.trim().length > 0)?.trim() ?? "";
 }
 
-function numeric(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+function inlineText(value: string): string {
+  return value.replace(/\r?\n/g, "\\n");
 }
 
 type CliRunResult = Awaited<ReturnType<TaskRunner["run"]>>;

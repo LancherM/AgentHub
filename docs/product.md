@@ -36,6 +36,8 @@ agent-hub run [--repo <path>] [--workspace-base <path>] [--retain-on-failure] "@
 agent-hub [--db <path>] run event add --run-id <run-id> --type <type> --message <message>
 agent-hub tasks list
 agent-hub runs list
+agent-hub runs events <run-id>
+agent-hub runs diff <run-id> [--stat|--patch] [--full]
 agent-hub runs show <run-id>
 agent-hub risks show <run-id>
 agent-hub [--db <path>] memory list --project-id <project-id>
@@ -120,6 +122,14 @@ Manual event recording is available for persisted task runs:
 the run exists, validates the event type, appends through the
 `RunEventRepository`, and assigns the next sequence number after existing
 events for that run.
+
+Persisted run review is explicit and read-only. `runs events <run-id>` prints
+the ordered adapter/manual event stream stored in `run_events` across CLI
+processes. `runs diff <run-id> --stat` prints stored changed-file and diff-stat
+metadata, while `runs diff <run-id> --patch` prints the stored git diff artifact
+with default truncation and an explicit `--full` flag for complete local output.
+These commands inspect SQLite-backed evidence only; they do not rerun agents,
+modify worktrees, accept output, merge branches, or push code.
 
 `--debug` is opt-in and does not change run behavior. For supported run
 commands it appends the detailed run summary, selected `context_delivery` mode,
