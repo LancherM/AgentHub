@@ -15,6 +15,7 @@ describe("CI/CD workflow", () => {
     expect(packageLine).toContain("apps");
     expect(packageLine).toContain(".github/workflows/ci-cd.yml");
     expect(packageLine).toContain("packages");
+    expect(packageLine).toContain("scripts");
     expect(packageLine).toContain("tests");
     expect(packageLine).toContain("tsconfig.json");
     expect(packageLine).toContain("tsconfig.build.json");
