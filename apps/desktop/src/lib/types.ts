@@ -39,7 +39,7 @@ export interface RiskFinding {
   details?: string;
 }
 
-export type ContextMode = "auto" | "minimal" | "full";
+export type ContextMode = "auto" | "minimal" | "full" | "workspace";
 
 export interface ProjectSummary {
   id: string;
@@ -48,18 +48,24 @@ export interface ProjectSummary {
   updatedAt: string;
 }
 
-export interface Thread {
+export interface ThreadSummary {
   id: string;
   title: string;
-  projectId: string;
+  projectId?: string;
   createdAt: string;
   updatedAt: string;
+  lastMessagePreview?: string;
+  activeRunCount?: number;
+  runCount?: number;
 }
 
-export interface ThreadSummary extends Thread {
-  lastMessage: string;
-  runCount: number;
-  activeRunCount: number;
+export interface ThreadDetail {
+  id: string;
+  title: string;
+  projectId?: string;
+  createdAt: string;
+  updatedAt: string;
+  messages: ThreadMessage[];
 }
 
 interface BaseThreadMessage {
@@ -87,6 +93,19 @@ export interface SystemMessage extends BaseThreadMessage {
 }
 
 export type ThreadMessage = UserMessage | AgentRunMessage | SystemMessage;
+
+export interface CreateThreadInput {
+  projectId?: string;
+  title?: string;
+}
+
+export interface SendThreadMessageInput {
+  threadId?: string;
+  projectId?: string;
+  text: string;
+  contextMode?: ContextMode;
+  agents?: AgentId[];
+}
 
 export interface RunSummary {
   id: string;
@@ -206,6 +225,12 @@ export interface AgentHubApi {
     create(input: CreateRunInput): Promise<RunSummary>;
     cancel(runId: string): Promise<void>;
     onEvent(runId: string, callback: (event: RunEvent) => void): Unsubscribe;
+  };
+  threads: {
+    list(): Promise<ThreadSummary[]>;
+    create(input?: CreateThreadInput): Promise<ThreadSummary>;
+    get(threadId: string): Promise<ThreadDetail>;
+    sendMessage(input: SendThreadMessageInput): Promise<ThreadDetail>;
   };
   review: {
     getDiff(runId: string): Promise<DiffSummary>;

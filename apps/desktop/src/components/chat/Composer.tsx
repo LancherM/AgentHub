@@ -21,6 +21,7 @@ export function Composer({
 }: ComposerProps): JSX.Element {
   const [input, setInput] = useState("");
   const [contextMode, setContextMode] = useState<ContextMode>("auto");
+  const [localError, setLocalError] = useState<string | undefined>();
   const explicitMentions = useMemo(() => parseAgentMentions(input), [input]);
   const resolved = useMemo(
     () => resolveMentionedAgents(input, lastUsedAgents),
@@ -34,8 +35,13 @@ export function Composer({
     if (!canSubmit) {
       return;
     }
-    await onSubmit(input, contextMode);
-    setInput("");
+    setLocalError(undefined);
+    try {
+      await onSubmit(input, contextMode);
+      setInput("");
+    } catch (error) {
+      setLocalError(error instanceof Error ? error.message : String(error));
+    }
   }
 
   return (
@@ -63,6 +69,7 @@ export function Composer({
             <option value="auto">auto</option>
             <option value="minimal">minimal</option>
             <option value="full">full</option>
+            <option value="workspace">workspace</option>
           </select>
         </label>
       </div>
@@ -78,6 +85,7 @@ export function Composer({
           Run
         </button>
       </div>
+      {localError ? <div className="inline-error">{localError}</div> : null}
     </form>
   );
 }

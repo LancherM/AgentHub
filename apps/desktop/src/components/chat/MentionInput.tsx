@@ -17,6 +17,15 @@ export function MentionInput({
     if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
       event.preventDefault();
       onSubmit();
+      return;
+    }
+    if (
+      event.key === "Enter" &&
+      !event.shiftKey &&
+      !value.includes("\n")
+    ) {
+      event.preventDefault();
+      onSubmit();
     }
   }
 

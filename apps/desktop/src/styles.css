@@ -216,6 +216,15 @@ textarea:disabled {
   background: var(--muted-2);
 }
 
+.thread-dot.active {
+  background: var(--accent);
+  box-shadow: 0 0 0 4px rgba(216, 255, 87, 0.12);
+}
+
+.thread-row:not(.selected) .thread-dot.active {
+  background: var(--accent);
+}
+
 .thread-meta {
   display: flex;
   gap: 6px;
@@ -312,7 +321,8 @@ textarea:disabled {
 .ghost-button,
 .memory-actions button,
 .review-tabs button,
-.run-card-actions button {
+.run-card-actions button,
+.run-card-pills button {
   min-height: 34px;
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -492,6 +502,7 @@ textarea:disabled {
     linear-gradient(90deg, rgba(216, 255, 87, 0.08), transparent 30%),
     rgba(22, 23, 19, 0.92);
   box-shadow: 0 16px 42px rgba(0, 0, 0, 0.2);
+  cursor: pointer;
 }
 
 .agent-run-card.running,
@@ -609,13 +620,19 @@ textarea:disabled {
   border-top: 1px solid rgba(255, 255, 255, 0.055);
 }
 
-.run-card-pills span {
+.run-card-pills button {
   min-height: 24px;
   padding: 3px 8px;
   border: 1px solid var(--line);
   border-radius: 999px;
+  background: rgba(255, 255, 255, 0.02);
   color: var(--muted);
   font-size: 11px;
+}
+
+.run-card-pills button:hover {
+  border-color: rgba(216, 255, 87, 0.42);
+  color: var(--text);
 }
 
 .system-message,
@@ -631,9 +648,20 @@ textarea:disabled {
 }
 
 .system-message {
+  display: grid;
+  gap: 4px;
   border-color: rgba(245, 189, 90, 0.42);
   background: rgba(75, 49, 12, 0.48);
   color: #ffe2a8;
+}
+
+.system-message span {
+  color: var(--muted-2);
+  font-size: 11px;
+}
+
+.system-message p {
+  margin: 0;
 }
 
 .error-strip.inline {

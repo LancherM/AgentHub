@@ -4,12 +4,12 @@ const mentionPattern = /(^|[\s([{])@(fake|codex|claude-code|claude)\b/gi;
 
 export interface MentionParseResult {
   agents: AgentId[];
-  taskText: string;
+  cleanedPrompt: string;
 }
 
 export function parseAgentMentions(input: string): MentionParseResult {
   const agents: AgentId[] = [];
-  const taskText = input
+  const cleanedPrompt = input
     .replace(mentionPattern, (match, prefix: string, rawAgent: string) => {
       const agent = normalizeAgentId(rawAgent);
       if (agent && !agents.includes(agent)) {
@@ -22,7 +22,7 @@ export function parseAgentMentions(input: string): MentionParseResult {
     .replace(/\n\s+/g, "\n")
     .trim();
 
-  return { agents, taskText };
+  return { agents, cleanedPrompt };
 }
 
 export function resolveMentionedAgents(

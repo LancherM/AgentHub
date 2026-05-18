@@ -48,19 +48,25 @@ exposing `ipcRenderer`.
 
 The desktop conversation console keeps the main-process `RunService` boundary
 for run creation, live event streaming, cancellation, and repository-backed
-review loading. Renderer components use only `window.agentHub.projects.list/
-open` for project registration and `window.agentHub.runs.create/list/get/
-cancel/onEvent` for runs; the preload hides channel names and returns
-unsubscribe functions for live event listeners. IPC handlers validate inputs
-and manage per-window subscriptions, but do not own run lifecycle logic. The
-renderer adds thread and message view models over persisted task/run data,
-synthesizing existing runs into thread-shaped conversations and keeping new
-thread state renderer-local until a persistence slice is added. If the project
-list is empty, renderer-local onboarding forms submit a local path through the
-same project-open IPC service before creating a renderer-local starter thread.
-Run cards subscribe to the same `RunService` stream as the earlier run-detail
-view and open review data through an on-demand inspector instead of a permanent
-right-hand panel.
+review loading. Renderer components call `window.agentHub.projects.list/open`
+for local project registration, `window.agentHub.threads.*` for conversation
+orchestration, and `window.agentHub.runs.get/cancel/onEvent` for inline card
+hydration, cancellation, and live stream subscriptions; the preload hides
+channel names and returns unsubscribe functions for live event listeners. IPC
+handlers validate inputs and manage per-window subscriptions, but do not own
+run lifecycle logic. If the project list is empty, renderer onboarding forms
+submit a local path through the same project-open IPC service before creating a
+starter thread through the thread service.
+
+`apps/desktop/electron/services/thread-service.ts` is the Phase 3 conversation
+facade. It keeps thread/message state in an isolated in-memory store with TODO
+markers around the persistence boundary, synthesizes existing SQLite-backed
+runs into thread-shaped conversations on startup, parses safe `@fake`,
+`@codex`, and `@claude` mentions, and implements `sendMessage` by appending one
+user message, creating one run per selected agent through `RunService`, and
+appending one agent-run message per run. Run cards subscribe to the same
+`RunService` stream as the earlier run-detail view and open review data through
+an on-demand inspector instead of a permanent right-hand panel.
 
 The service maps desktop-facing agent IDs (`fake`, `codex`, `claude`) and run
 statuses (`queued`, `running`, `verifying`, `completed`, `failed`,
@@ -69,7 +75,7 @@ still stores the core run status enum, so the desktop-only `verifying` phase
 is represented by live run events while the persisted core run remains
 `running`; core `succeeded` is exposed to the desktop renderer as `completed`.
 
-Desktop Phase 2 real execution is fake-agent only. The main process starts
+Desktop Phase 3 real execution remains fake-agent only. The main process starts
 `apps/desktop/electron/services/fake-agent-runner.ts`, which emits semantic
 events over time and responds to `AbortController` cancellation. The runner
 does not read or write target repository files. `RunService` persists

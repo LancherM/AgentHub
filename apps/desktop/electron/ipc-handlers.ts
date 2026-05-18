@@ -1,7 +1,10 @@
 import type {
+  AgentId,
   AgentHubApi,
+  CreateThreadInput,
   CreateRunInput,
-  RunEvent
+  RunEvent,
+  SendThreadMessageInput
 } from "../src/lib/types";
 import { IPC_CHANNELS, runEventChannel } from "./ipc-channels";
 import {
@@ -22,12 +25,17 @@ import {
   createRunService,
   type RunService
 } from "./services/run-service";
+import {
+  createThreadService,
+  type ThreadService
+} from "./services/thread-service";
 
 export { IPC_CHANNELS, runEventChannel } from "./ipc-channels";
 
 export interface DesktopServices {
   projects: ProjectService;
   runs: RunService;
+  threads: ThreadService;
   review: ReviewService;
   memory: MemoryService;
 }
@@ -46,12 +54,15 @@ export function createDesktopServices(
 ): DesktopServices {
   const review = createReviewService(context);
   const memory = createMemoryService(context);
+  const projects = createProjectService(context);
+  const runs = createRunService(context, {
+    reviewService: review,
+    memoryService: memory
+  });
   return {
-    projects: createProjectService(context),
-    runs: createRunService(context, {
-      reviewService: review,
-      memoryService: memory
-    }),
+    projects,
+    runs,
+    threads: createThreadService({ projects, runs }),
     review,
     memory
   };
@@ -95,6 +106,13 @@ export function createIpcHandlers(
     [IPC_CHANNELS.runsUnsubscribe]: async (event, input) => {
       unsubscribeSenderRun(subscriptions, event.sender, parseId(input, "runId"));
     },
+    [IPC_CHANNELS.threadsList]: async () => services.threads.listThreads(),
+    [IPC_CHANNELS.threadsGet]: async (_event, input) =>
+      services.threads.getThread(parseId(input, "threadId")),
+    [IPC_CHANNELS.threadsCreate]: async (_event, input) =>
+      services.threads.createThread(parseCreateThreadInput(input)),
+    [IPC_CHANNELS.threadsSendMessage]: async (_event, input) =>
+      services.threads.sendMessage(parseSendThreadMessageInput(input)),
     [IPC_CHANNELS.reviewDiff]: async (_event, input) =>
       services.review.getDiff(parseId(input, "runId")),
     [IPC_CHANNELS.reviewRisk]: async (_event, input) =>
@@ -181,9 +199,10 @@ function parseCreateRunInput(input: unknown): CreateRunInput {
   if (
     contextMode !== "auto" &&
     contextMode !== "minimal" &&
-    contextMode !== "full"
+    contextMode !== "full" &&
+    contextMode !== "workspace"
   ) {
-    throw new Error("contextMode must be auto, minimal, or full");
+    throw new Error("contextMode must be auto, minimal, full, or workspace");
   }
   const deliveryMode = value.deliveryMode ?? "runtime_injection";
   if (
@@ -202,6 +221,66 @@ function parseCreateRunInput(input: unknown): CreateRunInput {
     contextMode,
     deliveryMode
   };
+}
+
+function parseCreateThreadInput(input: unknown): CreateThreadInput {
+  if (input === undefined || input === null) {
+    return {};
+  }
+  if (typeof input !== "object" || Array.isArray(input)) {
+    throw new Error("thread input must be an object");
+  }
+  const value = input as Partial<CreateThreadInput>;
+  return {
+    projectId:
+      value.projectId === undefined
+        ? undefined
+        : parseId(value.projectId, "projectId"),
+    title:
+      value.title === undefined ? undefined : parseId(value.title, "title")
+  };
+}
+
+function parseSendThreadMessageInput(input: unknown): SendThreadMessageInput {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    throw new Error("thread message input is required");
+  }
+  const value = input as Partial<SendThreadMessageInput>;
+  const text = parseId(value.text, "text");
+  const contextMode = value.contextMode ?? "auto";
+  if (
+    contextMode !== "auto" &&
+    contextMode !== "minimal" &&
+    contextMode !== "full" &&
+    contextMode !== "workspace"
+  ) {
+    throw new Error("contextMode must be auto, minimal, full, or workspace");
+  }
+  return {
+    threadId:
+      value.threadId === undefined ? undefined : parseId(value.threadId, "threadId"),
+    projectId:
+      value.projectId === undefined ? undefined : parseId(value.projectId, "projectId"),
+    text,
+    contextMode,
+    agents: value.agents === undefined ? undefined : parseAgentList(value.agents)
+  };
+}
+
+function parseAgentList(input: unknown): AgentId[] {
+  if (!Array.isArray(input)) {
+    throw new Error("agents must be an array");
+  }
+  const agents: AgentId[] = [];
+  for (const value of input) {
+    if (value !== "fake" && value !== "codex" && value !== "claude") {
+      throw new Error("agents must be fake, codex, or claude");
+    }
+    if (!agents.includes(value)) {
+      agents.push(value);
+    }
+  }
+  return agents;
 }
 
 type _ApiShapeCheck = AgentHubApi;
