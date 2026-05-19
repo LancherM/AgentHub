@@ -47,16 +47,17 @@ tested without loading Electron. Preload uses `contextBridge` rather than
 exposing `ipcRenderer`.
 
 The desktop conversation console keeps the main-process `RunService` boundary
-for run creation, live event streaming, cancellation, and repository-backed
-review loading. Renderer components call `window.agentHub.projects.list/open`
-for local project registration, `window.agentHub.threads.*` for conversation
-orchestration, and `window.agentHub.runs.get/cancel/onEvent` for inline card
-hydration, cancellation, and live stream subscriptions; the preload hides
-channel names and returns unsubscribe functions for live event listeners. IPC
-handlers validate inputs and manage per-window subscriptions, but do not own
-run lifecycle logic. If the project list is empty, renderer onboarding forms
-submit a local path through the same project-open IPC service before creating a
-starter thread through the thread service.
+for run creation, live event streaming, cancellation, lightweight conversation
+snapshots, and repository-backed review loading. Renderer components call
+`window.agentHub.projects.list/open` for local project registration,
+`window.agentHub.threads.*` for conversation orchestration, and
+`window.agentHub.runs.get/cancel/onEvent` for on-demand card hydration,
+cancellation, and live stream subscriptions; the preload hides channel names
+and returns unsubscribe functions for live event listeners. IPC handlers
+validate inputs and manage per-window subscriptions, but do not own run
+lifecycle logic. If the project list is empty, renderer onboarding forms submit
+a local path through the same project-open IPC service before creating a starter
+thread through the thread service.
 
 Desktop review inspection is split across narrow Electron main-process
 services. `ReviewService` aggregates run summary, verification, logs, memory
@@ -100,17 +101,19 @@ facade over those repositories. It parses safe `@fake`, `@codex`, and
 message, creating one run per selected agent through `RunService`, and
 appending one durable run-card message plus one hidden pending assistant-output
 message per run. The renderer-facing `window.agentHub.threads.*` contract
-remains unchanged, but service state is loaded from SQLite on every list/detail
-request. Run-card display status is derived from linked run ids through
-`RunService` instead of live-only thread state. When a run reaches
-`completed`, `failed`, or `cancelled`, the service reconciles the pending
-assistant message with bounded agent-facing output or a concise terminal
-summary, while raw logs, diffs, verification output, and risk evidence remain
-on the run model. If an older database has runs but no conversation threads,
-the service performs a one-time compatibility import into conversation rows so
-existing desktop run records stay inspectable. Run cards subscribe to the same
-`RunService` stream as the earlier run-detail view and open review data through
-an on-demand inspector instead of a permanent right-hand panel.
+remains unchanged, but service state is loaded from SQLite through lightweight
+thread reads. Thread lists do not reconcile every thread or hydrate full run
+details; they derive run-card display status and active counts from
+`RunService.listRunStatuses()`. Selected thread details reconcile only pending
+assistant-output placeholders, and finalized assistant messages are treated as
+stable transcript rows. When a run reaches `completed`, `failed`, or
+`cancelled`, reconciliation uses `RunService.getConversationRunSnapshot()`,
+which reads run rows and events only, to produce bounded agent-facing output or
+a concise terminal summary. Raw logs, diffs, verification output, and risk
+evidence remain on the run model and load through review IPC only when the user
+expands a card or opens the inspector. If an older database has runs but no
+conversation threads, the service performs a one-time compatibility import into
+conversation rows so existing desktop run records stay inspectable.
 
 `docs/multiturn-conversation-prompts.md` defines the staged architecture route
 for real multi-turn support. The target now has persisted thread/message

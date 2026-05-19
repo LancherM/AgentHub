@@ -40,49 +40,49 @@ export function App(): JSX.Element {
     void refreshShell();
   }, []);
 
-  const refreshThreadList = useCallback(async (): Promise<void> => {
-    const threadList = await agentHubApi.threads.list();
-    setThreads(threadList);
-  }, []);
-
   const loadThread = useCallback(
     async (threadId: string): Promise<void> => {
       setError(undefined);
-      setIsBusy(true);
+      setSelectedThreadId(threadId);
       try {
         const detail = await agentHubApi.threads.get(threadId);
         setCurrentThread(detail);
         setSelectedThreadId(detail.id);
         setSelectedProjectId((current) => detail.projectId ?? current);
-        await refreshThreadList();
+        setThreads((current) => upsertThreadSummary(current, threadSummaryFromDetail(detail)));
       } catch (err) {
         setError(errorMessage(err));
-      } finally {
-        setIsBusy(false);
       }
     },
-    [refreshThreadList]
+    []
   );
 
   const handleRunUpdated = useCallback(
     (detail: RunDetail): void => {
       setRunDetails((current) => ({ ...current, [detail.id]: detail }));
-      setCurrentThread((thread) =>
-        thread ? updateAgentRunStatus(thread, detail.id, detail.status) : thread
-      );
+      setCurrentThread((thread) => {
+        if (!thread) {
+          return thread;
+        }
+        const updated = updateAgentRunStatus(thread, detail.id, detail.status);
+        setThreads((current) => upsertThreadSummary(current, threadSummaryFromDetail(updated)));
+        return updated;
+      });
       if (isTerminalRunStatus(detail.status) && selectedThreadId) {
         agentHubApi.threads
           .get(selectedThreadId)
-          .then(setCurrentThread)
+          .then((thread) => {
+            setCurrentThread(thread);
+            setThreads((current) =>
+              upsertThreadSummary(current, threadSummaryFromDetail(thread))
+            );
+          })
           .catch((err: unknown) => {
             setError(errorMessage(err));
           });
       }
-      void refreshThreadList().catch((err: unknown) => {
-        setError(errorMessage(err));
-      });
     },
-    [refreshThreadList, selectedThreadId]
+    [selectedThreadId]
   );
 
   const cancelRun = useCallback(
@@ -137,7 +137,7 @@ export function App(): JSX.Element {
       const detail = await agentHubApi.threads.get(thread.id);
       setCurrentThread(detail);
       setSelectedThreadId(detail.id);
-      await refreshThreadList();
+      setThreads((current) => upsertThreadSummary(current, threadSummaryFromDetail(detail)));
     } catch (err) {
       setError(errorMessage(err));
     } finally {
@@ -172,7 +172,7 @@ export function App(): JSX.Element {
       if (mentions) {
         setLastUsedAgents(mentions);
       }
-      await refreshThreadList();
+      setThreads((current) => upsertThreadSummary(current, threadSummaryFromDetail(detail)));
     } catch (err) {
       setError(errorMessage(err));
       throw err;
@@ -257,6 +257,47 @@ function upsertProjectSummary(
 ): ProjectSummary[] {
   const next = [summary, ...projects.filter((project) => project.id !== summary.id)];
   return next.sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+}
+
+function upsertThreadSummary(
+  threads: ThreadSummary[],
+  summary: ThreadSummary
+): ThreadSummary[] {
+  return [summary, ...threads.filter((thread) => thread.id !== summary.id)].sort(
+    (left, right) => right.updatedAt.localeCompare(left.updatedAt)
+  );
+}
+
+function threadSummaryFromDetail(thread: ThreadDetail): ThreadSummary {
+  const runMessages = thread.messages.filter(
+    (message): message is AgentRunMessage => message.type === "agent_run"
+  );
+  const lastMessage = thread.messages.at(-1);
+  return {
+    id: thread.id,
+    title: thread.title,
+    projectId: thread.projectId,
+    createdAt: thread.createdAt,
+    updatedAt: thread.updatedAt,
+    lastMessagePreview: lastMessage
+      ? threadMessagePreview(lastMessage)
+      : "Ready for a local agent prompt",
+    runCount: runMessages.length,
+    activeRunCount: runMessages.filter((message) =>
+      isActiveRunStatus(message.status)
+    ).length
+  };
+}
+
+function threadMessagePreview(message: ThreadMessage): string {
+  if (message.type === "user" || message.type === "assistant" || message.type === "system") {
+    return message.text;
+  }
+  return `@${message.agentId} ${message.status}`;
+}
+
+function isActiveRunStatus(status: AgentRunMessage["status"]): boolean {
+  return status === "queued" || status === "running" || status === "verifying";
 }
 
 function errorMessage(error: unknown): string {

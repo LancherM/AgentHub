@@ -18,7 +18,6 @@ import type {
   AgentRunMessage,
   ContextMode,
   CreateThreadInput,
-  RunDetail,
   RunEvent,
   RunStatus,
   RunSummary,
@@ -34,7 +33,7 @@ import type {
   DesktopServiceContext,
   ProjectService
 } from "./project-service";
-import type { RunService } from "./run-service";
+import type { ConversationRunSnapshot, RunService } from "./run-service";
 
 const maxAssistantMessageCharacters = 2_000;
 
@@ -84,14 +83,12 @@ class RepositoryThreadService implements ThreadService {
 
   async listThreads(): Promise<ThreadSummary[]> {
     await this.ensureLegacyRunThreads();
-    const threads = await this.threads.list();
-    await Promise.all(threads.map((thread) => this.reconcileAssistantMessages(thread.id)));
-    const [refreshedThreads, runStatusById] = await Promise.all([
+    const [threads, runStatusById] = await Promise.all([
       this.threads.list(),
       this.runStatusById()
     ]);
     const summaries = await Promise.all(
-      refreshedThreads.map(async (thread) => {
+      threads.map(async (thread) => {
         const messages = await this.messages.listByThreadId(thread.id);
         return toThreadSummary(toThreadDetail(thread, messages, runStatusById));
       })
@@ -374,7 +371,7 @@ class RepositoryThreadService implements ThreadService {
 
   private async runSummaryForConversation(runId: string): Promise<string | undefined> {
     try {
-      const run = await this.dependencies.runs.getRun(runId);
+      const run = await this.dependencies.runs.getConversationRunSnapshot(runId);
       return `@${run.agentId} ${run.status}: ${run.summary}`;
     } catch {
       return undefined;
@@ -416,13 +413,13 @@ class RepositoryThreadService implements ThreadService {
       return;
     }
     const messages = await this.messages.listByThreadId(threadId);
-    const assistantByRunId = new Map(
+    const pendingAssistantByRunId = new Map(
       messages
-        .filter((message) => isAssistantOutputMessage(message) && message.runId)
+        .filter((message) => isPendingAssistantOutputMessage(message) && message.runId)
         .map((message) => [message.runId as string, message])
     );
 
-    for (const assistantMessage of assistantByRunId.values()) {
+    for (const assistantMessage of pendingAssistantByRunId.values()) {
       await this.finalizeAssistantMessage(thread, assistantMessage);
     }
 
@@ -441,8 +438,8 @@ class RepositoryThreadService implements ThreadService {
       ) {
         continue;
       }
-      const run = await this.runDetail(message.runId);
-      if (!run || !isTerminalRunStatus(run.status)) {
+      const snapshot = await this.conversationRunSnapshot(message.runId);
+      if (!snapshot || !isTerminalRunStatus(snapshot.status)) {
         continue;
       }
       const now = this.dependencies.context.now();
@@ -453,15 +450,15 @@ class RepositoryThreadService implements ThreadService {
           sequence: await this.messages.countByThreadId(threadId),
           role: "assistant",
           kind: "text",
-          content: terminalAssistantContent(run),
+          content: terminalAssistantContent(snapshot),
           agentKind: message.agentKind,
           runId: message.runId,
-          status: toCoreRunStatus(run.status),
+          status: toCoreRunStatus(snapshot.status),
           metadata: {
             agentId: toAgentId(message.agentKind),
             assistantOutput: true,
             pending: false,
-            terminalStatus: run.status
+            terminalStatus: snapshot.status
           },
           createdAt: now
         })
@@ -478,11 +475,11 @@ class RepositoryThreadService implements ThreadService {
     if (!message.runId) {
       return;
     }
-    const run = await this.runDetail(message.runId);
-    if (!run || !isTerminalRunStatus(run.status)) {
+    const snapshot = await this.conversationRunSnapshot(message.runId);
+    if (!snapshot || !isTerminalRunStatus(snapshot.status)) {
       return;
     }
-    const status = toCoreRunStatus(run.status);
+    const status = toCoreRunStatus(snapshot.status);
     if (
       !isPendingAssistantOutputMessage(message) &&
       message.status === status &&
@@ -490,27 +487,29 @@ class RepositoryThreadService implements ThreadService {
     ) {
       return;
     }
-    const agentId = message.agentKind ? toAgentId(message.agentKind) : run.agentId;
+    const agentId = message.agentKind ? toAgentId(message.agentKind) : snapshot.agentId;
     await this.messages.update(
       validateConversationMessage({
         ...message,
-        content: terminalAssistantContent(run),
+        content: terminalAssistantContent(snapshot),
         status,
         metadata: {
           ...(message.metadata ?? {}),
           agentId,
           assistantOutput: true,
           pending: false,
-          terminalStatus: run.status
+          terminalStatus: snapshot.status
         }
       })
     );
     await this.touchThread(thread, { updatedAt: this.dependencies.context.now() });
   }
 
-  private async runDetail(runId: string): Promise<RunDetail | undefined> {
+  private async conversationRunSnapshot(
+    runId: string
+  ): Promise<ConversationRunSnapshot | undefined> {
     try {
-      return await this.dependencies.runs.getRun(runId);
+      return await this.dependencies.runs.getConversationRunSnapshot(runId);
     } catch {
       return undefined;
     }
@@ -563,8 +562,7 @@ class RepositoryThreadService implements ThreadService {
   }
 
   private async runStatusById(projectId?: string): Promise<Map<string, RunStatus>> {
-    const runs = await this.dependencies.runs.listRuns(projectId);
-    return new Map(runs.map((run) => [run.id, run.status]));
+    return this.dependencies.runs.listRunStatuses(projectId);
   }
 
   private async ensureLegacyRunThreads(): Promise<void> {
@@ -831,7 +829,7 @@ function isAssistantContextMessage(message: ConversationMessage): boolean {
   return message.role === "assistant" && !isPendingAssistantOutputMessage(message);
 }
 
-function terminalAssistantContent(run: RunDetail): string {
+function terminalAssistantContent(run: ConversationRunSnapshot): string {
   const extracted = extractAgentFacingOutput(
     {
       events: run.events.map(toAgentOutputEvent)
@@ -856,7 +854,7 @@ function toAgentOutputEvent(event: RunEvent): {
   };
 }
 
-function terminalStatusSummary(run: RunDetail): string {
+function terminalStatusSummary(run: ConversationRunSnapshot): string {
   if (run.summary.trim().length > 0) {
     return run.summary.trim();
   }
