@@ -119,9 +119,11 @@ describe("task runner", () => {
           maxRecentMessages: 12,
           maxTotalCharacters: 12_000,
           maxPerMessageCharacters: 2_000,
+          maxThreadSummaryCharacters: 2_000,
           approximateTokenCount: 12,
           includedMessageCount: 2,
           omittedMessageCount: 0,
+          includedThreadSummary: false,
           originalCharacterCount: 48,
           renderedCharacterCount: 48,
           truncated: false

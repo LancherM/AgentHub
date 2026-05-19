@@ -30,7 +30,8 @@ describe("SQLite storage", () => {
       { version: 2 },
       { version: 3 },
       { version: 4 },
-      { version: 5 }
+      { version: 5 },
+      { version: 6 }
     ]);
     await expect(
       database.query<{ name: string }>(
@@ -55,6 +56,7 @@ describe("SQLite storage", () => {
         { name: "risk_reports" },
         { name: "conversation_threads" },
         { name: "conversation_messages" },
+        { name: "conversation_thread_summaries" },
         { name: "memory_items" },
         { name: "comparison_reports" },
         { name: "skills" },
@@ -147,6 +149,20 @@ describe("SQLite storage", () => {
       kind: "text",
       content: "Persist this thread.",
       createdAt
+    });
+    await first.conversationThreadSummaryRepository.upsert({
+      id: "summary_1",
+      threadId: "thread_1",
+      summary: "Summarized 1 thread message.",
+      decisions: ["Keep thread context local"],
+      openItems: ["Refresh summaries after turns"],
+      constraints: ["Do not promote to approved memory"],
+      lastKnownUserGoal: "Persist this thread.",
+      sourceMessageCount: 1,
+      sourceLatestMessageId: "message_1",
+      metadata: { source: "test" },
+      createdAt,
+      updatedAt
     });
     await first.runMetadataRepository.save({
       runId: "run_1",
@@ -335,6 +351,20 @@ describe("SQLite storage", () => {
         sequence: 1,
         role: "assistant",
         content: "Persisted assistant answer."
+      })
+    );
+    await expect(
+      second.conversationThreadSummaryRepository.getByThreadId("thread_1")
+    ).resolves.toEqual(
+      expect.objectContaining({
+        id: "summary_1",
+        summary: "Summarized 1 thread message.",
+        decisions: ["Keep thread context local"],
+        openItems: ["Refresh summaries after turns"],
+        constraints: ["Do not promote to approved memory"],
+        lastKnownUserGoal: "Persist this thread.",
+        sourceLatestMessageId: "message_1",
+        metadata: { source: "test" }
       })
     );
     await expect(second.runEventRepository.listByRunId("run_1")).resolves.toEqual([
@@ -534,6 +564,42 @@ VALUES ('message_bad_role', 'thread_constraints', 1, 'narrator', 'text', 'bad', 
         createdAt
       })
     ).rejects.toThrow();
+    await expect(repositories.database.execute(`
+INSERT INTO conversation_thread_summaries (
+  id, thread_id, summary, decisions_json, open_items_json, constraints_json,
+  source_message_count, created_at, updated_at
+) VALUES (
+  'summary_bad_json', 'thread_constraints', 'bad json', '{bad', '[]', '[]',
+  1, '${createdAt}', '${createdAt}'
+);
+`)).rejects.toThrow();
+    await repositories.conversationThreadSummaryRepository.upsert({
+      id: "summary_constraints_1",
+      threadId: "thread_constraints",
+      summary: "Initial",
+      decisions: [],
+      openItems: [],
+      constraints: [],
+      sourceMessageCount: 1,
+      createdAt,
+      updatedAt: createdAt
+    });
+    await expect(
+      repositories.conversationThreadSummaryRepository.upsert({
+        id: "summary_constraints_2",
+        threadId: "thread_constraints",
+        summary: "Updated",
+        decisions: ["Keep it local"],
+        openItems: [],
+        constraints: [],
+        sourceMessageCount: 1,
+        createdAt,
+        updatedAt
+      })
+    ).resolves.toMatchObject({
+      id: "summary_constraints_2",
+      decisions: ["Keep it local"]
+    });
   });
 
   it("cascades project deletion through tasks and task runs", async () => {
@@ -572,6 +638,34 @@ VALUES ('message_bad_role', 'thread_constraints', 1, 'narrator', 'text', 'bad', 
       metadata: {},
       createdAt
     });
+    await repositories.conversationThreadRepository.create({
+      id: "thread_cascade",
+      projectId: "project_cascade",
+      title: "Cascade thread",
+      createdAt,
+      updatedAt: createdAt
+    });
+    await repositories.conversationMessageRepository.create({
+      id: "message_cascade",
+      threadId: "thread_cascade",
+      sequence: 0,
+      role: "user",
+      kind: "text",
+      content: "will be deleted",
+      createdAt
+    });
+    await repositories.conversationThreadSummaryRepository.upsert({
+      id: "summary_cascade",
+      threadId: "thread_cascade",
+      summary: "will be deleted",
+      decisions: [],
+      openItems: [],
+      constraints: [],
+      sourceMessageCount: 1,
+      sourceLatestMessageId: "message_cascade",
+      createdAt,
+      updatedAt: createdAt
+    });
 
     await repositories.database.execute("DELETE FROM projects WHERE id = 'project_cascade';");
 
@@ -579,6 +673,12 @@ VALUES ('message_bad_role', 'thread_constraints', 1, 'narrator', 'text', 'bad', 
     await expect(repositories.taskRunRepository.get("run_cascade")).resolves.toBeUndefined();
     await expect(repositories.runEventRepository.listByRunId("run_cascade"))
       .resolves.toEqual([]);
+    await expect(repositories.conversationThreadRepository.get("thread_cascade"))
+      .resolves.toBeUndefined();
+    await expect(repositories.conversationMessageRepository.listByThreadId("thread_cascade"))
+      .resolves.toEqual([]);
+    await expect(repositories.conversationThreadSummaryRepository.getByThreadId("thread_cascade"))
+      .resolves.toBeUndefined();
   });
 
   it("rejects repository status updates outside the imported lifecycle", async () => {
@@ -701,7 +801,8 @@ VALUES (
       { version: 2 },
       { version: 3 },
       { version: 4 },
-      { version: 5 }
+      { version: 5 },
+      { version: 6 }
     ]);
   });
 
@@ -746,7 +847,8 @@ VALUES (
       { version: 2 },
       { version: 3 },
       { version: 4 },
-      { version: 5 }
+      { version: 5 },
+      { version: 6 }
     ]);
     await expect(repositories.database.execute(`
 INSERT INTO tasks (id, project_id, title, status, created_at, updated_at)

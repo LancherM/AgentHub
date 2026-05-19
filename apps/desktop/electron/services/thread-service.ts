@@ -2,13 +2,17 @@ import {
   extractAgentFacingOutput,
   validateConversationMessage,
   validateConversationThread,
+  validateConversationThreadSummary,
   type ConversationMessage,
   type ConversationMessageRepository,
   type ConversationThread,
-  type ConversationThreadRepository
+  type ConversationThreadRepository,
+  type ConversationThreadSummary,
+  type ConversationThreadSummaryRepository
 } from "@agent-hub/core";
 import {
   ConversationContextBuilder,
+  ConversationThreadSummaryBuilder,
   type ConversationContextMessage
 } from "@agent-hub/context-compiler";
 import type { AgentKind, TaskRunStatus } from "@agent-hub/shared";
@@ -71,12 +75,16 @@ export function createThreadService(
 class RepositoryThreadService implements ThreadService {
   private readonly threads: ConversationThreadRepository;
   private readonly messages: ConversationMessageRepository;
+  private readonly summaries: ConversationThreadSummaryRepository;
   private readonly conversationContextBuilder: ConversationContextBuilder;
+  private readonly conversationThreadSummaryBuilder = new ConversationThreadSummaryBuilder();
   private importedLegacyRuns = false;
 
   constructor(private readonly dependencies: ThreadServiceDependencies) {
     this.threads = dependencies.context.repositories.conversationThreadRepository;
     this.messages = dependencies.context.repositories.conversationMessageRepository;
+    this.summaries =
+      dependencies.context.repositories.conversationThreadSummaryRepository;
     this.conversationContextBuilder =
       dependencies.conversationContextBuilder ?? new ConversationContextBuilder();
   }
@@ -105,6 +113,7 @@ class RepositoryThreadService implements ThreadService {
       throw new Error(`thread ${threadId} not found`);
     }
     await this.reconcileAssistantMessages(thread.id);
+    await this.refreshThreadSummary(thread.id);
     const refreshedThread = (await this.threads.get(thread.id)) ?? thread;
     const [messages, runStatusById] = await Promise.all([
       this.messages.listByThreadId(thread.id),
@@ -226,6 +235,7 @@ class RepositoryThreadService implements ThreadService {
           title: titleFromPrompt(cleanedPrompt)
         });
     await this.reconcileAssistantMessages(thread.id);
+    await this.refreshThreadSummary(thread.id);
 
     const userMessage = await this.appendUserMessage(thread.id, cleanedPrompt, agents);
     const currentThread = await this.requireThread(thread.id);
@@ -304,6 +314,7 @@ class RepositoryThreadService implements ThreadService {
       messages: messages.filter(
         (message): message is ConversationContextMessage => message !== undefined
       ),
+      threadSummary: await this.summaries.getByThreadId(input.thread.id),
       projectContextReferences: [
         `project:${input.thread.projectId}`,
         "Agent Hub-owned project context store",
@@ -376,6 +387,43 @@ class RepositoryThreadService implements ThreadService {
     } catch {
       return undefined;
     }
+  }
+
+  private async refreshThreadSummary(
+    threadId: string
+  ): Promise<ConversationThreadSummary | undefined> {
+    const messages = await this.messages.listByThreadId(threadId);
+    const summaryMessages = await Promise.all(
+      messages
+        .filter((message) => message.kind !== "run_card")
+        .map((message) => this.toConversationContextMessage(message))
+    );
+    const built = this.conversationThreadSummaryBuilder.build({
+      messages: summaryMessages.filter(
+        (message): message is ConversationContextMessage => message !== undefined
+      )
+    });
+    const existing = await this.summaries.getByThreadId(threadId);
+    if (built.sourceMessageCount === 0 && !existing) {
+      return undefined;
+    }
+    const now = this.dependencies.context.now();
+    return this.summaries.upsert(
+      validateConversationThreadSummary({
+        id: existing?.id ?? this.dependencies.context.nextId("thread_summary"),
+        threadId,
+        summary: built.summary,
+        decisions: built.decisions,
+        openItems: built.openItems,
+        constraints: built.constraints,
+        lastKnownUserGoal: built.lastKnownUserGoal,
+        sourceMessageCount: built.sourceMessageCount,
+        sourceLatestMessageId: built.sourceLatestMessageId,
+        metadata: built.metadata,
+        createdAt: existing?.createdAt ?? now,
+        updatedAt: now
+      })
+    );
   }
 
   private async appendAssistantOutputPlaceholder(

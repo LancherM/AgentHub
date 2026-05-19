@@ -16,6 +16,7 @@ import {
   type ComparisonReport,
   type ConversationMessage,
   type ConversationThread,
+  type ConversationThreadSummary,
   type ContextPack,
   type MemoryItem,
   type MemoryStatus,
@@ -178,6 +179,35 @@ export function validateConversationMessage(
   }
   optionalObject(input.metadata, "conversationMessage.metadata", issues);
   timestamp(input.createdAt, "conversationMessage.createdAt", issues);
+  return finish(input, issues);
+}
+
+export function validateConversationThreadSummary(
+  input: ConversationThreadSummary
+): ConversationThreadSummary {
+  const issues: string[] = [];
+  required(input.id, "conversationThreadSummary.id", issues);
+  required(input.threadId, "conversationThreadSummary.threadId", issues);
+  required(input.summary, "conversationThreadSummary.summary", issues);
+  stringArray(input.decisions, "conversationThreadSummary.decisions", issues);
+  stringArray(input.openItems, "conversationThreadSummary.openItems", issues);
+  stringArray(input.constraints, "conversationThreadSummary.constraints", issues);
+  optionalString(
+    input.lastKnownUserGoal,
+    "conversationThreadSummary.lastKnownUserGoal",
+    issues
+  );
+  if (!Number.isInteger(input.sourceMessageCount) || input.sourceMessageCount < 0) {
+    issues.push("conversationThreadSummary.sourceMessageCount must be a non-negative integer");
+  }
+  optionalString(
+    input.sourceLatestMessageId,
+    "conversationThreadSummary.sourceLatestMessageId",
+    issues
+  );
+  optionalObject(input.metadata, "conversationThreadSummary.metadata", issues);
+  timestamp(input.createdAt, "conversationThreadSummary.createdAt", issues);
+  timestamp(input.updatedAt, "conversationThreadSummary.updatedAt", issues);
   return finish(input, issues);
 }
 

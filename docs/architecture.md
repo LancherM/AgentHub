@@ -97,7 +97,12 @@ ordered user/assistant/system/tool messages, optional run-card links, and JSON
 metadata separately from run evidence, so run events, diffs, verification,
 risks, and logs continue to live on the existing task-run model. The thread
 repository also updates thread metadata, including display title and
-`updatedAt`, when desktop or CLI chat appends durable messages.
+`updatedAt`, when desktop or CLI chat appends durable messages. A separate
+`conversation_thread_summaries` repository stores conservative thread-local
+summaries: decisions, open items, constraints, the last known user goal, and
+source-message metadata. These summaries are local audit data for one thread
+only; they are not approved project memory and are not injected into other
+threads.
 
 `agent-hub chat` is the CLI path over the same durable conversation boundary.
 It resolves the local project, creates or resumes a conversation thread, writes
@@ -107,9 +112,11 @@ message, and persists the generated conversation brief as run evidence.
 Leading `@fake`, `@codex`, and `@claude-code` prefixes choose the agent for one
 turn; otherwise chat uses the selected default agent. The chat slash commands
 are local thread controls only: `/thread new`, `/thread use <id>`, `/threads`,
-`/history`, and `/exit`. The existing `agent-hub run` command and bare
-interactive shell remain stateless and do not read or write conversation
-threads.
+`/history`, and `/exit`. After each completed chat turn, the CLI refreshes the
+thread-local summary deterministically from bounded transcript messages.
+`threads show <thread-id>` renders that summary beside the ordered transcript.
+The existing `agent-hub run` command and bare interactive shell remain
+stateless and do not read or write conversation threads.
 
 `apps/desktop/electron/services/thread-service.ts` is the desktop conversation
 facade over those repositories. It parses safe `@fake`, `@codex`, and
@@ -133,19 +140,20 @@ conversation rows so existing desktop run records stay inspectable.
 
 `docs/multiturn-conversation-prompts.md` defines the staged architecture route
 for real multi-turn support. The target now has persisted thread/message
-repositories, the desktop thread service separated from task runs, and a
-package-level conversation context builder. The builder runs outside the
-renderer, applies deterministic message-count and character budgets, and
-produces a conversation brief that is injected through the runtime context
-bundle and persisted as a `conversation_brief` run artifact. A zero recent
-message budget includes no prior thread messages, and desktop first-turn runs
-reload the retitled thread before building the brief so pre-created empty
-threads do not inject stale `New Chat` titles. Project context, thread context,
-current-turn context, and run context remain distinct layers so thread-local
-decisions do not automatically promote into project approved memory. Follow-up
-turns prefer terminal assistant messages over run-card summaries for runs that
-have finished; run-card summaries remain available for pending runs and
-compatibility imports.
+repositories, thread summary storage, the desktop thread service separated
+from task runs, and a package-level conversation context builder. The builder
+runs outside the renderer, applies deterministic message-count and character
+budgets, and produces a conversation brief that is injected through the runtime
+context bundle and persisted as a `conversation_brief` run artifact. Context
+ordering is current turn, recent messages, thread summary, then project
+context. A zero recent-message budget includes no prior thread messages, and
+desktop first-turn runs reload the retitled thread before building the brief so
+pre-created empty threads do not inject stale `New Chat` titles. Project
+context, thread context, current-turn context, and run context remain distinct
+layers so thread-local decisions do not automatically promote into project
+approved memory. Follow-up turns prefer terminal assistant messages over
+run-card summaries for runs that have finished; run-card summaries remain
+available for pending runs and compatibility imports.
 
 The service maps desktop-facing agent IDs (`fake`, `codex`, `claude`) and run
 statuses (`queued`, `running`, `verifying`, `completed`, `failed`,
@@ -388,13 +396,15 @@ are not written into the target repository.
 
 The SQLite schema is initialized through versioned migrations. It covers
 `projects`, `agent_profiles`, `tasks`, `task_runs`, `run_events`,
-`run_artifacts`, `verification_results`, `risk_reports`, `memory_items`,
-`comparison_reports`, `skills`, `settings`, `status_transitions`, and legacy
-`run_metadata`. The task runner writes adapter events to `run_events`, diff
-payloads to `run_artifacts`, verification command rows to
-`verification_results`, and generated risk reports to `risk_reports`. The
-legacy aggregate `run_metadata` remains for compatibility with existing show
-paths and is no longer the only persisted source for run inspection.
+`run_artifacts`, `verification_results`, `risk_reports`,
+`conversation_threads`, `conversation_messages`,
+`conversation_thread_summaries`, `memory_items`, `comparison_reports`,
+`skills`, `settings`, `status_transitions`, and legacy `run_metadata`. The
+task runner writes adapter events to `run_events`, diff payloads to
+`run_artifacts`, verification command rows to `verification_results`, and
+generated risk reports to `risk_reports`. The legacy aggregate `run_metadata`
+remains for compatibility with existing show paths and is no longer the only
+persisted source for run inspection.
 
 Migration version 3 rebuilds the early `tasks` and `task_runs` tables to add
 the imported database constraints that SQLite cannot add in place. Existing

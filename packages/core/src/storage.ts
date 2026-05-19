@@ -9,6 +9,7 @@ import {
   validateComparisonReport,
   validateConversationMessage,
   validateConversationThread,
+  validateConversationThreadSummary,
   validateMemoryItem,
   validateProject,
   validateRiskReport,
@@ -26,6 +27,7 @@ import {
   type ComparisonReport,
   type ConversationMessage,
   type ConversationThread,
+  type ConversationThreadSummary,
   type MemoryItem,
   type Project,
   type RiskReport,
@@ -126,6 +128,11 @@ export interface ConversationMessageRepository {
   createMany(messages: ConversationMessage[]): Promise<ConversationMessage[]>;
   listByThreadId(threadId: string): Promise<ConversationMessage[]>;
   countByThreadId(threadId: string): Promise<number>;
+}
+
+export interface ConversationThreadSummaryRepository {
+  upsert(summary: ConversationThreadSummary): Promise<ConversationThreadSummary>;
+  getByThreadId(threadId: string): Promise<ConversationThreadSummary | undefined>;
 }
 
 export interface VerificationResultRepository {
@@ -540,6 +547,35 @@ export class InMemoryConversationMessageRepository
   }
 }
 
+export class InMemoryConversationThreadSummaryRepository
+  implements ConversationThreadSummaryRepository
+{
+  private readonly summaries = new Map<string, ConversationThreadSummary>();
+
+  async upsert(
+    summary: ConversationThreadSummary
+  ): Promise<ConversationThreadSummary> {
+    const validSummary = validateConversationThreadSummary(summary);
+    const existing = [...this.summaries.values()].find(
+      (entry) => entry.threadId === validSummary.threadId && entry.id !== validSummary.id
+    );
+    if (existing) {
+      this.summaries.delete(existing.id);
+    }
+    this.summaries.set(validSummary.id, cloneConversationThreadSummary(validSummary));
+    return cloneConversationThreadSummary(validSummary);
+  }
+
+  async getByThreadId(
+    threadId: string
+  ): Promise<ConversationThreadSummary | undefined> {
+    const summary = [...this.summaries.values()].find(
+      (entry) => entry.threadId === threadId
+    );
+    return summary ? cloneConversationThreadSummary(summary) : undefined;
+  }
+}
+
 export class InMemoryVerificationResultRepository
   implements VerificationResultRepository
 {
@@ -759,6 +795,18 @@ function cloneConversationMessage(
   return {
     ...message,
     metadata: message.metadata ? cloneJsonObject(message.metadata) : undefined
+  };
+}
+
+function cloneConversationThreadSummary(
+  summary: ConversationThreadSummary
+): ConversationThreadSummary {
+  return {
+    ...summary,
+    decisions: [...summary.decisions],
+    openItems: [...summary.openItems],
+    constraints: [...summary.constraints],
+    metadata: summary.metadata ? cloneJsonObject(summary.metadata) : undefined
   };
 }
 
