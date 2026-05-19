@@ -582,6 +582,172 @@ describe("desktop services", () => {
     ]);
   });
 
+  it("lists thread summaries without full run-detail hydration", async () => {
+    const fixture = await createFixture();
+    const context = createDesktopServiceContext(fixture.repositories);
+    const projects = createProjectService(context);
+    const memory = createMemoryService(context);
+    const review = createReviewService(context, { memoryService: memory });
+    const runs = createRunService(context, {
+      reviewService: review,
+      memoryService: memory,
+      fakeDelayMs: 5
+    });
+    const threads = createThreadService({ context, projects, runs });
+    const project = await projects.open(fixture.projectRoot);
+
+    const detail = await threads.sendMessage({
+      projectId: project.id,
+      text: "@fake hydrate lazily",
+      contextMode: "auto"
+    });
+    const run = detail.messages.find((message) => message.type === "agent_run");
+    if (!run) {
+      throw new Error("expected run card");
+    }
+    await waitForRun(runs, run.runId, "completed");
+    await threads.getThread(detail.id);
+
+    const getRunSpy = vi.spyOn(runs, "getRun");
+    const snapshotSpy = vi.spyOn(runs, "getConversationRunSnapshot");
+    const statusSpy = vi.spyOn(runs, "listRunStatuses");
+
+    await expect(threads.listThreads()).resolves.toMatchObject([
+      {
+        id: detail.id,
+        runCount: 1,
+        activeRunCount: 0
+      }
+    ]);
+    expect(statusSpy).toHaveBeenCalledTimes(1);
+    expect(getRunSpy).not.toHaveBeenCalled();
+    expect(snapshotSpy).not.toHaveBeenCalled();
+  });
+
+  it("does not refinalize stable assistant messages when opening a thread", async () => {
+    const fixture = await createFixture();
+    const context = createDesktopServiceContext(fixture.repositories);
+    const projects = createProjectService(context);
+    const memory = createMemoryService(context);
+    const review = createReviewService(context, { memoryService: memory });
+    const runs = createRunService(context, {
+      reviewService: review,
+      memoryService: memory,
+      fakeDelayMs: 5
+    });
+    const threads = createThreadService({ context, projects, runs });
+    const project = await projects.open(fixture.projectRoot);
+
+    const detail = await threads.sendMessage({
+      projectId: project.id,
+      text: "@fake stable assistant output",
+      contextMode: "auto"
+    });
+    const run = detail.messages.find((message) => message.type === "agent_run");
+    if (!run) {
+      throw new Error("expected run card");
+    }
+    await waitForRun(runs, run.runId, "completed");
+    const finalized = await threads.getThread(detail.id);
+    expect(finalized.messages.some((message) => message.type === "assistant")).toBe(true);
+
+    const snapshotSpy = vi.spyOn(runs, "getConversationRunSnapshot");
+    const updateSpy = vi.spyOn(
+      fixture.repositories.conversationMessageRepository,
+      "update"
+    );
+
+    await expect(threads.getThread(detail.id)).resolves.toMatchObject({
+      id: detail.id
+    });
+    expect(snapshotSpy).not.toHaveBeenCalled();
+    expect(updateSpy).not.toHaveBeenCalled();
+  });
+
+  it("finalizes pending assistant placeholders through lightweight run snapshots", async () => {
+    const fixture = await createFixture();
+    const context = createDesktopServiceContext(fixture.repositories);
+    const projects = createProjectService(context);
+    const memory = createMemoryService(context);
+    const review = createReviewService(context, { memoryService: memory });
+    const runs = createRunService(context, {
+      reviewService: review,
+      memoryService: memory,
+      fakeDelayMs: 25
+    });
+    const threads = createThreadService({ context, projects, runs });
+    const project = await projects.open(fixture.projectRoot);
+
+    const detail = await threads.sendMessage({
+      projectId: project.id,
+      text: "@fake pending assistant output",
+      contextMode: "auto"
+    });
+    const run = detail.messages.find((message) => message.type === "agent_run");
+    if (!run) {
+      throw new Error("expected run card");
+    }
+    const pendingMessages =
+      await fixture.repositories.conversationMessageRepository.listByThreadId(
+        detail.id
+      );
+    expect(
+      pendingMessages.some((message) => message.metadata?.pending === true)
+    ).toBe(true);
+
+    await waitForRun(runs, run.runId, "completed");
+    const snapshotSpy = vi.spyOn(runs, "getConversationRunSnapshot");
+    const refreshed = await threads.getThread(detail.id);
+
+    expect(snapshotSpy).toHaveBeenCalledWith(run.runId);
+    expect(
+      refreshed.messages
+        .filter((message) => message.type === "assistant")
+        .map((message) => message.text)
+    ).toEqual(["Fake run completed successfully"]);
+  });
+
+  it("keeps thread run counts current from lightweight statuses", async () => {
+    const fixture = await createFixture();
+    const context = createDesktopServiceContext(fixture.repositories);
+    const projects = createProjectService(context);
+    const memory = createMemoryService(context);
+    const review = createReviewService(context, { memoryService: memory });
+    const runs = createRunService(context, {
+      reviewService: review,
+      memoryService: memory,
+      fakeDelayMs: 100
+    });
+    const threads = createThreadService({ context, projects, runs });
+    const project = await projects.open(fixture.projectRoot);
+
+    const detail = await threads.sendMessage({
+      projectId: project.id,
+      text: "@fake status counts",
+      contextMode: "auto"
+    });
+    const run = detail.messages.find((message) => message.type === "agent_run");
+    if (!run) {
+      throw new Error("expected run card");
+    }
+
+    await expect(threads.listThreads()).resolves.toMatchObject([
+      {
+        id: detail.id,
+        runCount: 1,
+        activeRunCount: 1
+      }
+    ]);
+    await waitForRun(runs, run.runId, "completed");
+    await expect(threads.listThreads()).resolves.toMatchObject([
+      {
+        id: detail.id,
+        runCount: 1,
+        activeRunCount: 0
+      }
+    ]);
+  });
+
   it("persists bounded conversation brief artifacts for follow-up desktop turns", async () => {
     const fixture = await createFixture();
     const context = createDesktopServiceContext(fixture.repositories);

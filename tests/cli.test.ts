@@ -1288,6 +1288,93 @@ describe("CLI", () => {
     );
   });
 
+  it("lists generated proposed memory without injecting it into context", async () => {
+    const projectRoot = await createTestDirectory("cli-generated-memory-project");
+    const runRoot = path.join(
+      await createTestDirectory("cli-generated-memory-runs"),
+      "runs"
+    );
+    const databasePath = path.join(
+      await createTestDirectory("cli-generated-memory-db"),
+      "agent-hub.sqlite"
+    );
+    const agentHubHome = await createTestDirectory("cli-generated-memory-home");
+    const runtime = createCliRuntime({
+      sqliteDatabasePath: databasePath,
+      defaultRunRoot: runRoot,
+      workspaceManager: new TestWorkspaceManager(runRoot),
+      diffCollector: new StaticDiffCollector(),
+      verificationRunner: new VerificationRunner(
+        new MockShellExecutor([{ exitCode: 0, stdout: "ok\n" }])
+      ),
+      idGenerator: new SequenceIdGenerator(),
+      clock: new FixedClock("2026-01-01T00:00:00.000Z")
+    });
+    const output: string[] = [];
+    const errors: string[] = [];
+    const io = {
+      stdout: { write: (chunk: string) => { output.push(chunk); return true; } },
+      stderr: { write: (chunk: string) => { errors.push(chunk); return true; } }
+    };
+
+    await expect(
+      main([
+        "run",
+        "--verify",
+        "pnpm test",
+        "@fake",
+        "capture verification memory"
+      ], io, projectRoot, runtime)
+    ).resolves.toBe(0);
+    await expect(
+      main(["memory", "list", "--project-id", "adhoc_project"], io, projectRoot, runtime)
+    ).resolves.toBe(0);
+    await expect(
+      main([
+        "context",
+        "init",
+        "--project-root",
+        projectRoot,
+        "--project-id",
+        "adhoc_project",
+        "--agent-hub-home",
+        agentHubHome
+      ], io, projectRoot, runtime)
+    ).resolves.toBe(0);
+    await expect(
+      main([
+        "context",
+        "build",
+        "--project-root",
+        projectRoot,
+        "--project-id",
+        "adhoc_project",
+        "--task-id",
+        "task_generated_memory",
+        "--title",
+        "Use generated memory",
+        "--prompt",
+        "Build context without proposed generated memory",
+        "--agent-hub-home",
+        agentHubHome
+      ], io, projectRoot, runtime)
+    ).resolves.toBe(0);
+
+    const renderedOutput = output.join("");
+    const contextPackPath = extractLineValue(renderedOutput, "context_pack_path");
+    const contextPack = JSON.parse(await fs.readFile(contextPackPath, "utf8")) as {
+      approvedMemorySections: string[];
+    };
+
+    expect(errors.join("")).toBe("");
+    expect(renderedOutput).toContain(
+      "proposed\tworkflow_rule\tVerification command for this project is pnpm test."
+    );
+    expect(contextPack.approvedMemorySections.join("\n")).not.toContain(
+      "Verification command for this project is pnpm test."
+    );
+  });
+
   it("creates and persists comparison reports from SQLite run records", async () => {
     const projectRoot = await createTestDirectory("cli-compare-project");
     const databasePath = path.join(

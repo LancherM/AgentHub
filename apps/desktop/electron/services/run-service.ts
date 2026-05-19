@@ -45,7 +45,9 @@ import type { ReviewService } from "./review-service";
 export interface RunService {
   createRun(input: CreateDesktopRunInput): Promise<RunSummary>;
   getRun(runId: string): Promise<RunDetail>;
+  getConversationRunSnapshot(runId: string): Promise<ConversationRunSnapshot>;
   listRuns(projectId?: string): Promise<RunSummary[]>;
+  listRunStatuses(projectId?: string): Promise<Map<string, RunStatus>>;
   startRun(runId: string): Promise<void>;
   cancelRun(runId: string): Promise<void>;
   subscribe(runId: string, listener: (event: RunEvent) => void): () => void;
@@ -59,6 +61,14 @@ export interface RunServiceDependencies {
 
 export interface CreateDesktopRunInput extends CreateRunInput {
   conversationBrief?: string | ConversationContextBrief;
+}
+
+export interface ConversationRunSnapshot {
+  id: string;
+  agentId: AgentId;
+  status: RunStatus;
+  summary: string;
+  events: RunEvent[];
 }
 
 interface ActiveRun {
@@ -156,6 +166,17 @@ class RepositoryRunService implements RunService {
       .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
   }
 
+  async listRunStatuses(projectId?: string): Promise<Map<string, RunStatus>> {
+    const tasks = projectId
+      ? await this.tasks.listByProjectId(projectId)
+      : await this.tasks.list();
+    const taskIds = new Set(tasks.map((task) => task.id));
+    const runs = (await this.runs.list()).filter((run) => taskIds.has(run.taskId));
+    return new Map(
+      runs.map((run) => [run.id, this.currentDesktopStatus(run)])
+    );
+  }
+
   async getRun(runId: string): Promise<RunDetail> {
     const run = await this.runs.get(runId);
     if (!run) {
@@ -186,6 +207,21 @@ class RepositoryRunService implements RunService {
       risk,
       memoryProposals,
       summary
+    };
+  }
+
+  async getConversationRunSnapshot(runId: string): Promise<ConversationRunSnapshot> {
+    const run = await this.runs.get(runId);
+    if (!run) {
+      throw new Error(`run ${runId} not found`);
+    }
+    const events = await this.events.listByRunId(runId);
+    return {
+      id: run.id,
+      agentId: toAgentId(run.agentKind),
+      status: this.currentDesktopStatus(run),
+      summary: finalSummary(events) ?? statusSummary(run),
+      events: events.map(toRunEvent)
     };
   }
 

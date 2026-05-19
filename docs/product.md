@@ -211,9 +211,14 @@ The memory workflow is explicit and user-approved. `memory propose` creates a
 SQLite memory item in `proposed` state, `memory list` shows project memory
 items, `memory approve` marks an item approved and appends it to the Agent
 Hub-owned context store at `memory/approved.md`, and `memory reject` marks it
-rejected. Context builds read approved memory only from the context store and
-ignore the default `# Approved Memory` placeholder, so proposed, rejected, and
-empty placeholder memory items are not injected into future task briefs.
+rejected. Successful task runs may also generate a small number of
+conservative proposed memory items from persisted run evidence such as
+verification rows and diff metadata. These generated items are visible through
+the same `memory list` command and still start as `proposed`; Agent Hub does
+not auto-approve, auto-write, or inject them. Context builds read approved
+memory only from the context store and ignore the default `# Approved Memory`
+placeholder, so proposed, rejected, and empty placeholder memory items are not
+injected into future task briefs.
 
 The compare workflow generates a persisted comparison report for two runs of a
 task. `compare --task-id ... --baseline ... --candidate ...` compares changed
@@ -245,17 +250,19 @@ run reaches a terminal state, the pending assistant message is updated with
 the agent-facing final output or a concise failure/cancel summary. If no agent
 is mentioned or supplied by the caller, desktop falls back to `@fake`.
 
-Each inline run card subscribes to the existing desktop run event stream and
-shows agent identity, status, the latest streamed line, compact review pills,
-and an expandable event log. Diff, tests, risk, memory proposals, summary, and
-full logs are hidden by default and open through an on-demand run inspector
-drawer. Existing persisted run records are synthesized into thread-shaped
-conversations only as a compatibility import when no durable conversation
-threads exist yet, so old desktop run data remains inspectable without making
-run synthesis the primary thread store. Desktop thread lists and details now
-read from the core conversation repositories, while run-card display status is
-hydrated from the linked run ids. Run records, events, simulated verification,
-placeholder diffs, and risk review rows remain SQLite-backed.
+Active inline run cards subscribe to the existing desktop run event stream and
+show agent identity, status, the latest streamed line, compact review pills, and
+an expandable event log. Terminal cards do not load full run review evidence
+when a thread is merely selected; diff, tests, risk, memory proposals, summary,
+and full logs load lazily when the user expands a card or opens the on-demand
+run inspector drawer. Existing persisted run records are synthesized into
+thread-shaped conversations only as a compatibility import when no durable
+conversation threads exist yet, so old desktop run data remains inspectable
+without making run synthesis the primary thread store. Desktop thread lists and
+details now read from the core conversation repositories, use a lightweight run
+status map for run-card status/counts, and reconcile assistant output only for
+the selected thread. Run records, events, simulated verification, placeholder
+diffs, and risk review rows remain SQLite-backed.
 
 The planned real multi-turn conversation route is captured in
 `docs/multiturn-conversation-prompts.md`. It keeps project context, thread
@@ -413,6 +420,6 @@ assets only; it does not deploy a hosted service, notarize the desktop app, or
 change Agent Hub's local-first product model.
 
 Deferred product capabilities include richer Codex/Claude structured event
-mapping, automatic memory proposal generation from completed runs, and real
-desktop TaskRunner/adapter execution beyond the current fake-agent-backed
+mapping, automatic memory proposal generation from completed runs, mapping, richer comparison scoring, 
+and real desktop TaskRunner/adapter execution beyond the current fake-agent-backed
 desktop run path.

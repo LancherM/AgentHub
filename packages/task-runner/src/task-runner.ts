@@ -47,6 +47,7 @@ import {
   type VerificationResult
 } from "@agent-hub/core";
 import { RiskReportGenerator } from "@agent-hub/safety";
+import { generateMemoryProposalsFromCompletedRun } from "./memory-proposals";
 import { formatShellCommand, NodeShellExecutor, type ShellExecutor } from "./shell-executor";
 import {
   InMemoryRiskReportRepository,
@@ -56,6 +57,8 @@ import {
   InMemoryTaskRepository,
   InMemoryTaskRunRepository,
   InMemoryVerificationResultRepository,
+  InMemoryMemoryItemRepository,
+  type MemoryItemRepository,
   type RiskReportRepository,
   type RunArtifactRepository,
   type RunEventRepository,
@@ -144,6 +147,7 @@ export interface TaskRunnerDependencies {
   runArtifactRepository?: RunArtifactRepository;
   verificationResultRepository?: VerificationResultRepository;
   riskReportRepository?: RiskReportRepository;
+  memoryItemRepository?: MemoryItemRepository;
   runMetadataRepository?: RunMetadataRepository;
   agentRegistry?: AgentRegistry;
   shellExecutor?: ShellExecutor;
@@ -201,6 +205,7 @@ export class TaskRunner {
   readonly runArtifactRepository: RunArtifactRepository;
   readonly verificationResultRepository: VerificationResultRepository;
   readonly riskReportRepository: RiskReportRepository;
+  readonly memoryItemRepository: MemoryItemRepository;
   readonly runMetadataRepository: RunMetadataRepository;
   private readonly contextCompiler: ContextCompiler;
   private readonly contextFormatter: ContextFormatter;
@@ -231,6 +236,8 @@ export class TaskRunner {
       new InMemoryVerificationResultRepository();
     this.riskReportRepository =
       dependencies.riskReportRepository ?? new InMemoryRiskReportRepository();
+    this.memoryItemRepository =
+      dependencies.memoryItemRepository ?? new InMemoryMemoryItemRepository();
     this.runMetadataRepository =
       dependencies.runMetadataRepository ?? new InMemoryRunMetadataRepository();
     this.agentRegistry =
@@ -691,6 +698,27 @@ export class TaskRunner {
       status === "succeeded" ? "completed" : "open",
       completedAt
     );
+    if (status === "succeeded") {
+      try {
+        await generateMemoryProposalsFromCompletedRun(
+          {
+            taskRunRepository: this.taskRunRepository,
+            taskRepository: this.taskRepository,
+            runArtifactRepository: this.runArtifactRepository,
+            verificationResultRepository: this.verificationResultRepository,
+            riskReportRepository: this.riskReportRepository,
+            memoryItemRepository: this.memoryItemRepository
+          },
+          {
+            runId: updatedRun.id,
+            idGenerator: this.idGenerator,
+            clock: this.clock
+          }
+        );
+      } catch (error) {
+        warnings.push(`memory proposal generation failed: ${errorMessage(error)}`);
+      }
+    }
 
     const fakeOutput = extractFakeOutput(events);
     const errorEvent = events.find((event) => event.type === "error");
