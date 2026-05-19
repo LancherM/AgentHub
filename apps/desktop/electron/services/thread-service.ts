@@ -6,6 +6,10 @@ import {
   type ConversationThread,
   type ConversationThreadRepository
 } from "@agent-hub/core";
+import {
+  ConversationContextBuilder,
+  type ConversationContextMessage
+} from "@agent-hub/context-compiler";
 import type { AgentKind, TaskRunStatus } from "@agent-hub/shared";
 import type {
   AgentId,
@@ -50,6 +54,7 @@ export interface ThreadServiceDependencies {
   context: DesktopServiceContext;
   projects: ProjectService;
   runs: RunService;
+  conversationContextBuilder?: ConversationContextBuilder;
 }
 
 export function createThreadService(
@@ -61,11 +66,14 @@ export function createThreadService(
 class RepositoryThreadService implements ThreadService {
   private readonly threads: ConversationThreadRepository;
   private readonly messages: ConversationMessageRepository;
+  private readonly conversationContextBuilder: ConversationContextBuilder;
   private importedLegacyRuns = false;
 
   constructor(private readonly dependencies: ThreadServiceDependencies) {
     this.threads = dependencies.context.repositories.conversationThreadRepository;
     this.messages = dependencies.context.repositories.conversationMessageRepository;
+    this.conversationContextBuilder =
+      dependencies.conversationContextBuilder ?? new ConversationContextBuilder();
   }
 
   async listThreads(): Promise<ThreadSummary[]> {
@@ -211,17 +219,28 @@ class RepositoryThreadService implements ThreadService {
           title: titleFromPrompt(cleanedPrompt)
         });
 
-    await this.appendUserMessage(thread.id, cleanedPrompt, agents);
+    const userMessage = await this.appendUserMessage(thread.id, cleanedPrompt, agents);
+    const priorMessages = (await this.messages.listByThreadId(thread.id))
+      .filter((message) => message.id !== userMessage.id);
 
     for (const agentId of agents) {
       try {
+        const conversationBrief = await this.buildConversationBrief({
+          thread,
+          currentTurn: cleanedPrompt,
+          currentMessageCreatedAt: userMessage.createdAt,
+          agentId,
+          contextMode,
+          priorMessages
+        });
         const run = await this.dependencies.runs.createRun({
           projectId: thread.projectId,
           prompt: cleanedPrompt,
           title: titleFromPrompt(cleanedPrompt),
           agentId,
           contextMode,
-          deliveryMode: "runtime_injection"
+          deliveryMode: "runtime_injection",
+          conversationBrief
         });
         await this.appendAgentRunMessage(thread.id, run.id, agentId);
       } catch (error) {
@@ -233,6 +252,104 @@ class RepositoryThreadService implements ThreadService {
     }
 
     return this.getThread(thread.id);
+  }
+
+  private async buildConversationBrief(input: {
+    thread: ConversationThread;
+    currentTurn: string;
+    currentMessageCreatedAt: string;
+    agentId: AgentId;
+    contextMode: ContextMode;
+    priorMessages: ConversationMessage[];
+  }) {
+    const messages = await Promise.all(
+      input.priorMessages.map((message) => this.toConversationContextMessage(message))
+    );
+    return this.conversationContextBuilder.build({
+      thread: {
+        id: input.thread.id,
+        title: input.thread.title,
+        projectId: input.thread.projectId
+      },
+      currentTurn: {
+        content: input.currentTurn,
+        agentId: input.agentId,
+        contextMode: input.contextMode,
+        deliveryMode: "runtime_injection",
+        createdAt: input.currentMessageCreatedAt
+      },
+      messages: messages.filter(
+        (message): message is ConversationContextMessage => message !== undefined
+      ),
+      projectContextReferences: [
+        `project:${input.thread.projectId}`,
+        "Agent Hub-owned project context store",
+        "Approved memory only; thread context is not promoted automatically"
+      ]
+    });
+  }
+
+  private async toConversationContextMessage(
+    message: ConversationMessage
+  ): Promise<ConversationContextMessage | undefined> {
+    if (message.role === "user") {
+      return {
+        id: message.id,
+        role: "user",
+        kind: message.kind,
+        content: message.content,
+        createdAt: message.createdAt,
+        metadata: message.metadata
+      };
+    }
+    if (message.kind === "run_card") {
+      const agentId = message.agentKind ? toAgentId(message.agentKind) : undefined;
+      const runSummary = message.runId
+        ? await this.runSummaryForConversation(message.runId)
+        : undefined;
+      return {
+        id: message.id,
+        role: "tool",
+        kind: "run_summary",
+        content: message.content,
+        summary: runSummary,
+        agentId,
+        runId: message.runId,
+        status: message.status,
+        createdAt: message.createdAt,
+        metadata: message.metadata
+      };
+    }
+    if (message.role === "assistant") {
+      return {
+        id: message.id,
+        role: "assistant",
+        kind: message.kind,
+        content: message.content,
+        agentId: message.agentKind ? toAgentId(message.agentKind) : undefined,
+        runId: message.runId,
+        status: message.status,
+        createdAt: message.createdAt,
+        metadata: message.metadata
+      };
+    }
+    return {
+      id: message.id,
+      role: "system",
+      kind: message.kind,
+      content: message.content,
+      createdAt: message.createdAt,
+      metadata: message.metadata
+    };
+  }
+
+  private async runSummaryForConversation(runId: string): Promise<string | undefined> {
+    try {
+      const run = await this.dependencies.runs.getRun(runId);
+      return `@${run.agentId} ${run.status}: ${run.summary}`;
+    } catch {
+      return undefined;
+    }
   }
 
   private async requireThread(threadId: string): Promise<ConversationThread> {

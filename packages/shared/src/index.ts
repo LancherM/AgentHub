@@ -421,6 +421,7 @@ export type ContextSourceKind =
   | "agent"
   | "repository"
   | "project"
+  | "conversation"
   | "memory"
   | "skill"
   | "user_constraint"
