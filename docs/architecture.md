@@ -74,10 +74,11 @@ is deterministic and evidence based; it classifies changed paths, verification
 failures, large diffs, dependency/config changes, generated files, and
 source-without-tests conditions without calling an LLM when no persisted
 safety report is available. `MemoryService` lists and generates a small number
-of conservative pending proposals, then maps approve/ignore to the existing
-local memory item states. All of these services sit behind preload IPC methods,
-so the renderer still has no Node.js, filesystem, SQLite, shell, child-process,
-or Git access.
+of conservative pending proposals, serializes generation per run, deduplicates
+proposal content, and caps generated proposals for a run before mapping
+approve/ignore to the existing local memory item states. All of these services
+sit behind preload IPC methods, so the renderer still has no Node.js,
+filesystem, SQLite, shell, child-process, or Git access.
 
 Run review decisions are stored as local `run_artifacts` entries of kind
 `review_decision`. They are not execution status transitions and they do not
@@ -89,27 +90,31 @@ leaving any explicit apply/merge workflow for a later phase.
 message repositories backed by local SQLite tables. They store thread metadata,
 ordered user/assistant/system/tool messages, optional run-card links, and JSON
 metadata separately from run evidence, so run events, diffs, verification,
-risks, and logs continue to live on the existing task-run model.
+risks, and logs continue to live on the existing task-run model. The thread
+repository also updates thread metadata, including display title and
+`updatedAt`, when desktop appends durable messages.
 
-`apps/desktop/electron/services/thread-service.ts` is still the current desktop
-conversation facade. It keeps renderer-facing thread/message state in an
-isolated in-memory store until the follow-up repository-backed service phase,
-synthesizes existing SQLite-backed runs into thread-shaped conversations on
-startup, parses safe `@fake`,
-`@codex`, and `@claude` mentions, and implements `sendMessage` by appending one
-user message, creating one run per selected agent through `RunService`, and
-appending one agent-run message per run. Run cards subscribe to the same
+`apps/desktop/electron/services/thread-service.ts` is the desktop conversation
+facade over those repositories. It parses safe `@fake`, `@codex`, and
+`@claude` mentions, implements `sendMessage` by appending one durable user
+message, creating one run per selected agent through `RunService`, and
+appending one durable run-card message per run. The renderer-facing
+`window.agentHub.threads.*` contract remains unchanged, but service state is
+loaded from SQLite on every list/detail request. Run-card display status is
+derived from linked run ids through `RunService` instead of live-only thread
+state. If an older database has runs but no conversation threads, the service
+performs a one-time compatibility import into conversation rows so existing
+desktop run records stay inspectable. Run cards subscribe to the same
 `RunService` stream as the earlier run-detail view and open review data through
 an on-demand inspector instead of a permanent right-hand panel.
 
 `docs/multiturn-conversation-prompts.md` defines the staged architecture route
-for replacing that Phase 3 facade with real multi-turn support. The target
-now has persisted thread/message repositories separated from task runs; later
-phases wire the desktop/CLI services to those repositories, add a bounded
-conversation context builder, and persist per-run context snapshots as audit
-artifacts. Project context, thread context, current-turn context, and run
-context remain distinct layers so thread-local decisions do not automatically
-promote into project approved memory.
+for real multi-turn support. The target now has persisted thread/message
+repositories and the desktop thread service separated from task runs; later
+phases add a bounded conversation context builder and persist per-run context
+snapshots as audit artifacts. Project context, thread context, current-turn
+context, and run context remain distinct layers so thread-local decisions do
+not automatically promote into project approved memory.
 
 The service maps desktop-facing agent IDs (`fake`, `codex`, `claude`) and run
 statuses (`queued`, `running`, `verifying`, `completed`, `failed`,

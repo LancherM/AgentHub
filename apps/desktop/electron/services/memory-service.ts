@@ -38,6 +38,8 @@ export function createMemoryService(context: DesktopServiceContext): MemoryServi
 }
 
 class RepositoryMemoryService implements MemoryService {
+  private readonly generationLocks = new Map<string, Promise<MemoryProposal[]>>();
+
   constructor(
     private readonly runs: TaskRunRepository,
     private readonly tasks: TaskRepository,
@@ -48,38 +50,62 @@ class RepositoryMemoryService implements MemoryService {
   ) {}
 
   async listProposals(runId: string): Promise<MemoryProposal[]> {
-    await this.generateProposalsForRun(runId);
-    const { task } = await this.requireRunAndTask(runId);
-    const items = await this.memory.listByProjectId(task.projectId);
-    return items
-      .filter((item) => item.taskId === task.id)
-      .map((item) => toMemoryProposal(runId, item));
+    return this.generateProposalsForRun(runId);
   }
 
   async generateProposalsForRun(runId: string): Promise<MemoryProposal[]> {
+    const activeGeneration = this.generationLocks.get(runId);
+    if (activeGeneration) {
+      return activeGeneration;
+    }
+
+    const generation = this.generateProposalsForRunLocked(runId);
+    this.generationLocks.set(runId, generation);
+    try {
+      return await generation;
+    } finally {
+      if (this.generationLocks.get(runId) === generation) {
+        this.generationLocks.delete(runId);
+      }
+    }
+  }
+
+  private async generateProposalsForRunLocked(
+    runId: string
+  ): Promise<MemoryProposal[]> {
     const { run, task } = await this.requireRunAndTask(runId);
     const project = await this.projects.get(task.projectId);
     if (!project) {
       throw new Error(`project ${task.projectId} not found`);
     }
-    const existing = await this.memory.listByProjectId(project.id);
-    const existingContent = new Set(
-      existing.map((item) => normalizeMemoryContent(item.content))
-    );
+    let projectItems = await this.memory.listByProjectId(project.id);
     if (run.status === "queued" || run.status === "running") {
-      return existing
-        .filter((item) => item.taskId === task.id)
-        .map((item) => toMemoryProposal(runId, item));
+      return toMemoryProposalsForTask(runId, projectItems, task.id);
     }
     const candidates = await this.buildCandidates(run, task, project.rootPath);
-    const created: MemoryItem[] = [];
     for (const candidate of candidates) {
-      if (created.length >= MAX_GENERATED_PROPOSALS) {
+      if (
+        uniqueMemoryItemsForTask(projectItems, task.id).length >=
+        MAX_GENERATED_PROPOSALS
+      ) {
         break;
       }
-      if (existingContent.has(normalizeMemoryContent(candidate.content))) {
+      const normalizedContent = normalizeMemoryContent(candidate.content);
+      if (hasProjectMemoryContent(projectItems, normalizedContent)) {
         continue;
       }
+
+      projectItems = await this.memory.listByProjectId(project.id);
+      if (
+        uniqueMemoryItemsForTask(projectItems, task.id).length >=
+        MAX_GENERATED_PROPOSALS
+      ) {
+        break;
+      }
+      if (hasProjectMemoryContent(projectItems, normalizedContent)) {
+        continue;
+      }
+
       const now = this.context.now();
       const item = await this.memory.create(
         validateMemoryItem({
@@ -93,13 +119,13 @@ class RepositoryMemoryService implements MemoryService {
           updatedAt: now
         })
       );
-      existingContent.add(normalizeMemoryContent(candidate.content));
-      created.push(item);
+      projectItems = [...projectItems, item];
     }
-    const items = await this.memory.listByProjectId(project.id);
-    return items
-      .filter((item) => item.taskId === task.id)
-      .map((item) => toMemoryProposal(runId, item));
+    return toMemoryProposalsForTask(
+      runId,
+      await this.memory.listByProjectId(project.id),
+      task.id
+    );
   }
 
   async approve(ids: string[]): Promise<void> {
@@ -192,6 +218,69 @@ function toMemoryProposal(runId: string, item: MemoryItem): MemoryProposal {
     createdAt: item.createdAt,
     decidedAt: status === "pending" ? undefined : item.updatedAt
   };
+}
+
+function toMemoryProposalsForTask(
+  runId: string,
+  items: MemoryItem[],
+  taskId: string
+): MemoryProposal[] {
+  return uniqueMemoryItemsForTask(items, taskId).map((item) =>
+    toMemoryProposal(runId, item)
+  );
+}
+
+function uniqueMemoryItemsForTask(
+  items: MemoryItem[],
+  taskId: string
+): MemoryItem[] {
+  const byContent = new Map<string, MemoryItem>();
+  for (const item of items) {
+    if (item.taskId !== taskId) {
+      continue;
+    }
+    const normalizedContent = normalizeMemoryContent(item.content);
+    const existing = byContent.get(normalizedContent);
+    if (!existing || prefersMemoryItem(item, existing)) {
+      byContent.set(normalizedContent, item);
+    }
+  }
+  return [...byContent.values()].sort((left, right) =>
+    left.createdAt === right.createdAt
+      ? left.id.localeCompare(right.id)
+      : left.createdAt.localeCompare(right.createdAt)
+  );
+}
+
+function prefersMemoryItem(candidate: MemoryItem, current: MemoryItem): boolean {
+  const candidateRank = memoryStatusRank(candidate.status);
+  const currentRank = memoryStatusRank(current.status);
+  if (candidateRank !== currentRank) {
+    return candidateRank > currentRank;
+  }
+  if (candidate.createdAt !== current.createdAt) {
+    return candidate.createdAt < current.createdAt;
+  }
+  return candidate.id < current.id;
+}
+
+function memoryStatusRank(status: MemoryItem["status"]): number {
+  if (status === "approved") {
+    return 3;
+  }
+  if (status === "rejected") {
+    return 2;
+  }
+  return 1;
+}
+
+function hasProjectMemoryContent(
+  items: MemoryItem[],
+  normalizedContent: string
+): boolean {
+  return items.some(
+    (item) => normalizeMemoryContent(item.content) === normalizedContent
+  );
 }
 
 async function usesPnpm(projectRoot: string): Promise<boolean> {

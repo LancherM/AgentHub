@@ -1,3 +1,12 @@
+import {
+  validateConversationMessage,
+  validateConversationThread,
+  type ConversationMessage,
+  type ConversationMessageRepository,
+  type ConversationThread,
+  type ConversationThreadRepository
+} from "@agent-hub/core";
+import type { AgentKind, TaskRunStatus } from "@agent-hub/shared";
 import type {
   AgentId,
   AgentRunMessage,
@@ -13,7 +22,10 @@ import type {
   UserMessage
 } from "../../src/lib/types";
 import { parseAgentMentions } from "../../src/lib/mentions";
-import type { ProjectService } from "./project-service";
+import type {
+  DesktopServiceContext,
+  ProjectService
+} from "./project-service";
 import type { RunService } from "./run-service";
 
 export interface ThreadService {
@@ -35,6 +47,7 @@ export interface ThreadService {
 }
 
 export interface ThreadServiceDependencies {
+  context: DesktopServiceContext;
   projects: ProjectService;
   runs: RunService;
 }
@@ -42,46 +55,65 @@ export interface ThreadServiceDependencies {
 export function createThreadService(
   dependencies: ThreadServiceDependencies
 ): ThreadService {
-  return new InMemoryThreadService(dependencies);
+  return new RepositoryThreadService(dependencies);
 }
 
-class InMemoryThreadService implements ThreadService {
-  // TODO: replace this in-memory store with SQLite-backed thread/message tables.
-  private readonly threads = new Map<string, ThreadDetail>();
-  private seededFromRuns = false;
+class RepositoryThreadService implements ThreadService {
+  private readonly threads: ConversationThreadRepository;
+  private readonly messages: ConversationMessageRepository;
+  private importedLegacyRuns = false;
 
-  constructor(private readonly dependencies: ThreadServiceDependencies) {}
+  constructor(private readonly dependencies: ThreadServiceDependencies) {
+    this.threads = dependencies.context.repositories.conversationThreadRepository;
+    this.messages = dependencies.context.repositories.conversationMessageRepository;
+  }
 
   async listThreads(): Promise<ThreadSummary[]> {
-    await this.ensureSeededFromRuns();
-    await this.refreshRunStatuses();
-    return [...this.threads.values()]
-      .map(toThreadSummary)
-      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+    await this.ensureLegacyRunThreads();
+    const [threads, runStatusById] = await Promise.all([
+      this.threads.list(),
+      this.runStatusById()
+    ]);
+    const summaries = await Promise.all(
+      threads.map(async (thread) => {
+        const messages = await this.messages.listByThreadId(thread.id);
+        return toThreadSummary(toThreadDetail(thread, messages, runStatusById));
+      })
+    );
+    return summaries.sort((left, right) =>
+      right.updatedAt.localeCompare(left.updatedAt)
+    );
   }
 
   async getThread(threadId: string): Promise<ThreadDetail> {
-    await this.ensureSeededFromRuns();
-    await this.refreshRunStatuses();
-    const thread = this.threads.get(threadId);
+    await this.ensureLegacyRunThreads();
+    const thread = await this.threads.get(threadId);
     if (!thread) {
       throw new Error(`thread ${threadId} not found`);
     }
-    return cloneThread(thread);
+    const [messages, runStatusById] = await Promise.all([
+      this.messages.listByThreadId(thread.id),
+      this.runStatusById(thread.projectId)
+    ]);
+    return toThreadDetail(thread, messages, runStatusById);
   }
 
   async createThread(input: CreateThreadInput = {}): Promise<ThreadSummary> {
-    const now = new Date().toISOString();
-    const thread: ThreadDetail = {
-      id: nextId("thread"),
-      title: titleFromPrompt(input.title ?? "") || "New Chat",
-      projectId: input.projectId,
-      createdAt: now,
-      updatedAt: now,
-      messages: []
-    };
-    this.threads.set(thread.id, thread);
-    return toThreadSummary(thread);
+    const projectId = input.projectId ?? (await this.defaultProjectId());
+    if (!projectId) {
+      throw new Error("projectId is required before creating a thread");
+    }
+    const now = this.dependencies.context.now();
+    const thread = await this.threads.create(
+      validateConversationThread({
+        id: this.dependencies.context.nextId("thread"),
+        title: titleFromPrompt(input.title ?? "") || "New Chat",
+        projectId,
+        createdAt: now,
+        updatedAt: now
+      })
+    );
+    return toThreadSummary(toThreadDetail(thread, [], new Map()));
   }
 
   async appendUserMessage(
@@ -90,21 +122,27 @@ class InMemoryThreadService implements ThreadService {
     mentions: AgentId[]
   ): Promise<UserMessage> {
     const thread = await this.requireThread(threadId);
-    const now = new Date().toISOString();
-    const message: UserMessage = {
-      id: nextId("message"),
-      threadId,
-      type: "user",
-      text,
-      mentions,
-      createdAt: now
-    };
-    thread.messages.push(message);
-    if (thread.title === "New Chat") {
-      thread.title = titleFromPrompt(text) || thread.title;
-    }
-    thread.updatedAt = now;
-    return { ...message, mentions: [...message.mentions] };
+    const now = this.dependencies.context.now();
+    const message = await this.messages.create(
+      validateConversationMessage({
+        id: this.dependencies.context.nextId("message"),
+        threadId,
+        sequence: await this.messages.countByThreadId(threadId),
+        role: "user",
+        kind: "text",
+        content: text,
+        metadata: { mentions: uniqueAgents(mentions) },
+        createdAt: now
+      })
+    );
+    await this.touchThread(thread, {
+      title:
+        thread.title === "New Chat"
+          ? titleFromPrompt(text) || thread.title
+          : thread.title,
+      updatedAt: now
+    });
+    return toUserMessage(message);
   }
 
   async appendAgentRunMessage(
@@ -114,37 +152,46 @@ class InMemoryThreadService implements ThreadService {
   ): Promise<AgentRunMessage> {
     const thread = await this.requireThread(threadId);
     const run = await this.dependencies.runs.getRun(runId);
-    const now = new Date().toISOString();
-    const message: AgentRunMessage = {
-      id: nextId("message"),
-      threadId,
-      type: "agent_run",
-      runId,
-      agentId,
-      status: run.status,
-      createdAt: now
-    };
-    thread.messages.push(message);
-    thread.updatedAt = now;
-    return { ...message };
+    const now = this.dependencies.context.now();
+    const message = await this.messages.create(
+      validateConversationMessage({
+        id: this.dependencies.context.nextId("message"),
+        threadId,
+        sequence: await this.messages.countByThreadId(threadId),
+        role: "tool",
+        kind: "run_card",
+        content: `@${agentId} ${run.status}`,
+        agentKind: toCoreAgentKind(agentId),
+        runId,
+        status: toCoreRunStatus(run.status),
+        metadata: { agentId },
+        createdAt: now
+      })
+    );
+    await this.touchThread(thread, { updatedAt: now });
+    return toAgentRunMessage(message, new Map([[runId, run.status]]));
   }
 
   async appendSystemMessage(threadId: string, text: string): Promise<SystemMessage> {
     const thread = await this.requireThread(threadId);
-    const now = new Date().toISOString();
-    const message: SystemMessage = {
-      id: nextId("message"),
-      threadId,
-      type: "system",
-      text,
-      createdAt: now
-    };
-    thread.messages.push(message);
-    thread.updatedAt = now;
-    return { ...message };
+    const now = this.dependencies.context.now();
+    const message = await this.messages.create(
+      validateConversationMessage({
+        id: this.dependencies.context.nextId("message"),
+        threadId,
+        sequence: await this.messages.countByThreadId(threadId),
+        role: "system",
+        kind: "text",
+        content: text,
+        createdAt: now
+      })
+    );
+    await this.touchThread(thread, { updatedAt: now });
+    return toSystemMessage(message);
   }
 
   async sendMessage(input: SendThreadMessageInput): Promise<ThreadDetail> {
+    await this.ensureLegacyRunThreads();
     const parsed = parseAgentMentions(input.text);
     const cleanedPrompt = parsed.cleanedPrompt.trim();
     if (!cleanedPrompt) {
@@ -159,16 +206,10 @@ class InMemoryThreadService implements ThreadService {
     const contextMode = parseContextMode(input.contextMode ?? "auto");
     const thread = input.threadId
       ? await this.requireThread(input.threadId)
-      : await this.createThreadDetail({
-          projectId: input.projectId,
+      : await this.createThreadRecord({
+          projectId: input.projectId ?? (await this.defaultProjectId()),
           title: titleFromPrompt(cleanedPrompt)
         });
-
-    thread.projectId =
-      thread.projectId ?? input.projectId ?? (await this.defaultProjectId());
-    if (!thread.projectId) {
-      throw new Error("projectId is required before sending a message");
-    }
 
     await this.appendUserMessage(thread.id, cleanedPrompt, agents);
 
@@ -194,41 +235,73 @@ class InMemoryThreadService implements ThreadService {
     return this.getThread(thread.id);
   }
 
-  private async requireThread(threadId: string): Promise<ThreadDetail> {
-    await this.ensureSeededFromRuns();
-    const thread = this.threads.get(threadId);
+  private async requireThread(threadId: string): Promise<ConversationThread> {
+    await this.ensureLegacyRunThreads();
+    const thread = await this.threads.get(threadId);
     if (!thread) {
       throw new Error(`thread ${threadId} not found`);
     }
     return thread;
   }
 
-  private async createThreadDetail(input: CreateThreadInput): Promise<ThreadDetail> {
-    const summary = await this.createThread(input);
-    const thread = this.threads.get(summary.id);
-    if (!thread) {
-      throw new Error(`thread ${summary.id} not found`);
+  private async createThreadRecord(input: {
+    projectId?: string;
+    title: string;
+  }): Promise<ConversationThread> {
+    const projectId = input.projectId ?? (await this.defaultProjectId());
+    if (!projectId) {
+      throw new Error("projectId is required before sending a message");
     }
-    return thread;
+    const now = this.dependencies.context.now();
+    return this.threads.create(
+      validateConversationThread({
+        id: this.dependencies.context.nextId("thread"),
+        projectId,
+        title: titleFromPrompt(input.title) || "New Chat",
+        createdAt: now,
+        updatedAt: now
+      })
+    );
   }
 
   private async defaultProjectId(): Promise<string | undefined> {
     return (await this.dependencies.projects.list())[0]?.id;
   }
 
-  private async ensureSeededFromRuns(): Promise<void> {
-    if (this.seededFromRuns || this.threads.size > 0) {
-      this.seededFromRuns = true;
+  private async touchThread(
+    thread: ConversationThread,
+    updates: { title?: string; updatedAt: string }
+  ): Promise<void> {
+    await this.threads.update(
+      validateConversationThread({
+        ...thread,
+        title: updates.title ?? thread.title,
+        updatedAt: updates.updatedAt
+      })
+    );
+  }
+
+  private async runStatusById(projectId?: string): Promise<Map<string, RunStatus>> {
+    const runs = await this.dependencies.runs.listRuns(projectId);
+    return new Map(runs.map((run) => [run.id, run.status]));
+  }
+
+  private async ensureLegacyRunThreads(): Promise<void> {
+    if (this.importedLegacyRuns) {
       return;
     }
-    this.seededFromRuns = true;
+    this.importedLegacyRuns = true;
+    if ((await this.threads.list()).length > 0) {
+      return;
+    }
+
     const runs = await this.dependencies.runs.listRuns();
     const grouped = new Map<string, RunSummary[]>();
     runs.forEach((run) => {
       grouped.set(run.taskId, [...(grouped.get(run.taskId) ?? []), run]);
     });
 
-    grouped.forEach((taskRuns, taskId) => {
+    for (const [taskId, taskRuns] of grouped) {
       const sorted = [...taskRuns].sort((left, right) =>
         left.createdAt.localeCompare(right.createdAt)
       );
@@ -237,53 +310,71 @@ class InMemoryThreadService implements ThreadService {
         right.updatedAt.localeCompare(left.updatedAt)
       )[0];
       if (!first || !latest) {
-        return;
+        continue;
       }
+
       const threadId = `thread-${taskId}`;
-      const messages: ThreadMessage[] = [
-        {
+      const mentions = uniqueAgents(sorted.map((run) => run.agentId));
+      await this.threads.create(
+        validateConversationThread({
+          id: threadId,
+          projectId: first.projectId,
+          title: first.title,
+          metadata: { legacyRunImport: true, taskId },
+          createdAt: first.createdAt,
+          updatedAt: latest.updatedAt
+        })
+      );
+      await this.messages.createMany([
+        validateConversationMessage({
           id: `message-${taskId}-user`,
           threadId,
-          type: "user",
-          text: first.taskPrompt,
-          mentions: uniqueAgents(sorted.map((run) => run.agentId)),
+          sequence: 0,
+          role: "user",
+          kind: "text",
+          content: first.taskPrompt || first.title,
+          metadata: { legacyRunImport: true, mentions },
           createdAt: first.createdAt
-        },
-        ...sorted.map<AgentRunMessage>((run) => ({
-          id: `message-${run.id}`,
-          threadId,
-          type: "agent_run",
-          runId: run.id,
-          agentId: run.agentId,
-          status: run.status,
-          createdAt: run.createdAt
-        }))
-      ];
-      this.threads.set(threadId, {
-        id: threadId,
-        title: first.title,
-        projectId: first.projectId,
-        createdAt: first.createdAt,
-        updatedAt: latest.updatedAt,
-        messages
-      });
-    });
+        }),
+        ...sorted.map((run, index) =>
+          validateConversationMessage({
+            id: `message-${run.id}`,
+            threadId,
+            sequence: index + 1,
+            role: "tool",
+            kind: "run_card",
+            content: `@${run.agentId} ${run.status}`,
+            agentKind: toCoreAgentKind(run.agentId),
+            runId: run.id,
+            status: toCoreRunStatus(run.status),
+            metadata: {
+              legacyRunImport: true,
+              agentId: run.agentId
+            },
+            createdAt: run.createdAt
+          })
+        )
+      ]);
+    }
   }
+}
 
-  private async refreshRunStatuses(): Promise<void> {
-    const runs = await this.dependencies.runs.listRuns();
-    const statusByRunId = new Map(runs.map((run) => [run.id, run.status]));
-    this.threads.forEach((thread) => {
-      thread.messages = thread.messages.map((message) =>
-        message.type === "agent_run"
-          ? {
-              ...message,
-              status: statusByRunId.get(message.runId) ?? message.status
-            }
-          : message
-      );
-    });
-  }
+function toThreadDetail(
+  thread: ConversationThread,
+  messages: ConversationMessage[],
+  runStatusById: Map<string, RunStatus>
+): ThreadDetail {
+  const threadMessages = messages.map((message) =>
+    toThreadMessage(message, runStatusById)
+  );
+  return {
+    id: thread.id,
+    title: thread.title,
+    projectId: thread.projectId,
+    createdAt: thread.createdAt,
+    updatedAt: latestUpdatedAt(thread, messages),
+    messages: threadMessages
+  };
 }
 
 function toThreadSummary(thread: ThreadDetail): ThreadSummary {
@@ -307,15 +398,67 @@ function toThreadSummary(thread: ThreadDetail): ThreadSummary {
   };
 }
 
-function cloneThread(thread: ThreadDetail): ThreadDetail {
+function toThreadMessage(
+  message: ConversationMessage,
+  runStatusById: Map<string, RunStatus>
+): ThreadMessage {
+  if (message.kind === "run_card") {
+    return toAgentRunMessage(message, runStatusById);
+  }
+  if (message.role === "user") {
+    return toUserMessage(message);
+  }
+  return toSystemMessage(message);
+}
+
+function toUserMessage(message: ConversationMessage): UserMessage {
   return {
-    ...thread,
-    messages: thread.messages.map((message) =>
-      message.type === "user"
-        ? { ...message, mentions: [...message.mentions] }
-        : { ...message }
-    )
+    id: message.id,
+    threadId: message.threadId,
+    type: "user",
+    text: message.content,
+    mentions: metadataAgents(message.metadata),
+    createdAt: message.createdAt
   };
+}
+
+function toAgentRunMessage(
+  message: ConversationMessage,
+  runStatusById: Map<string, RunStatus>
+): AgentRunMessage {
+  if (!message.runId || !message.agentKind) {
+    throw new Error(`run-card message ${message.id} is missing run metadata`);
+  }
+  return {
+    id: message.id,
+    threadId: message.threadId,
+    type: "agent_run",
+    runId: message.runId,
+    agentId: toAgentId(message.agentKind),
+    status:
+      runStatusById.get(message.runId) ??
+      toDesktopRunStatus(message.status ?? "queued"),
+    createdAt: message.createdAt
+  };
+}
+
+function toSystemMessage(message: ConversationMessage): SystemMessage {
+  return {
+    id: message.id,
+    threadId: message.threadId,
+    type: "system",
+    text: message.content,
+    createdAt: message.createdAt
+  };
+}
+
+function latestUpdatedAt(
+  thread: ConversationThread,
+  messages: ConversationMessage[]
+): string {
+  return [thread.updatedAt, ...messages.map((message) => message.createdAt)].sort(
+    (left, right) => right.localeCompare(left)
+  )[0];
 }
 
 function threadMessagePreview(message: ThreadMessage): string {
@@ -328,8 +471,22 @@ function threadMessagePreview(message: ThreadMessage): string {
   return message.text;
 }
 
+function metadataAgents(metadata: ConversationMessage["metadata"]): AgentId[] {
+  const mentions = metadata?.mentions;
+  if (!Array.isArray(mentions)) {
+    return [];
+  }
+  return uniqueAgents(
+    mentions.filter((mention): mention is AgentId => isAgentId(mention))
+  );
+}
+
+function isAgentId(value: unknown): value is AgentId {
+  return value === "fake" || value === "codex" || value === "claude";
+}
+
 function parseAgentId(value: unknown): AgentId {
-  if (value === "fake" || value === "codex" || value === "claude") {
+  if (isAgentId(value)) {
     return value;
   }
   throw new Error("agent must be fake, codex, or claude");
@@ -363,12 +520,29 @@ function titleFromPrompt(prompt: string): string {
   return firstLine.length > 60 ? `${firstLine.slice(0, 57)}...` : firstLine;
 }
 
-function nextId(prefix: string): string {
-  const crypto = globalThis.crypto;
-  if (crypto?.randomUUID) {
-    return `${prefix}-${crypto.randomUUID()}`;
+function toCoreAgentKind(agentId: AgentId): AgentKind {
+  return agentId === "claude" ? "claude-code" : agentId;
+}
+
+function toAgentId(agentKind: AgentKind): AgentId {
+  return agentKind === "claude-code" ? "claude" : agentKind;
+}
+
+function toCoreRunStatus(status: RunStatus): TaskRunStatus {
+  if (status === "completed") {
+    return "succeeded";
   }
-  return `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  if (status === "verifying") {
+    return "running";
+  }
+  return status;
+}
+
+function toDesktopRunStatus(status: TaskRunStatus): RunStatus {
+  if (status === "succeeded") {
+    return "completed";
+  }
+  return status;
 }
 
 function errorMessage(error: unknown): string {
