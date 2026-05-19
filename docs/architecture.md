@@ -154,9 +154,10 @@ Child process environment policy is explicit by default. `ProcessRunner` and
 needed for local CLI execution: path lookup, home/config/cache locations,
 temporary directories, locale/terminal flags, CI, and required Windows process
 variables. They do not pass all of `process.env`, so secrets such as arbitrary
-API keys or tokens are not inherited accidentally. Callers may still provide
-explicit per-process environment overrides; an override value of `undefined`
-removes an allowlisted variable for that child.
+API keys or tokens are not inherited accidentally. `RunTaskInput` exposes an
+explicit `environmentOverrides` field for process-backed task runs; those
+overrides are forwarded to adapter detection and execution, and an override
+value of `undefined` removes an allowlisted variable for that child.
 
 The CLI calls the runner rather than owning orchestration logic. The runner
 compiles context, creates a worktree workspace through a `WorkspaceManager`,
