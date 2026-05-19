@@ -414,8 +414,9 @@ settings, and status transitions.
 SQLite now enforces the important imported storage constraints at the database
 boundary. Tasks reference projects with cascade delete, task runs reference
 agent profiles when one is selected, task and run status values are checked,
-agent kinds are checked, JSON columns reject invalid JSON, and run event
-sequence numbers remain unique per run. Local settings reject secret-like keys,
+agent kinds are checked, JSON columns reject invalid JSON, risk report list
+fields are constrained to JSON arrays, and run event sequence numbers remain
+unique per run. Local settings reject secret-like keys,
 including delimiter-separated and camelCase names such as `api_key`,
 `openaiApiKey`, `authToken`, and `clientSecret`, and reject secret-like string
 values before they can be stored in SQLite or in-memory test repositories, so

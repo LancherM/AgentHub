@@ -250,6 +250,71 @@ describe("GitWorktreeWorkspaceManager", () => {
     expect(shell.calls).toHaveLength(0);
   });
 
+  it("surfaces dirty source repository status in workspace metadata", async () => {
+    const sourceRepositoryPath = await createTestDirectory("workspace-dirty-source");
+    const workspaceBasePath = await createTestDirectory("workspace-base");
+    const shell = new MockShellExecutor([
+      { stdout: "true\n" },
+      { stdout: " M README.md\n?? scratch.txt\n" },
+      { exitCode: 1 },
+      { stdout: "created worktree\n" }
+    ]);
+    const manager = new GitWorktreeWorkspaceManager(shell);
+
+    const session = await manager.createSession({
+      sourceRepositoryPath,
+      workspaceBasePath,
+      taskId: "task_1",
+      runId: "run_1",
+      agentKind: "fake"
+    });
+
+    expect(session.workspace.sourceRepositoryDirty).toBe(true);
+  });
+
+  it("rejects non-git source repositories before creating a worktree", async () => {
+    const sourceRepositoryPath = await createTestDirectory("workspace-non-git");
+    const workspaceBasePath = await createTestDirectory("workspace-base");
+    const shell = new MockShellExecutor([
+      { exitCode: 128, stderr: "fatal: not a git repository\n" }
+    ]);
+    const manager = new GitWorktreeWorkspaceManager(shell);
+
+    await expect(
+      manager.createSession({
+        sourceRepositoryPath,
+        workspaceBasePath,
+        taskId: "task_1",
+        runId: "run_1",
+        agentKind: "fake"
+      })
+    ).rejects.toThrow(
+      "validate source repository failed: fatal: not a git repository"
+    );
+    expect(shell.calls).toHaveLength(1);
+  });
+
+  it("sanitizes empty or separator-only workspace path and branch segments", async () => {
+    const sourceRepositoryPath = await createTestDirectory("workspace-source");
+    const workspaceBasePath = await createTestDirectory("workspace-base");
+    const shell = new MockShellExecutor(worktreeCreateResponses());
+    const manager = new GitWorktreeWorkspaceManager(shell);
+
+    const session = await manager.createSession({
+      sourceRepositoryPath,
+      workspaceBasePath,
+      taskId: " /// ",
+      runId: "🚀",
+      agentKind: "fake"
+    });
+
+    expect(session.workspace.path).toBe(
+      path.join(workspaceBasePath, path.basename(sourceRepositoryPath), "workspace-fake-workspace")
+    );
+    expect(session.workspace.branchName).toBe("agent-hub/run/fake");
+    expect(shell.calls.at(-1)?.command.args).toContain(session.workspace.path);
+  });
+
   it("supports dry-run mode without cleanup commands", async () => {
     const sourceRepositoryPath = await createTestDirectory("workspace-source");
     const workspaceBasePath = await createTestDirectory("workspace-base");

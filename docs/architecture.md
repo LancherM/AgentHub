@@ -415,6 +415,11 @@ and task-run agent kinds are checked at the table boundary. The migration
 guards abort before rebuilding if existing rows would violate those
 relationships or enum values.
 
+Migration version 7 rebuilds `risk_reports` so list-shaped risk evidence is
+constrained as JSON arrays at the SQLite boundary. Existing legacy scalar or
+object-shaped risk list payloads are normalized to empty arrays during the
+local migration rather than being exposed through the typed repositories.
+
 Repository implementations enforce the imported state diagrams before writing
 status updates. Tasks may move `open -> running -> completed`, return from
 `running` to `open` after a failed run, or cancel from `open`/`running`; task
