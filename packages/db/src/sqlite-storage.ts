@@ -7,6 +7,7 @@ import {
   validateComparisonReport,
   validateConversationMessage,
   validateConversationThread,
+  validateConversationThreadSummary,
   validateMemoryItem,
   validateProject,
   validateRiskReport,
@@ -25,6 +26,7 @@ import {
   type ComparisonReport,
   type ConversationMessage,
   type ConversationThread,
+  type ConversationThreadSummary,
   type MemoryItem,
   type Project,
   type RiskReport,
@@ -46,6 +48,7 @@ import {
   type AgentProfileRepository,
   type ComparisonReportRepository,
   type ConversationMessageRepository,
+  type ConversationThreadSummaryRepository,
   type ConversationThreadRepository,
   type MemoryItemRepository,
   type ProjectRepository,
@@ -79,6 +82,7 @@ export interface SqliteRepositories {
   runMetadataRepository: RunMetadataRepository;
   conversationThreadRepository: ConversationThreadRepository;
   conversationMessageRepository: ConversationMessageRepository;
+  conversationThreadSummaryRepository: ConversationThreadSummaryRepository;
   memoryItemRepository: MemoryItemRepository;
   comparisonReportRepository: ComparisonReportRepository;
   skillRepository: SkillRepository;
@@ -518,6 +522,30 @@ ALTER TABLE comparison_reports
   },
   {
     version: 6,
+    sql: `
+CREATE TABLE IF NOT EXISTS conversation_thread_summaries (
+  id TEXT PRIMARY KEY,
+  thread_id TEXT NOT NULL UNIQUE,
+  summary TEXT NOT NULL,
+  decisions_json TEXT NOT NULL CHECK (json_valid(decisions_json)),
+  open_items_json TEXT NOT NULL CHECK (json_valid(open_items_json)),
+  constraints_json TEXT NOT NULL CHECK (json_valid(constraints_json)),
+  last_known_user_goal TEXT,
+  source_message_count INTEGER NOT NULL CHECK (source_message_count >= 0),
+  source_latest_message_id TEXT,
+  metadata_json TEXT CHECK (metadata_json IS NULL OR json_valid(metadata_json)),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (thread_id) REFERENCES conversation_threads(id) ON DELETE CASCADE,
+  FOREIGN KEY (source_latest_message_id) REFERENCES conversation_messages(id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_conversation_thread_summaries_thread
+  ON conversation_thread_summaries(thread_id);
+`
+  },
+  {
+    version: 7,
     transaction: false,
     sql: `
 PRAGMA foreign_keys = OFF;
@@ -577,7 +605,7 @@ CREATE INDEX IF NOT EXISTS idx_risk_reports_run ON risk_reports(task_run_id);
 CREATE INDEX IF NOT EXISTS idx_risk_reports_level ON risk_reports(level);
 
 INSERT INTO schema_migrations (version, applied_at)
-VALUES (6, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
+VALUES (7, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
 
 COMMIT;
 PRAGMA foreign_keys = ON;
@@ -605,6 +633,8 @@ export function createSqliteRepositories(
     runMetadataRepository: new SQLiteRunMetadataRepository(database),
     conversationThreadRepository: new SQLiteConversationThreadRepository(database),
     conversationMessageRepository: new SQLiteConversationMessageRepository(database),
+    conversationThreadSummaryRepository:
+      new SQLiteConversationThreadSummaryRepository(database),
     memoryItemRepository: new SQLiteMemoryItemRepository(database),
     comparisonReportRepository: new SQLiteComparisonReportRepository(database),
     skillRepository: new SQLiteSkillRepository(database),
@@ -1519,6 +1549,85 @@ WHERE thread_id = ${sqlString(threadId)};
   }
 }
 
+export class SQLiteConversationThreadSummaryRepository
+  implements ConversationThreadSummaryRepository
+{
+  constructor(private readonly database: SqliteDatabase) {}
+
+  async upsert(
+    summary: ConversationThreadSummary
+  ): Promise<ConversationThreadSummary> {
+    const validSummary = validateConversationThreadSummary(summary);
+    await this.database.execute(`
+INSERT INTO conversation_thread_summaries (
+  id,
+  thread_id,
+  summary,
+  decisions_json,
+  open_items_json,
+  constraints_json,
+  last_known_user_goal,
+  source_message_count,
+  source_latest_message_id,
+  metadata_json,
+  created_at,
+  updated_at
+) VALUES (
+  ${sqlString(validSummary.id)},
+  ${sqlString(validSummary.threadId)},
+  ${sqlString(validSummary.summary)},
+  ${sqlString(JSON.stringify(validSummary.decisions))},
+  ${sqlString(JSON.stringify(validSummary.openItems))},
+  ${sqlString(JSON.stringify(validSummary.constraints))},
+  ${sqlNullableString(validSummary.lastKnownUserGoal)},
+  ${validSummary.sourceMessageCount},
+  ${sqlNullableString(validSummary.sourceLatestMessageId)},
+  ${sqlJson(validSummary.metadata)},
+  ${sqlString(validSummary.createdAt)},
+  ${sqlString(validSummary.updatedAt)}
+)
+ON CONFLICT(thread_id) DO UPDATE SET
+  id = excluded.id,
+  summary = excluded.summary,
+  decisions_json = excluded.decisions_json,
+  open_items_json = excluded.open_items_json,
+  constraints_json = excluded.constraints_json,
+  last_known_user_goal = excluded.last_known_user_goal,
+  source_message_count = excluded.source_message_count,
+  source_latest_message_id = excluded.source_latest_message_id,
+  metadata_json = excluded.metadata_json,
+  created_at = conversation_thread_summaries.created_at,
+  updated_at = excluded.updated_at;
+`);
+    return cloneConversationThreadSummary(validSummary);
+  }
+
+  async getByThreadId(
+    threadId: string
+  ): Promise<ConversationThreadSummary | undefined> {
+    const rows = await this.database.query<ConversationThreadSummaryRow>(`
+SELECT
+  id,
+  thread_id AS threadId,
+  summary,
+  decisions_json AS decisionsJson,
+  open_items_json AS openItemsJson,
+  constraints_json AS constraintsJson,
+  last_known_user_goal AS lastKnownUserGoal,
+  source_message_count AS sourceMessageCount,
+  source_latest_message_id AS sourceLatestMessageId,
+  metadata_json AS metadataJson,
+  created_at AS createdAt,
+  updated_at AS updatedAt
+FROM conversation_thread_summaries
+WHERE thread_id = ${sqlString(threadId)}
+LIMIT 1;
+`);
+    const row = rows[0];
+    return row ? conversationThreadSummaryFromRow(row) : undefined;
+  }
+}
+
 export class SQLiteVerificationResultRepository
   implements VerificationResultRepository
 {
@@ -1991,6 +2100,21 @@ interface ConversationMessageRow extends Record<string, unknown> {
   createdAt: string;
 }
 
+interface ConversationThreadSummaryRow extends Record<string, unknown> {
+  id: string;
+  threadId: string;
+  summary: string;
+  decisionsJson: string;
+  openItemsJson: string;
+  constraintsJson: string;
+  lastKnownUserGoal: string | null;
+  sourceMessageCount: number;
+  sourceLatestMessageId: string | null;
+  metadataJson: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 interface VerificationResultRow extends Record<string, unknown> {
   id: string;
   taskRunId: string;
@@ -2172,6 +2296,25 @@ function conversationMessageFromRow(
   });
 }
 
+function conversationThreadSummaryFromRow(
+  row: ConversationThreadSummaryRow
+): ConversationThreadSummary {
+  return validateConversationThreadSummary({
+    id: row.id,
+    threadId: row.threadId,
+    summary: row.summary,
+    decisions: parseJson<string[]>(row.decisionsJson) ?? [],
+    openItems: parseJson<string[]>(row.openItemsJson) ?? [],
+    constraints: parseJson<string[]>(row.constraintsJson) ?? [],
+    lastKnownUserGoal: nullToUndefined(row.lastKnownUserGoal),
+    sourceMessageCount: row.sourceMessageCount,
+    sourceLatestMessageId: nullToUndefined(row.sourceLatestMessageId),
+    metadata: parseJson(row.metadataJson),
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt
+  });
+}
+
 function verificationResultFromRow(row: VerificationResultRow): VerificationResult {
   return validateVerificationResult({
     id: row.id,
@@ -2334,6 +2477,18 @@ function cloneConversationMessage(
   return {
     ...message,
     metadata: message.metadata ? cloneJsonObject(message.metadata) : undefined
+  };
+}
+
+function cloneConversationThreadSummary(
+  summary: ConversationThreadSummary
+): ConversationThreadSummary {
+  return {
+    ...summary,
+    decisions: [...summary.decisions],
+    openItems: [...summary.openItems],
+    constraints: [...summary.constraints],
+    metadata: summary.metadata ? cloneJsonObject(summary.metadata) : undefined
   };
 }
 

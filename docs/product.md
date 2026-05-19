@@ -69,10 +69,15 @@ turns use the selected default agent, while leading `@fake`, `@codex`, or
 `@claude-code` prefixes route that turn to a specific adapter. Each chat turn
 builds a bounded conversation brief from prior thread messages with the shared
 `ConversationContextBuilder`, injects it through `runtime_injection`, and
-persists the exact brief as a `conversation_brief` run artifact. Full logs,
-diffs, verification results, risks, and memory proposals remain on the run
-evidence model rather than in message bodies. `agent-hub run` remains
-stateless and does not require or create a thread.
+persists the exact brief as a `conversation_brief` run artifact. Chat also
+maintains a conservative thread-local summary with decisions, open items,
+constraints, and the last known user goal. `threads show <thread-id>` renders
+that summary for inspection. Thread summaries stay scoped to the thread and do
+not become approved project memory unless the user explicitly promotes them
+through the memory workflow. Full logs, diffs, verification results, risks, and
+memory proposals remain on the run evidence model rather than in message
+bodies. `agent-hub run` remains stateless and does not require or create a
+thread.
 
 The context commands initialize and inspect a project context store, build a
 task-specific context pack and task brief, and explicitly export managed
@@ -292,17 +297,18 @@ The planned real multi-turn conversation route is captured in
 `docs/multiturn-conversation-prompts.md`. It keeps project context, thread
 context, current-turn context, and per-run context snapshots as separate
 layers. Desktop follow-up turns now build a bounded conversation brief before
-each run. The brief includes the current turn, recent thread messages,
-terminal assistant answers from prior runs, compact prior run summaries when
-no assistant answer exists yet, project context-store references, and explicit
-character-budget metadata. A zero recent-message budget includes no prior
-messages, and the first message in an empty thread uses the retitled thread
-name in the injected brief. Agent Hub persists that exact brief as a
-`conversation_brief` run artifact so review can inspect what was injected.
-The brief excludes raw lifecycle/debug events, logs, diffs, verification
-output, risk evidence, and other review artifacts. Full evidence remains on
-the run model; assistant messages store only bounded transcript text for
-future turns.
+each run. The brief includes the current turn, recent thread messages, the
+latest conservative thread summary, terminal assistant answers from prior runs,
+compact prior run summaries when no assistant answer exists yet, project
+context-store references, and explicit character-budget metadata. A zero
+recent-message budget includes no prior messages, and the first message in an
+empty thread uses the retitled thread name in the injected brief. Agent Hub
+persists that exact brief as a `conversation_brief` run artifact so review can
+inspect what was injected. The brief excludes raw lifecycle/debug events, logs,
+diffs, verification output, risk evidence, and other review artifacts. Full
+evidence remains on the run model; assistant messages store only bounded
+transcript text for future turns. Thread summaries are generated locally from
+transcript text only and are never written to approved memory automatically.
 
 The run inspector is the desktop drill-down surface for review evidence. It
 loads review summaries, changed-file stats, bounded unified diffs, captured
@@ -395,13 +401,15 @@ Structured run data is now also persisted in first-class SQLite tables:
 - git diff artifacts in `run_artifacts`
 - verification command rows in `verification_results`
 - risk reports in `risk_reports`
+- thread-local conversation summaries in `conversation_thread_summaries`
 - memory proposals and decisions in `memory_items`
 - run comparison summaries in `comparison_reports`
 
 The initialized SQLite schema covers the imported MVP table set: projects,
 agent profiles, tasks, task runs, run events, run artifacts, verification
-results, risk reports, memory items, comparison reports, skills, settings, and
-status transitions.
+results, risk reports, conversation threads, conversation messages,
+thread-local conversation summaries, memory items, comparison reports, skills,
+settings, and status transitions.
 
 SQLite now enforces the important imported storage constraints at the database
 boundary. Tasks reference projects with cascade delete, task runs reference

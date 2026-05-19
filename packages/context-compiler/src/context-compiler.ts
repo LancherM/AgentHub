@@ -141,6 +141,7 @@ export interface ConversationContextBudget {
   maxRecentMessages: number;
   maxTotalCharacters: number;
   maxPerMessageCharacters: number;
+  maxThreadSummaryCharacters: number;
   approximateCharsPerToken: number;
 }
 
@@ -171,6 +172,17 @@ export interface ConversationContextMessage {
   metadata?: JsonObject;
 }
 
+export interface ConversationContextThreadSummary {
+  summary: string;
+  decisions: string[];
+  openItems: string[];
+  constraints: string[];
+  lastKnownUserGoal?: string;
+  sourceMessageCount?: number;
+  sourceLatestMessageId?: string;
+  updatedAt?: string;
+}
+
 export interface ConversationContextBrief {
   renderedContent: string;
   metadata: JsonObject & {
@@ -180,6 +192,7 @@ export interface ConversationContextBrief {
     approximateTokenCount: number;
     includedMessageCount: number;
     omittedMessageCount: number;
+    includedThreadSummary: boolean;
     originalCharacterCount: number;
     renderedCharacterCount: number;
     truncated: boolean;
@@ -190,8 +203,27 @@ export interface ConversationContextBuildInput {
   thread: ConversationContextThread;
   currentTurn: ConversationContextTurn;
   messages: ConversationContextMessage[];
+  threadSummary?: ConversationContextThreadSummary;
   projectContextReferences?: string[];
   budget?: Partial<ConversationContextBudget>;
+}
+
+export interface ConversationThreadSummaryBuildInput {
+  messages: ConversationContextMessage[];
+  maxItems?: number;
+  maxItemCharacters?: number;
+  maxSummaryCharacters?: number;
+}
+
+export interface ConversationThreadSummaryBuildResult {
+  summary: string;
+  decisions: string[];
+  openItems: string[];
+  constraints: string[];
+  lastKnownUserGoal?: string;
+  sourceMessageCount: number;
+  sourceLatestMessageId?: string;
+  metadata: JsonObject;
 }
 
 export interface MemoryProvider {
@@ -234,8 +266,66 @@ export const defaultConversationContextBudget: ConversationContextBudget = {
   maxRecentMessages: 12,
   maxTotalCharacters: 12_000,
   maxPerMessageCharacters: 2_000,
+  maxThreadSummaryCharacters: 2_000,
   approximateCharsPerToken: 4
 };
+
+export class ConversationThreadSummaryBuilder {
+  build(
+    input: ConversationThreadSummaryBuildInput
+  ): ConversationThreadSummaryBuildResult {
+    const maxItems = input.maxItems ?? 6;
+    const maxItemCharacters = input.maxItemCharacters ?? 240;
+    const maxSummaryCharacters = input.maxSummaryCharacters ?? 1_200;
+    const messages = input.messages.filter(isThreadSummarySourceMessage);
+    const sourceLatestMessage = messages.at(-1);
+    const lastKnownUserGoal = latestUserGoal(messages, maxItemCharacters);
+    const decisions = extractThreadSummaryItems(
+      messages,
+      threadSummaryDecisionPrefixes,
+      maxItems,
+      maxItemCharacters
+    );
+    const openItems = extractThreadSummaryItems(
+      messages,
+      threadSummaryOpenItemPrefixes,
+      maxItems,
+      maxItemCharacters
+    );
+    const constraints = extractThreadSummaryItems(
+      messages,
+      threadSummaryConstraintPrefixes,
+      maxItems,
+      maxItemCharacters
+    );
+    const summary = truncateText(
+      renderThreadSummaryText({
+        sourceMessageCount: messages.length,
+        lastKnownUserGoal,
+        decisions,
+        openItems,
+        constraints
+      }),
+      maxSummaryCharacters
+    );
+
+    return {
+      summary,
+      decisions,
+      openItems,
+      constraints,
+      lastKnownUserGoal,
+      sourceMessageCount: messages.length,
+      sourceLatestMessageId: sourceLatestMessage?.id,
+      metadata: {
+        source: "deterministic_thread_summary_builder",
+        maxItems,
+        maxItemCharacters,
+        maxSummaryCharacters
+      }
+    };
+  }
+}
 
 export class ConversationContextBuilder {
   build(input: ConversationContextBuildInput): ConversationContextBrief {
@@ -252,6 +342,7 @@ export class ConversationContextBuilder {
     const omittedMessageCount = Math.max(0, input.messages.length - usableMessages.length);
     const originalCharacterCount =
       input.currentTurn.content.length +
+      threadSummaryCharacterCount(input.threadSummary) +
       input.messages.reduce((total, message) => total + messageContent(message).length, 0);
 
     const lines: string[] = [
@@ -289,6 +380,8 @@ export class ConversationContextBuilder {
       lines.push("");
     }
 
+    appendThreadSummarySection(lines, input.threadSummary, budget);
+
     lines.push("## Project Context References", "");
     const references = (input.projectContextReferences ?? [])
       .map((reference) => reference.trim())
@@ -309,19 +402,190 @@ export class ConversationContextBuilder {
         maxRecentMessages: budget.maxRecentMessages,
         maxTotalCharacters: budget.maxTotalCharacters,
         maxPerMessageCharacters: budget.maxPerMessageCharacters,
+        maxThreadSummaryCharacters: budget.maxThreadSummaryCharacters,
         approximateTokenCount: Math.ceil(
           renderedContent.length / Math.max(1, budget.approximateCharsPerToken)
         ),
         includedMessageCount: usableMessages.length,
         omittedMessageCount,
+        includedThreadSummary: hasThreadSummary(input.threadSummary),
         originalCharacterCount,
         renderedCharacterCount: renderedContent.length,
         truncated:
           renderedContent.length < unboundedContent.length ||
-          usableMessages.some((message) => messageContent(message).length > budget.maxPerMessageCharacters)
+          usableMessages.some((message) => messageContent(message).length > budget.maxPerMessageCharacters) ||
+          threadSummaryCharacterCount(input.threadSummary) > budget.maxThreadSummaryCharacters
       }
     };
   }
+}
+
+const threadSummaryDecisionPrefixes = [
+  "decision",
+  "decisions",
+  "decided",
+  "we decided"
+];
+const threadSummaryOpenItemPrefixes = [
+  "open item",
+  "open items",
+  "todo",
+  "follow-up",
+  "follow up",
+  "next"
+];
+const threadSummaryConstraintPrefixes = [
+  "constraint",
+  "constraints",
+  "must",
+  "do not",
+  "don't",
+  "non-negotiable"
+];
+
+function isThreadSummarySourceMessage(message: ConversationContextMessage): boolean {
+  return (
+    !isNoisyConversationMessage(message) &&
+    message.kind !== "run_card" &&
+    message.kind !== "run_summary" &&
+    message.metadata?.pending !== true &&
+    (message.role === "user" || message.role === "assistant" || message.role === "system") &&
+    messageContent(message).length > 0
+  );
+}
+
+function latestUserGoal(
+  messages: ConversationContextMessage[],
+  maxCharacters: number
+): string | undefined {
+  const latestUserMessage = [...messages].reverse().find(
+    (message) => message.role === "user" && messageContent(message).length > 0
+  );
+  return latestUserMessage
+    ? truncateText(firstMeaningfulLine(messageContent(latestUserMessage)), maxCharacters)
+    : undefined;
+}
+
+function extractThreadSummaryItems(
+  messages: ConversationContextMessage[],
+  prefixes: string[],
+  maxItems: number,
+  maxCharacters: number
+): string[] {
+  const items: string[] = [];
+  for (const message of messages) {
+    for (const line of messageContent(message).split(/\r?\n/)) {
+      const item = extractPrefixedItem(line, prefixes);
+      if (item && !items.includes(item)) {
+        items.push(truncateText(item, maxCharacters));
+      }
+      if (items.length >= maxItems) {
+        return items;
+      }
+    }
+  }
+  return items;
+}
+
+function extractPrefixedItem(line: string, prefixes: string[]): string | undefined {
+  const normalized = line.replace(/^[-*]\s*/, "").trim();
+  if (!normalized) {
+    return undefined;
+  }
+  for (const prefix of prefixes) {
+    const escapedPrefix = prefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const match = normalized.match(
+      new RegExp(`^${escapedPrefix}\\s*(?:[:：-]|\\bis\\b|\\bare\\b)?\\s*(.+)$`, "i")
+    );
+    if (match?.[1]?.trim()) {
+      return match[1].trim();
+    }
+  }
+  return undefined;
+}
+
+function renderThreadSummaryText(input: {
+  sourceMessageCount: number;
+  lastKnownUserGoal?: string;
+  decisions: string[];
+  openItems: string[];
+  constraints: string[];
+}): string {
+  const lines = [
+    `Summarized ${input.sourceMessageCount} thread messages.`,
+    input.lastKnownUserGoal ? `Last known user goal: ${input.lastKnownUserGoal}` : undefined,
+    input.decisions.length > 0 ? `Decisions: ${input.decisions.join("; ")}` : undefined,
+    input.openItems.length > 0 ? `Open items: ${input.openItems.join("; ")}` : undefined,
+    input.constraints.length > 0 ? `Constraints: ${input.constraints.join("; ")}` : undefined
+  ].filter((line): line is string => line !== undefined);
+  return lines.join("\n");
+}
+
+function appendThreadSummarySection(
+  lines: string[],
+  summary: ConversationContextThreadSummary | undefined,
+  budget: ConversationContextBudget
+): void {
+  if (!hasThreadSummary(summary)) {
+    return;
+  }
+  const summaryLines = [
+    "## Thread Summary",
+    "",
+    truncateText(summary.summary, budget.maxThreadSummaryCharacters),
+    ""
+  ];
+  if (summary.lastKnownUserGoal) {
+    summaryLines.push(
+      `last_known_user_goal: ${truncateText(summary.lastKnownUserGoal, budget.maxPerMessageCharacters)}`
+    );
+  }
+  appendThreadSummaryList(summaryLines, "decisions", summary.decisions, budget);
+  appendThreadSummaryList(summaryLines, "open_items", summary.openItems, budget);
+  appendThreadSummaryList(summaryLines, "constraints", summary.constraints, budget);
+  summaryLines.push("");
+  lines.push(...summaryLines);
+}
+
+function appendThreadSummaryList(
+  lines: string[],
+  label: string,
+  items: string[],
+  budget: ConversationContextBudget
+): void {
+  const nonEmptyItems = items.map((item) => item.trim()).filter(Boolean);
+  if (nonEmptyItems.length === 0) {
+    return;
+  }
+  lines.push(`${label}:`);
+  for (const item of nonEmptyItems) {
+    lines.push(`- ${truncateText(item, budget.maxPerMessageCharacters)}`);
+  }
+}
+
+function threadSummaryCharacterCount(
+  summary: ConversationContextThreadSummary | undefined
+): number {
+  if (!hasThreadSummary(summary)) {
+    return 0;
+  }
+  return [
+    summary.summary,
+    summary.lastKnownUserGoal,
+    ...summary.decisions,
+    ...summary.openItems,
+    ...summary.constraints
+  ].reduce((total, value) => total + (value?.length ?? 0), 0);
+}
+
+function hasThreadSummary(
+  summary: ConversationContextThreadSummary | undefined
+): summary is ConversationContextThreadSummary {
+  return summary !== undefined && summary.summary.trim().length > 0;
+}
+
+function firstMeaningfulLine(value: string): string {
+  return value.split(/\r?\n/).find((line) => line.trim().length > 0)?.trim() ?? "";
 }
 
 function conversationBriefContent(

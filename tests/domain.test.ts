@@ -4,6 +4,7 @@ import {
   DomainValidationError,
   DomainStateTransitionError,
   InMemoryConversationMessageRepository,
+  InMemoryConversationThreadSummaryRepository,
   InMemoryConversationThreadRepository,
   InMemorySettingsRepository,
   InMemoryTaskRunRepository,
@@ -14,6 +15,7 @@ import {
   validateContextPack,
   validateConversationMessage,
   validateConversationThread,
+  validateConversationThreadSummary,
   validateMemoryItem,
   validateRiskReport,
   validateRunArtifact,
@@ -238,6 +240,74 @@ describe("domain model validation", () => {
         createdAt: updatedAt
       })
     ).rejects.toThrow("sequence 0 already exists");
+  });
+
+  it("validates and upserts thread-local summaries in memory", async () => {
+    expect(
+      validateConversationThreadSummary({
+        id: "summary_1",
+        threadId: "thread_memory",
+        summary: "Last goal: keep the renderer sandboxed.",
+        decisions: ["Use runtime injection"],
+        openItems: ["Wire desktop refresh"],
+        constraints: ["Do not promote to approved memory"],
+        lastKnownUserGoal: "Continue Phase 6",
+        sourceMessageCount: 3,
+        sourceLatestMessageId: "message_3",
+        metadata: { source: "test" },
+        createdAt,
+        updatedAt
+      })
+    ).toMatchObject({
+      id: "summary_1",
+      threadId: "thread_memory",
+      sourceMessageCount: 3
+    });
+
+    expect(() =>
+      validateConversationThreadSummary({
+        id: "summary_bad",
+        threadId: "thread_memory",
+        summary: "Invalid",
+        decisions: ["ok"],
+        openItems: ["ok"],
+        constraints: [1] as never,
+        sourceMessageCount: -1,
+        createdAt,
+        updatedAt
+      })
+    ).toThrow(DomainValidationError);
+
+    const summaries = new InMemoryConversationThreadSummaryRepository();
+    await summaries.upsert({
+      id: "summary_1",
+      threadId: "thread_memory",
+      summary: "Initial",
+      decisions: [],
+      openItems: [],
+      constraints: [],
+      sourceMessageCount: 1,
+      createdAt,
+      updatedAt: createdAt
+    });
+    await summaries.upsert({
+      id: "summary_2",
+      threadId: "thread_memory",
+      summary: "Updated",
+      decisions: ["Keep it local"],
+      openItems: [],
+      constraints: [],
+      sourceMessageCount: 2,
+      createdAt,
+      updatedAt
+    });
+
+    await expect(summaries.getByThreadId("thread_memory")).resolves.toMatchObject({
+      id: "summary_2",
+      summary: "Updated",
+      decisions: ["Keep it local"],
+      sourceMessageCount: 2
+    });
   });
 
   it("validates memory category and status enums", () => {
