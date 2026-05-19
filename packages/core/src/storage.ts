@@ -636,15 +636,15 @@ export class InMemoryComparisonReportRepository
 
   async create(report: ComparisonReport): Promise<ComparisonReport> {
     const validReport = validateComparisonReport(report);
-    this.reports.set(validReport.id, { ...validReport });
-    return { ...validReport };
+    this.reports.set(validReport.id, cloneComparisonReport(validReport));
+    return cloneComparisonReport(validReport);
   }
 
   async listByTaskId(taskId: string): Promise<ComparisonReport[]> {
     return [...this.reports.values()]
       .filter((report) => report.taskId === taskId)
       .sort((left, right) => left.createdAt.localeCompare(right.createdAt))
-      .map((report) => ({ ...report }));
+      .map((report) => cloneComparisonReport(report));
   }
 }
 
@@ -770,6 +770,13 @@ function cloneRiskReport(report: RiskReport): RiskReport {
     riskFactors: [...report.riskFactors],
     manualReviewChecklist: [...report.manualReviewChecklist],
     findings: report.findings.map((finding) => ({ ...finding }))
+  };
+}
+
+function cloneComparisonReport(report: ComparisonReport): ComparisonReport {
+  return {
+    ...report,
+    details: report.details ? cloneJsonObject(report.details) : undefined
   };
 }
 

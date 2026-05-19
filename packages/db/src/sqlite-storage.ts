@@ -508,6 +508,13 @@ PRAGMA foreign_keys = ON;
 	CREATE INDEX IF NOT EXISTS idx_conversation_messages_run
 	  ON conversation_messages(run_id);
 	`
+  },
+  {
+    version: 5,
+    sql: `
+ALTER TABLE comparison_reports
+  ADD COLUMN details_json TEXT CHECK (details_json IS NULL OR json_valid(details_json));
+`
   }
 ];
 
@@ -1683,13 +1690,14 @@ export class SQLiteComparisonReportRepository
     const validReport = validateComparisonReport(report);
     await this.database.execute(`
 INSERT INTO comparison_reports (
-  id, task_id, baseline_run_id, candidate_run_id, summary, created_at
+  id, task_id, baseline_run_id, candidate_run_id, summary, details_json, created_at
 ) VALUES (
   ${sqlString(validReport.id)},
   ${sqlString(validReport.taskId)},
   ${sqlNullableString(validReport.baselineRunId)},
   ${sqlNullableString(validReport.candidateRunId)},
   ${sqlString(validReport.summary)},
+  ${sqlJson(validReport.details)},
   ${sqlString(validReport.createdAt)}
 )
 ON CONFLICT(id) DO UPDATE SET
@@ -1697,6 +1705,7 @@ ON CONFLICT(id) DO UPDATE SET
   baseline_run_id = excluded.baseline_run_id,
   candidate_run_id = excluded.candidate_run_id,
   summary = excluded.summary,
+  details_json = excluded.details_json,
   created_at = excluded.created_at;
 `);
     return { ...validReport };
@@ -1710,6 +1719,7 @@ SELECT
   baseline_run_id AS baselineRunId,
   candidate_run_id AS candidateRunId,
   summary,
+  details_json AS detailsJson,
   created_at AS createdAt
 FROM comparison_reports
 WHERE task_id = ${sqlString(taskId)}
@@ -1958,6 +1968,7 @@ interface ComparisonReportRow extends Record<string, unknown> {
   baselineRunId: string | null;
   candidateRunId: string | null;
   summary: string;
+  detailsJson: string | null;
   createdAt: string;
 }
 
@@ -2145,6 +2156,7 @@ function comparisonReportFromRow(row: ComparisonReportRow): ComparisonReport {
     baselineRunId: nullToUndefined(row.baselineRunId),
     candidateRunId: nullToUndefined(row.candidateRunId),
     summary: row.summary,
+    details: parseJson<Record<string, unknown>>(row.detailsJson),
     createdAt: row.createdAt
   });
 }

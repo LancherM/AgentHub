@@ -56,6 +56,105 @@ export interface ComparisonSummaryInput {
   candidateRunId: string;
 }
 
+export interface ComparisonBuildResult {
+  summary: string;
+  details: ComparisonReportDetails;
+}
+
+export type ComparisonReportDetails = Record<string, unknown> & {
+  version: 1;
+  taskId: string;
+  runs: {
+    baseline: ComparisonRunSignal;
+    candidate: ComparisonRunSignal;
+  };
+  changedFiles: {
+    baselineOnly: string[];
+    candidateOnly: string[];
+    shared: string[];
+    baselineCount: number;
+    candidateCount: number;
+    overlapCount: number;
+    overlapRatio: number;
+  };
+  diffSize: {
+    baseline: ComparisonDiffSizeSignal;
+    candidate: ComparisonDiffSizeSignal;
+    fileDelta: number;
+    insertionDelta: number;
+    deletionDelta: number;
+    totalLineDelta: number;
+  };
+  verification: {
+    baseline: VerificationCounts;
+    candidate: VerificationCounts;
+    failedCheckDelta: number;
+    failedChecks: {
+      baseline: string[];
+      candidate: string[];
+    };
+  };
+  risk: {
+    baseline: ComparisonRiskSignal;
+    candidate: ComparisonRiskSignal;
+    rankDelta: number;
+  };
+  score: {
+    baseline: number;
+    candidate: number;
+    winner: ComparisonWinner;
+    reasons: string[];
+    breakdown: {
+      baseline: ComparisonScoreBreakdown;
+      candidate: ComparisonScoreBreakdown;
+    };
+  };
+  tradeoffs: string[];
+};
+
+interface ComparisonRunSignal {
+  runId: string;
+  agent: string;
+  status: string;
+  changedFiles: number;
+  verification: string;
+  risk: string;
+}
+
+interface ComparisonDiffSizeSignal {
+  filesChanged: number;
+  insertions: number;
+  deletions: number;
+  totalLineChanges: number;
+}
+
+interface ComparisonRiskSignal {
+  level: string;
+  rank: number;
+  factors: string[];
+}
+
+interface VerificationCounts {
+  passed: number;
+  failed: number;
+  skipped: number;
+}
+
+type ComparisonWinner = "baseline" | "candidate" | "tie";
+
+interface ComparisonScoreBreakdown {
+  statusPenalty: number;
+  riskPenalty: number;
+  failedCheckPenalty: number;
+  skippedVerificationPenalty: number;
+  diffSizePenalty: number;
+}
+
+interface ComparisonScore {
+  total: number;
+  breakdown: ComparisonScoreBreakdown;
+}
+
 interface ComparisonRunSnapshot {
   runId: string;
   taskId: string;
@@ -64,6 +163,7 @@ interface ComparisonRunSnapshot {
   changedFiles: string[];
   stat: { filesChanged: number; insertions: number; deletions: number };
   verification: string;
+  verificationCounts: VerificationCounts;
   verificationOutcomes: string[];
   risk: string;
   riskFactors: string[];
@@ -139,6 +239,13 @@ export async function buildComparisonSummary(
   repositories: ComparisonReviewRepositories,
   input: ComparisonSummaryInput
 ): Promise<string> {
+  return (await buildComparisonReport(repositories, input)).summary;
+}
+
+export async function buildComparisonReport(
+  repositories: ComparisonReviewRepositories,
+  input: ComparisonSummaryInput
+): Promise<ComparisonBuildResult> {
   const task = await repositories.taskRepository.get(input.taskId);
   if (!task) {
     throw new Error(`task ${input.taskId} not found`);
@@ -155,7 +262,11 @@ export async function buildComparisonSummary(
       `candidate run ${input.candidateRunId} does not belong to task ${input.taskId}`
     );
   }
-  return renderComparisonSummary(input.taskId, baseline, candidate);
+  const details = buildComparisonDetails(input.taskId, baseline, candidate);
+  return {
+    summary: renderComparisonSummary(input.taskId, baseline, candidate, details),
+    details
+  };
 }
 
 async function requireRun(
@@ -209,6 +320,10 @@ async function loadComparisonRun(
           result.status,
           result.exitCode ?? undefined
         )) ?? [];
+  const verificationCounts =
+    verificationRows.length > 0
+      ? countVerificationStatuses(verificationRows)
+      : countVerificationStatuses(metadata?.verification?.results ?? []);
 
   return {
     runId: run.id,
@@ -225,6 +340,7 @@ async function loadComparisonRun(
       verificationRows.length > 0
         ? summarizeVerificationResults(verificationRows)
         : metadata?.verification?.summary ?? "not available",
+    verificationCounts,
     verificationOutcomes,
     risk: riskReport?.level ?? "not available",
     riskFactors: riskReport?.riskFactors ?? [],
@@ -235,11 +351,13 @@ async function loadComparisonRun(
 function renderComparisonSummary(
   taskId: string,
   baseline: ComparisonRunSnapshot,
-  candidate: ComparisonRunSnapshot
+  candidate: ComparisonRunSnapshot,
+  details: ComparisonReportDetails
 ): string {
   const baselineOnly = difference(baseline.changedFiles, candidate.changedFiles);
   const candidateOnly = difference(candidate.changedFiles, baseline.changedFiles);
   const shared = intersection(baseline.changedFiles, candidate.changedFiles);
+  const score = details.score;
   return [
     `task_id: ${taskId}`,
     `baseline: ${formatComparisonRun(baseline)}`,
@@ -255,8 +373,79 @@ function renderComparisonSummary(
     `candidate_risk_factors: ${formatList(candidate.riskFactors)}`,
     `baseline_failed_checks: ${formatList(baseline.failedChecks)}`,
     `candidate_failed_checks: ${formatList(candidate.failedChecks)}`,
+    `comparison_score: baseline=${score.baseline} candidate=${score.candidate} winner=${score.winner}`,
+    `score_reasons: ${formatList(score.reasons)}`,
     `summary_tradeoffs: ${comparisonTradeoffs(baseline, candidate)}`
   ].join("\n");
+}
+
+function buildComparisonDetails(
+  taskId: string,
+  baseline: ComparisonRunSnapshot,
+  candidate: ComparisonRunSnapshot
+): ComparisonReportDetails {
+  const baselineOnly = difference(baseline.changedFiles, candidate.changedFiles);
+  const candidateOnly = difference(candidate.changedFiles, baseline.changedFiles);
+  const shared = intersection(baseline.changedFiles, candidate.changedFiles);
+  const uniqueFileCount = new Set([
+    ...baseline.changedFiles,
+    ...candidate.changedFiles
+  ]).size;
+  const baselineDiffSize = diffSizeSignal(baseline.stat);
+  const candidateDiffSize = diffSizeSignal(candidate.stat);
+  const score = scoreComparison(baseline, candidate);
+
+  return {
+    version: 1,
+    taskId,
+    runs: {
+      baseline: runSignal(baseline),
+      candidate: runSignal(candidate)
+    },
+    changedFiles: {
+      baselineOnly,
+      candidateOnly,
+      shared,
+      baselineCount: baseline.changedFiles.length,
+      candidateCount: candidate.changedFiles.length,
+      overlapCount: shared.length,
+      overlapRatio: ratio(shared.length, uniqueFileCount)
+    },
+    diffSize: {
+      baseline: baselineDiffSize,
+      candidate: candidateDiffSize,
+      fileDelta: candidate.stat.filesChanged - baseline.stat.filesChanged,
+      insertionDelta: candidate.stat.insertions - baseline.stat.insertions,
+      deletionDelta: candidate.stat.deletions - baseline.stat.deletions,
+      totalLineDelta:
+        candidateDiffSize.totalLineChanges - baselineDiffSize.totalLineChanges
+    },
+    verification: {
+      baseline: baseline.verificationCounts,
+      candidate: candidate.verificationCounts,
+      failedCheckDelta: candidate.failedChecks.length - baseline.failedChecks.length,
+      failedChecks: {
+        baseline: baseline.failedChecks,
+        candidate: candidate.failedChecks
+      }
+    },
+    risk: {
+      baseline: riskSignal(baseline),
+      candidate: riskSignal(candidate),
+      rankDelta: riskRank(candidate.risk) - riskRank(baseline.risk)
+    },
+    score: {
+      baseline: score.baseline.total,
+      candidate: score.candidate.total,
+      winner: score.winner,
+      reasons: score.reasons,
+      breakdown: {
+        baseline: score.baseline.breakdown,
+        candidate: score.candidate.breakdown
+      }
+    },
+    tradeoffs: comparisonTradeoffNotes(baseline, candidate)
+  };
 }
 
 function formatComparisonRun(run: ComparisonRunSnapshot): string {
@@ -292,10 +481,147 @@ function summarizeVerificationResults(results: VerificationResult[]): string {
   return `${passed} passed, ${failed} failed, ${skipped} skipped`;
 }
 
+function countVerificationStatuses(
+  results: Array<{ status: string }>
+): VerificationCounts {
+  return {
+    passed: results.filter((result) => result.status === "passed").length,
+    failed: results.filter((result) => result.status === "failed").length,
+    skipped: results.filter((result) => result.status === "skipped").length
+  };
+}
+
+function runSignal(run: ComparisonRunSnapshot): ComparisonRunSignal {
+  return {
+    runId: run.runId,
+    agent: run.agent,
+    status: run.status,
+    changedFiles: run.changedFiles.length,
+    verification: run.verification,
+    risk: run.risk
+  };
+}
+
+function diffSizeSignal(
+  stat: ComparisonRunSnapshot["stat"]
+): ComparisonDiffSizeSignal {
+  return {
+    filesChanged: stat.filesChanged,
+    insertions: stat.insertions,
+    deletions: stat.deletions,
+    totalLineChanges: stat.insertions + stat.deletions
+  };
+}
+
+function riskSignal(run: ComparisonRunSnapshot): ComparisonRiskSignal {
+  return {
+    level: run.risk,
+    rank: riskRank(run.risk),
+    factors: run.riskFactors
+  };
+}
+
+function ratio(value: number, total: number): number {
+  return total === 0 ? 0 : Number((value / total).toFixed(3));
+}
+
+function scoreComparison(
+  baseline: ComparisonRunSnapshot,
+  candidate: ComparisonRunSnapshot
+): {
+  baseline: ComparisonScore;
+  candidate: ComparisonScore;
+  winner: ComparisonWinner;
+  reasons: string[];
+} {
+  const baselineScore = scoreRun(baseline);
+  const candidateScore = scoreRun(candidate);
+  const winner =
+    baselineScore.total > candidateScore.total
+      ? "baseline"
+      : candidateScore.total > baselineScore.total
+        ? "candidate"
+        : "tie";
+  const reasons = [
+    winner === "tie"
+      ? "baseline and candidate scores are tied"
+      : `${winner} has higher deterministic review score`,
+    ...comparisonTradeoffNotes(baseline, candidate)
+  ];
+
+  return {
+    baseline: baselineScore,
+    candidate: candidateScore,
+    winner,
+    reasons: [...new Set(reasons)]
+  };
+}
+
+function scoreRun(run: ComparisonRunSnapshot): ComparisonScore {
+  const breakdown = {
+    statusPenalty: statusPenalty(run.status),
+    riskPenalty: riskPenalty(run.risk),
+    failedCheckPenalty: Math.min(45, run.failedChecks.length * 15),
+    skippedVerificationPenalty: Math.min(15, run.verificationCounts.skipped * 5),
+    diffSizePenalty: diffSizePenalty(run.stat)
+  };
+  const penalty = Object.values(breakdown).reduce((sum, value) => sum + value, 0);
+  return {
+    total: Math.max(0, 100 - penalty),
+    breakdown
+  };
+}
+
+function statusPenalty(status: string): number {
+  switch (status) {
+    case "succeeded":
+      return 0;
+    case "failed":
+    case "cancelled":
+      return 30;
+    case "queued":
+    case "running":
+      return 20;
+    default:
+      return 20;
+  }
+}
+
+function riskPenalty(risk: string): number {
+  switch (risk) {
+    case "low":
+      return 0;
+    case "medium":
+      return 10;
+    case "high":
+      return 25;
+    case "blocking":
+      return 50;
+    default:
+      return 15;
+  }
+}
+
+function diffSizePenalty(stat: ComparisonRunSnapshot["stat"]): number {
+  return Math.min(20, Math.ceil(stat.filesChanged * 2 + (
+    stat.insertions + stat.deletions
+  ) / 100));
+}
+
 function comparisonTradeoffs(
   baseline: ComparisonRunSnapshot,
   candidate: ComparisonRunSnapshot
 ): string {
+  const notes = comparisonTradeoffNotes(baseline, candidate);
+  return notes.length === 0
+    ? "no material tradeoff detected from stored run data"
+    : notes.join("; ");
+}
+
+function comparisonTradeoffNotes(
+  baseline: ComparisonRunSnapshot,
+  candidate: ComparisonRunSnapshot
+): string[] {
   const notes: string[] = [];
   if (candidate.failedChecks.length > baseline.failedChecks.length) {
     notes.push("candidate has more failed checks");
@@ -312,9 +638,7 @@ function comparisonTradeoffs(
   } else if (candidate.stat.filesChanged < baseline.stat.filesChanged) {
     notes.push("candidate changes fewer files");
   }
-  return notes.length === 0
-    ? "no material tradeoff detected from stored run data"
-    : notes.join("; ");
+  return notes;
 }
 
 function riskRank(risk: string): number {

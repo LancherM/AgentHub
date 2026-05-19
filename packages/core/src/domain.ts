@@ -205,6 +205,7 @@ export function validateComparisonReport(input: ComparisonReport): ComparisonRep
   optionalString(input.baselineRunId, "comparisonReport.baselineRunId", issues);
   optionalString(input.candidateRunId, "comparisonReport.candidateRunId", issues);
   required(input.summary, "comparisonReport.summary", issues);
+  optionalObject(input.details, "comparisonReport.details", issues);
   timestamp(input.createdAt, "comparisonReport.createdAt", issues);
   return finish(input, issues);
 }

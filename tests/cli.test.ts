@@ -1492,7 +1492,24 @@ describe("CLI", () => {
         taskId: "task_compare",
         baselineRunId: "run_baseline",
         candidateRunId: "run_candidate",
-        summary: expect.stringContaining("candidate_failed_checks: pnpm lint")
+        summary: expect.stringContaining("candidate_failed_checks: pnpm lint"),
+        details: expect.objectContaining({
+          changedFiles: expect.objectContaining({
+            candidateOnly: ["src/b.ts"],
+            overlapCount: 1
+          }),
+          verification: expect.objectContaining({
+            failedCheckDelta: 1
+          }),
+          risk: expect.objectContaining({
+            rankDelta: 3
+          }),
+          score: expect.objectContaining({
+            baseline: 97,
+            candidate: 0,
+            winner: "baseline"
+          })
+        })
       })
     ]);
     expect(errors.join("")).toBe("");
@@ -1507,6 +1524,87 @@ describe("CLI", () => {
     );
     expect(output.join("")).toContain(
       "summary_tradeoffs: candidate has more failed checks; candidate has higher risk; candidate changes more files"
+    );
+    expect(output.join("")).toContain(
+      "comparison_score: baseline=97 candidate=0 winner=baseline"
+    );
+    expect(output.join("")).toContain("structured_signals:");
+    expect(output.join("")).toContain('"overlapCount": 1');
+    expect(output.join("")).toContain('"failedCheckDelta": 1');
+    expect(output.join("")).toContain('"winner": "baseline"');
+  });
+
+  it("rejects comparison when either run belongs to another task", async () => {
+    const projectRoot = await createTestDirectory("cli-compare-mismatch-project");
+    const databasePath = path.join(
+      await createTestDirectory("cli-compare-mismatch-db"),
+      "agent-hub.sqlite"
+    );
+    const repositories = createSqliteRepositories({ databasePath });
+    await repositories.projectRepository.create({
+      id: "project_compare_mismatch",
+      name: "Compare Mismatch Project",
+      rootPath: projectRoot,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z"
+    });
+    await repositories.taskRepository.create({
+      id: "task_compare_a",
+      projectId: "project_compare_mismatch",
+      title: "Compare A",
+      status: "open",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z"
+    });
+    await repositories.taskRepository.create({
+      id: "task_compare_b",
+      projectId: "project_compare_mismatch",
+      title: "Compare B",
+      status: "open",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z"
+    });
+    await repositories.taskRunRepository.create({
+      id: "run_compare_a",
+      taskId: "task_compare_a",
+      agentKind: "fake",
+      status: "succeeded",
+      createdAt: "2026-01-01T00:00:01.000Z",
+      updatedAt: "2026-01-01T00:00:01.000Z"
+    });
+    await repositories.taskRunRepository.create({
+      id: "run_compare_b",
+      taskId: "task_compare_b",
+      agentKind: "codex",
+      status: "succeeded",
+      createdAt: "2026-01-01T00:00:02.000Z",
+      updatedAt: "2026-01-01T00:00:02.000Z"
+    });
+
+    const output: string[] = [];
+    const errors: string[] = [];
+    const io = {
+      stdout: { write: (chunk: string) => { output.push(chunk); return true; } },
+      stderr: { write: (chunk: string) => { errors.push(chunk); return true; } }
+    };
+
+    await expect(
+      main([
+        "--db",
+        databasePath,
+        "compare",
+        "--task-id",
+        "task_compare_a",
+        "--baseline",
+        "run_compare_a",
+        "--candidate",
+        "run_compare_b"
+      ], io, projectRoot)
+    ).resolves.toBe(1);
+
+    expect(output.join("")).toBe("");
+    expect(errors.join("")).toContain(
+      "candidate run run_compare_b does not belong to task task_compare_a"
     );
   });
 

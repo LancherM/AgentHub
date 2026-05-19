@@ -29,8 +29,16 @@ describe("SQLite storage", () => {
       { version: 1 },
       { version: 2 },
       { version: 3 },
-      { version: 4 }
+      { version: 4 },
+      { version: 5 }
     ]);
+    await expect(
+      database.query<{ name: string }>(
+        "SELECT name FROM pragma_table_info('comparison_reports') ORDER BY cid ASC;"
+      )
+    ).resolves.toEqual(
+      expect.arrayContaining([{ name: "details_json" }])
+    );
     await expect(
       database.query<{ name: string }>(
         "SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name ASC;"
@@ -203,6 +211,13 @@ describe("SQLite storage", () => {
       baselineRunId: "run_1",
       candidateRunId: "run_1",
       summary: "Same run comparison.",
+      details: {
+        score: {
+          baseline: 100,
+          candidate: 100,
+          winner: "tie"
+        }
+      },
       createdAt
     });
     await first.skillRepository.create({
@@ -344,7 +359,17 @@ describe("SQLite storage", () => {
       expect.objectContaining({ id: "memory_1", status: "proposed" })
     ]);
     await expect(second.comparisonReportRepository.listByTaskId("task_1")).resolves.toEqual([
-      expect.objectContaining({ id: "comparison_1", summary: "Same run comparison." })
+      expect.objectContaining({
+        id: "comparison_1",
+        summary: "Same run comparison.",
+        details: {
+          score: {
+            baseline: 100,
+            candidate: 100,
+            winner: "tie"
+          }
+        }
+      })
     ]);
     await expect(second.skillRepository.list("project_1")).resolves.toEqual([
       expect.objectContaining({ id: "skill_1", name: "fake-skill" })
@@ -675,7 +700,8 @@ VALUES (
       { version: 1 },
       { version: 2 },
       { version: 3 },
-      { version: 4 }
+      { version: 4 },
+      { version: 5 }
     ]);
   });
 
@@ -719,7 +745,8 @@ VALUES (
       { version: 1 },
       { version: 2 },
       { version: 3 },
-      { version: 4 }
+      { version: 4 },
+      { version: 5 }
     ]);
     await expect(repositories.database.execute(`
 INSERT INTO tasks (id, project_id, title, status, created_at, updated_at)
