@@ -1925,8 +1925,17 @@ function parseMemoryCategory(value: string): MemoryCategory {
 }
 
 function parseContextExportTarget(args: string[]): "repo" {
-  const index = args.indexOf("--target");
-  if (index === -1) {
+  const indexes = args
+    .map((arg, index) => (arg === "--target" ? index : -1))
+    .filter((index) => index !== -1);
+  if (indexes.length === 0) {
+    return "repo";
+  }
+  if (indexes.length > 1) {
+    throw new Error("--target may only be provided once");
+  }
+  const index = indexes[0];
+  if (index === undefined) {
     return "repo";
   }
   const value = args[index + 1];
