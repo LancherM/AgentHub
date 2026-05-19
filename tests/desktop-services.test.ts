@@ -20,7 +20,8 @@ import { createThreadService } from "../apps/desktop/electron/services/thread-se
 import { runFakeAgent } from "../apps/desktop/electron/services/fake-agent-runner";
 import {
   createIpcHandlers,
-  IPC_CHANNELS
+  IPC_CHANNELS,
+  runEventChannel
 } from "../apps/desktop/electron/ipc-handlers";
 import type { RunDetail, RunEvent } from "../apps/desktop/src/lib/types";
 
@@ -899,15 +900,14 @@ describe("desktop services", () => {
     );
 
     expect(summary).toMatchObject({ status: "queued" });
-    await handlers[IPC_CHANNELS.runsSubscribe](
-      { sender } as never,
-      (summary as { id: string }).id
-    );
-    await waitForRun(runs, (summary as { id: string }).id, "completed");
+    const runId = (summary as { id: string }).id;
+    await waitForRun(runs, runId, "completed");
+    await handlers[IPC_CHANNELS.runsSubscribe]({ sender } as never, runId);
+    await waitForIpcSend(sender);
     await expect(
       handlers[IPC_CHANNELS.reviewSummary](
         { sender } as never,
-        (summary as { id: string }).id
+        runId
       )
     ).resolves.toMatchObject({
       reviewStatus: "pending",
@@ -915,23 +915,23 @@ describe("desktop services", () => {
     });
     await expect(
       handlers[IPC_CHANNELS.reviewReject]({ sender } as never, {
-        runId: (summary as { id: string }).id,
+        runId,
         reason: "x".repeat(1_001)
       })
     ).rejects.toThrow(/1000/);
     await expect(
       handlers[IPC_CHANNELS.reviewAccept](
         { sender } as never,
-        (summary as { id: string }).id
+        runId
       )
     ).resolves.toMatchObject({
       reviewStatus: "accepted"
     });
-    expect(sender.send).toHaveBeenCalled();
-    await handlers[IPC_CHANNELS.runsUnsubscribe](
-      { sender } as never,
-      (summary as { id: string }).id
+    expect(sender.send).toHaveBeenCalledWith(
+      runEventChannel(runId),
+      expect.objectContaining({ type: "run_started" })
     );
+    await handlers[IPC_CHANNELS.runsUnsubscribe]({ sender } as never, runId);
   });
 });
 
@@ -963,6 +963,19 @@ async function waitForEvent(
     await sleep(10);
   }
   throw new Error(`timed out waiting for ${type}`);
+}
+
+async function waitForIpcSend(sender: {
+  send: { mock: { calls: unknown[][] } };
+}): Promise<void> {
+  const deadline = Date.now() + 2_000;
+  while (Date.now() < deadline) {
+    if (sender.send.mock.calls.length > 0) {
+      return;
+    }
+    await sleep(10);
+  }
+  throw new Error("timed out waiting for IPC run event");
 }
 
 function sleep(ms: number): Promise<void> {

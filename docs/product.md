@@ -274,18 +274,19 @@ the agent-facing final output or a concise failure/cancel summary. If no agent
 is mentioned or supplied by the caller, desktop falls back to `@fake`.
 
 Active inline run cards subscribe to the existing desktop run event stream and
-show agent identity, status, the latest streamed line, compact review pills, and
-an expandable event log. Terminal cards do not load full run review evidence
-when a thread is merely selected; diff, tests, risk, memory proposals, summary,
-and full logs load lazily when the user expands a card or opens the on-demand
-run inspector drawer. Existing persisted run records are synthesized into
-thread-shaped conversations only as a compatibility import when no durable
-conversation threads exist yet, so old desktop run data remains inspectable
-without making run synthesis the primary thread store. Desktop thread lists and
-details now read from the core conversation repositories, use a lightweight run
-status map for run-card status/counts, and reconcile assistant output only for
-the selected thread. Run records, events, simulated verification, placeholder
-diffs, and risk review rows remain SQLite-backed.
+replay already-persisted events when a subscription starts after a fast run has
+advanced. They show agent identity, status, the latest streamed line, compact
+review pills, and an expandable event log. Terminal cards do not load full run
+review evidence when a thread is merely selected; diff, tests, risk, memory
+proposals, summary, and full logs load lazily when the user expands a card or
+opens the on-demand run inspector drawer. Existing persisted run records are
+synthesized into thread-shaped conversations only as a compatibility import
+when no durable conversation threads exist yet, so old desktop run data remains
+inspectable without making run synthesis the primary thread store. Desktop
+thread lists and details now read from the core conversation repositories, use
+a lightweight run status map for run-card status/counts, and reconcile
+assistant output only for the selected thread. Run records, events, simulated
+verification, placeholder diffs, and risk review rows remain SQLite-backed.
 
 The planned real multi-turn conversation route is captured in
 `docs/multiturn-conversation-prompts.md`. It keeps project context, thread

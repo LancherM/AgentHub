@@ -54,7 +54,10 @@ snapshots, and repository-backed review loading. Renderer components call
 `window.agentHub.threads.*` for conversation orchestration, and
 `window.agentHub.runs.get/cancel/onEvent` for on-demand card hydration,
 cancellation, and live stream subscriptions; the preload hides channel names
-and returns unsubscribe functions for live event listeners. IPC handlers
+and returns unsubscribe functions for live event listeners. Run subscriptions
+register with the main-process emitter before replaying persisted run events,
+with event-id de-duplication, so renderer cards do not miss fast fake-run
+events that were written before the subscription attached. IPC handlers
 validate inputs and manage per-window subscriptions, but do not own run
 lifecycle logic. If the project list is empty, renderer onboarding forms submit
 a local path through the same project-open IPC service before creating a starter
