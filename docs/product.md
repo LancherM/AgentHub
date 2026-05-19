@@ -32,7 +32,7 @@ agent-hub [--db <path>] task history --task-id <task-id>
 agent-hub context init --project-root <path> --project-id <project-id>
 agent-hub context show --project-root <path> --project-id <project-id>
 agent-hub context build --project-root <path> --project-id <project-id> --task-id <task-id> --title <title> --prompt <prompt>
-agent-hub context export --project-root <path> --project-id <project-id> --dry-run|--write
+agent-hub context export --project-root <path> --project-id <project-id> [--target repo] --dry-run|--write
 agent-hub [--db <path>] run --task <task-id> --agent fake|codex|claude-code
 agent-hub run [--repo <path>] [--workspace-base <path>] [--retain-on-failure] "@fake|@codex|@claude-code <task>"
 agent-hub [--db <path>] run event add --run-id <run-id> --type <type> --message <message>
@@ -74,14 +74,19 @@ Skill files must include YAML-style frontmatter with `name` and `description`.
 Malformed or empty skills are skipped and surfaced as build/export warnings
 instead of being silently injected as generic text.
 
-`context export --dry-run` previews repository writes. `context export --write`
-uses Agent Hub managed blocks in `AGENTS.md` and optionally `CLAUDE.md`,
-preserves user-authored content outside those blocks, and ignores marker
-examples inside fenced code blocks. Runtime context files are generated in
-Agent Hub-owned artifacts or inside isolated worktrees; default context build
-does not write repository-level agent files. `context build --delivery-mode`
-accepts only `runtime_injection` and `worktree_overlay`; `repo_export` remains
-exclusive to `context export`.
+`context export --target repo --dry-run` previews repository writes.
+`context export --target repo --write` uses Agent Hub managed blocks in
+`AGENTS.md` and optionally `CLAUDE.md`, preserves user-authored content
+outside those blocks, and ignores marker examples inside fenced code blocks.
+If `--target` is provided, its only supported value is `repo`; omitting it
+keeps the same repo-export default for compatibility. Approved memory from the
+Agent Hub-owned context store is included in the managed context block when it
+contains non-placeholder content, and `--include-approved-memory` is accepted
+as an explicit acknowledgement of that default. Runtime context files are
+generated in Agent Hub-owned artifacts or inside isolated worktrees; default
+context build does not write repository-level agent files. The context build
+`--delivery-mode` flag accepts only `runtime_injection` and
+`worktree_overlay`; `repo_export` remains exclusive to `context export`.
 
 The run command validates the task input, compiles non-invasive context, routes
 to the selected adapter, rejects unsafe repository-local Git config before any
@@ -139,6 +144,9 @@ the ordered adapter/manual event stream stored in `run_events` across CLI
 processes. `runs diff <run-id> --stat` prints stored changed-file and diff-stat
 metadata, while `runs diff <run-id> --patch` prints the stored git diff artifact
 with default truncation and an explicit `--full` flag for complete local output.
+Patch output is still redacted when persisted changed-file metadata or diff
+headers identify sensitive paths such as `.env`, key, token, secret, or
+credential files.
 These commands inspect SQLite-backed evidence only; they do not rerun agents,
 modify worktrees, accept output, merge branches, or push code.
 
@@ -159,10 +167,10 @@ The process-backed adapters use direct executable-plus-args spawning:
   detection from that worktree with the run environment. Missing CLI,
   authentication, or setup failures become failed run events and no real
   adapter process is started.
-- Child processes receive only Agent Hub's explicit environment overrides plus
-  a small inherited allowlist for path lookup, home/config/cache paths, temp
-  directories, locale/terminal flags, CI, and required Windows process
-  variables.
+- Task runs may provide explicit `environmentOverrides` for process-backed
+  adapters. Child processes receive only those overrides plus a small inherited
+  allowlist for path lookup, home/config/cache paths, temp directories,
+  locale/terminal flags, CI, and required Windows process variables.
 - stdout and stderr are captured as run events; structured JSONL output is
   parsed into message/status/error events when possible, while raw output is
   preserved.
@@ -215,30 +223,30 @@ IPC path and seeds a new conversation for the registered project.
 The composer accepts mention-based prompts such as `@fake ...` or multi-agent
 mentions. The renderer sends prompt text through the safe
 `window.agentHub.threads.sendMessage` preload API; the Electron main-process
-thread service strips known agent mentions from the task body, records one
-user message in the active thread, creates one run per selected agent through
-`RunService`, and appends one inline run card message per run. If no agent is
-mentioned or supplied by the caller, desktop falls back to `@fake`.
+thread service strips known agent mentions from the task body, persists one
+ordered user message in the selected SQLite-backed conversation thread, creates
+one run per selected agent through `RunService`, and persists one inline run
+card message per run. If no agent is mentioned or supplied by the caller,
+desktop falls back to `@fake`.
 
 Each inline run card subscribes to the existing desktop run event stream and
 shows agent identity, status, the latest streamed line, compact review pills,
 and an expandable event log. Diff, tests, risk, memory proposals, summary, and
 full logs are hidden by default and open through an on-demand run inspector
 drawer. Existing persisted run records are synthesized into thread-shaped
-conversations by the main-process thread service so old desktop run data
-remains inspectable. Core conversation thread/message storage is now available
-through local repositories and SQLite tables, but the current desktop thread
-service still uses its isolated in-memory facade until the follow-up service
-wiring phase lands. Run records, events, simulated verification, placeholder
-diffs, and risk review rows remain SQLite-backed.
+conversations only as a compatibility import when no durable conversation
+threads exist yet, so old desktop run data remains inspectable without making
+run synthesis the primary thread store. Desktop thread lists and details now
+read from the core conversation repositories, while run-card display status is
+hydrated from the linked run ids. Run records, events, simulated verification,
+placeholder diffs, and risk review rows remain SQLite-backed.
 
 The planned real multi-turn conversation route is captured in
 `docs/multiturn-conversation-prompts.md`. It keeps project context, thread
 context, current-turn context, and per-run context snapshots as separate
-layers, then replaces the current in-memory thread facade with persisted
-threads/messages and bounded runtime injection of prior conversation context.
-The first storage slice adds durable conversation tables only; until the desktop
-service and context builder phases are implemented, desktop threads are a
+layers, then adds bounded runtime injection of prior conversation context. The
+current desktop service persists conversation threads and messages, but until
+the context builder phase is implemented, desktop threads are a durable
 conversation UI and run review surface, not a guarantee that each new agent run
 sees the previous messages.
 
@@ -254,7 +262,10 @@ risk classifier. Fake desktop runs explicitly show that no real repository
 files were modified and do not invent changed files. When a retained worktree
 exists, desktop diff loading uses read-only Git inspection from the Electron
 main process only; renderer code never receives shell, filesystem, SQLite, or
-Git access.
+Git access. Desktop memory proposal generation is idempotent for each run:
+summary cards, run-detail loading, and the memory tab can refresh in parallel
+without duplicating the same proposal content or growing beyond the bounded
+proposal set for that run.
 
 Inspector accept/reject actions are audit decisions only. Accepting a run
 records `accepted` review state and shows "Accepted for record. No merge was
@@ -342,9 +353,11 @@ SQLite now enforces the important imported storage constraints at the database
 boundary. Tasks reference projects with cascade delete, task runs reference
 agent profiles when one is selected, task and run status values are checked,
 agent kinds are checked, JSON columns reject invalid JSON, and run event
-sequence numbers remain unique per run. Local settings reject secret-like keys
-and string values before they can be stored in SQLite or in-memory test
-repositories, so settings remain limited to safe local behavior preferences.
+sequence numbers remain unique per run. Local settings reject secret-like keys,
+including delimiter-separated and camelCase names such as `api_key`,
+`openaiApiKey`, `authToken`, and `clientSecret`, and reject secret-like string
+values before they can be stored in SQLite or in-memory test repositories, so
+settings remain limited to safe local behavior preferences.
 Ad-hoc CLI runs reuse an existing project for the same repository root. The
 first legacy ad-hoc root may still use `adhoc_project` for compatibility;
 additional ad-hoc roots get deterministic root-scoped project ids so tasks and
@@ -367,9 +380,9 @@ GitHub CI/CD is available for repository maintenance. Pull requests to `main`
 run the validation suite (`pnpm typecheck`, `pnpm lint`, `pnpm test`,
 `pnpm build`, and the desktop Electron/Vite bundle build). Pushes to `main`
 and manual workflow runs build a packaged CLI artifact from the workspace app/
-package directories, tests, the CI workflow, root package metadata, `README.md`,
-workspace/lock files, and root TypeScript/Vitest config files needed by those
-advertised validation scripts. They also build ad-hoc signed macOS desktop DMG
+package directories, root scripts, tests, the CI workflow, root package
+metadata, `README.md`, workspace/lock files, and root TypeScript/Vitest config
+files needed by those advertised validation scripts. They also build ad-hoc signed macOS desktop DMG
 artifacts for x64 and arm64 on GitHub-hosted macOS runners. Version tags that
 match `v*.*.*` create or update a GitHub Release with both the workspace
 package artifact and the DMG artifacts. The workflow publishes local release

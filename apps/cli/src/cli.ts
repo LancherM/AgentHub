@@ -362,7 +362,7 @@ export function helpText(): string {
     "  agent-hub context init --project-root <path> --project-id <project-id>",
     "  agent-hub context show --project-root <path> --project-id <project-id>",
     "  agent-hub context build --project-root <path> --project-id <project-id> --task-id <task-id> --title <title> --prompt <prompt>",
-    "  agent-hub context export --project-root <path> --project-id <project-id> --dry-run|--write",
+    "  agent-hub context export --project-root <path> --project-id <project-id> [--target repo] --dry-run|--write",
     "  agent-hub [--db <path>] run --task <task-id> --agent fake|codex|claude-code [--workspace-base <path>]",
     "  agent-hub [--db <path>] run [--repo <path>] [--workspace-base <path>] [--retain-on-failure] \"@fake|@codex|@claude-code <task>\"",
     "  agent-hub [--db <path>] run event add --run-id <run-id> --type <type> --message <message>",
@@ -752,6 +752,7 @@ async function contextExport(args: string[], io: CliIO, cwd: string): Promise<nu
     const store = parseContextStoreArgs(args, cwd);
     const result = await exportContextToRepository({
       ...store,
+      target: parseContextExportTarget(args),
       includeAgentsMd: args.includes("--include-agents-md") || !args.includes("--include-claude-md"),
       includeClaudeMd: args.includes("--include-claude-md"),
       includeSkills: args.includes("--include-skills"),
@@ -764,7 +765,8 @@ async function contextExport(args: string[], io: CliIO, cwd: string): Promise<nu
         `${result.dryRun ? "Previewed" : "Wrote"} repo context export`,
         `project_root: ${result.config.projectRoot}`,
         `project_id: ${result.config.projectId}`,
-        "target: repo",
+        `target: ${result.target}`,
+        `approved_memory: ${result.approvedMemoryPolicy}`,
         `dry_run: ${result.dryRun}`,
         "changed_files:",
         ...(result.changedFiles.length === 0
@@ -1920,6 +1922,21 @@ function parseMemoryCategory(value: string): MemoryCategory {
     return value as MemoryCategory;
   }
   throw new Error(`--category must be one of ${memoryCategories.join(", ")}`);
+}
+
+function parseContextExportTarget(args: string[]): "repo" {
+  const index = args.indexOf("--target");
+  if (index === -1) {
+    return "repo";
+  }
+  const value = args[index + 1];
+  if (!value || value.startsWith("--")) {
+    throw new Error("--target requires a value");
+  }
+  if (value !== "repo") {
+    throw new Error("--target must be repo");
+  }
+  return "repo";
 }
 
 function parseRunEventType(value: string): RunEventType {

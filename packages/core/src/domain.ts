@@ -358,7 +358,7 @@ function secretFreeSettingKey(value: unknown, field: string, issues: string[]): 
   if (typeof value !== "string") {
     return;
   }
-  if (secretLikeSettingKeyPattern.test(value)) {
+  if (isSecretLikeSettingKey(value)) {
     issues.push(`${field} must not store secrets`);
   }
 }
@@ -370,7 +370,10 @@ function secretFreeSettingValue(
   seen: WeakSet<object>
 ): void {
   if (typeof value === "string") {
-    if (secretLikeSettingValuePatterns.some((pattern) => pattern.test(value))) {
+    if (
+      secretLikeSettingValuePatterns.some((pattern) => pattern.test(value)) ||
+      containsSecretLikeAssignment(value)
+    ) {
       issues.push(`${field} must not store secret-like string values`);
     }
     return;
@@ -430,15 +433,48 @@ const memoryStatusTransitions: Record<MemoryStatus, readonly MemoryStatus[]> = {
   rejected: []
 };
 
-const secretLikeSettingKeyPattern =
-  /(^|[._:-])(api[_-]?key|token|password|private[_-]?key|credentials?)([._:-]|$)/i;
-
 const secretLikeSettingValuePatterns = [
   /-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----/i,
   /\b(api[_-]?key|token|password|private[_-]?key|credentials?)\b\s*[:=]\s*["']?[^"'\s]+/i,
   /\bBearer\s+[A-Za-z0-9._~+/=-]{20,}/i,
   /\b(?:gh[pousr]_[A-Za-z0-9_]{20,}|xox[baprs]-[A-Za-z0-9-]{20,}|sk-[A-Za-z0-9]{20,})\b/i
 ];
+
+const secretLikeAssignmentPattern =
+  /([A-Za-z0-9_.:-]+)\s*[:=]\s*["']?[^"'\s]+/g;
+
+function isSecretLikeSettingKey(key: string): boolean {
+  const terms = splitSettingKeyTerms(key);
+  return terms.some((term, index) =>
+    term === "token" ||
+    term === "secret" ||
+    term === "password" ||
+    term === "credential" ||
+    term === "credentials" ||
+    term === "apikey" ||
+    term === "privatekey" ||
+    (term === "api" && terms[index + 1] === "key") ||
+    (term === "private" && terms[index + 1] === "key")
+  );
+}
+
+function splitSettingKeyTerms(key: string): string[] {
+  return key
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .split(/[._:\-\s]+/)
+    .map((term) => term.toLowerCase())
+    .filter((term) => term.length > 0);
+}
+
+function containsSecretLikeAssignment(value: string): boolean {
+  for (const match of value.matchAll(secretLikeAssignmentPattern)) {
+    const key = match[1];
+    if (key && isSecretLikeSettingKey(key)) {
+      return true;
+    }
+  }
+  return false;
+}
 
 function validateStatusTransition<T extends string>(
   from: T,

@@ -67,15 +67,18 @@ risk reports take precedence over the deterministic desktop fallback, including
 does not downgrade scanner output from sensitive path changes or dangerous
 instructions. `DiffService` uses persisted diff artifacts when available and
 can read retained worktrees with read-only Git commands through
-`DiffCollector`, `NodeShellExecutor`, and safe Git configuration. `RiskService`
+`DiffCollector`, `NodeShellExecutor`, and safe Git configuration. It redacts
+patch text before returning desktop review data when changed-file metadata or
+diff headers identify sensitive paths. `RiskService`
 is deterministic and evidence based; it classifies changed paths, verification
 failures, large diffs, dependency/config changes, generated files, and
 source-without-tests conditions without calling an LLM when no persisted
 safety report is available. `MemoryService` lists and generates a small number
-of conservative pending proposals, then maps approve/ignore to the existing
-local memory item states. All of these services sit behind preload IPC methods,
-so the renderer still has no Node.js, filesystem, SQLite, shell, child-process,
-or Git access.
+of conservative pending proposals, serializes generation per run, deduplicates
+proposal content, and caps generated proposals for a run before mapping
+approve/ignore to the existing local memory item states. All of these services
+sit behind preload IPC methods, so the renderer still has no Node.js,
+filesystem, SQLite, shell, child-process, or Git access.
 
 Run review decisions are stored as local `run_artifacts` entries of kind
 `review_decision`. They are not execution status transitions and they do not
@@ -87,27 +90,31 @@ leaving any explicit apply/merge workflow for a later phase.
 message repositories backed by local SQLite tables. They store thread metadata,
 ordered user/assistant/system/tool messages, optional run-card links, and JSON
 metadata separately from run evidence, so run events, diffs, verification,
-risks, and logs continue to live on the existing task-run model.
+risks, and logs continue to live on the existing task-run model. The thread
+repository also updates thread metadata, including display title and
+`updatedAt`, when desktop appends durable messages.
 
-`apps/desktop/electron/services/thread-service.ts` is still the current desktop
-conversation facade. It keeps renderer-facing thread/message state in an
-isolated in-memory store until the follow-up repository-backed service phase,
-synthesizes existing SQLite-backed runs into thread-shaped conversations on
-startup, parses safe `@fake`,
-`@codex`, and `@claude` mentions, and implements `sendMessage` by appending one
-user message, creating one run per selected agent through `RunService`, and
-appending one agent-run message per run. Run cards subscribe to the same
+`apps/desktop/electron/services/thread-service.ts` is the desktop conversation
+facade over those repositories. It parses safe `@fake`, `@codex`, and
+`@claude` mentions, implements `sendMessage` by appending one durable user
+message, creating one run per selected agent through `RunService`, and
+appending one durable run-card message per run. The renderer-facing
+`window.agentHub.threads.*` contract remains unchanged, but service state is
+loaded from SQLite on every list/detail request. Run-card display status is
+derived from linked run ids through `RunService` instead of live-only thread
+state. If an older database has runs but no conversation threads, the service
+performs a one-time compatibility import into conversation rows so existing
+desktop run records stay inspectable. Run cards subscribe to the same
 `RunService` stream as the earlier run-detail view and open review data through
 an on-demand inspector instead of a permanent right-hand panel.
 
 `docs/multiturn-conversation-prompts.md` defines the staged architecture route
-for replacing that Phase 3 facade with real multi-turn support. The target
-now has persisted thread/message repositories separated from task runs; later
-phases wire the desktop/CLI services to those repositories, add a bounded
-conversation context builder, and persist per-run context snapshots as audit
-artifacts. Project context, thread context, current-turn context, and run
-context remain distinct layers so thread-local decisions do not automatically
-promote into project approved memory.
+for real multi-turn support. The target now has persisted thread/message
+repositories and the desktop thread service separated from task runs; later
+phases add a bounded conversation context builder and persist per-run context
+snapshots as audit artifacts. Project context, thread context, current-turn
+context, and run context remain distinct layers so thread-local decisions do
+not automatically promote into project approved memory.
 
 The service maps desktop-facing agent IDs (`fake`, `codex`, `claude`) and run
 statuses (`queued`, `running`, `verifying`, `completed`, `failed`,
@@ -147,9 +154,10 @@ Child process environment policy is explicit by default. `ProcessRunner` and
 needed for local CLI execution: path lookup, home/config/cache locations,
 temporary directories, locale/terminal flags, CI, and required Windows process
 variables. They do not pass all of `process.env`, so secrets such as arbitrary
-API keys or tokens are not inherited accidentally. Callers may still provide
-explicit per-process environment overrides; an override value of `undefined`
-removes an allowlisted variable for that child.
+API keys or tokens are not inherited accidentally. `RunTaskInput` exposes an
+explicit `environmentOverrides` field for process-backed task runs; those
+overrides are forwarded to adapter detection and execution, and an override
+value of `undefined` removes an allowlisted variable for that child.
 
 The CLI calls the runner rather than owning orchestration logic. The runner
 compiles context, creates a worktree workspace through a `WorkspaceManager`,
@@ -204,7 +212,9 @@ Persisted run review aggregation lives in `packages/task-runner`. The CLI
 parses `runs events <run-id>` and `runs diff <run-id> [--stat|--patch]`, then
 delegates repository-backed loading of ordered events, latest `git_diff`
 artifacts, changed-file metadata, diff stats, and patch truncation to the local
-package. This keeps review commands read-only and process-independent while
+package. That package redacts patch text for sensitive paths before CLI
+rendering, even when `--full` is requested. This keeps review commands
+read-only and process-independent while
 avoiding comparison or artifact aggregation logic in the CLI layer.
 
 Safety review is separated from report rendering. `SafetyScanner` scans the
@@ -279,11 +289,17 @@ parser, so malformed skills are not copied into `.claude/skills` or
 `.agents/skills`.
 
 Repo-local context stores remain opt-in through `--mode repo_local`. Repository
-export remains opt-in through `context export --dry-run` or
-`context export --write`; dry-run produces previews without writing, while
-write mode updates managed blocks in `AGENTS.md` and optionally `CLAUDE.md`.
-Managed block replacement preserves user-authored content outside the block and
-does not treat fenced code examples of the markers as real blocks.
+export remains opt-in through `context export --target repo --dry-run` or
+`context export --target repo --write`; dry-run produces previews without
+writing, while write mode updates managed blocks in `AGENTS.md` and optionally
+`CLAUDE.md`. The CLI and context-compiler export boundary only accept the
+`repo` target, and omitting `--target` keeps that repo-export default for
+compatibility. Approved memory is part of the rendered context store export
+when `memory/approved.md` contains non-placeholder content; the
+`--include-approved-memory` flag does not broaden the boundary and only makes
+that default explicit in command output. Managed block replacement preserves
+user-authored content outside the block and does not treat fenced code examples
+of the markers as real blocks.
 
 `runtime_injection` is still the default delivery mode. In this mode the runner
 writes only worktree-local runtime files under `.agent-hub/tasks/<task-id>/` and
@@ -358,8 +374,9 @@ focused runner tests and injected runtimes.
 
 Settings use the same domain validation before repository writes. Both
 in-memory and SQLite settings repositories reject secret-like key names such as
-API keys, tokens, passwords, private keys, and credentials, and they also reject
-string values that look like embedded secret assignments, bearer tokens, common
+API keys, tokens, secrets, passwords, private keys, and credentials across
+delimiter-separated and camelCase setting names, and they also reject string
+values that look like embedded secret assignments, bearer tokens, common
 service tokens, or private key blocks. Safe local UI and behavior flags remain
 valid setting values.
 
@@ -467,9 +484,9 @@ Agent Hub runtime. The workflow installs the pinned pnpm and Node versions from
 the root package, runs the same local validation commands documented for
 developers, uploads a built CLI package artifact for `main` and manual runs,
 and publishes that artifact to GitHub Releases only for `v*.*.*` tags. The
-artifact includes the workspace package sources, tests, CI workflow, and root
-TypeScript/Vitest configs so the root package scripts remain executable after
-extraction. Release publishing uses the repository-scoped `GITHUB_TOKEN` with
+artifact includes the workspace package sources, root scripts, tests, CI
+workflow, and root TypeScript/Vitest configs so the root package scripts remain
+executable after extraction. Release publishing uses the repository-scoped `GITHUB_TOKEN` with
 `contents: write` on the release job only. There is no deployment target,
 external backend, custom secret, remote task execution, or automatic code push
 in the CI/CD path.

@@ -272,10 +272,42 @@ describe("CLI", () => {
       },
       createdAt: "2026-01-01T00:00:04.000Z"
     });
+    await repositories.taskRunRepository.create({
+      id: "run_sensitive_review",
+      taskId: "task_review",
+      agentKind: "codex",
+      status: "succeeded",
+      createdAt: "2026-01-01T00:00:05.000Z",
+      updatedAt: "2026-01-01T00:00:05.000Z"
+    });
+    await repositories.runArtifactRepository.create({
+      id: "artifact_sensitive_review_diff",
+      taskRunId: "run_sensitive_review",
+      kind: "git_diff",
+      content: [
+        "diff --git a/.env.local b/.env.local",
+        "--- a/.env.local",
+        "+++ b/.env.local",
+        "+API_TOKEN=secret-value",
+        ""
+      ].join("\n"),
+      metadata: {
+        changedFiles: [{ path: ".env.local", status: "modified" }],
+        stat: {
+          filesChanged: 1,
+          insertions: 1,
+          deletions: 0,
+          text: "1 file changed, 1 insertion(+)"
+        },
+        fileSummaries: [".env.local: modified"]
+      },
+      createdAt: "2026-01-01T00:00:06.000Z"
+    });
 
     const eventOutput: string[] = [];
     const statOutput: string[] = [];
     const patchOutput: string[] = [];
+    const sensitivePatchOutput: string[] = [];
     const errors: string[] = [];
     const eventIo = {
       stdout: { write: (chunk: string) => { eventOutput.push(chunk); return true; } },
@@ -289,6 +321,10 @@ describe("CLI", () => {
       stdout: { write: (chunk: string) => { patchOutput.push(chunk); return true; } },
       stderr: { write: (chunk: string) => { errors.push(chunk); return true; } }
     };
+    const sensitivePatchIo = {
+      stdout: { write: (chunk: string) => { sensitivePatchOutput.push(chunk); return true; } },
+      stderr: { write: (chunk: string) => { errors.push(chunk); return true; } }
+    };
 
     await expect(
       main(["--db", databasePath, "runs", "events", "run_review"], eventIo, projectRoot)
@@ -298,6 +334,17 @@ describe("CLI", () => {
     ).resolves.toBe(0);
     await expect(
       main(["--db", databasePath, "runs", "diff", "run_review", "--patch"], patchIo, projectRoot)
+    ).resolves.toBe(0);
+    await expect(
+      main([
+        "--db",
+        databasePath,
+        "runs",
+        "diff",
+        "run_sensitive_review",
+        "--patch",
+        "--full"
+      ], sensitivePatchIo, projectRoot)
     ).resolves.toBe(0);
 
     const events = eventOutput.join("");
@@ -316,6 +363,12 @@ describe("CLI", () => {
     expect(patchOutput.join("")).toContain("truncated: true");
     expect(patchOutput.join("")).toContain("diff --git a/src/a.ts b/src/a.ts");
     expect(patchOutput.join("")).toContain("rerun with --full");
+    expect(sensitivePatchOutput.join("")).toContain("patch_bytes: ");
+    expect(sensitivePatchOutput.join("")).toContain("truncated: false");
+    expect(sensitivePatchOutput.join("")).toContain(
+      "Patch redacted because sensitive file path changed: .env.local"
+    );
+    expect(sensitivePatchOutput.join("")).not.toContain("API_TOKEN=secret-value");
   });
 
   it("supports --db project, task, and registered fake run commands across runtimes", async () => {
@@ -698,6 +751,9 @@ describe("CLI", () => {
         "project_1",
         "--agent-hub-home",
         agentHubHome,
+        "--target",
+        "repo",
+        "--include-approved-memory",
         "--dry-run"
       ], io, projectRoot)
     ).resolves.toBe(0);
@@ -707,7 +763,68 @@ describe("CLI", () => {
     expect(output.join("")).toContain("  - context/project.md");
     expect(output.join("")).toContain("Built context artifacts");
     expect(output.join("")).toContain("Previewed repo context export");
+    expect(output.join("")).toContain("target: repo");
+    expect(output.join("")).toContain("approved_memory: included_when_present");
+    expect(output.join("")).toContain(
+      "--include-approved-memory is already the default for repo context export"
+    );
     await expect(fs.access(path.join(projectRoot, "AGENTS.md"))).rejects.toThrow();
+  });
+
+  it("rejects unsupported context export targets", async () => {
+    const projectRoot = await createTestDirectory("cli-context-export-target-project");
+    const agentHubHome = await createTestDirectory("cli-context-export-target-home");
+    const output: string[] = [];
+    const errors: string[] = [];
+    const io = {
+      stdout: { write: (chunk: string) => { output.push(chunk); return true; } },
+      stderr: { write: (chunk: string) => { errors.push(chunk); return true; } }
+    };
+
+    await expect(
+      main([
+        "context",
+        "export",
+        "--project-root",
+        projectRoot,
+        "--project-id",
+        "project_1",
+        "--agent-hub-home",
+        agentHubHome,
+        "--target",
+        "workspace",
+        "--dry-run"
+      ], io, projectRoot)
+    ).resolves.toBe(1);
+
+    expect(output.join("")).toBe("");
+    expect(errors.join("")).toContain("--target must be repo");
+  });
+
+  it("rejects context export target without a value", async () => {
+    const projectRoot = await createTestDirectory("cli-context-export-missing-target-project");
+    const output: string[] = [];
+    const errors: string[] = [];
+    const io = {
+      stdout: { write: (chunk: string) => { output.push(chunk); return true; } },
+      stderr: { write: (chunk: string) => { errors.push(chunk); return true; } }
+    };
+
+    await expect(
+      main([
+        "context",
+        "export",
+        "--project-root",
+        projectRoot,
+        "--project-id",
+        "project_1",
+        "--target",
+        "--dry-run"
+      ], io, projectRoot)
+    ).resolves.toBe(1);
+
+    expect(output.join("")).toBe("");
+    expect(errors.join("")).toContain("--target requires a value");
   });
 
   it("rejects repo_export delivery mode for context builds", async () => {
