@@ -214,15 +214,17 @@ routes natural language prompts or `@agent` prompts through the existing run
 command and `TaskRunner`. It keeps selected agent and project state in the CLI
 layer only; it does not create a second orchestration implementation.
 
-Run output rendering is also a CLI concern. Normal `run` output shows the
-agent-facing output extracted through the shared core helper from fake output,
-structured message/error events, or raw non-JSON stdout/stderr fallbacks.
-Structured lifecycle/status events are persisted for inspection and debug
-output but are not rendered as normal agent output. Parser promotion is limited
-to assistant/agent/result payloads, so lifecycle summaries and non-assistant
-message items remain status events. It does not show Agent Hub run metadata by
-default, and interactive mode does not echo prompt dispatch lines unless debug
-rendering is enabled.
+Run output rendering is also a CLI concern. `TaskRunner.run()` returns a
+completed `RunResult`; command mode does not receive a live event callback or
+stream intermediate adapter events to the terminal in this MVP slice. Normal
+`run` output shows the agent-facing output extracted through the shared core
+helper from fake output, structured message/error events, or raw non-JSON
+stdout/stderr fallbacks after the run finalizes. Structured lifecycle/status
+events are persisted for inspection and debug output but are not rendered as
+normal agent output. Parser promotion is limited to assistant/agent/result
+payloads, so lifecycle summaries and non-assistant message items remain status
+events. It does not show Agent Hub run metadata by default, and interactive
+mode does not echo prompt dispatch lines unless debug rendering is enabled.
 
 Debug rendering remains opt-in. `--debug` or `AGENT_HUB_DEBUG=1` appends the
 run summary, run boundaries, context artifact paths, verification

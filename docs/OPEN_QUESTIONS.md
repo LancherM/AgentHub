@@ -43,6 +43,18 @@ Current decision: every current task run uses an isolated git worktree through
 the workspace manager. Runtime files are written inside the worktree, not the
 original checkout.
 
+## CLI Live Run-Event Streaming
+
+The imported adapter and desktop flows describe live event streams, while
+current command mode writes normal output only after a local task run finishes.
+
+Current decision: MVP command mode intentionally keeps post-run rendering.
+`TaskRunner.run()` collects and persists adapter events, then the CLI prints
+the final agent-facing output once. Operators can inspect persisted events with
+`runs events` and use `--debug` for post-run metadata. A future live terminal
+status stream must be additive and must not add a server, websocket layer,
+remote execution, or browser UI.
+
 ## Package Layout Timing
 
 The imported architecture targets a monorepo with `apps/` and `packages/`.

@@ -117,10 +117,12 @@ project checkout, materializes runtime task brief/context-pack files inside
 that workspace, runs the adapter with the context payload, collects git diff
 metadata, runs explicitly configured verification commands, generates a
 structured risk report from safety scanner findings, captures events, applies
-the workspace cleanup policy, and prints a concise summary. The pre-flight Git
-config check covers worktree-local config files, inline section comments, and
-dotted filter or diff driver names that could otherwise enable executable Git
-helpers during checkout.
+the workspace cleanup policy, and returns a finalized local result to the CLI.
+Command mode intentionally uses post-run rendering for the MVP: it waits for
+the task run to finish, then prints the final agent-facing output once. The
+pre-flight Git config check covers worktree-local config files, inline section
+comments, and dotted filter or diff driver names that could otherwise enable
+executable Git helpers during checkout.
 `runtime_injection` remains the default delivery mode. Codex and Claude Code
 receive the task brief/context through stdin-driven runtime injection and do
 not require repository-level `AGENTS.md` or `CLAUDE.md`. `worktree_overlay` is
@@ -152,8 +154,10 @@ only. Agent Hub extracts fake-agent output, structured message/error events,
 or raw non-JSON stdout/stderr fallbacks instead of printing run metadata or
 adapter lifecycle events after every task. Structured lifecycle summaries and
 non-assistant message items remain persisted status events rather than normal
-agent output. Interactive mode follows the same rule and does not echo
-`run: <prompt>` in normal mode.
+agent output. Command mode does not stream intermediate run events live in this
+slice; operators inspect the persisted event stream with `runs events` or opt
+into post-run debug metadata with `--debug`. Interactive mode follows the same
+rule and does not echo `run: <prompt>` in normal mode.
 
 Manual event recording is available for persisted task runs:
 `run event add --run-id ... --type ... --message ...`. The command validates
