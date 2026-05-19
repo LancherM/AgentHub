@@ -337,10 +337,31 @@ class RepositoryRunService implements RunService {
 
   subscribe(runId: string, listener: (event: RunEvent) => void): () => void {
     const channel = eventChannel(runId);
-    this.emitter.on(channel, listener);
-    return () => {
-      this.emitter.off(channel, listener);
+    const deliveredEventIds = new Set<string>();
+    let subscribed = true;
+    const deliver = (event: RunEvent): void => {
+      if (!subscribed || deliveredEventIds.has(event.id)) {
+        return;
+      }
+      deliveredEventIds.add(event.id);
+      listener(event);
     };
+    this.emitter.on(channel, deliver);
+    void this.replayPersistedEvents(runId, deliver).catch(() => undefined);
+    return () => {
+      subscribed = false;
+      this.emitter.off(channel, deliver);
+    };
+  }
+
+  private async replayPersistedEvents(
+    runId: string,
+    listener: (event: RunEvent) => void
+  ): Promise<void> {
+    const events = await this.events.listByRunId(runId);
+    for (const event of events.map(toRunEvent)) {
+      listener(event);
+    }
   }
 
   private async executeFakeRun(
