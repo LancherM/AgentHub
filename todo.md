@@ -329,7 +329,7 @@ pnpm lint
 ### 10. Add structured comparison details and scoring
 
 Status: done
-Done: 2026-05-19 via codex/todo-10-comparison-scoring; PR: pending
+Done: 2026-05-19 via codex/todo-10-comparison-scoring; PR: https://github.com/LancherM/AgentHub/pull/58
 
 Prompt:
 
