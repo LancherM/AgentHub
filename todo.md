@@ -402,6 +402,9 @@ pnpm lint
 
 ### 12. Broaden focused hardening coverage
 
+Status: done
+Done: 2026-05-19 via codex/todo-12-hardening-coverage; PR: pending
+
 Prompt:
 
 You are working in `/Users/lan/agent-hub`. Add targeted regression coverage for

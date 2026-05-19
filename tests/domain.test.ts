@@ -9,17 +9,25 @@ import {
   InMemoryTaskRunRepository,
   nowIso,
   parseAgentKind,
+  validateAgentProfile,
+  validateComparisonReport,
+  validateContextPack,
   validateConversationMessage,
   validateConversationThread,
   validateMemoryItem,
+  validateRiskReport,
+  validateRunArtifact,
   validateRunEvent,
   validateMemoryStatusTransition,
   validateProject,
   validateSetting,
+  validateSkill,
   validateTask,
+  validateTaskBrief,
   validateTaskRun,
   validateTaskRunStatusTransition,
-  validateTaskStatusTransition
+  validateTaskStatusTransition,
+  validateVerificationResult
 } from "@agent-hub/core";
 
 const createdAt = "2026-01-01T00:00:00.000Z";
@@ -255,6 +263,193 @@ describe("domain model validation", () => {
         content: "Invalid",
         createdAt: now,
         updatedAt: now
+      })
+    ).toThrow(DomainValidationError);
+  });
+
+  it("validates local evidence, agent, skill, and context models", () => {
+    expect(
+      validateAgentProfile({
+        id: "agent_profile_1",
+        kind: "codex",
+        displayName: "Codex",
+        enabled: true,
+        createdAt,
+        updatedAt
+      })
+    ).toMatchObject({ id: "agent_profile_1", kind: "codex" });
+    expect(() =>
+      validateAgentProfile({
+        id: "agent_profile_bad",
+        kind: "remote" as never,
+        displayName: "Remote",
+        enabled: true,
+        createdAt,
+        updatedAt
+      })
+    ).toThrow(DomainValidationError);
+
+    expect(
+      validateRunArtifact({
+        id: "artifact_1",
+        taskRunId: "run_1",
+        kind: "git_diff",
+        content: "diff text",
+        metadata: { changedFiles: [] },
+        createdAt
+      })
+    ).toMatchObject({ kind: "git_diff" });
+    expect(() =>
+      validateRunArtifact({
+        id: "artifact_bad",
+        taskRunId: "run_1",
+        kind: "git_diff",
+        content: "diff text",
+        metadata: [] as never,
+        createdAt
+      })
+    ).toThrow(DomainValidationError);
+
+    expect(
+      validateVerificationResult({
+        id: "verification_1",
+        taskRunId: "run_1",
+        command: "pnpm test",
+        status: "passed",
+        exitCode: 0,
+        createdAt
+      })
+    ).toMatchObject({ status: "passed" });
+    expect(() =>
+      validateVerificationResult({
+        id: "verification_bad",
+        taskRunId: "run_1",
+        command: "pnpm test",
+        status: "unknown" as never,
+        createdAt
+      })
+    ).toThrow(DomainValidationError);
+
+    expect(
+      validateComparisonReport({
+        id: "comparison_1",
+        taskId: "task_1",
+        baselineRunId: "run_a",
+        candidateRunId: "run_b",
+        summary: "Candidate has lower risk.",
+        details: { score: { candidate: 90 } },
+        createdAt
+      })
+    ).toMatchObject({ taskId: "task_1" });
+    expect(() =>
+      validateComparisonReport({
+        id: "comparison_bad",
+        taskId: "task_1",
+        summary: "Invalid details.",
+        details: [] as never,
+        createdAt
+      })
+    ).toThrow(DomainValidationError);
+
+    expect(
+      validateRiskReport({
+        id: "risk_1",
+        taskRunId: "run_1",
+        level: "medium",
+        summary: "Review generated code.",
+        changedFiles: ["src/index.ts"],
+        verificationSummary: "1 passed",
+        failedChecks: [],
+        riskFactors: ["source changed"],
+        manualReviewChecklist: ["Review src/index.ts"],
+        acceptanceRecommendation: "Review before applying.",
+        findings: [{ level: "medium", summary: "Source changed." }],
+        createdAt
+      })
+    ).toMatchObject({ level: "medium" });
+    expect(() =>
+      validateRiskReport({
+        id: "risk_bad",
+        taskRunId: "run_1",
+        level: "medium",
+        summary: "Invalid findings.",
+        changedFiles: ["src/index.ts"],
+        verificationSummary: "1 passed",
+        failedChecks: [],
+        riskFactors: [],
+        manualReviewChecklist: [],
+        acceptanceRecommendation: "Review before applying.",
+        findings: {} as never,
+        createdAt
+      })
+    ).toThrow(DomainValidationError);
+
+    expect(
+      validateSkill({
+        id: "skill_1",
+        projectId: "project_1",
+        name: "review",
+        description: "Review generated output.",
+        path: "/tmp/review/SKILL.md",
+        createdAt,
+        updatedAt
+      })
+    ).toMatchObject({ name: "review" });
+    expect(() =>
+      validateSkill({
+        id: "skill_bad",
+        name: "review",
+        description: "",
+        path: "/tmp/review/SKILL.md",
+        createdAt,
+        updatedAt
+      })
+    ).toThrow(DomainValidationError);
+
+    expect(
+      validateContextPack({
+        id: "context_pack_1",
+        projectId: "project_1",
+        taskId: "task_1",
+        taskTitle: "Run task",
+        taskPrompt: "Do the work.",
+        deliveryMode: "runtime_injection",
+        contextSections: ["Project context."],
+        approvedMemorySections: [],
+        skillReferences: ["review"],
+        createdAt
+      })
+    ).toMatchObject({ deliveryMode: "runtime_injection" });
+    expect(() =>
+      validateContextPack({
+        id: "context_pack_bad",
+        projectId: "project_1",
+        taskId: "task_1",
+        deliveryMode: "repo_export" as never,
+        contextSections: "Project context." as never,
+        approvedMemorySections: [],
+        skillReferences: [],
+        createdAt
+      })
+    ).toThrow(DomainValidationError);
+
+    expect(
+      validateTaskBrief({
+        taskId: "task_1",
+        taskTitle: "Run task",
+        taskPrompt: "Do the work.",
+        renderedContent: "# Brief\n",
+        contextPackId: "context_pack_1",
+        createdAt
+      })
+    ).toMatchObject({ contextPackId: "context_pack_1" });
+    expect(() =>
+      validateTaskBrief({
+        taskId: "task_1",
+        taskTitle: "Run task",
+        renderedContent: "",
+        contextPackId: "context_pack_1",
+        createdAt
       })
     ).toThrow(DomainValidationError);
   });

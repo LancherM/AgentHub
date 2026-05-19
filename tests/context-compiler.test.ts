@@ -357,6 +357,24 @@ describe("ContextCompiler", () => {
     expect(built.contextPack.skillReferences).toEqual(["review"]);
   });
 
+  it("uses repo-local context storage only when explicitly requested", async () => {
+    const projectRoot = await createTestDirectory("context-repo-local");
+    const initialized = await initContextStore({
+      projectRoot,
+      projectId: "project_1",
+      mode: "repo_local"
+    });
+
+    expect(initialized.mode).toBe("repo_local");
+    expect(initialized.storeRoot).toBe(path.join(projectRoot, ".agent-hub"));
+    expect(initialized.files).toEqual(
+      expect.arrayContaining([
+        "context/project.md",
+        "memory/approved.md"
+      ])
+    );
+  });
+
   it("loads file skills from declared metadata", async () => {
     const projectRoot = await createTestDirectory("context-skill-metadata-project");
     const agentHubHome = await createTestDirectory("context-skill-metadata-home");

@@ -227,12 +227,12 @@ CREATE TABLE IF NOT EXISTS risk_reports (
   task_run_id TEXT NOT NULL,
   level TEXT NOT NULL CHECK (level IN ('low', 'medium', 'high', 'blocking')),
   summary TEXT NOT NULL,
-  findings_json TEXT NOT NULL CHECK (json_valid(findings_json)),
-  changed_files_json TEXT NOT NULL CHECK (json_valid(changed_files_json)),
+  findings_json TEXT NOT NULL CHECK (json_valid(findings_json) AND json_type(findings_json) = 'array'),
+  changed_files_json TEXT NOT NULL CHECK (json_valid(changed_files_json) AND json_type(changed_files_json) = 'array'),
   verification_summary TEXT NOT NULL,
-  failed_checks_json TEXT NOT NULL CHECK (json_valid(failed_checks_json)),
-  risk_factors_json TEXT NOT NULL CHECK (json_valid(risk_factors_json)),
-  manual_review_checklist_json TEXT NOT NULL CHECK (json_valid(manual_review_checklist_json)),
+  failed_checks_json TEXT NOT NULL CHECK (json_valid(failed_checks_json) AND json_type(failed_checks_json) = 'array'),
+  risk_factors_json TEXT NOT NULL CHECK (json_valid(risk_factors_json) AND json_type(risk_factors_json) = 'array'),
+  manual_review_checklist_json TEXT NOT NULL CHECK (json_valid(manual_review_checklist_json) AND json_type(manual_review_checklist_json) = 'array'),
   acceptance_recommendation TEXT NOT NULL,
   created_at TEXT NOT NULL,
   FOREIGN KEY (task_run_id) REFERENCES task_runs(id) ON DELETE CASCADE
@@ -514,6 +514,74 @@ PRAGMA foreign_keys = ON;
     sql: `
 ALTER TABLE comparison_reports
   ADD COLUMN details_json TEXT CHECK (details_json IS NULL OR json_valid(details_json));
+`
+  },
+  {
+    version: 6,
+    transaction: false,
+    sql: `
+PRAGMA foreign_keys = OFF;
+PRAGMA legacy_alter_table = ON;
+BEGIN;
+
+ALTER TABLE risk_reports RENAME TO risk_reports_old;
+
+CREATE TABLE risk_reports (
+  id TEXT PRIMARY KEY,
+  task_run_id TEXT NOT NULL,
+  level TEXT NOT NULL CHECK (level IN ('low', 'medium', 'high', 'blocking')),
+  summary TEXT NOT NULL,
+  findings_json TEXT NOT NULL CHECK (json_valid(findings_json) AND json_type(findings_json) = 'array'),
+  changed_files_json TEXT NOT NULL CHECK (json_valid(changed_files_json) AND json_type(changed_files_json) = 'array'),
+  verification_summary TEXT NOT NULL,
+  failed_checks_json TEXT NOT NULL CHECK (json_valid(failed_checks_json) AND json_type(failed_checks_json) = 'array'),
+  risk_factors_json TEXT NOT NULL CHECK (json_valid(risk_factors_json) AND json_type(risk_factors_json) = 'array'),
+  manual_review_checklist_json TEXT NOT NULL CHECK (json_valid(manual_review_checklist_json) AND json_type(manual_review_checklist_json) = 'array'),
+  acceptance_recommendation TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  FOREIGN KEY (task_run_id) REFERENCES task_runs(id) ON DELETE CASCADE
+);
+
+INSERT INTO risk_reports (
+  id,
+  task_run_id,
+  level,
+  summary,
+  findings_json,
+  changed_files_json,
+  verification_summary,
+  failed_checks_json,
+  risk_factors_json,
+  manual_review_checklist_json,
+  acceptance_recommendation,
+  created_at
+)
+SELECT
+  id,
+  task_run_id,
+  level,
+  summary,
+  CASE WHEN json_type(findings_json) = 'array' THEN findings_json ELSE '[]' END,
+  CASE WHEN json_type(changed_files_json) = 'array' THEN changed_files_json ELSE '[]' END,
+  verification_summary,
+  CASE WHEN json_type(failed_checks_json) = 'array' THEN failed_checks_json ELSE '[]' END,
+  CASE WHEN json_type(risk_factors_json) = 'array' THEN risk_factors_json ELSE '[]' END,
+  CASE WHEN json_type(manual_review_checklist_json) = 'array' THEN manual_review_checklist_json ELSE '[]' END,
+  acceptance_recommendation,
+  created_at
+FROM risk_reports_old;
+
+DROP TABLE risk_reports_old;
+
+CREATE INDEX IF NOT EXISTS idx_risk_reports_run ON risk_reports(task_run_id);
+CREATE INDEX IF NOT EXISTS idx_risk_reports_level ON risk_reports(level);
+
+INSERT INTO schema_migrations (version, applied_at)
+VALUES (6, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
+
+COMMIT;
+PRAGMA foreign_keys = ON;
+PRAGMA legacy_alter_table = OFF;
 `
   }
 ];
