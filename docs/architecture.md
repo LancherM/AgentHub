@@ -27,8 +27,8 @@ Current workspace boundaries:
   repository interfaces.
 - `packages/task-runner`: worktree management, shell execution, git safety,
   diff collection, verification command execution, risk report orchestration,
-  persisted run review aggregation, comparison summary generation, and task-run
-  orchestration.
+  persisted run review aggregation, automatic proposed-memory generation,
+  comparison summary generation, and task-run orchestration.
 - `apps/cli`: command parsing, interactive console input, command dispatch,
   output rendering, debug rendering, and manual run-event recording. The CLI is
   thin over local package APIs and does not own orchestration logic.
@@ -422,6 +422,14 @@ project repository. The context compiler reads approved memory only from that
 file provider and treats the default `# Approved Memory` heading as an empty
 placeholder; proposed and rejected database rows are not injected, and
 placeholder content does not become a context-pack memory section.
+After a task run is finalized and persisted as `succeeded`, the task runner
+reloads durable run evidence through repositories before generating memory
+proposals. The generator uses conservative signals such as persisted
+verification commands, diff changed-file metadata, and the latest risk report;
+it does not inspect transient adapter state or write to the approved-memory
+context store. Generated items are deduplicated by normalized project content,
+capped per task, and created only as `proposed` memory rows. A generation
+failure is reported as a run warning without changing the completed run status.
 
 Comparison reports are generated from persisted run data rather than process
 memory or UI state. `packages/task-runner` loads each selected run, diff

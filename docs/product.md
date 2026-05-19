@@ -211,9 +211,14 @@ The memory workflow is explicit and user-approved. `memory propose` creates a
 SQLite memory item in `proposed` state, `memory list` shows project memory
 items, `memory approve` marks an item approved and appends it to the Agent
 Hub-owned context store at `memory/approved.md`, and `memory reject` marks it
-rejected. Context builds read approved memory only from the context store and
-ignore the default `# Approved Memory` placeholder, so proposed, rejected, and
-empty placeholder memory items are not injected into future task briefs.
+rejected. Successful task runs may also generate a small number of
+conservative proposed memory items from persisted run evidence such as
+verification rows and diff metadata. These generated items are visible through
+the same `memory list` command and still start as `proposed`; Agent Hub does
+not auto-approve, auto-write, or inject them. Context builds read approved
+memory only from the context store and ignore the default `# Approved Memory`
+placeholder, so proposed, rejected, and empty placeholder memory items are not
+injected into future task briefs.
 
 The compare workflow generates a persisted comparison report for two runs of a
 task. `compare --task-id ... --baseline ... --candidate ...` compares changed
@@ -410,6 +415,5 @@ assets only; it does not deploy a hosted service, notarize the desktop app, or
 change Agent Hub's local-first product model.
 
 Deferred product capabilities include richer Codex/Claude structured event
-mapping, automatic memory proposal generation from completed runs, richer
-comparison scoring, and real desktop TaskRunner/adapter execution beyond the
-current fake-agent-backed desktop run path.
+mapping, richer comparison scoring, and real desktop TaskRunner/adapter
+execution beyond the current fake-agent-backed desktop run path.

@@ -297,6 +297,9 @@ pnpm lint
 
 ### 9. Add automatic memory proposal generation from completed runs
 
+Status: done
+Done: 2026-05-19 via codex/todo-9-auto-memory-proposals; PR: pending
+
 Prompt:
 
 You are working in `/Users/lan/agent-hub`. Add automatic memory proposal

@@ -191,6 +191,7 @@ export function createCliRuntime(
     runArtifactRepository,
     verificationResultRepository,
     riskReportRepository,
+    memoryItemRepository,
     runMetadataRepository
   });
 
