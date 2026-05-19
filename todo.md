@@ -439,7 +439,7 @@ pnpm lint
 ### 13. Clean stale historical docs
 
 Status: done
-Done: 2026-05-19 via codex/todo-13-clean-stale-docs; PR: pending
+Done: 2026-05-19 via codex/todo-13-clean-stale-docs; PR: https://github.com/LancherM/AgentHub/pull/65
 
 Prompt:
 
