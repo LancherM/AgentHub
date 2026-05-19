@@ -438,6 +438,9 @@ pnpm lint
 
 ### 13. Clean stale historical docs
 
+Status: done
+Done: 2026-05-19 via codex/todo-13-clean-stale-docs; PR: pending
+
 Prompt:
 
 You are working in `/Users/lan/agent-hub`. Clean or clearly mark stale

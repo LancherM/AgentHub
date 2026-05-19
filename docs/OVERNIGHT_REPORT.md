@@ -9,11 +9,20 @@ current repository and must not be used as the active implementation status.
 As of the current baseline, the code includes SQLite persistence, context
 init/show/build/export, git worktree task runs, fake/Codex/Claude Code
 adapters, verification, diff collection, safety scanning, risk report
-persistence, memory propose/list/approve/reject flows, comparison report
-generation, interactive CLI mode, and manual `run event add` recording.
+persistence, memory propose/list/approve/reject flows, automatic
+proposed-memory generation from completed runs, structured comparison reports
+with deterministic scoring, interactive CLI mode, manual `run event add`
+recording, the physical `apps/` plus `packages/` workspace split, and the first
+Electron + React desktop conversation console.
 
-Still deferred: desktop UI, physical `apps/` and `packages/` restructuring,
-automatic memory proposal generation, and richer comparison scoring.
+Still deferred: real desktop TaskRunner integration for Codex/Claude adapter
+execution, real verification configuration, approved-memory writeback
+confirmation, multi-agent comparison review, worktree lifecycle management, and
+explicit merge/apply workflows.
+
+The old `src/` file paths and "remaining gaps" below are retained only as
+historical evidence from the Night 1 through Night 3 implementation reports.
+They do not describe the current workspace layout or active product status.
 
 ## Night 3 Report
 
