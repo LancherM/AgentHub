@@ -29,9 +29,10 @@ Current workspace boundaries:
   diff collection, verification command execution, risk report orchestration,
   persisted run review aggregation, automatic proposed-memory generation,
   comparison summary generation, and task-run orchestration.
-- `apps/cli`: command parsing, interactive console input, command dispatch,
-  output rendering, debug rendering, and manual run-event recording. The CLI is
-  thin over local package APIs and does not own orchestration logic.
+- `apps/cli`: command parsing, stateless interactive console input, threaded
+  chat input, command dispatch, output rendering, debug rendering, and manual
+  run-event recording. The CLI is thin over local package APIs and does not
+  own orchestration logic.
 - `apps/desktop`: Electron main/preload plus React renderer for the first
   local desktop shell. Main process services call the existing local
   repositories and review helpers; the renderer calls only `window.agentHub`
@@ -93,7 +94,19 @@ ordered user/assistant/system/tool messages, optional run-card links, and JSON
 metadata separately from run evidence, so run events, diffs, verification,
 risks, and logs continue to live on the existing task-run model. The thread
 repository also updates thread metadata, including display title and
-`updatedAt`, when desktop appends durable messages.
+`updatedAt`, when desktop or CLI chat appends durable messages.
+
+`agent-hub chat` is the CLI path over the same durable conversation boundary.
+It resolves the local project, creates or resumes a conversation thread, writes
+one user message per natural-language line, runs the selected agent through the
+existing `TaskRunner`, writes a run-card message plus a bounded assistant
+message, and persists the generated conversation brief as run evidence.
+Leading `@fake`, `@codex`, and `@claude-code` prefixes choose the agent for one
+turn; otherwise chat uses the selected default agent. The chat slash commands
+are local thread controls only: `/thread new`, `/thread use <id>`, `/threads`,
+`/history`, and `/exit`. The existing `agent-hub run` command and bare
+interactive shell remain stateless and do not read or write conversation
+threads.
 
 `apps/desktop/electron/services/thread-service.ts` is the desktop conversation
 facade over those repositories. It parses safe `@fake`, `@codex`, and
