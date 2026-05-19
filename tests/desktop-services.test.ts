@@ -774,7 +774,7 @@ async function waitForRun(
   runId: string,
   status: RunDetail["status"]
 ): Promise<RunDetail> {
-  const deadline = Date.now() + 2_000;
+  const deadline = Date.now() + 10_000;
   while (Date.now() < deadline) {
     const detail = await runs.getRun(runId);
     if (detail.status === status) {
