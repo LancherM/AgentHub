@@ -7,8 +7,9 @@ The current verified rebuild slice supports registered projects, registered
 tasks, Agent Hub-owned context stores, context artifact build/export,
 deterministic fake-agent runs, process-backed Codex and Claude Code runs, and
 cross-process SQLite-backed run inspection, manual run-event recording, memory
-workflows, and comparison reports. Running `agent-hub` with no subcommand
-starts an interactive shell over the same local core services:
+workflows, comparison reports, and explicit threaded CLI chat/resume.
+Running `agent-hub` with no subcommand starts a stateless interactive shell
+over the same local core services:
 
 The implementation now uses the imported workspace shape for the CLI, local
 core packages, and first desktop shell. `apps/cli` contains CLI parsing,
@@ -36,6 +37,9 @@ agent-hub context export --project-root <path> --project-id <project-id> [--targ
 agent-hub [--db <path>] run --task <task-id> --agent fake|codex|claude-code
 agent-hub run [--repo <path>] [--workspace-base <path>] [--retain-on-failure] "@fake|@codex|@claude-code <task>"
 agent-hub [--db <path>] run event add --run-id <run-id> --type <type> --message <message>
+agent-hub [--db <path>] threads list
+agent-hub [--db <path>] threads show <thread-id>
+agent-hub [--db <path>] chat [--thread <thread-id>]
 agent-hub tasks list
 agent-hub runs list
 agent-hub runs events <run-id>
@@ -54,6 +58,21 @@ Interactive mode accepts natural language prompts plus `@fake`, `@codex`, and
 `/context`, `/context init`, `/clear`, `/exit`, and `/quit`. Interactive task
 execution calls the same task runner and repositories as command mode, so it
 does not duplicate orchestration logic or create a separate execution path.
+This bare interactive shell remains stateless: each prompt is dispatched as a
+single run and no conversation thread rows are created.
+
+`agent-hub chat` is the explicit persistent conversation mode. It creates or
+resumes a local SQLite-backed conversation thread, persists ordered user,
+run-card, and bounded assistant-output messages, and accepts `/thread new`,
+`/thread use <id>`, `/threads`, `/history`, and `/exit`. Natural-language chat
+turns use the selected default agent, while leading `@fake`, `@codex`, or
+`@claude-code` prefixes route that turn to a specific adapter. Each chat turn
+builds a bounded conversation brief from prior thread messages with the shared
+`ConversationContextBuilder`, injects it through `runtime_injection`, and
+persists the exact brief as a `conversation_brief` run artifact. Full logs,
+diffs, verification results, risks, and memory proposals remain on the run
+evidence model rather than in message bodies. `agent-hub run` remains
+stateless and does not require or create a thread.
 
 The context commands initialize and inspect a project context store, build a
 task-specific context pack and task brief, and explicitly export managed

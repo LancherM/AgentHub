@@ -6,10 +6,12 @@ import { parseAgentPrompt } from "@agent-hub/agent-adapters";
 import {
   appendApprovedMemory,
   buildContextArtifacts,
+  ConversationContextBuilder,
   exportContextToRepository,
   initContextStore,
   showContextStore,
-  type ContextBuildResult
+  type ContextBuildResult,
+  type ConversationContextMessage
 } from "@agent-hub/context-compiler";
 import {
   createId,
@@ -20,6 +22,8 @@ import {
   parseAgentKind,
   extractAgentFacingOutput,
   validateComparisonReport,
+  validateConversationMessage,
+  validateConversationThread,
   validateMemoryItem,
   validateProject,
   validateRunEvent,
@@ -27,7 +31,10 @@ import {
   type ContextDeliveryMode,
   type ContextStoreMode,
   type AgentKind,
+  type ConversationMessage,
+  type ConversationThread,
   type MemoryCategory,
+  type Project,
   type RunContextDeliveryMode,
   type RunEventType,
   type VerificationResult
@@ -47,6 +54,8 @@ import { createSqliteRepositories } from "@agent-hub/db";
 import {
   InMemoryAgentProfileRepository,
   InMemoryComparisonReportRepository,
+  InMemoryConversationMessageRepository,
+  InMemoryConversationThreadRepository,
   InMemoryMemoryItemRepository,
   InMemoryProjectRepository,
   InMemoryRiskReportRepository,
@@ -60,6 +69,8 @@ import {
   InMemoryVerificationResultRepository,
   type AgentProfileRepository,
   type ComparisonReportRepository,
+  type ConversationMessageRepository,
+  type ConversationThreadRepository,
   type MemoryItemRepository,
   type ProjectRepository,
   type RiskReportRepository,
@@ -86,6 +97,8 @@ export interface CliRuntime {
   taskRunRepository: TaskRunRepository;
   runEventRepository: RunEventRepository;
   runArtifactRepository: RunArtifactRepository;
+  conversationThreadRepository: ConversationThreadRepository;
+  conversationMessageRepository: ConversationMessageRepository;
   verificationResultRepository: VerificationResultRepository;
   riskReportRepository: RiskReportRepository;
   runMetadataRepository: RunMetadataRepository;
@@ -101,6 +114,8 @@ export interface CliRuntimeDependencies extends TaskRunnerDependencies {
   storageMode?: "sqlite" | "memory";
   projectRepository?: ProjectRepository;
   agentProfileRepository?: AgentProfileRepository;
+  conversationThreadRepository?: ConversationThreadRepository;
+  conversationMessageRepository?: ConversationMessageRepository;
   memoryItemRepository?: MemoryItemRepository;
   comparisonReportRepository?: ComparisonReportRepository;
   skillRepository?: SkillRepository;
@@ -117,6 +132,8 @@ export function createCliRuntime(
     dependencies.taskRunRepository !== undefined ||
     dependencies.runEventRepository !== undefined ||
     dependencies.runArtifactRepository !== undefined ||
+    dependencies.conversationThreadRepository !== undefined ||
+    dependencies.conversationMessageRepository !== undefined ||
     dependencies.verificationResultRepository !== undefined ||
     dependencies.riskReportRepository !== undefined ||
     dependencies.runMetadataRepository !== undefined ||
@@ -155,6 +172,14 @@ export function createCliRuntime(
     dependencies.runArtifactRepository ??
     sqliteRepositories?.runArtifactRepository ??
     new InMemoryRunArtifactRepository();
+  const conversationThreadRepository =
+    dependencies.conversationThreadRepository ??
+    sqliteRepositories?.conversationThreadRepository ??
+    new InMemoryConversationThreadRepository();
+  const conversationMessageRepository =
+    dependencies.conversationMessageRepository ??
+    sqliteRepositories?.conversationMessageRepository ??
+    new InMemoryConversationMessageRepository();
   const verificationResultRepository =
     dependencies.verificationResultRepository ??
     sqliteRepositories?.verificationResultRepository ??
@@ -202,6 +227,8 @@ export function createCliRuntime(
     taskRunRepository,
     runEventRepository,
     runArtifactRepository,
+    conversationThreadRepository,
+    conversationMessageRepository,
     verificationResultRepository,
     riskReportRepository,
     runMetadataRepository,
@@ -301,6 +328,26 @@ export async function main(
     return runCommand(rest, io, cwd, activeRuntime, debug);
   }
 
+  if (command === "threads" && rest[0] === "list") {
+    return listThreads(io, activeRuntime);
+  }
+
+  if (command === "threads" && rest[0] === "show") {
+    return showThread(rest.slice(1), io, activeRuntime);
+  }
+
+  if (command === "chat") {
+    return runChat({
+      io,
+      cwd,
+      runtime: activeRuntime,
+      projectRoot: global.projectRoot ?? cwd,
+      selectedAgent: global.agentKind ?? "fake",
+      debug,
+      args: rest
+    });
+  }
+
   if (command === "tasks" && rest[0] === "list") {
     return listTasks(rest.slice(1), io, activeRuntime);
   }
@@ -368,6 +415,9 @@ export function helpText(): string {
     "  agent-hub [--db <path>] run --task <task-id> --agent fake|codex|claude-code [--workspace-base <path>]",
     "  agent-hub [--db <path>] run [--repo <path>] [--workspace-base <path>] [--retain-on-failure] \"@fake|@codex|@claude-code <task>\"",
     "  agent-hub [--db <path>] run event add --run-id <run-id> --type <type> --message <message>",
+    "  agent-hub [--db <path>] threads list",
+    "  agent-hub [--db <path>] threads show <thread-id>",
+    "  agent-hub [--db <path>] chat [--thread <thread-id>]",
     "  agent-hub runs list",
     "  agent-hub runs events <run-id>",
     "  agent-hub runs diff <run-id> [--stat|--patch] [--full]",
@@ -595,6 +645,598 @@ async function resolveInteractiveProjectId(
 ): Promise<string> {
   const project = await runtime.projectRepository.getByRootPath(path.resolve(projectRoot));
   return project?.id ?? "adhoc_project";
+}
+
+export interface ChatOptions {
+  io?: CliIO;
+  cwd?: string;
+  runtime?: CliRuntime;
+  projectRoot?: string;
+  selectedAgent?: AgentKind;
+  debug?: boolean;
+  args?: string[];
+  input?: AsyncIterable<string>;
+}
+
+interface ParsedChatArgs {
+  threadId?: string;
+  workspaceBasePath?: string;
+  retainOnFailure: boolean;
+  dryRun: boolean;
+  debug: boolean;
+}
+
+interface ChatState {
+  projectRoot: string;
+  project: Project;
+  selectedAgent: AgentKind;
+  threadId?: string;
+  workspaceBasePath?: string;
+  retainOnFailure: boolean;
+  dryRun: boolean;
+  debug: boolean;
+}
+
+export async function runChat(options: ChatOptions = {}): Promise<number> {
+  const io = options.io ?? {
+    stdin: process.stdin,
+    stdout: process.stdout,
+    stderr: process.stderr
+  };
+  const cwd = options.cwd ?? process.cwd();
+  const runtime = options.runtime ?? getDefaultRuntime();
+  let parsed: ParsedChatArgs;
+  let state: ChatState;
+
+  try {
+    parsed = parseChatArgs(options.args ?? [], cwd);
+    const projectRoot = path.resolve(cwd, options.projectRoot ?? cwd);
+    const project = parsed.threadId
+      ? await projectForThread(runtime, parsed.threadId)
+      : await ensureProjectForRoot(runtime, projectRoot);
+    state = {
+      projectRoot: project.rootPath,
+      project,
+      selectedAgent: options.selectedAgent ?? "fake",
+      threadId: parsed.threadId,
+      workspaceBasePath: parsed.workspaceBasePath,
+      retainOnFailure: parsed.retainOnFailure,
+      dryRun: parsed.dryRun,
+      debug: options.debug === true || parsed.debug
+    };
+  } catch (error) {
+    io.stderr.write(`error: ${error instanceof Error ? error.message : String(error)}\n`);
+    return 1;
+  }
+
+  const input = options.input ?? readInteractiveLines(io.stdin ?? process.stdin);
+  io.stdout.write(renderChatBanner(state));
+  io.stdout.write(chatPrompt(state));
+
+  for await (const rawLine of input) {
+    const line = rawLine.trim();
+    if (!line) {
+      io.stdout.write(chatPrompt(state));
+      continue;
+    }
+    if (line.startsWith("/")) {
+      const action = await handleChatSlash(line, io, runtime, state);
+      if (action === "exit") {
+        return 0;
+      }
+      io.stdout.write(chatPrompt(state));
+      continue;
+    }
+
+    try {
+      const exitCode = await runChatTurn(line, io, runtime, state);
+      if (exitCode !== 0) {
+        io.stderr.write(`chat run failed with exit code ${exitCode}\n`);
+      }
+    } catch (error) {
+      io.stderr.write(`error: ${error instanceof Error ? error.message : String(error)}\n`);
+    }
+    io.stdout.write(chatPrompt(state));
+  }
+
+  return 0;
+}
+
+async function projectForThread(
+  runtime: CliRuntime,
+  threadId: string
+): Promise<Project> {
+  const thread = await requireChatThread(runtime, threadId);
+  const project = await runtime.projectRepository.get(thread.projectId);
+  if (!project) {
+    throw new Error(`project ${thread.projectId} for thread ${threadId} not found`);
+  }
+  return project;
+}
+
+function parseChatArgs(args: string[], cwd: string): ParsedChatArgs {
+  let threadId: string | undefined;
+  let workspaceBasePath: string | undefined;
+  let retainOnFailure = false;
+  let dryRun = false;
+  let debug = false;
+
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if (arg === "--thread") {
+      const value = args[index + 1];
+      if (!value) {
+        throw new Error("--thread requires an id");
+      }
+      threadId = value;
+      index += 1;
+      continue;
+    }
+    if (arg === "--workspace-base") {
+      const value = args[index + 1];
+      if (!value) {
+        throw new Error("--workspace-base requires a path");
+      }
+      workspaceBasePath = path.resolve(cwd, value);
+      index += 1;
+      continue;
+    }
+    if (arg === "--retain-on-failure") {
+      retainOnFailure = true;
+      continue;
+    }
+    if (arg === "--dry-run") {
+      dryRun = true;
+      continue;
+    }
+    if (arg === "--debug") {
+      debug = true;
+      continue;
+    }
+    throw new Error(`unknown chat argument ${arg}`);
+  }
+
+  return { threadId, workspaceBasePath, retainOnFailure, dryRun, debug };
+}
+
+function renderChatBanner(state: ChatState): string {
+  return [
+    "Agent Hub chat",
+    `project: ${state.projectRoot}`,
+    `thread: ${state.threadId ?? "new"}`,
+    `agent: ${state.selectedAgent}`,
+    "type /exit to quit",
+    ""
+  ].join("\n");
+}
+
+function chatPrompt(state: ChatState): string {
+  return `agent-hub-chat[${state.selectedAgent}][${state.threadId ?? "new"}]> `;
+}
+
+async function handleChatSlash(
+  line: string,
+  io: CliIO,
+  runtime: CliRuntime,
+  state: ChatState
+): Promise<"continue" | "exit"> {
+  const [command, ...rest] = line.split(/\s+/);
+  if (command === "/thread" && rest[0] === "new") {
+    const title = rest.slice(1).join(" ").trim();
+    const thread = await createChatThread(runtime, state.project, title || "New Chat");
+    state.threadId = thread.id;
+    io.stdout.write(`created thread: ${thread.id}\n`);
+    return "continue";
+  }
+  if (command === "/thread" && rest[0] === "use") {
+    const threadId = rest[1];
+    if (!threadId) {
+      io.stderr.write("error: /thread use requires an id\n");
+      return "continue";
+    }
+    try {
+      const thread = await selectChatThread(runtime, state, threadId);
+      io.stdout.write(`using thread: ${thread.id}\n`);
+    } catch (error) {
+      io.stderr.write(`error: ${error instanceof Error ? error.message : String(error)}\n`);
+    }
+    return "continue";
+  }
+  if (command === "/threads") {
+    await renderChatThreads(io, runtime);
+    return "continue";
+  }
+  if (command === "/history") {
+    if (!state.threadId) {
+      io.stdout.write("No active thread.\n");
+      return "continue";
+    }
+    await renderChatThreadDetail(io, runtime, state.threadId);
+    return "continue";
+  }
+  if (command === "/exit") {
+    io.stdout.write("Exiting Agent Hub chat.\n");
+    return "exit";
+  }
+  io.stderr.write(`error: unknown chat command ${command}\n`);
+  return "continue";
+}
+
+async function runChatTurn(
+  rawLine: string,
+  io: CliIO,
+  runtime: CliRuntime,
+  state: ChatState
+): Promise<number> {
+  const parsed = parseAgentPrompt(rawLine, state.selectedAgent);
+  const prompt = parsed.prompt.trim();
+  if (!prompt) {
+    throw new Error("chat prompt is required");
+  }
+
+  const thread = state.threadId
+    ? await requireChatThread(runtime, state.threadId)
+    : await createChatThread(runtime, state.project, titleFromPrompt(prompt));
+  state.threadId = thread.id;
+  const priorMessages = await runtime.conversationMessageRepository.listByThreadId(thread.id);
+  const userMessage = await appendChatMessage(runtime, thread.id, {
+    role: "user",
+    kind: "text",
+    content: prompt,
+    metadata: {
+      source: "cli_chat",
+      mentions: [parsed.agentKind]
+    }
+  });
+  const currentThread = await retitleThreadFromPrompt(runtime, thread, prompt);
+  const conversationBrief = await buildChatConversationBrief({
+    runtime,
+    thread: currentThread,
+    currentTurn: prompt,
+    currentMessageCreatedAt: userMessage.createdAt,
+    agentKind: parsed.agentKind,
+    priorMessages
+  });
+  const runInput: RunTaskInput = {
+    projectRoot: state.projectRoot,
+    projectId: state.project.id,
+    title: titleFromPrompt(prompt),
+    taskPrompt: prompt,
+    agentKind: parsed.agentKind,
+    deliveryMode: "runtime_injection",
+    conversationBrief,
+    workspaceBasePath: state.workspaceBasePath,
+    workspaceCleanupPolicy: state.retainOnFailure ? "retain_on_failure" : undefined,
+    dryRun: state.dryRun
+  };
+
+  let result: CliRunResult;
+  try {
+    result = await runtime.taskRunner.run(runInput);
+  } catch (error) {
+    await appendChatMessage(runtime, currentThread.id, {
+      role: "system",
+      kind: "text",
+      content: `@${parsed.agentKind} could not start: ${errorMessage(error)}`,
+      metadata: { source: "cli_chat" }
+    });
+    throw error;
+  }
+
+  await appendChatMessage(runtime, currentThread.id, {
+    role: "tool",
+    kind: "run_card",
+    content: `@${parsed.agentKind} ${result.run.status}`,
+    agentKind: result.run.agentKind,
+    runId: result.run.id,
+    status: result.run.status,
+    metadata: {
+      source: "cli_chat",
+      agentKind: parsed.agentKind
+    }
+  });
+  await appendChatMessage(runtime, currentThread.id, {
+    role: "assistant",
+    kind: "text",
+    content: chatAssistantContent(result),
+    agentKind: result.run.agentKind,
+    runId: result.run.id,
+    status: result.run.status,
+    metadata: {
+      source: "cli_chat",
+      assistantOutput: true,
+      terminalStatus: result.run.status
+    }
+  });
+
+  io.stdout.write(renderAgentOutput(result));
+  if (state.debug) {
+    io.stdout.write(renderRunDebug(result, runInput, "runtime_injection"));
+  }
+  return result.ok ? 0 : 1;
+}
+
+async function buildChatConversationBrief(input: {
+  runtime: CliRuntime;
+  thread: ConversationThread;
+  currentTurn: string;
+  currentMessageCreatedAt: string;
+  agentKind: AgentKind;
+  priorMessages: ConversationMessage[];
+}) {
+  const assistantRunIds = new Set(
+    input.priorMessages
+      .filter((message) => message.role === "assistant" && message.runId)
+      .map((message) => message.runId as string)
+  );
+  const messages = await Promise.all(
+    input.priorMessages
+      .filter(
+        (message) =>
+          !(message.kind === "run_card" && message.runId && assistantRunIds.has(message.runId))
+      )
+      .map((message) => toChatConversationContextMessage(input.runtime, message))
+  );
+  return new ConversationContextBuilder().build({
+    thread: {
+      id: input.thread.id,
+      title: input.thread.title,
+      projectId: input.thread.projectId
+    },
+    currentTurn: {
+      content: input.currentTurn,
+      agentId: input.agentKind,
+      contextMode: "auto",
+      deliveryMode: "runtime_injection",
+      createdAt: input.currentMessageCreatedAt
+    },
+    messages,
+    projectContextReferences: [
+      `project:${input.thread.projectId}`,
+      "Agent Hub-owned project context store",
+      "Approved memory only; thread context is not promoted automatically"
+    ]
+  });
+}
+
+async function toChatConversationContextMessage(
+  runtime: CliRuntime,
+  message: ConversationMessage
+): Promise<ConversationContextMessage> {
+  if (message.kind === "run_card") {
+    return {
+      id: message.id,
+      role: "tool",
+      kind: "run_summary",
+      content: message.content,
+      summary: message.runId
+        ? await chatRunSummaryForConversation(runtime, message.runId)
+        : undefined,
+      agentId: message.agentKind,
+      runId: message.runId,
+      status: message.status,
+      createdAt: message.createdAt,
+      metadata: message.metadata
+    };
+  }
+  return {
+    id: message.id,
+    role: message.role,
+    kind: message.kind,
+    content: message.content,
+    agentId: message.agentKind,
+    runId: message.runId,
+    status: message.status,
+    createdAt: message.createdAt,
+    metadata: message.metadata
+  };
+}
+
+async function chatRunSummaryForConversation(
+  runtime: CliRuntime,
+  runId: string
+): Promise<string | undefined> {
+  const run = await runtime.taskRunRepository.get(runId);
+  if (!run) {
+    return undefined;
+  }
+  const task = await runtime.taskRepository.get(run.taskId);
+  return `@${run.agentKind} ${run.status}: ${task?.title ?? run.taskId}`;
+}
+
+async function appendChatMessage(
+  runtime: CliRuntime,
+  threadId: string,
+  input: Omit<ConversationMessage, "id" | "threadId" | "sequence" | "createdAt">
+): Promise<ConversationMessage> {
+  const message = await runtime.conversationMessageRepository.create(
+    validateConversationMessage({
+      id: createId("message"),
+      threadId,
+      sequence: await runtime.conversationMessageRepository.countByThreadId(threadId),
+      createdAt: nowIso(),
+      ...input
+    })
+  );
+  const thread = await runtime.conversationThreadRepository.get(threadId);
+  if (thread) {
+    await runtime.conversationThreadRepository.update(
+      validateConversationThread({
+        ...thread,
+        updatedAt: message.createdAt
+      })
+    );
+  }
+  return message;
+}
+
+async function createChatThread(
+  runtime: CliRuntime,
+  project: Project,
+  title: string
+): Promise<ConversationThread> {
+  const now = nowIso();
+  return runtime.conversationThreadRepository.create(
+    validateConversationThread({
+      id: createId("thread"),
+      projectId: project.id,
+      title: titleFromPrompt(title) || "New Chat",
+      metadata: { source: "cli_chat" },
+      createdAt: now,
+      updatedAt: now
+    })
+  );
+}
+
+async function retitleThreadFromPrompt(
+  runtime: CliRuntime,
+  thread: ConversationThread,
+  prompt: string
+): Promise<ConversationThread> {
+  if (thread.title !== "New Chat") {
+    return thread;
+  }
+  const title = titleFromPrompt(prompt);
+  if (!title || title === thread.title) {
+    return thread;
+  }
+  return runtime.conversationThreadRepository.update(
+    validateConversationThread({
+      ...thread,
+      title,
+      updatedAt: nowIso()
+    })
+  );
+}
+
+async function selectChatThread(
+  runtime: CliRuntime,
+  state: ChatState,
+  threadId: string
+): Promise<ConversationThread> {
+  const thread = await requireChatThread(runtime, threadId);
+  const project = await runtime.projectRepository.get(thread.projectId);
+  if (!project) {
+    throw new Error(`project ${thread.projectId} for thread ${threadId} not found`);
+  }
+  state.threadId = thread.id;
+  state.project = project;
+  state.projectRoot = project.rootPath;
+  return thread;
+}
+
+async function requireChatThread(
+  runtime: CliRuntime,
+  threadId: string
+): Promise<ConversationThread> {
+  const thread = await runtime.conversationThreadRepository.get(threadId);
+  if (!thread) {
+    throw new Error(`thread ${threadId} not found`);
+  }
+  return thread;
+}
+
+async function listThreads(
+  io: CliIO,
+  runtime: CliRuntime
+): Promise<number> {
+  await renderChatThreads(io, runtime);
+  return 0;
+}
+
+async function showThread(
+  args: string[],
+  io: CliIO,
+  runtime: CliRuntime
+): Promise<number> {
+  const threadId = args[0];
+  if (!threadId) {
+    io.stderr.write("error: thread id is required\n");
+    return 1;
+  }
+  try {
+    await renderChatThreadDetail(io, runtime, threadId);
+    return 0;
+  } catch (error) {
+    io.stderr.write(`error: ${error instanceof Error ? error.message : String(error)}\n`);
+    return 1;
+  }
+}
+
+async function renderChatThreads(
+  io: CliIO,
+  runtime: CliRuntime
+): Promise<void> {
+  const threads = (await runtime.conversationThreadRepository.list()).sort((left, right) =>
+    right.updatedAt.localeCompare(left.updatedAt)
+  );
+  if (threads.length === 0) {
+    io.stdout.write("No threads found.\n");
+    return;
+  }
+  for (const thread of threads) {
+    io.stdout.write(
+      `${thread.id}\t${thread.projectId}\t${thread.updatedAt}\t${thread.title}\n`
+    );
+  }
+}
+
+async function renderChatThreadDetail(
+  io: CliIO,
+  runtime: CliRuntime,
+  threadId: string
+): Promise<void> {
+  const thread = await requireChatThread(runtime, threadId);
+  const messages = await runtime.conversationMessageRepository.listByThreadId(threadId);
+  io.stdout.write(
+    [
+      `Thread ${thread.id}`,
+      `title: ${thread.title}`,
+      `project_id: ${thread.projectId}`,
+      `created_at: ${thread.createdAt}`,
+      `updated_at: ${thread.updatedAt}`,
+      `messages: ${messages.length}`,
+      ...messages.map(formatThreadMessageLine),
+      ""
+    ].join("\n")
+  );
+}
+
+function formatThreadMessageLine(message: ConversationMessage): string {
+  const base = [
+    message.sequence,
+    message.role,
+    message.kind,
+    message.agentKind ?? "-",
+    message.runId ?? "-",
+    message.status ?? "-"
+  ].join("\t");
+  return `${base}\t${inlineText(firstLine(message.content))}`;
+}
+
+function chatAssistantContent(result: CliRunResult): string {
+  const extracted = extractAgentOutput(result).trim();
+  const content =
+    extracted ||
+    result.error ||
+    (result.ok
+      ? `@${result.run.agentKind} completed.`
+      : `@${result.run.agentKind} failed.`);
+  return truncateText(content, 2_000);
+}
+
+function titleFromPrompt(prompt: string): string {
+  const firstPromptLine = firstLine(prompt);
+  if (!firstPromptLine) {
+    return "New Chat";
+  }
+  return firstPromptLine.length > 60
+    ? `${firstPromptLine.slice(0, 57)}...`
+    : firstPromptLine;
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 async function addProject(
@@ -830,10 +1472,18 @@ async function withAdhocProject(
     return runInput;
   }
 
-  const projectRoot = path.resolve(runInput.projectRoot);
+  const project = await ensureProjectForRoot(runtime, runInput.projectRoot);
+  return { ...runInput, projectId: project.id };
+}
+
+async function ensureProjectForRoot(
+  runtime: CliRuntime,
+  rootPath: string
+): Promise<Project> {
+  const projectRoot = path.resolve(rootPath);
   const existingForRoot = await runtime.projectRepository.getByRootPath(projectRoot);
   if (existingForRoot) {
-    return { ...runInput, projectId: existingForRoot.id };
+    return existingForRoot;
   }
 
   let projectId = "adhoc_project";
@@ -843,7 +1493,7 @@ async function withAdhocProject(
   }
 
   const now = nowIso();
-  await runtime.projectRepository.create(
+  return runtime.projectRepository.create(
     validateProject({
       id: projectId,
       name: path.basename(projectRoot) || projectId,
@@ -852,7 +1502,6 @@ async function withAdhocProject(
       updatedAt: now
     })
   );
-  return { ...runInput, projectId };
 }
 
 function adhocProjectIdForRoot(projectRoot: string): string {

@@ -947,6 +947,192 @@ describe("CLI", () => {
     expect(output.join("")).toContain("Exiting Agent Hub.");
   });
 
+  it("lists and shows persisted CLI conversation threads", async () => {
+    const projectRoot = await createTestDirectory("cli-threads-project");
+    const runtime = createCliRuntime({ storageMode: "memory" });
+    await runtime.projectRepository.create({
+      id: "project_threads",
+      name: "Threads Project",
+      rootPath: projectRoot,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z"
+    });
+    await runtime.conversationThreadRepository.create({
+      id: "thread_cli",
+      projectId: "project_threads",
+      title: "CLI thread",
+      createdAt: "2026-01-01T00:00:01.000Z",
+      updatedAt: "2026-01-01T00:00:02.000Z"
+    });
+    await runtime.conversationMessageRepository.create({
+      id: "message_cli_user",
+      threadId: "thread_cli",
+      sequence: 0,
+      role: "user",
+      kind: "text",
+      content: "First CLI message",
+      createdAt: "2026-01-01T00:00:02.000Z"
+    });
+    const output: string[] = [];
+    const errors: string[] = [];
+    const io = {
+      stdout: { write: (chunk: string) => { output.push(chunk); return true; } },
+      stderr: { write: (chunk: string) => { errors.push(chunk); return true; } }
+    };
+
+    await expect(main(["threads", "list"], io, projectRoot, runtime)).resolves.toBe(0);
+    await expect(
+      main(["threads", "show", "thread_cli"], io, projectRoot, runtime)
+    ).resolves.toBe(0);
+
+    const rendered = output.join("");
+    expect(errors.join("")).toBe("");
+    expect(rendered).toContain("thread_cli\tproject_threads");
+    expect(rendered).toContain("CLI thread");
+    expect(rendered).toContain("Thread thread_cli");
+    expect(rendered).toContain("messages: 1");
+    expect(rendered).toContain("0\tuser\ttext\t-\t-\t-\tFirst CLI message");
+  });
+
+  it("persists CLI chat turns and injects prior thread context", async () => {
+    const projectRoot = await createTestDirectory("cli-chat-project");
+    const runRoot = path.join(await createTestDirectory("cli-chat-runs"), "runs");
+    const runtime = createCliRuntime({
+      storageMode: "memory",
+      defaultRunRoot: runRoot,
+      workspaceManager: new TestWorkspaceManager(runRoot),
+      diffCollector: new StaticDiffCollector(),
+      verificationRunner: new VerificationRunner(new MockShellExecutor()),
+      idGenerator: new SequenceIdGenerator(),
+      clock: new FixedClock("2026-01-01T00:00:00.000Z")
+    });
+    const output: string[] = [];
+    const errors: string[] = [];
+    const io = {
+      stdin: Readable.from([
+        "first thread-aware prompt\n",
+        "second thread-aware prompt\n",
+        "/history\n",
+        "/exit\n"
+      ]),
+      stdout: { write: (chunk: string) => { output.push(chunk); return true; } },
+      stderr: { write: (chunk: string) => { errors.push(chunk); return true; } }
+    };
+
+    await expect(main(["chat"], io, projectRoot, runtime)).resolves.toBe(0);
+
+    const threads = await runtime.conversationThreadRepository.list();
+    expect(threads).toHaveLength(1);
+    const messages = await runtime.conversationMessageRepository.listByThreadId(
+      threads[0]?.id ?? ""
+    );
+    expect(messages.map((message) => message.sequence)).toEqual([0, 1, 2, 3, 4, 5]);
+    expect(messages.filter((message) => message.role === "user").map((message) => message.content))
+      .toEqual(["first thread-aware prompt", "second thread-aware prompt"]);
+    expect(messages.filter((message) => message.kind === "run_card")).toHaveLength(2);
+    expect(messages.filter((message) => message.role === "assistant")).toHaveLength(2);
+    expect(messages.find((message) => message.role === "assistant")?.content)
+      .toContain("# Fake Agent Output");
+
+    const secondRunId = messages.filter((message) => message.kind === "run_card")[1]?.runId;
+    expect(secondRunId).toBeTruthy();
+    const brief = await runtime.runArtifactRepository.getLatestByRunIdAndKind(
+      secondRunId ?? "",
+      "conversation_brief"
+    );
+    expect(brief?.content).toContain("second thread-aware prompt");
+    expect(brief?.content).toContain("first thread-aware prompt");
+    expect(brief?.content).toContain("# Fake Agent Output");
+    expect(errors.join("")).toBe("");
+    expect(output.join("")).toContain("Agent Hub chat");
+    expect(output.join("")).toContain("Thread ");
+    expect(output.join("")).toContain("Exiting Agent Hub chat.");
+  });
+
+  it("resumes a CLI chat thread from a later runtime using the same SQLite database", async () => {
+    const projectRoot = await createTestDirectory("cli-chat-resume-project");
+    const runRoot = path.join(await createTestDirectory("cli-chat-resume-runs"), "runs");
+    const databasePath = path.join(
+      await createTestDirectory("cli-chat-resume-db"),
+      "agent-hub.sqlite"
+    );
+    const createRuntime = () =>
+      createCliRuntime({
+        sqliteDatabasePath: databasePath,
+        defaultRunRoot: runRoot,
+        workspaceManager: new TestWorkspaceManager(runRoot),
+        diffCollector: new StaticDiffCollector(),
+        verificationRunner: new VerificationRunner(new MockShellExecutor())
+      });
+    const firstOutput: string[] = [];
+    const firstErrors: string[] = [];
+    const firstRuntime = createRuntime();
+    const firstIo = {
+      stdin: Readable.from(["resume seed prompt\n", "/exit\n"]),
+      stdout: { write: (chunk: string) => { firstOutput.push(chunk); return true; } },
+      stderr: { write: (chunk: string) => { firstErrors.push(chunk); return true; } }
+    };
+
+    await expect(main(["chat"], firstIo, projectRoot, firstRuntime)).resolves.toBe(0);
+    const firstThreads = await firstRuntime.conversationThreadRepository.list();
+    const threadId = firstThreads[0]?.id ?? "";
+    expect(threadId).toBeTruthy();
+
+    const secondOutput: string[] = [];
+    const secondErrors: string[] = [];
+    const secondRuntime = createRuntime();
+    const secondIo = {
+      stdin: Readable.from(["resume follow-up prompt\n", "/exit\n"]),
+      stdout: { write: (chunk: string) => { secondOutput.push(chunk); return true; } },
+      stderr: { write: (chunk: string) => { secondErrors.push(chunk); return true; } }
+    };
+    await expect(
+      main(["chat", "--thread", threadId], secondIo, projectRoot, secondRuntime)
+    ).resolves.toBe(0);
+
+    const repositories = createSqliteRepositories({ databasePath });
+    const messages = await repositories.conversationMessageRepository.listByThreadId(threadId);
+    expect(messages.filter((message) => message.role === "user").map((message) => message.content))
+      .toEqual(["resume seed prompt", "resume follow-up prompt"]);
+    const secondRunId = messages.filter((message) => message.kind === "run_card")[1]?.runId;
+    const brief = await repositories.runArtifactRepository.getLatestByRunIdAndKind(
+      secondRunId ?? "",
+      "conversation_brief"
+    );
+    expect(brief?.content).toContain("resume seed prompt");
+    expect(brief?.content).toContain("resume follow-up prompt");
+    expect(firstErrors.join("")).toBe("");
+    expect(secondErrors.join("")).toBe("");
+    expect(secondOutput.join("")).toContain(`thread: ${threadId}`);
+  });
+
+  it("keeps stateless run commands out of the conversation thread store", async () => {
+    const projectRoot = await createTestDirectory("cli-stateless-run-project");
+    const runRoot = path.join(await createTestDirectory("cli-stateless-run-runs"), "runs");
+    const runtime = createCliRuntime({
+      storageMode: "memory",
+      defaultRunRoot: runRoot,
+      workspaceManager: new TestWorkspaceManager(runRoot),
+      diffCollector: new StaticDiffCollector(),
+      verificationRunner: new VerificationRunner(new MockShellExecutor()),
+      idGenerator: new SequenceIdGenerator(),
+      clock: new FixedClock("2026-01-01T00:00:00.000Z")
+    });
+    const output: string[] = [];
+    const errors: string[] = [];
+    const io = {
+      stdout: { write: (chunk: string) => { output.push(chunk); return true; } },
+      stderr: { write: (chunk: string) => { errors.push(chunk); return true; } }
+    };
+
+    await expect(main(["run", "@fake", "stateless task"], io, projectRoot, runtime))
+      .resolves.toBe(0);
+
+    await expect(runtime.conversationThreadRepository.list()).resolves.toEqual([]);
+    expect(errors.join("")).toBe("");
+    expect(output.join("")).toContain("# Fake Agent Output");
+  });
+
   it("renders opt-in debug output without changing run results", async () => {
     const projectRoot = await createTestDirectory("cli-debug-project");
     const runRoot = path.join(await createTestDirectory("cli-debug-runs"), "runs");
