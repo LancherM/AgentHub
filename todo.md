@@ -258,7 +258,7 @@ pnpm lint
 ### 8. Decide first-class tool-call event support
 
 Status: done
-Done: 2026-05-19 via codex/todo-8-tool-event-scope; PR: pending
+Done: 2026-05-19 via codex/todo-8-tool-event-scope; PR: https://github.com/LancherM/AgentHub/pull/52
 
 Prompt:
 
