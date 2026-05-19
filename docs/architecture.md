@@ -114,11 +114,14 @@ repositories, the desktop thread service separated from task runs, and a
 package-level conversation context builder. The builder runs outside the
 renderer, applies deterministic message-count and character budgets, and
 produces a conversation brief that is injected through the runtime context
-bundle and persisted as a `conversation_brief` run artifact. Project context,
-thread context, current-turn context, and run context remain distinct layers
-so thread-local decisions do not automatically promote into project approved
-memory. Durable assistant-message promotion from completed run output remains
-the next staged phase.
+bundle and persisted as a `conversation_brief` run artifact. A zero recent
+message budget includes no prior thread messages, and desktop first-turn runs
+reload the retitled thread before building the brief so pre-created empty
+threads do not inject stale `New Chat` titles. Project context, thread context,
+current-turn context, and run context remain distinct layers so thread-local
+decisions do not automatically promote into project approved memory. Durable
+assistant-message promotion from completed run output remains the next staged
+phase.
 
 The service maps desktop-facing agent IDs (`fake`, `codex`, `claude`) and run
 statuses (`queued`, `running`, `verifying`, `completed`, `failed`,
@@ -296,15 +299,18 @@ skill must declare both `name` and `description`; the context compiler uses the
 declared values in context bundles and skips empty or malformed skill files
 with deterministic warnings. Export and worktree overlay flows reuse the same
 parser, so malformed skills are not copied into `.claude/skills` or
-`.agents/skills`.
+`.agents/skills`. Export and overlay paths use the context-store directory id,
+not the frontmatter display name, so a malformed-looking display name cannot
+collapse paths outside the intended skill folder.
 
 Repo-local context stores remain opt-in through `--mode repo_local`. Repository
 export remains opt-in through `context export --target repo --dry-run` or
 `context export --target repo --write`; dry-run produces previews without
 writing, while write mode updates managed blocks in `AGENTS.md` and optionally
 `CLAUDE.md`. The CLI and context-compiler export boundary only accept the
-`repo` target, and omitting `--target` keeps that repo-export default for
-compatibility. Approved memory is part of the rendered context store export
+`repo` target, repeated `--target` flags are rejected, and omitting `--target`
+keeps that repo-export default for compatibility. Approved memory is part of
+the rendered context store export
 when `memory/approved.md` contains non-placeholder content; the
 `--include-approved-memory` flag does not broaden the boundary and only makes
 that default explicit in command output. Managed block replacement preserves

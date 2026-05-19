@@ -115,6 +115,26 @@ describe("ContextCompiler", () => {
     });
   });
 
+  it("honors a zero recent-message conversation budget", () => {
+    const brief = new ConversationContextBuilder().build({
+      thread: { id: "thread_zero_budget", title: "Zero budget", projectId: "project_1" },
+      currentTurn: { content: "Current prompt", agentId: "fake" },
+      messages: [
+        {
+          id: "message_1",
+          role: "user",
+          content: "Prior prompt should be omitted"
+        }
+      ],
+      budget: { maxRecentMessages: 0 }
+    });
+
+    expect(brief.metadata.includedMessageCount).toBe(0);
+    expect(brief.metadata.omittedMessageCount).toBe(1);
+    expect(brief.renderedContent).toContain("No prior thread messages were included.");
+    expect(brief.renderedContent).not.toContain("Prior prompt should be omitted");
+  });
+
   it("omits noisy lifecycle, log, verification, diff, and risk messages", () => {
     const brief = new ConversationContextBuilder().build({
       thread: { id: "thread_noise", title: "Noise" },
@@ -747,6 +767,67 @@ describe("ContextCompiler", () => {
     expect(preview.changedFiles).toContain(".agents/skills/review/SKILL.md");
     expect(preview.changedFiles).not.toContain(".claude/skills/legacy/SKILL.md");
     expect(preview.changedFiles).not.toContain(".agents/skills/legacy/SKILL.md");
+  });
+
+  it("uses context-store skill directory names for export paths", async () => {
+    const worktreePath = await createTestDirectory("context-overlay-safe-skill-worktree");
+    const projectRoot = await createTestDirectory("context-export-safe-skill-project");
+    const agentHubHome = await createTestDirectory("context-export-safe-skill-home");
+    const initialized = await initContextStore({
+      projectRoot,
+      projectId: "project_safe_skill",
+      agentHubHome
+    });
+    await fs.mkdir(path.join(initialized.storeRoot, "skills", "safe-skill"), {
+      recursive: true
+    });
+    await fs.writeFile(
+      path.join(initialized.storeRoot, "skills", "safe-skill", "SKILL.md"),
+      skillMarkdown({
+        name: "..",
+        description: "Display names must not control export paths.",
+        body: "Generated skill."
+      }),
+      "utf8"
+    );
+    const built = await buildContextArtifacts({
+      projectRoot,
+      projectId: "project_safe_skill",
+      taskId: "task_safe_skill",
+      title: "Overlay safe skill",
+      prompt: "Write overlay",
+      selectedAgentId: "fake",
+      deliveryMode: "worktree_overlay",
+      agentHubHome
+    });
+
+    const overlay = await materializeWorktreeOverlay({
+      worktreePath,
+      taskId: "task_safe_skill",
+      contextPack: built.contextPack,
+      taskBrief: built.taskBrief,
+      contextMarkdown: new MarkdownContextFormatter().format(built.bundle),
+      includeAgentFiles: true,
+      storeRoot: initialized.storeRoot
+    });
+    const preview = await exportContextToRepository({
+      projectRoot,
+      projectId: "project_safe_skill",
+      agentHubHome,
+      includeSkills: true,
+      dryRun: true
+    });
+
+    expect(overlay.writtenFiles).toContain(".claude/skills/safe-skill/SKILL.md");
+    expect(overlay.writtenFiles).toContain(".agents/skills/safe-skill/SKILL.md");
+    expect(overlay.writtenFiles).not.toContain(".claude/SKILL.md");
+    expect(overlay.writtenFiles).not.toContain(".agents/SKILL.md");
+    await expect(fs.access(path.join(worktreePath, ".claude", "SKILL.md")))
+      .rejects.toThrow();
+    expect(preview.changedFiles).toContain(".claude/skills/safe-skill/SKILL.md");
+    expect(preview.changedFiles).toContain(".agents/skills/safe-skill/SKILL.md");
+    expect(preview.changedFiles).not.toContain(".claude/SKILL.md");
+    expect(preview.changedFiles).not.toContain(".agents/SKILL.md");
   });
 
   it("rejects symlink paths for runtime artifacts", async () => {

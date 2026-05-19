@@ -617,6 +617,41 @@ describe("desktop services", () => {
     expect(artifact?.content).not.toContain("Sensitive path changed");
   });
 
+  it("uses the retitled thread in first-turn conversation briefs", async () => {
+    const fixture = await createFixture();
+    const context = createDesktopServiceContext(fixture.repositories);
+    const projects = createProjectService(context);
+    const memory = createMemoryService(context);
+    const review = createReviewService(context, { memoryService: memory });
+    const runs = createRunService(context, {
+      reviewService: review,
+      memoryService: memory,
+      fakeDelayMs: 5
+    });
+    const threads = createThreadService({ context, projects, runs });
+    const project = await projects.open(fixture.projectRoot);
+    const thread = await threads.createThread({ projectId: project.id });
+
+    const detail = await threads.sendMessage({
+      threadId: thread.id,
+      text: "@fake rename this empty chat",
+      contextMode: "auto"
+    });
+    const run = detail.messages.find((message) => message.type === "agent_run");
+    if (!run) {
+      throw new Error("expected run card");
+    }
+    const artifact =
+      await fixture.repositories.runArtifactRepository.getLatestByRunIdAndKind(
+        run.runId,
+        "conversation_brief"
+      );
+
+    expect(detail.title).toBe("rename this empty chat");
+    expect(artifact?.content).toContain("thread_title: rename this empty chat");
+    expect(artifact?.content).not.toContain("thread_title: New Chat");
+  });
+
   it("validates IPC run creation and rejects repo_export delivery", async () => {
     const fixture = await createFixture();
     const context = createDesktopServiceContext(fixture.repositories);
