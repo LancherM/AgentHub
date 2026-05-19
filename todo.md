@@ -187,6 +187,9 @@ pnpm lint
 
 ### 6. Parse skill metadata and warn on malformed skills
 
+Status: done
+Done: 2026-05-19 via codex/todo-6-skill-metadata-23e0; PR: https://github.com/LancherM/AgentHub/pull/48
+
 Prompt:
 
 You are working in `/Users/lan/agent-hub`. Make context-store skill loading

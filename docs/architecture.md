@@ -281,6 +281,13 @@ external store path is:
   skills/<skill-name>/SKILL.md
 ```
 
+File-backed skills are parsed from YAML-style `SKILL.md` frontmatter. A valid
+skill must declare both `name` and `description`; the context compiler uses the
+declared values in context bundles and skips empty or malformed skill files
+with deterministic warnings. Export and worktree overlay flows reuse the same
+parser, so malformed skills are not copied into `.claude/skills` or
+`.agents/skills`.
+
 Repo-local context stores remain opt-in through `--mode repo_local`. Repository
 export remains opt-in through `context export --target repo --dry-run` or
 `context export --target repo --write`; dry-run produces previews without
