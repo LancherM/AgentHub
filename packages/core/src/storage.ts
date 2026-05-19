@@ -122,6 +122,7 @@ export interface ConversationThreadRepository {
 
 export interface ConversationMessageRepository {
   create(message: ConversationMessage): Promise<ConversationMessage>;
+  update(message: ConversationMessage): Promise<ConversationMessage>;
   createMany(messages: ConversationMessage[]): Promise<ConversationMessage[]>;
   listByThreadId(threadId: string): Promise<ConversationMessage[]>;
   countByThreadId(threadId: string): Promise<number>;
@@ -481,6 +482,26 @@ export class InMemoryConversationMessageRepository
     }
     const existingSequence = [...this.messages.values()].find(
       (entry) =>
+        entry.threadId === validMessage.threadId &&
+        entry.sequence === validMessage.sequence
+    );
+    if (existingSequence) {
+      throw new Error(
+        `conversation message sequence ${validMessage.sequence} already exists for thread ${validMessage.threadId}`
+      );
+    }
+    this.messages.set(validMessage.id, cloneConversationMessage(validMessage));
+    return cloneConversationMessage(validMessage);
+  }
+
+  async update(message: ConversationMessage): Promise<ConversationMessage> {
+    const validMessage = validateConversationMessage(message);
+    if (!this.messages.has(validMessage.id)) {
+      throw new Error(`conversation message ${validMessage.id} not found`);
+    }
+    const existingSequence = [...this.messages.values()].find(
+      (entry) =>
+        entry.id !== validMessage.id &&
         entry.threadId === validMessage.threadId &&
         entry.sequence === validMessage.sequence
     );

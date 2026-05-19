@@ -1372,6 +1372,35 @@ export class SQLiteConversationMessageRepository
     return cloneConversationMessage(validMessage);
   }
 
+  async update(message: ConversationMessage): Promise<ConversationMessage> {
+    const validMessage = validateConversationMessage(message);
+    const existingRows = await this.database.query<{ id: string }>(`
+SELECT id
+FROM conversation_messages
+WHERE id = ${sqlString(validMessage.id)}
+LIMIT 1;
+`);
+    if (!existingRows[0]) {
+      throw new Error(`conversation message ${validMessage.id} not found`);
+    }
+    await this.database.execute(`
+UPDATE conversation_messages
+SET
+  thread_id = ${sqlString(validMessage.threadId)},
+  sequence = ${validMessage.sequence},
+  role = ${sqlString(validMessage.role)},
+  kind = ${sqlString(validMessage.kind)},
+  content = ${sqlString(validMessage.content)},
+  agent_kind = ${sqlNullableString(validMessage.agentKind)},
+  run_id = ${sqlNullableString(validMessage.runId)},
+  status = ${sqlNullableString(validMessage.status)},
+  metadata_json = ${sqlJson(validMessage.metadata)},
+  created_at = ${sqlString(validMessage.createdAt)}
+WHERE id = ${sqlString(validMessage.id)};
+`);
+    return cloneConversationMessage(validMessage);
+  }
+
   async createMany(
     messages: ConversationMessage[]
   ): Promise<ConversationMessage[]> {

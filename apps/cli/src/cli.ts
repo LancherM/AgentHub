@@ -18,6 +18,7 @@ import {
   memoryCategories,
   runEventTypes,
   parseAgentKind,
+  extractAgentFacingOutput,
   validateComparisonReport,
   validateMemoryItem,
   validateProject,
@@ -1412,41 +1413,10 @@ function renderAgentOutput(result: CliRunResult): string {
 }
 
 function extractAgentOutput(result: CliRunResult): string {
-  if (result.fakeOutput?.trim()) {
-    return result.fakeOutput.trim();
-  }
-
-  const structuredOutput = result.events
-    .filter((event) => event.type === "message" || event.type === "error")
-    .map((event) => event.message.trim())
-    .filter(Boolean);
-  if (structuredOutput.length > 0) {
-    return structuredOutput.join("\n");
-  }
-
-  return result.events
-    .filter((event) => event.type === "stdout" || event.type === "stderr")
-    .flatMap((event) => humanReadableRawLines(event.message))
-    .join("\n");
-}
-
-function humanReadableRawLines(value: string): string[] {
-  return value
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0 && !isJsonObjectLine(line));
-}
-
-function isJsonObjectLine(value: string): boolean {
-  if (!value.startsWith("{") || !value.endsWith("}")) {
-    return false;
-  }
-  try {
-    const parsed = JSON.parse(value) as unknown;
-    return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed);
-  } catch {
-    return false;
-  }
+  return extractAgentFacingOutput({
+    fakeOutput: result.fakeOutput,
+    events: result.events
+  });
 }
 
 function renderRunDebug(

@@ -98,13 +98,17 @@ repository also updates thread metadata, including display title and
 facade over those repositories. It parses safe `@fake`, `@codex`, and
 `@claude` mentions, implements `sendMessage` by appending one durable user
 message, creating one run per selected agent through `RunService`, and
-appending one durable run-card message per run. The renderer-facing
-`window.agentHub.threads.*` contract remains unchanged, but service state is
-loaded from SQLite on every list/detail request. Run-card display status is
-derived from linked run ids through `RunService` instead of live-only thread
-state. If an older database has runs but no conversation threads, the service
-performs a one-time compatibility import into conversation rows so existing
-desktop run records stay inspectable. Run cards subscribe to the same
+appending one durable run-card message plus one hidden pending assistant-output
+message per run. The renderer-facing `window.agentHub.threads.*` contract
+remains unchanged, but service state is loaded from SQLite on every list/detail
+request. Run-card display status is derived from linked run ids through
+`RunService` instead of live-only thread state. When a run reaches
+`completed`, `failed`, or `cancelled`, the service reconciles the pending
+assistant message with bounded agent-facing output or a concise terminal
+summary, while raw logs, diffs, verification output, and risk evidence remain
+on the run model. If an older database has runs but no conversation threads,
+the service performs a one-time compatibility import into conversation rows so
+existing desktop run records stay inspectable. Run cards subscribe to the same
 `RunService` stream as the earlier run-detail view and open review data through
 an on-demand inspector instead of a permanent right-hand panel.
 
@@ -119,9 +123,10 @@ message budget includes no prior thread messages, and desktop first-turn runs
 reload the retitled thread before building the brief so pre-created empty
 threads do not inject stale `New Chat` titles. Project context, thread context,
 current-turn context, and run context remain distinct layers so thread-local
-decisions do not automatically promote into project approved memory. Durable
-assistant-message promotion from completed run output remains the next staged
-phase.
+decisions do not automatically promote into project approved memory. Follow-up
+turns prefer terminal assistant messages over run-card summaries for runs that
+have finished; run-card summaries remain available for pending runs and
+compatibility imports.
 
 The service maps desktop-facing agent IDs (`fake`, `codex`, `claude`) and run
 statuses (`queued`, `running`, `verifying`, `completed`, `failed`,
@@ -136,14 +141,14 @@ events over time and responds to `AbortController` cancellation. The runner
 does not read or write target repository files. `RunService` persists
 task/run rows, run events, simulated verification rows, and placeholder
 diff/risk review rows through the existing local repositories, then broadcasts
-each event through an in-memory emitter. Phase 4 adds a real inspector over
-that persisted evidence plus retained-worktree diffs when present, but it does
-not change execution semantics. The renderer can mention `@codex` and
-`@claude` so multi-agent thread flows are visible, but those runs are safe
-main-process placeholders that fail with an explicit "not wired yet" event and
-do not invoke adapters, create worktrees, or modify repositories. Real Codex
-and Claude Code execution remains behind the same IPC boundary as follow-up
-TaskRunner integration.
+each event through an in-memory emitter. Terminal run output is also promoted
+into bounded assistant transcript messages for future thread context, but that
+promotion does not change execution semantics or duplicate full evidence into
+message bodies. The renderer can mention `@codex` and `@claude` so multi-agent
+thread flows are visible, but those runs are safe main-process placeholders
+that fail with an explicit "not wired yet" event and do not invoke adapters,
+create worktrees, or modify repositories. Real Codex and Claude Code execution
+remains behind the same IPC boundary as follow-up TaskRunner integration.
 
 Desktop packaging is a local release concern layered over that shell. The
 workspace keeps Electron/Vite bundling in `apps/desktop`, then uses
@@ -194,13 +199,14 @@ command and `TaskRunner`. It keeps selected agent and project state in the CLI
 layer only; it does not create a second orchestration implementation.
 
 Run output rendering is also a CLI concern. Normal `run` output shows the
-agent-facing output extracted from fake output, structured message/error
-events, or raw non-JSON stdout/stderr fallbacks. Structured lifecycle/status
-events are persisted for inspection and debug output but are not rendered as
-normal agent output. Parser promotion is limited to assistant/agent/result
-payloads, so lifecycle summaries and non-assistant message items remain status
-events. It does not show Agent Hub run metadata by default, and interactive
-mode does not echo prompt dispatch lines unless debug rendering is enabled.
+agent-facing output extracted through the shared core helper from fake output,
+structured message/error events, or raw non-JSON stdout/stderr fallbacks.
+Structured lifecycle/status events are persisted for inspection and debug
+output but are not rendered as normal agent output. Parser promotion is limited
+to assistant/agent/result payloads, so lifecycle summaries and non-assistant
+message items remain status events. It does not show Agent Hub run metadata by
+default, and interactive mode does not echo prompt dispatch lines unless debug
+rendering is enabled.
 
 Debug rendering remains opt-in. `--debug` or `AGENT_HUB_DEBUG=1` appends the
 run summary, run boundaries, context artifact paths, verification

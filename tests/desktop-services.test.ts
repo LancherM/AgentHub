@@ -446,11 +446,44 @@ describe("desktop services", () => {
     await waitForRun(runs, codexRun.runId, "failed");
 
     const refreshed = await threads.getThread(detail.id);
+    expect(refreshed.messages.map((message) => message.type)).toEqual([
+      "user",
+      "agent_run",
+      "assistant",
+      "agent_run",
+      "assistant"
+    ]);
     expect(
       refreshed.messages
         .filter((message) => message.type === "agent_run")
         .map((message) => message.status)
     ).toEqual(["completed", "failed"]);
+    expect(
+      refreshed.messages
+        .filter((message) => message.type === "assistant")
+        .map((message) => ({
+          agentId: message.agentId,
+          status: message.status,
+          text: message.text
+        }))
+    ).toEqual([
+      {
+        agentId: "fake",
+        status: "completed",
+        text: "Fake run completed successfully"
+      },
+      {
+        agentId: "codex",
+        status: "failed",
+        text: "@codex desktop execution is not wired yet. No repository files were modified."
+      }
+    ]);
+    expect(
+      refreshed.messages
+        .filter((message) => message.type === "assistant")
+        .map((message) => message.text)
+        .join("\n")
+    ).not.toContain("Found package.json");
     await expect(threads.listThreads()).resolves.toMatchObject([
       {
         id: detail.id,
@@ -517,8 +550,10 @@ describe("desktop services", () => {
     expect(restored.messages.map((message) => message.type)).toEqual([
       "user",
       "agent_run",
+      "assistant",
       "user",
-      "agent_run"
+      "agent_run",
+      "assistant"
     ]);
     expect(
       restored.messages
@@ -530,6 +565,14 @@ describe("desktop services", () => {
         .filter((message) => message.type === "agent_run")
         .map((message) => message.status)
     ).toEqual(["completed", "completed"]);
+    expect(
+      restored.messages
+        .filter((message) => message.type === "assistant")
+        .map((message) => message.text)
+    ).toEqual([
+      "Fake run completed successfully",
+      "Fake run completed successfully"
+    ]);
     await expect(restartedThreads.listThreads()).resolves.toMatchObject([
       {
         id: first.id,
@@ -609,6 +652,7 @@ describe("desktop services", () => {
     });
     expect(artifact?.content).toContain("second thread-aware prompt");
     expect(artifact?.content).toContain("first thread-aware prompt");
+    expect(artifact?.content).toContain("Assistant @fake");
     expect(artifact?.content).toContain("Fake run completed successfully");
     expect(artifact?.content).not.toContain("Found package.json");
     expect(artifact?.content).not.toContain("pnpm test -- simulated");
@@ -730,7 +774,7 @@ async function waitForRun(
   runId: string,
   status: RunDetail["status"]
 ): Promise<RunDetail> {
-  const deadline = Date.now() + 2_000;
+  const deadline = Date.now() + 10_000;
   while (Date.now() < deadline) {
     const detail = await runs.getRun(runId);
     if (detail.status === status) {

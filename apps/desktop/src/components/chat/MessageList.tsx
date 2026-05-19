@@ -1,5 +1,6 @@
 import type { RunDetail, RunInspectorTab, ThreadMessage } from "../../lib/types";
 import { AgentRunCard } from "./AgentRunCard";
+import { AssistantMessageBubble } from "./AssistantMessageBubble";
 import { SystemMessage } from "./SystemMessage";
 import { UserMessageBubble } from "./UserMessageBubble";
 
@@ -41,6 +42,8 @@ export function MessageList({
             onOpenInspector={onOpenInspector}
             onCancelRun={onCancelRun}
           />
+        ) : message.type === "assistant" ? (
+          <AssistantMessageBubble key={message.id} message={message} />
         ) : (
           <SystemMessage key={message.id} message={message} />
         )

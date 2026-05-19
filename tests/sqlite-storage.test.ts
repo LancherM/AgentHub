@@ -291,6 +291,37 @@ describe("SQLite storage", () => {
         metadata: { card: true }
       })
     ]);
+    await expect(
+      second.conversationMessageRepository.update({
+        id: "message_2",
+        threadId: "thread_1",
+        sequence: 1,
+        role: "assistant",
+        kind: "text",
+        content: "Persisted assistant answer.",
+        agentKind: "fake",
+        runId: "run_1",
+        status: "succeeded",
+        metadata: { assistantOutput: true },
+        createdAt: updatedAt
+      })
+    ).resolves.toMatchObject({
+      id: "message_2",
+      role: "assistant",
+      content: "Persisted assistant answer.",
+      status: "succeeded",
+      metadata: { assistantOutput: true }
+    });
+    await expect(
+      second.conversationMessageRepository.listByThreadId("thread_1")
+    ).resolves.toContainEqual(
+      expect.objectContaining({
+        id: "message_2",
+        sequence: 1,
+        role: "assistant",
+        content: "Persisted assistant answer."
+      })
+    );
     await expect(second.runEventRepository.listByRunId("run_1")).resolves.toEqual([
       expect.objectContaining({ id: "event_1", sequence: 0, metadata: { stream: "stdout" } }),
       expect.objectContaining({ id: "event_2", sequence: 1, metadata: { exitCode: 0 } })
