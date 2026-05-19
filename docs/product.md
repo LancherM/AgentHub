@@ -211,30 +211,30 @@ IPC path and seeds a new conversation for the registered project.
 The composer accepts mention-based prompts such as `@fake ...` or multi-agent
 mentions. The renderer sends prompt text through the safe
 `window.agentHub.threads.sendMessage` preload API; the Electron main-process
-thread service strips known agent mentions from the task body, records one
-user message in the active thread, creates one run per selected agent through
-`RunService`, and appends one inline run card message per run. If no agent is
-mentioned or supplied by the caller, desktop falls back to `@fake`.
+thread service strips known agent mentions from the task body, persists one
+ordered user message in the selected SQLite-backed conversation thread, creates
+one run per selected agent through `RunService`, and persists one inline run
+card message per run. If no agent is mentioned or supplied by the caller,
+desktop falls back to `@fake`.
 
 Each inline run card subscribes to the existing desktop run event stream and
 shows agent identity, status, the latest streamed line, compact review pills,
 and an expandable event log. Diff, tests, risk, memory proposals, summary, and
 full logs are hidden by default and open through an on-demand run inspector
 drawer. Existing persisted run records are synthesized into thread-shaped
-conversations by the main-process thread service so old desktop run data
-remains inspectable. Core conversation thread/message storage is now available
-through local repositories and SQLite tables, but the current desktop thread
-service still uses its isolated in-memory facade until the follow-up service
-wiring phase lands. Run records, events, simulated verification, placeholder
-diffs, and risk review rows remain SQLite-backed.
+conversations only as a compatibility import when no durable conversation
+threads exist yet, so old desktop run data remains inspectable without making
+run synthesis the primary thread store. Desktop thread lists and details now
+read from the core conversation repositories, while run-card display status is
+hydrated from the linked run ids. Run records, events, simulated verification,
+placeholder diffs, and risk review rows remain SQLite-backed.
 
 The planned real multi-turn conversation route is captured in
 `docs/multiturn-conversation-prompts.md`. It keeps project context, thread
 context, current-turn context, and per-run context snapshots as separate
-layers, then replaces the current in-memory thread facade with persisted
-threads/messages and bounded runtime injection of prior conversation context.
-The first storage slice adds durable conversation tables only; until the desktop
-service and context builder phases are implemented, desktop threads are a
+layers, then adds bounded runtime injection of prior conversation context. The
+current desktop service persists conversation threads and messages, but until
+the context builder phase is implemented, desktop threads are a durable
 conversation UI and run review surface, not a guarantee that each new agent run
 sees the previous messages.
 
@@ -250,7 +250,10 @@ risk classifier. Fake desktop runs explicitly show that no real repository
 files were modified and do not invent changed files. When a retained worktree
 exists, desktop diff loading uses read-only Git inspection from the Electron
 main process only; renderer code never receives shell, filesystem, SQLite, or
-Git access.
+Git access. Desktop memory proposal generation is idempotent for each run:
+summary cards, run-detail loading, and the memory tab can refresh in parallel
+without duplicating the same proposal content or growing beyond the bounded
+proposal set for that run.
 
 Inspector accept/reject actions are audit decisions only. Accepting a run
 records `accepted` review state and shows "Accepted for record. No merge was

@@ -1303,6 +1303,26 @@ INSERT INTO conversation_threads (
     return cloneConversationThread(validThread);
   }
 
+  async update(thread: ConversationThread): Promise<ConversationThread> {
+    const validThread = validateConversationThread(thread);
+    const existing = await this.get(validThread.id);
+    if (!existing) {
+      throw new Error(`conversation thread ${validThread.id} not found`);
+    }
+    await this.database.execute(`
+UPDATE conversation_threads
+SET
+  project_id = ${sqlString(validThread.projectId)},
+  title = ${sqlString(validThread.title)},
+  metadata_json = ${sqlJson(validThread.metadata)},
+  archived_at = ${sqlNullableString(validThread.archivedAt)},
+  created_at = ${sqlString(validThread.createdAt)},
+  updated_at = ${sqlString(validThread.updatedAt)}
+WHERE id = ${sqlString(validThread.id)};
+`);
+    return cloneConversationThread(validThread);
+  }
+
   async get(threadId: string): Promise<ConversationThread | undefined> {
     const rows = await this.database.query<ConversationThreadRow>(`
 SELECT
