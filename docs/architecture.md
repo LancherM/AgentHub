@@ -211,6 +211,12 @@ runner behavior. `run event add` loads the target run through
 the event through `RunEventRepository`, and derives the next sequence number
 from existing events for that run. This keeps manual notes in the same ordered
 event stream as adapter-captured output while avoiding any task execution.
+The persisted MVP event enum is intentionally closed to `stdout`, `stderr`,
+`message`, `status`, `error`, and `exit`. Agent CLI tool-call records are not a
+first-class storage type in this slice; process adapters preserve the original
+JSONL line as stdout and may emit a `status` event whose metadata contains the
+parsed adapter payload. Domain validation, SQLite checks, manual CLI event
+validation, and review rendering all use that same six-type model.
 
 Persisted run review aggregation lives in `packages/task-runner`. The CLI
 parses `runs events <run-id>` and `runs diff <run-id> [--stat|--patch]`, then
