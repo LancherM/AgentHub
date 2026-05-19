@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
+  ConversationContextBuilder,
   DefaultContextCompiler,
   InMemoryMemoryProvider,
   InMemorySkillProvider,
@@ -45,6 +46,119 @@ function skillMarkdown(input: {
 }
 
 describe("ContextCompiler", () => {
+  it("builds deterministic bounded conversation briefs", () => {
+    const builder = new ConversationContextBuilder();
+    const input = {
+      thread: { id: "thread_1", title: "Persist context", projectId: "project_1" },
+      currentTurn: {
+        content: "Continue the implementation",
+        agentId: "fake",
+        contextMode: "workspace",
+        deliveryMode: "runtime_injection"
+      },
+      messages: [
+        {
+          id: "message_1",
+          role: "user" as const,
+          content: "First user request"
+        },
+        {
+          id: "message_2",
+          role: "tool" as const,
+          kind: "run_summary",
+          content: "@fake completed",
+          summary: "@fake completed: Fake run completed successfully",
+          agentId: "fake",
+          runId: "run_1",
+          status: "succeeded"
+        }
+      ],
+      projectContextReferences: ["project:project_1"]
+    };
+
+    const first = builder.build(input);
+    const second = builder.build(input);
+
+    expect(first).toEqual(second);
+    expect(first.renderedContent).toContain("Continue the implementation");
+    expect(first.renderedContent).toContain("First user request");
+    expect(first.renderedContent).toContain("Fake run completed successfully");
+    expect(first.metadata).toMatchObject({
+      includedMessageCount: 2,
+      omittedMessageCount: 0,
+      maxRecentMessages: expect.any(Number)
+    });
+  });
+
+  it("applies conversation message count and character budgets", () => {
+    const brief = new ConversationContextBuilder().build({
+      thread: { id: "thread_budget", title: "Budget" },
+      currentTurn: { content: "Now", agentId: "fake" },
+      messages: [
+        { role: "user", content: "old message" },
+        { role: "user", content: "recent message with a very long body" }
+      ],
+      budget: {
+        maxRecentMessages: 1,
+        maxPerMessageCharacters: 24,
+        maxTotalCharacters: 360
+      }
+    });
+
+    expect(brief.renderedContent).not.toContain("old message");
+    expect(brief.renderedContent).toContain("User: recent message ...");
+    expect(brief.renderedContent.length).toBeLessThanOrEqual(360);
+    expect(brief.metadata).toMatchObject({
+      includedMessageCount: 1,
+      omittedMessageCount: 1,
+      truncated: true
+    });
+  });
+
+  it("omits noisy lifecycle, log, verification, diff, and risk messages", () => {
+    const brief = new ConversationContextBuilder().build({
+      thread: { id: "thread_noise", title: "Noise" },
+      currentTurn: { content: "Continue", agentId: "fake" },
+      messages: [
+        { role: "tool", kind: "run_event", content: "run_started lifecycle" },
+        { role: "tool", kind: "log", content: "API_TOKEN=secret-value" },
+        { role: "tool", kind: "verification", content: "pnpm test -- simulated" },
+        { role: "tool", kind: "diff", content: "diff --git a/.env b/.env" },
+        { role: "tool", kind: "risk", content: "Sensitive path changed" },
+        { role: "user", content: "Keep this user decision" }
+      ]
+    });
+
+    expect(brief.renderedContent).toContain("Keep this user decision");
+    expect(brief.renderedContent).not.toContain("run_started lifecycle");
+    expect(brief.renderedContent).not.toContain("API_TOKEN=secret-value");
+    expect(brief.renderedContent).not.toContain("pnpm test -- simulated");
+    expect(brief.renderedContent).not.toContain("diff --git");
+    expect(brief.renderedContent).not.toContain("Sensitive path changed");
+  });
+
+  it("includes conversation briefs in context bundles before project context", async () => {
+    const bundle = await new DefaultContextCompiler({
+      projectContextProvider: new StaticProjectContextProvider({
+        summary: "Project context comes after thread context."
+      })
+    }).compile({
+      ...baseInput,
+      conversationBrief: "Thread decision: keep the renderer sandboxed."
+    });
+
+    expect(bundle.sections.map((section) => section.id)).toEqual([
+      "task:task",
+      "agent:agent",
+      "repository:repo_agent_hub",
+      "conversation:thread",
+      "project:summary"
+    ]);
+    expect(
+      bundle.sections.find((section) => section.id === "conversation:thread")?.body
+    ).toContain("keep the renderer sandboxed");
+  });
+
   it("compiles task-only context", async () => {
     const bundle = await new DefaultContextCompiler().compile(baseInput);
 

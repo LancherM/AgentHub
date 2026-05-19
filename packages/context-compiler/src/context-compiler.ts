@@ -15,6 +15,7 @@ import type {
   ContextSection,
   ContextStoreMode,
   ContextSourceKind,
+  JsonObject,
   MemoryContextItem,
   ProjectContext,
   SkillContextItem,
@@ -131,8 +132,66 @@ export interface ContextCompilerInput {
   taskPrompt: string;
   selectedAgentId: AgentKind;
   targetRepository: TargetRepositoryMetadata;
+  conversationBrief?: string | ConversationContextBrief;
   userConstraints?: string[];
   executionHints?: string[];
+}
+
+export interface ConversationContextBudget {
+  maxRecentMessages: number;
+  maxTotalCharacters: number;
+  maxPerMessageCharacters: number;
+  approximateCharsPerToken: number;
+}
+
+export interface ConversationContextThread {
+  id: string;
+  title: string;
+  projectId?: string;
+}
+
+export interface ConversationContextTurn {
+  content: string;
+  agentId: string;
+  contextMode?: string;
+  deliveryMode?: string;
+  createdAt?: string;
+}
+
+export interface ConversationContextMessage {
+  id?: string;
+  role: "user" | "assistant" | "system" | "tool";
+  kind?: string;
+  content: string;
+  agentId?: string;
+  runId?: string;
+  status?: string;
+  summary?: string;
+  createdAt?: string;
+  metadata?: JsonObject;
+}
+
+export interface ConversationContextBrief {
+  renderedContent: string;
+  metadata: JsonObject & {
+    maxRecentMessages: number;
+    maxTotalCharacters: number;
+    maxPerMessageCharacters: number;
+    approximateTokenCount: number;
+    includedMessageCount: number;
+    omittedMessageCount: number;
+    originalCharacterCount: number;
+    renderedCharacterCount: number;
+    truncated: boolean;
+  };
+}
+
+export interface ConversationContextBuildInput {
+  thread: ConversationContextThread;
+  currentTurn: ConversationContextTurn;
+  messages: ConversationContextMessage[];
+  projectContextReferences?: string[];
+  budget?: Partial<ConversationContextBudget>;
 }
 
 export interface MemoryProvider {
@@ -170,6 +229,166 @@ export const contextStoreRelativeFiles = [
 
 export const managedBlockStart = "<!-- agent-hub:start -->";
 export const managedBlockEnd = "<!-- agent-hub:end -->";
+
+export const defaultConversationContextBudget: ConversationContextBudget = {
+  maxRecentMessages: 12,
+  maxTotalCharacters: 12_000,
+  maxPerMessageCharacters: 2_000,
+  approximateCharsPerToken: 4
+};
+
+export class ConversationContextBuilder {
+  build(input: ConversationContextBuildInput): ConversationContextBrief {
+    const budget = {
+      ...defaultConversationContextBudget,
+      ...(input.budget ?? {})
+    };
+    const usableMessages = input.messages
+      .filter((message) => !isNoisyConversationMessage(message))
+      .slice(-budget.maxRecentMessages);
+    const omittedMessageCount = Math.max(0, input.messages.length - usableMessages.length);
+    const originalCharacterCount =
+      input.currentTurn.content.length +
+      input.messages.reduce((total, message) => total + messageContent(message).length, 0);
+
+    const lines: string[] = [
+      "# Agent Hub Conversation Brief",
+      "",
+      `thread_id: ${input.thread.id}`,
+      `thread_title: ${input.thread.title}`,
+      input.thread.projectId ? `project_id: ${input.thread.projectId}` : undefined,
+      `selected_agent: ${input.currentTurn.agentId}`,
+      input.currentTurn.contextMode ? `context_mode: ${input.currentTurn.contextMode}` : undefined,
+      input.currentTurn.deliveryMode ? `delivery_mode: ${input.currentTurn.deliveryMode}` : undefined,
+      "",
+      "## Budget",
+      "",
+      `max_recent_messages: ${budget.maxRecentMessages}`,
+      `max_total_characters: ${budget.maxTotalCharacters}`,
+      `max_per_message_characters: ${budget.maxPerMessageCharacters}`,
+      "",
+      "## Current Turn",
+      "",
+      truncateText(`User: ${input.currentTurn.content}`, budget.maxPerMessageCharacters),
+      "",
+      "## Recent Thread Context",
+      ""
+    ].filter((line): line is string => line !== undefined);
+
+    if (usableMessages.length === 0) {
+      lines.push("No prior thread messages were included.", "");
+    } else {
+      for (const message of usableMessages) {
+        lines.push(
+          `- ${truncateText(formatConversationMessage(message), budget.maxPerMessageCharacters)}`
+        );
+      }
+      lines.push("");
+    }
+
+    lines.push("## Project Context References", "");
+    const references = (input.projectContextReferences ?? [])
+      .map((reference) => reference.trim())
+      .filter(Boolean);
+    if (references.length === 0) {
+      lines.push("- Agent Hub project context store");
+    } else {
+      for (const reference of references) {
+        lines.push(`- ${truncateText(reference, budget.maxPerMessageCharacters)}`);
+      }
+    }
+
+    const unboundedContent = `${lines.join("\n").trimEnd()}\n`;
+    const renderedContent = truncateText(unboundedContent, budget.maxTotalCharacters);
+    return {
+      renderedContent,
+      metadata: {
+        maxRecentMessages: budget.maxRecentMessages,
+        maxTotalCharacters: budget.maxTotalCharacters,
+        maxPerMessageCharacters: budget.maxPerMessageCharacters,
+        approximateTokenCount: Math.ceil(
+          renderedContent.length / Math.max(1, budget.approximateCharsPerToken)
+        ),
+        includedMessageCount: usableMessages.length,
+        omittedMessageCount,
+        originalCharacterCount,
+        renderedCharacterCount: renderedContent.length,
+        truncated:
+          renderedContent.length < unboundedContent.length ||
+          usableMessages.some((message) => messageContent(message).length > budget.maxPerMessageCharacters)
+      }
+    };
+  }
+}
+
+function conversationBriefContent(
+  brief: ContextCompilerInput["conversationBrief"]
+): string | undefined {
+  if (brief === undefined) {
+    return undefined;
+  }
+  const content = typeof brief === "string" ? brief : brief.renderedContent;
+  const trimmed = content.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function isNoisyConversationMessage(message: ConversationContextMessage): boolean {
+  const kind = message.kind?.toLowerCase();
+  const phase =
+    typeof message.metadata?.phase === "string"
+      ? message.metadata.phase.toLowerCase()
+      : undefined;
+  return (
+    kind === "run_event" ||
+    kind === "debug" ||
+    kind === "lifecycle" ||
+    kind === "log" ||
+    kind === "verification" ||
+    kind === "diff" ||
+    kind === "risk" ||
+    phase === "lifecycle" ||
+    phase === "logs" ||
+    phase === "verification"
+  );
+}
+
+function formatConversationMessage(message: ConversationContextMessage): string {
+  const prefix = conversationMessagePrefix(message);
+  return `${prefix}: ${messageContent(message)}`;
+}
+
+function conversationMessagePrefix(message: ConversationContextMessage): string {
+  if (message.role === "user") {
+    return "User";
+  }
+  if (message.role === "system") {
+    return "System";
+  }
+  const agent = message.agentId ? ` @${message.agentId}` : "";
+  const run = message.runId ? ` run=${message.runId}` : "";
+  const status = message.status ? ` status=${message.status}` : "";
+  if (message.role === "assistant") {
+    return `Assistant${agent}${run}${status}`;
+  }
+  return `Run summary${agent}${run}${status}`;
+}
+
+function messageContent(message: ConversationContextMessage): string {
+  return (message.summary ?? message.content).trim();
+}
+
+function truncateText(value: string, maxCharacters: number): string {
+  if (maxCharacters <= 0) {
+    return "";
+  }
+  if (value.length <= maxCharacters) {
+    return value;
+  }
+  if (maxCharacters <= 3) {
+    return value.slice(0, maxCharacters);
+  }
+  return `${value.slice(0, maxCharacters - 3)}...`;
+}
 
 export interface DefaultContextCompilerOptions {
   memoryProvider?: MemoryProvider;
@@ -217,6 +436,13 @@ export class DefaultContextCompiler implements ContextCompiler {
       );
     }
     warnings.push(...(projectContext?.warnings ?? []));
+
+    const conversationBrief = conversationBriefContent(input.conversationBrief);
+    if (conversationBrief) {
+      sections.push(
+        section(35, "conversation", "thread", "Conversation Context", conversationBrief)
+      );
+    }
 
     const memories = await safeProvider("memory provider", warnings, () =>
       this.memoryProvider.getRelevantMemories(input)

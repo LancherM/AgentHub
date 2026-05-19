@@ -94,6 +94,59 @@ describe("task runner", () => {
     await expect(fs.readdir(projectRoot)).resolves.toEqual(before);
   });
 
+  it("injects and persists conversation briefs for task runs", async () => {
+    const projectRoot = await createTestDirectory("agent-hub-project");
+    const runRoot = await createTestDirectory("agent-hub-runs");
+    const runArtifactRepository = new InMemoryRunArtifactRepository();
+    const runner = new TaskRunner({
+      defaultRunRoot: runRoot,
+      workspaceManager: new TestWorkspaceManager(runRoot),
+      diffCollector: new StaticDiffCollector(),
+      verificationRunner: new VerificationRunner(new MockShellExecutor()),
+      runArtifactRepository,
+      idGenerator: new SequenceIdGenerator(),
+      clock: new FixedClock("2026-01-01T00:00:00.000Z")
+    });
+
+    const result = await runner.run({
+      projectRoot,
+      taskPrompt: "Continue a thread-aware task",
+      agentKind: "fake",
+      conversationBrief: {
+        renderedContent: "Thread decision: preserve the preload IPC boundary.\n",
+        metadata: {
+          maxRecentMessages: 12,
+          maxTotalCharacters: 12_000,
+          maxPerMessageCharacters: 2_000,
+          approximateTokenCount: 12,
+          includedMessageCount: 2,
+          omittedMessageCount: 0,
+          originalCharacterCount: 48,
+          renderedCharacterCount: 48,
+          truncated: false
+        }
+      }
+    });
+
+    expect(result.contextBundle.sections.map((section) => section.id))
+      .toContain("conversation:thread");
+    expect(result.contextMarkdown).toContain(
+      "Thread decision: preserve the preload IPC boundary."
+    );
+    await expect(
+      runArtifactRepository.getLatestByRunIdAndKind(
+        result.run.id,
+        "conversation_brief"
+      )
+    ).resolves.toMatchObject({
+      content: expect.stringContaining("preserve the preload IPC boundary"),
+      metadata: expect.objectContaining({
+        source: "conversation_context_builder",
+        includedMessageCount: 2
+      })
+    });
+  });
+
   it("rejects run roots inside the original project root", async () => {
     const projectRoot = await createTestDirectory("agent-hub-project");
 

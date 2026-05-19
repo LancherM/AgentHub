@@ -110,11 +110,15 @@ an on-demand inspector instead of a permanent right-hand panel.
 
 `docs/multiturn-conversation-prompts.md` defines the staged architecture route
 for real multi-turn support. The target now has persisted thread/message
-repositories and the desktop thread service separated from task runs; later
-phases add a bounded conversation context builder and persist per-run context
-snapshots as audit artifacts. Project context, thread context, current-turn
-context, and run context remain distinct layers so thread-local decisions do
-not automatically promote into project approved memory.
+repositories, the desktop thread service separated from task runs, and a
+package-level conversation context builder. The builder runs outside the
+renderer, applies deterministic message-count and character budgets, and
+produces a conversation brief that is injected through the runtime context
+bundle and persisted as a `conversation_brief` run artifact. Project context,
+thread context, current-turn context, and run context remain distinct layers
+so thread-local decisions do not automatically promote into project approved
+memory. Durable assistant-message promotion from completed run output remains
+the next staged phase.
 
 The service maps desktop-facing agent IDs (`fake`, `codex`, `claude`) and run
 statuses (`queued`, `running`, `verifying`, `completed`, `failed`,

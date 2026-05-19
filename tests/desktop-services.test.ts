@@ -539,6 +539,84 @@ describe("desktop services", () => {
     ]);
   });
 
+  it("persists bounded conversation brief artifacts for follow-up desktop turns", async () => {
+    const fixture = await createFixture();
+    const context = createDesktopServiceContext(fixture.repositories);
+    const projects = createProjectService(context);
+    const memory = createMemoryService(context);
+    const review = createReviewService(context, { memoryService: memory });
+    const runs = createRunService(context, {
+      reviewService: review,
+      memoryService: memory,
+      fakeDelayMs: 5
+    });
+    const threads = createThreadService({ context, projects, runs });
+    const project = await projects.open(fixture.projectRoot);
+
+    const first = await threads.sendMessage({
+      projectId: project.id,
+      text: "@fake first thread-aware prompt",
+      contextMode: "auto"
+    });
+    const firstRun = first.messages.find(
+      (message) => message.type === "agent_run"
+    );
+    if (!firstRun) {
+      throw new Error("expected first run card");
+    }
+    await waitForRun(runs, firstRun.runId, "completed");
+    await fixture.repositories.runArtifactRepository.create(
+      validateRunArtifact({
+        id: "artifact_sensitive_prior_diff",
+        taskRunId: firstRun.runId,
+        kind: "git_diff",
+        content: [
+          "diff --git a/.env.local b/.env.local",
+          "+API_TOKEN=secret-value",
+          ""
+        ].join("\n"),
+        metadata: {
+          changedFiles: [{ path: ".env.local", status: "modified" }],
+          fileSummaries: [".env.local: modified +1/-0"]
+        },
+        createdAt: context.now()
+      })
+    );
+
+    const second = await threads.sendMessage({
+      threadId: first.id,
+      text: "@fake second thread-aware prompt",
+      contextMode: "workspace"
+    });
+    const secondRun = second.messages
+      .filter((message) => message.type === "agent_run")
+      .at(-1);
+    if (!secondRun) {
+      throw new Error("expected second run card");
+    }
+
+    const artifact =
+      await fixture.repositories.runArtifactRepository.getLatestByRunIdAndKind(
+        secondRun.runId,
+        "conversation_brief"
+      );
+    expect(artifact).toMatchObject({
+      kind: "conversation_brief",
+      metadata: expect.objectContaining({
+        source: "desktop_thread_service",
+        includedMessageCount: 2
+      })
+    });
+    expect(artifact?.content).toContain("second thread-aware prompt");
+    expect(artifact?.content).toContain("first thread-aware prompt");
+    expect(artifact?.content).toContain("Fake run completed successfully");
+    expect(artifact?.content).not.toContain("Found package.json");
+    expect(artifact?.content).not.toContain("pnpm test -- simulated");
+    expect(artifact?.content).not.toContain("API_TOKEN=secret-value");
+    expect(artifact?.content).not.toContain("diff --git");
+    expect(artifact?.content).not.toContain("Sensitive path changed");
+  });
+
   it("validates IPC run creation and rejects repo_export delivery", async () => {
     const fixture = await createFixture();
     const context = createDesktopServiceContext(fixture.repositories);

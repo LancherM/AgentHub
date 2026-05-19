@@ -18,6 +18,7 @@ import {
   MarkdownContextFormatter,
   createTaskBrief as createContextTaskBrief,
   materializeWorktreeOverlay,
+  type ConversationContextBrief,
   type GeneratedFileBaseline,
   type ContextBundle,
   type ContextCompiler,
@@ -104,6 +105,7 @@ export interface RunTaskInput {
   stopOnVerificationFailure?: boolean;
   environmentOverrides?: Record<string, string | undefined>;
   targetRepository?: Partial<TargetRepositoryMetadata>;
+  conversationBrief?: string | ConversationContextBrief;
   userConstraints?: string[];
   executionHints?: string[];
 }
@@ -287,6 +289,7 @@ export class TaskRunner {
       taskPrompt: parsed.taskPrompt,
       selectedAgentId: parsed.agentKind,
       targetRepository: targetRepository(projectRoot, input.targetRepository),
+      conversationBrief: input.conversationBrief,
       userConstraints: input.userConstraints,
       executionHints: input.executionHints
     });
@@ -596,6 +599,23 @@ export class TaskRunner {
         recordDiagnostic("task brief artifact persistence", error);
       }
     }
+    const conversationBrief = conversationBriefArtifact(input.conversationBrief);
+    if (conversationBrief) {
+      try {
+        await this.runArtifactRepository.create(
+          createTextArtifact({
+            runId: run.id,
+            kind: "conversation_brief",
+            content: conversationBrief.content,
+            metadata: conversationBrief.metadata,
+            clock: this.clock,
+            idGenerator: this.idGenerator
+          })
+        );
+      } catch (error) {
+        recordDiagnostic("conversation brief artifact persistence", error);
+      }
+    }
     try {
       await this.verificationResultRepository.createMany(
         toPersistedVerificationResults(
@@ -814,6 +834,36 @@ function createDiffArtifact(
     clock,
     idGenerator
   });
+}
+
+function conversationBriefArtifact(
+  brief: RunTaskInput["conversationBrief"]
+): { content: string; metadata: JsonObject } | undefined {
+  if (brief === undefined) {
+    return undefined;
+  }
+  if (typeof brief === "string") {
+    const content = brief.trim();
+    return content.length > 0
+      ? {
+          content: `${content}\n`,
+          metadata: {
+            source: "conversation_context_builder",
+            characterCount: content.length
+          }
+        }
+      : undefined;
+  }
+  const content = brief.renderedContent.trim();
+  return content.length > 0
+    ? {
+        content: `${content}\n`,
+        metadata: {
+          source: "conversation_context_builder",
+          ...brief.metadata
+        }
+      }
+    : undefined;
 }
 
 function createTextArtifact(input: {

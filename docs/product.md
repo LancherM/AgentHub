@@ -244,11 +244,14 @@ placeholder diffs, and risk review rows remain SQLite-backed.
 The planned real multi-turn conversation route is captured in
 `docs/multiturn-conversation-prompts.md`. It keeps project context, thread
 context, current-turn context, and per-run context snapshots as separate
-layers, then adds bounded runtime injection of prior conversation context. The
-current desktop service persists conversation threads and messages, but until
-the context builder phase is implemented, desktop threads are a durable
-conversation UI and run review surface, not a guarantee that each new agent run
-sees the previous messages.
+layers. Desktop follow-up turns now build a bounded conversation brief before
+each run. The brief includes the current turn, recent thread messages, compact
+prior run summaries, project context-store references, and explicit
+character-budget metadata. Agent Hub persists that exact brief as a
+`conversation_brief` run artifact so review can inspect what was injected.
+The brief excludes raw lifecycle/debug events, logs, diffs, verification
+output, risk evidence, and other review artifacts. Durable assistant-message
+promotion from completed run output remains the next staged conversation phase.
 
 The run inspector is the desktop drill-down surface for review evidence. It
 loads review summaries, changed-file stats, bounded unified diffs, captured

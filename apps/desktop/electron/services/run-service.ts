@@ -1,4 +1,5 @@
 import { EventEmitter } from "node:events";
+import type { ConversationContextBrief } from "@agent-hub/context-compiler";
 import {
   validateRiskReport,
   validateRunArtifact,
@@ -42,7 +43,7 @@ import type { DesktopServiceContext } from "./project-service";
 import type { ReviewService } from "./review-service";
 
 export interface RunService {
-  createRun(input: CreateRunInput): Promise<RunSummary>;
+  createRun(input: CreateDesktopRunInput): Promise<RunSummary>;
   getRun(runId: string): Promise<RunDetail>;
   listRuns(projectId?: string): Promise<RunSummary[]>;
   startRun(runId: string): Promise<void>;
@@ -56,13 +57,19 @@ export interface RunServiceDependencies {
   fakeDelayMs?: number;
 }
 
+export interface CreateDesktopRunInput extends CreateRunInput {
+  conversationBrief?: string | ConversationContextBrief;
+}
+
 interface ActiveRun {
   controller: AbortController;
   status: RunStatus;
   promise: Promise<void>;
 }
 
-interface ParsedCreateRunInput extends Required<CreateRunInput> {}
+interface ParsedCreateRunInput extends Required<CreateRunInput> {
+  conversationBrief?: string | ConversationContextBrief;
+}
 
 const desktopStatusTransitions: Record<RunStatus, readonly RunStatus[]> = {
   queued: ["running", "cancelled"],
@@ -182,7 +189,7 @@ class RepositoryRunService implements RunService {
     };
   }
 
-  async createRun(input: CreateRunInput): Promise<RunSummary> {
+  async createRun(input: CreateDesktopRunInput): Promise<RunSummary> {
     const parsed = parseCreateRunInput(input);
     const project = await this.projects.get(parsed.projectId);
     if (!project) {
@@ -215,6 +222,7 @@ class RepositoryRunService implements RunService {
       prompt: parsed.prompt,
       contextMode: parsed.contextMode
     });
+    await this.persistConversationBrief(run.id, parsed.conversationBrief);
 
     queueMicrotask(() => {
       void this.startRun(run.id).catch((error) => {
@@ -487,6 +495,26 @@ class RepositoryRunService implements RunService {
     );
   }
 
+  private async persistConversationBrief(
+    runId: string,
+    brief: ParsedCreateRunInput["conversationBrief"]
+  ): Promise<void> {
+    const artifact = conversationBriefArtifact(brief);
+    if (!artifact) {
+      return;
+    }
+    await this.artifacts.create(
+      validateRunArtifact({
+        id: this.context.nextId("artifact"),
+        taskRunId: runId,
+        kind: "conversation_brief",
+        content: artifact.content,
+        metadata: artifact.metadata,
+        createdAt: this.context.now()
+      })
+    );
+  }
+
   private async persistTerminalReview(
     runId: string,
     status: "completed" | "failed" | "cancelled"
@@ -589,7 +617,7 @@ class RepositoryRunService implements RunService {
   }
 }
 
-function parseCreateRunInput(input: CreateRunInput): ParsedCreateRunInput {
+function parseCreateRunInput(input: CreateDesktopRunInput): ParsedCreateRunInput {
   if (!input || typeof input !== "object") {
     throw new Error("run input is required");
   }
@@ -612,7 +640,8 @@ function parseCreateRunInput(input: CreateRunInput): ParsedCreateRunInput {
     title: input.title?.trim() || titleFromPrompt(prompt),
     agentId,
     contextMode,
-    deliveryMode
+    deliveryMode,
+    conversationBrief: input.conversationBrief
   };
 }
 
@@ -756,6 +785,36 @@ function statusSummary(run: TaskRun): string {
 
 function isTerminalStatus(status: RunStatus): boolean {
   return status === "completed" || status === "failed" || status === "cancelled";
+}
+
+function conversationBriefArtifact(
+  brief: ParsedCreateRunInput["conversationBrief"]
+): { content: string; metadata: JsonObject } | undefined {
+  if (brief === undefined) {
+    return undefined;
+  }
+  if (typeof brief === "string") {
+    const content = brief.trim();
+    return content.length > 0
+      ? {
+          content: `${content}\n`,
+          metadata: {
+            source: "desktop_thread_service",
+            characterCount: content.length
+          }
+        }
+      : undefined;
+  }
+  const content = brief.renderedContent.trim();
+  return content.length > 0
+    ? {
+        content: `${content}\n`,
+        metadata: {
+          source: "desktop_thread_service",
+          ...brief.metadata
+        }
+      }
+    : undefined;
 }
 
 function isTerminalEvent(type: RunEventType): boolean {
