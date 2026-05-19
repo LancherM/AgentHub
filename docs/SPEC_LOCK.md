@@ -142,10 +142,13 @@ Task runs create an isolated git worktree under the configured workspace base,
 write generated runtime files only inside that worktree, run the selected
 adapter, collect git diff metadata, run configured verification commands,
 generate a structured risk report, capture adapter events, persist run data,
-clean up according to the workspace cleanup policy, and print a concise run
-summary. The run summary includes `context_delivery` and `branch_name` along
-with worktree path, task brief path, verification summary, risk level, retained
-workspace, warnings, and event count.
+and clean up according to the workspace cleanup policy. MVP command mode keeps
+the current post-run rendering contract: it waits for `TaskRunner.run()` to
+finalize, then prints the final agent-facing output once. It does not stream
+intermediate run events live to the terminal. Detailed run metadata, including
+`context_delivery`, `branch_name`, worktree path, task brief path, verification
+summary, risk level, retained workspace, warnings, and event count, is shown
+only in opt-in debug output or persisted review commands.
 
 Manual event recording validates the run, validates the event type, appends a
 `run_events` row through `RunEventRepository`, and preserves event ordering by

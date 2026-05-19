@@ -369,6 +369,9 @@ pnpm lint
 
 ### 11. Decide live run-event streaming scope
 
+Status: done
+Done: 2026-05-19 via codex/todo-11-run-event-streaming-scope; PR: pending
+
 Prompt:
 
 You are working in `/Users/lan/agent-hub`. Decide whether MVP command mode

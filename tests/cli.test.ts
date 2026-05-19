@@ -3,6 +3,13 @@ import path from "node:path";
 import { Readable } from "node:stream";
 import { describe, expect, it } from "vitest";
 import { createCliRuntime, main } from "@agent-hub/cli";
+import type {
+  ProcessDetectionInput,
+  ProcessDetectionResult,
+  ProcessRunEvent,
+  ProcessRunInput,
+  ProcessRunner
+} from "@agent-hub/agent-adapters";
 import type { DiffCollectionResult, DiffCollectorService } from "@agent-hub/task-runner";
 import type { RiskReport } from "@agent-hub/core";
 import { createSqliteRepositories } from "@agent-hub/db";
@@ -146,6 +153,51 @@ describe("CLI", () => {
     expect(output.join("")).not.toContain("Codex turn.completed");
     expect(output.join("")).not.toContain("agent: codex");
     expect(output.join("")).not.toContain("agent: claude-code");
+  });
+
+  it("renders command-mode run output only after the task run completes", async () => {
+    const projectRoot = await createTestDirectory("cli-post-run-render-project");
+    const runRoot = path.join(
+      await createTestDirectory("cli-post-run-render-runs"),
+      "runs"
+    );
+    const processRunner = new ControlledProcessRunner([
+      {
+        type: "stdout",
+        data: "{\"type\":\"item.completed\",\"item\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"delayed codex output\"}]}}\n"
+      }
+    ]);
+    const runtime = createCliRuntime({
+      storageMode: "memory",
+      defaultRunRoot: runRoot,
+      workspaceManager: new TestWorkspaceManager(runRoot),
+      diffCollector: new StaticDiffCollector(),
+      verificationRunner: new VerificationRunner(new MockShellExecutor()),
+      processRunner,
+      idGenerator: new SequenceIdGenerator(),
+      clock: new FixedClock("2026-01-01T00:00:00.000Z")
+    });
+    const output: string[] = [];
+    const errors: string[] = [];
+    const io = {
+      stdout: { write: (chunk: string) => { output.push(chunk); return true; } },
+      stderr: { write: (chunk: string) => { errors.push(chunk); return true; } }
+    };
+
+    const runPromise = main(["run", "@codex", "streaming boundary"], io, projectRoot, runtime);
+    await processRunner.firstRunEventYielded.promise;
+
+    expect(output.join("")).toBe("");
+    expect(errors.join("")).toBe("");
+
+    processRunner.releaseExit();
+    await expect(runPromise).resolves.toBe(0);
+
+    const rendered = output.join("");
+    expect(rendered).toContain("delayed codex output");
+    expect(rendered).not.toContain("Codex preflight passed");
+    expect(rendered).not.toContain("starting Codex");
+    expect(rendered).not.toContain("context_delivery:");
   });
 
   it("persists CLI task, run, and risk views through SQLite runtimes", async () => {
@@ -1753,6 +1805,53 @@ class StaticDiffCollector implements DiffCollectorService {
       fileSummaries: this.fileSummaries,
       commands: []
     };
+  }
+}
+
+interface Deferred<T> {
+  promise: Promise<T>;
+  resolve(value: T | PromiseLike<T>): void;
+  reject(error?: unknown): void;
+}
+
+function createDeferred<T = void>(): Deferred<T> {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (error?: unknown) => void;
+  const promise = new Promise<T>((promiseResolve, promiseReject) => {
+    resolve = promiseResolve;
+    reject = promiseReject;
+  });
+  return { promise, resolve, reject };
+}
+
+class ControlledProcessRunner implements ProcessRunner {
+  readonly runCalls: ProcessRunInput[] = [];
+  readonly detectCalls: ProcessDetectionInput[] = [];
+  readonly firstRunEventYielded = createDeferred<void>();
+  private readonly exitReleased = createDeferred<void>();
+
+  constructor(private readonly runEvents: ProcessRunEvent[]) {}
+
+  async *run(input: ProcessRunInput): AsyncIterable<ProcessRunEvent> {
+    this.runCalls.push(input);
+    for (const event of this.runEvents) {
+      this.firstRunEventYielded.resolve();
+      yield event;
+    }
+    await this.exitReleased.promise;
+    yield { type: "exit", exitCode: 0, signal: null };
+  }
+
+  async detect(input: ProcessDetectionInput): Promise<ProcessDetectionResult> {
+    this.detectCalls.push(input);
+    return {
+      available: true,
+      version: "mock"
+    };
+  }
+
+  releaseExit(): void {
+    this.exitReleased.resolve();
   }
 }
 
