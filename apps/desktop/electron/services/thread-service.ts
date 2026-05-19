@@ -1,4 +1,5 @@
 import {
+  extractAgentFacingOutput,
   validateConversationMessage,
   validateConversationThread,
   type ConversationMessage,
@@ -13,9 +14,12 @@ import {
 import type { AgentKind, TaskRunStatus } from "@agent-hub/shared";
 import type {
   AgentId,
+  AssistantMessage,
   AgentRunMessage,
   ContextMode,
   CreateThreadInput,
+  RunDetail,
+  RunEvent,
   RunStatus,
   RunSummary,
   SendThreadMessageInput,
@@ -31,6 +35,8 @@ import type {
   ProjectService
 } from "./project-service";
 import type { RunService } from "./run-service";
+
+const maxAssistantMessageCharacters = 2_000;
 
 export interface ThreadService {
   listThreads(): Promise<ThreadSummary[]>;
@@ -78,12 +84,14 @@ class RepositoryThreadService implements ThreadService {
 
   async listThreads(): Promise<ThreadSummary[]> {
     await this.ensureLegacyRunThreads();
-    const [threads, runStatusById] = await Promise.all([
+    const threads = await this.threads.list();
+    await Promise.all(threads.map((thread) => this.reconcileAssistantMessages(thread.id)));
+    const [refreshedThreads, runStatusById] = await Promise.all([
       this.threads.list(),
       this.runStatusById()
     ]);
     const summaries = await Promise.all(
-      threads.map(async (thread) => {
+      refreshedThreads.map(async (thread) => {
         const messages = await this.messages.listByThreadId(thread.id);
         return toThreadSummary(toThreadDetail(thread, messages, runStatusById));
       })
@@ -99,11 +107,13 @@ class RepositoryThreadService implements ThreadService {
     if (!thread) {
       throw new Error(`thread ${threadId} not found`);
     }
+    await this.reconcileAssistantMessages(thread.id);
+    const refreshedThread = (await this.threads.get(thread.id)) ?? thread;
     const [messages, runStatusById] = await Promise.all([
       this.messages.listByThreadId(thread.id),
       this.runStatusById(thread.projectId)
     ]);
-    return toThreadDetail(thread, messages, runStatusById);
+    return toThreadDetail(refreshedThread, messages, runStatusById);
   }
 
   async createThread(input: CreateThreadInput = {}): Promise<ThreadSummary> {
@@ -218,6 +228,7 @@ class RepositoryThreadService implements ThreadService {
           projectId: input.projectId ?? (await this.defaultProjectId()),
           title: titleFromPrompt(cleanedPrompt)
         });
+    await this.reconcileAssistantMessages(thread.id);
 
     const userMessage = await this.appendUserMessage(thread.id, cleanedPrompt, agents);
     const priorMessages = (await this.messages.listByThreadId(thread.id))
@@ -243,6 +254,7 @@ class RepositoryThreadService implements ThreadService {
           conversationBrief
         });
         await this.appendAgentRunMessage(thread.id, run.id, agentId);
+        await this.appendAssistantOutputPlaceholder(thread.id, run.id, agentId);
       } catch (error) {
         await this.appendSystemMessage(
           thread.id,
@@ -262,8 +274,21 @@ class RepositoryThreadService implements ThreadService {
     contextMode: ContextMode;
     priorMessages: ConversationMessage[];
   }) {
+    const assistantRunIds = new Set(
+      input.priorMessages
+        .filter((message) => isAssistantContextMessage(message) && message.runId)
+        .map((message) => message.runId as string)
+    );
+    const contextSourceMessages = input.priorMessages.filter(
+      (message) =>
+        !(
+          message.kind === "run_card" &&
+          message.runId &&
+          assistantRunIds.has(message.runId)
+        )
+    );
     const messages = await Promise.all(
-      input.priorMessages.map((message) => this.toConversationContextMessage(message))
+      contextSourceMessages.map((message) => this.toConversationContextMessage(message))
     );
     return this.conversationContextBuilder.build({
       thread: {
@@ -292,6 +317,9 @@ class RepositoryThreadService implements ThreadService {
   private async toConversationContextMessage(
     message: ConversationMessage
   ): Promise<ConversationContextMessage | undefined> {
+    if (isPendingAssistantOutputMessage(message)) {
+      return undefined;
+    }
     if (message.role === "user") {
       return {
         id: message.id,
@@ -347,6 +375,141 @@ class RepositoryThreadService implements ThreadService {
     try {
       const run = await this.dependencies.runs.getRun(runId);
       return `@${run.agentId} ${run.status}: ${run.summary}`;
+    } catch {
+      return undefined;
+    }
+  }
+
+  private async appendAssistantOutputPlaceholder(
+    threadId: string,
+    runId: string,
+    agentId: AgentId
+  ): Promise<void> {
+    const thread = await this.requireThread(threadId);
+    const now = this.dependencies.context.now();
+    await this.messages.create(
+      validateConversationMessage({
+        id: this.dependencies.context.nextId("message"),
+        threadId,
+        sequence: await this.messages.countByThreadId(threadId),
+        role: "assistant",
+        kind: "text",
+        content: "Assistant output pending.",
+        agentKind: toCoreAgentKind(agentId),
+        runId,
+        status: "queued",
+        metadata: {
+          agentId,
+          assistantOutput: true,
+          pending: true
+        },
+        createdAt: now
+      })
+    );
+    await this.touchThread(thread, { updatedAt: now });
+  }
+
+  private async reconcileAssistantMessages(threadId: string): Promise<void> {
+    const thread = await this.threads.get(threadId);
+    if (!thread) {
+      return;
+    }
+    const messages = await this.messages.listByThreadId(threadId);
+    const assistantByRunId = new Map(
+      messages
+        .filter((message) => isAssistantOutputMessage(message) && message.runId)
+        .map((message) => [message.runId as string, message])
+    );
+
+    for (const assistantMessage of assistantByRunId.values()) {
+      await this.finalizeAssistantMessage(thread, assistantMessage);
+    }
+
+    const refreshedMessages = await this.messages.listByThreadId(threadId);
+    const refreshedAssistantRunIds = new Set(
+      refreshedMessages
+        .filter((message) => isAssistantOutputMessage(message) && message.runId)
+        .map((message) => message.runId as string)
+    );
+    for (const message of refreshedMessages) {
+      if (
+        message.kind !== "run_card" ||
+        !message.runId ||
+        !message.agentKind ||
+        refreshedAssistantRunIds.has(message.runId)
+      ) {
+        continue;
+      }
+      const run = await this.runDetail(message.runId);
+      if (!run || !isTerminalRunStatus(run.status)) {
+        continue;
+      }
+      const now = this.dependencies.context.now();
+      await this.messages.create(
+        validateConversationMessage({
+          id: this.dependencies.context.nextId("message"),
+          threadId,
+          sequence: await this.messages.countByThreadId(threadId),
+          role: "assistant",
+          kind: "text",
+          content: terminalAssistantContent(run),
+          agentKind: message.agentKind,
+          runId: message.runId,
+          status: toCoreRunStatus(run.status),
+          metadata: {
+            agentId: toAgentId(message.agentKind),
+            assistantOutput: true,
+            pending: false,
+            terminalStatus: run.status
+          },
+          createdAt: now
+        })
+      );
+      await this.touchThread(thread, { updatedAt: now });
+      refreshedAssistantRunIds.add(message.runId);
+    }
+  }
+
+  private async finalizeAssistantMessage(
+    thread: ConversationThread,
+    message: ConversationMessage
+  ): Promise<void> {
+    if (!message.runId) {
+      return;
+    }
+    const run = await this.runDetail(message.runId);
+    if (!run || !isTerminalRunStatus(run.status)) {
+      return;
+    }
+    const status = toCoreRunStatus(run.status);
+    if (
+      !isPendingAssistantOutputMessage(message) &&
+      message.status === status &&
+      message.content.trim().length > 0
+    ) {
+      return;
+    }
+    const agentId = message.agentKind ? toAgentId(message.agentKind) : run.agentId;
+    await this.messages.update(
+      validateConversationMessage({
+        ...message,
+        content: terminalAssistantContent(run),
+        status,
+        metadata: {
+          ...(message.metadata ?? {}),
+          agentId,
+          assistantOutput: true,
+          pending: false,
+          terminalStatus: run.status
+        }
+      })
+    );
+    await this.touchThread(thread, { updatedAt: this.dependencies.context.now() });
+  }
+
+  private async runDetail(runId: string): Promise<RunDetail | undefined> {
+    try {
+      return await this.dependencies.runs.getRun(runId);
     } catch {
       return undefined;
     }
@@ -481,9 +644,9 @@ function toThreadDetail(
   messages: ConversationMessage[],
   runStatusById: Map<string, RunStatus>
 ): ThreadDetail {
-  const threadMessages = messages.map((message) =>
-    toThreadMessage(message, runStatusById)
-  );
+  const threadMessages = messages
+    .map((message) => toThreadMessage(message, runStatusById))
+    .filter((message): message is ThreadMessage => message !== undefined);
   return {
     id: thread.id,
     title: thread.title,
@@ -518,12 +681,18 @@ function toThreadSummary(thread: ThreadDetail): ThreadSummary {
 function toThreadMessage(
   message: ConversationMessage,
   runStatusById: Map<string, RunStatus>
-): ThreadMessage {
+): ThreadMessage | undefined {
+  if (isPendingAssistantOutputMessage(message)) {
+    return undefined;
+  }
   if (message.kind === "run_card") {
     return toAgentRunMessage(message, runStatusById);
   }
   if (message.role === "user") {
     return toUserMessage(message);
+  }
+  if (message.role === "assistant") {
+    return toAssistantMessage(message);
   }
   return toSystemMessage(message);
 }
@@ -559,6 +728,19 @@ function toAgentRunMessage(
   };
 }
 
+function toAssistantMessage(message: ConversationMessage): AssistantMessage {
+  return {
+    id: message.id,
+    threadId: message.threadId,
+    type: "assistant",
+    text: message.content,
+    agentId: message.agentKind ? toAgentId(message.agentKind) : undefined,
+    runId: message.runId,
+    status: message.status ? toDesktopRunStatus(message.status) : undefined,
+    createdAt: message.createdAt
+  };
+}
+
 function toSystemMessage(message: ConversationMessage): SystemMessage {
   return {
     id: message.id,
@@ -584,6 +766,9 @@ function threadMessagePreview(message: ThreadMessage): string {
   }
   if (message.type === "agent_run") {
     return `@${message.agentId} ${message.status}`;
+  }
+  if (message.type === "assistant") {
+    return message.text;
   }
   return message.text;
 }
@@ -627,6 +812,68 @@ function uniqueAgents(agents: AgentId[]): AgentId[] {
 
 function isActiveRunStatus(status: RunStatus): boolean {
   return status === "queued" || status === "running" || status === "verifying";
+}
+
+function isTerminalRunStatus(status: RunStatus): boolean {
+  return status === "completed" || status === "failed" || status === "cancelled";
+}
+
+function isAssistantOutputMessage(message: ConversationMessage): boolean {
+  return message.role === "assistant" && message.metadata?.assistantOutput === true;
+}
+
+function isPendingAssistantOutputMessage(message: ConversationMessage): boolean {
+  return isAssistantOutputMessage(message) && message.metadata?.pending === true;
+}
+
+function isAssistantContextMessage(message: ConversationMessage): boolean {
+  return message.role === "assistant" && !isPendingAssistantOutputMessage(message);
+}
+
+function terminalAssistantContent(run: RunDetail): string {
+  const extracted = extractAgentFacingOutput(
+    {
+      events: run.events.map(toAgentOutputEvent)
+    },
+    {
+      includeRawStreams: false,
+      includeTerminalSummaries: true
+    }
+  ).trim();
+  return truncateAssistantContent(extracted || terminalStatusSummary(run));
+}
+
+function toAgentOutputEvent(event: RunEvent): {
+  type: string;
+  message: string;
+  metadata: Record<string, unknown>;
+} {
+  return {
+    type: event.type,
+    message: event.payload.message ?? event.payload.summary ?? event.type,
+    metadata: event.payload
+  };
+}
+
+function terminalStatusSummary(run: RunDetail): string {
+  if (run.summary.trim().length > 0) {
+    return run.summary.trim();
+  }
+  if (run.status === "completed") {
+    return `@${run.agentId} completed.`;
+  }
+  if (run.status === "cancelled") {
+    return `@${run.agentId} was cancelled.`;
+  }
+  return `@${run.agentId} failed.`;
+}
+
+function truncateAssistantContent(content: string): string {
+  const trimmed = content.trim();
+  if (trimmed.length <= maxAssistantMessageCharacters) {
+    return trimmed;
+  }
+  return `${trimmed.slice(0, maxAssistantMessageCharacters - 16).trimEnd()}\n[truncated]`;
 }
 
 function titleFromPrompt(prompt: string): string {

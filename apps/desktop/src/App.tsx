@@ -70,11 +70,19 @@ export function App(): JSX.Element {
       setCurrentThread((thread) =>
         thread ? updateAgentRunStatus(thread, detail.id, detail.status) : thread
       );
+      if (isTerminalRunStatus(detail.status) && selectedThreadId) {
+        agentHubApi.threads
+          .get(selectedThreadId)
+          .then(setCurrentThread)
+          .catch((err: unknown) => {
+            setError(errorMessage(err));
+          });
+      }
       void refreshThreadList().catch((err: unknown) => {
         setError(errorMessage(err));
       });
     },
-    [refreshThreadList]
+    [refreshThreadList, selectedThreadId]
   );
 
   const cancelRun = useCallback(
@@ -227,6 +235,10 @@ function updateAgentRunStatus(
         : message
     )
   };
+}
+
+function isTerminalRunStatus(status: AgentRunMessage["status"]): boolean {
+  return status === "completed" || status === "failed" || status === "cancelled";
 }
 
 function lastUserMentions(messages: ThreadMessage[]): AgentId[] | undefined {

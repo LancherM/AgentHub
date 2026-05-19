@@ -161,6 +161,22 @@ describe("domain model validation", () => {
     ]);
     await expect(messages.countByThreadId("thread_memory")).resolves.toBe(2);
     await expect(
+      messages.update({
+        id: "message_second",
+        threadId: "thread_memory",
+        sequence: 1,
+        role: "assistant",
+        kind: "text",
+        content: "Second updated",
+        status: "succeeded",
+        createdAt: updatedAt
+      })
+    ).resolves.toMatchObject({
+      id: "message_second",
+      content: "Second updated",
+      status: "succeeded"
+    });
+    await expect(
       messages.create({
         id: "message_duplicate_sequence",
         threadId: "thread_memory",
@@ -171,6 +187,17 @@ describe("domain model validation", () => {
         createdAt
       })
     ).rejects.toThrow("sequence 1 already exists");
+    await expect(
+      messages.update({
+        id: "message_second",
+        threadId: "thread_memory",
+        sequence: 0,
+        role: "assistant",
+        kind: "text",
+        content: "Duplicate update",
+        createdAt: updatedAt
+      })
+    ).rejects.toThrow("sequence 0 already exists");
   });
 
   it("validates memory category and status enums", () => {

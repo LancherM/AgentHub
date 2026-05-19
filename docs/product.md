@@ -226,8 +226,10 @@ mentions. The renderer sends prompt text through the safe
 thread service strips known agent mentions from the task body, persists one
 ordered user message in the selected SQLite-backed conversation thread, creates
 one run per selected agent through `RunService`, and persists one inline run
-card message per run. If no agent is mentioned or supplied by the caller,
-desktop falls back to `@fake`.
+card message plus one hidden pending assistant-output message per run. When a
+run reaches a terminal state, the pending assistant message is updated with
+the agent-facing final output or a concise failure/cancel summary. If no agent
+is mentioned or supplied by the caller, desktop falls back to `@fake`.
 
 Each inline run card subscribes to the existing desktop run event stream and
 shows agent identity, status, the latest streamed line, compact review pills,
@@ -245,13 +247,15 @@ The planned real multi-turn conversation route is captured in
 `docs/multiturn-conversation-prompts.md`. It keeps project context, thread
 context, current-turn context, and per-run context snapshots as separate
 layers. Desktop follow-up turns now build a bounded conversation brief before
-each run. The brief includes the current turn, recent thread messages, compact
-prior run summaries, project context-store references, and explicit
+each run. The brief includes the current turn, recent thread messages,
+terminal assistant answers from prior runs, compact prior run summaries when
+no assistant answer exists yet, project context-store references, and explicit
 character-budget metadata. Agent Hub persists that exact brief as a
 `conversation_brief` run artifact so review can inspect what was injected.
 The brief excludes raw lifecycle/debug events, logs, diffs, verification
-output, risk evidence, and other review artifacts. Durable assistant-message
-promotion from completed run output remains the next staged conversation phase.
+output, risk evidence, and other review artifacts. Full evidence remains on
+the run model; assistant messages store only bounded transcript text for
+future turns.
 
 The run inspector is the desktop drill-down surface for review evidence. It
 loads review summaries, changed-file stats, bounded unified diffs, captured

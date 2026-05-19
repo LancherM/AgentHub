@@ -422,6 +422,13 @@ textarea:disabled {
   align-items: start;
 }
 
+.assistant-message-row {
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr);
+  gap: 11px;
+  align-items: start;
+}
+
 .message-avatar,
 .agent-mark {
   display: grid;
@@ -448,6 +455,16 @@ textarea:disabled {
   background: rgba(255, 255, 255, 0.04);
 }
 
+.assistant-message-bubble {
+  width: min(820px, 100%);
+  padding: 12px 14px;
+  border: 1px solid rgba(103, 216, 196, 0.26);
+  border-radius: 8px;
+  background:
+    linear-gradient(90deg, rgba(103, 216, 196, 0.08), transparent 34%),
+    rgba(17, 25, 24, 0.82);
+}
+
 .message-meta,
 .run-card-header,
 .summary-heading,
@@ -468,11 +485,14 @@ textarea:disabled {
 }
 
 .user-message-bubble p,
+.assistant-message-bubble p,
 .summary-stack p,
 .risk-report p {
   margin: 0;
   color: #e6dfcf;
   line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .mention-chip-row {

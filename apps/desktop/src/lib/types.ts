@@ -117,12 +117,24 @@ export interface AgentRunMessage extends BaseThreadMessage {
   status: RunStatus;
 }
 
+export interface AssistantMessage extends BaseThreadMessage {
+  type: "assistant";
+  text: string;
+  agentId?: AgentId;
+  runId?: string;
+  status?: RunStatus;
+}
+
 export interface SystemMessage extends BaseThreadMessage {
   type: "system";
   text: string;
 }
 
-export type ThreadMessage = UserMessage | AgentRunMessage | SystemMessage;
+export type ThreadMessage =
+  | UserMessage
+  | AgentRunMessage
+  | AssistantMessage
+  | SystemMessage;
 
 export interface CreateThreadInput {
   projectId?: string;
