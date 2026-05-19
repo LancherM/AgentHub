@@ -819,6 +819,8 @@ describe("desktop services", () => {
     });
     expect(artifact?.content).toContain("second thread-aware prompt");
     expect(artifact?.content).toContain("first thread-aware prompt");
+    expect(artifact?.content).toContain("## Thread Summary");
+    expect(artifact?.content).toContain("Last known user goal: first thread-aware prompt");
     expect(artifact?.content).toContain("Assistant @fake");
     expect(artifact?.content).toContain("Fake run completed successfully");
     expect(artifact?.content).not.toContain("Found package.json");
@@ -826,6 +828,12 @@ describe("desktop services", () => {
     expect(artifact?.content).not.toContain("API_TOKEN=secret-value");
     expect(artifact?.content).not.toContain("diff --git");
     expect(artifact?.content).not.toContain("Sensitive path changed");
+    const summary =
+      await fixture.repositories.conversationThreadSummaryRepository.getByThreadId(first.id);
+    expect(summary).toMatchObject({
+      lastKnownUserGoal: "second thread-aware prompt"
+    });
+    expect(summary?.sourceMessageCount).toBeGreaterThanOrEqual(3);
   });
 
   it("uses the retitled thread in first-turn conversation briefs", async () => {

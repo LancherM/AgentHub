@@ -3,6 +3,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   ConversationContextBuilder,
+  ConversationThreadSummaryBuilder,
   DefaultContextCompiler,
   InMemoryMemoryProvider,
   InMemorySkillProvider,
@@ -155,6 +156,56 @@ describe("ContextCompiler", () => {
     expect(brief.renderedContent).not.toContain("pnpm test -- simulated");
     expect(brief.renderedContent).not.toContain("diff --git");
     expect(brief.renderedContent).not.toContain("Sensitive path changed");
+  });
+
+  it("builds conservative thread-local summaries from transcript text", () => {
+    const summary = new ConversationThreadSummaryBuilder().build({
+      messages: [
+        { id: "message_1", role: "user", content: "Decision: keep desktop local-first" },
+        { id: "message_2", role: "assistant", content: "Constraint: do not promote thread memory" },
+        { id: "message_3", role: "tool", kind: "run_card", content: "@fake completed" },
+        { id: "message_4", role: "tool", kind: "diff", content: "diff --git a/.env b/.env" },
+        { id: "message_5", role: "user", content: "Follow-up: add CLI inspectability" }
+      ]
+    });
+
+    expect(summary).toMatchObject({
+      decisions: ["keep desktop local-first"],
+      openItems: ["add CLI inspectability"],
+      constraints: ["do not promote thread memory"],
+      lastKnownUserGoal: "Follow-up: add CLI inspectability",
+      sourceMessageCount: 3,
+      sourceLatestMessageId: "message_5"
+    });
+    expect(summary.summary).toContain("Last known user goal");
+    expect(summary.summary).not.toContain("diff --git");
+  });
+
+  it("includes thread summaries after recent messages and before project context", () => {
+    const brief = new ConversationContextBuilder().build({
+      thread: { id: "thread_summary", title: "Summary", projectId: "project_1" },
+      currentTurn: { content: "Continue", agentId: "fake" },
+      messages: [{ role: "user", content: "Recent message" }],
+      threadSummary: {
+        summary: "Summarized 20 thread messages.",
+        decisions: ["Use SQLite for local summaries"],
+        openItems: ["Expose summary in CLI"],
+        constraints: ["Thread memory stays local"],
+        lastKnownUserGoal: "Implement Phase 6",
+        sourceMessageCount: 20
+      },
+      projectContextReferences: ["project:project_1"]
+    });
+
+    expect(brief.renderedContent.indexOf("## Recent Thread Context"))
+      .toBeLessThan(brief.renderedContent.indexOf("## Thread Summary"));
+    expect(brief.renderedContent.indexOf("## Thread Summary"))
+      .toBeLessThan(brief.renderedContent.indexOf("## Project Context References"));
+    expect(brief.renderedContent).toContain("Use SQLite for local summaries");
+    expect(brief.metadata).toMatchObject({
+      includedThreadSummary: true,
+      maxThreadSummaryCharacters: expect.any(Number)
+    });
   });
 
   it("includes conversation briefs in context bundles before project context", async () => {

@@ -7,6 +7,7 @@ import {
   appendApprovedMemory,
   buildContextArtifacts,
   ConversationContextBuilder,
+  ConversationThreadSummaryBuilder,
   exportContextToRepository,
   initContextStore,
   showContextStore,
@@ -24,6 +25,7 @@ import {
   validateComparisonReport,
   validateConversationMessage,
   validateConversationThread,
+  validateConversationThreadSummary,
   validateMemoryItem,
   validateProject,
   validateRunEvent,
@@ -33,6 +35,7 @@ import {
   type AgentKind,
   type ConversationMessage,
   type ConversationThread,
+  type ConversationThreadSummary,
   type MemoryCategory,
   type Project,
   type RunContextDeliveryMode,
@@ -55,6 +58,7 @@ import {
   InMemoryAgentProfileRepository,
   InMemoryComparisonReportRepository,
   InMemoryConversationMessageRepository,
+  InMemoryConversationThreadSummaryRepository,
   InMemoryConversationThreadRepository,
   InMemoryMemoryItemRepository,
   InMemoryProjectRepository,
@@ -70,6 +74,7 @@ import {
   type AgentProfileRepository,
   type ComparisonReportRepository,
   type ConversationMessageRepository,
+  type ConversationThreadSummaryRepository,
   type ConversationThreadRepository,
   type MemoryItemRepository,
   type ProjectRepository,
@@ -99,6 +104,7 @@ export interface CliRuntime {
   runArtifactRepository: RunArtifactRepository;
   conversationThreadRepository: ConversationThreadRepository;
   conversationMessageRepository: ConversationMessageRepository;
+  conversationThreadSummaryRepository: ConversationThreadSummaryRepository;
   verificationResultRepository: VerificationResultRepository;
   riskReportRepository: RiskReportRepository;
   runMetadataRepository: RunMetadataRepository;
@@ -116,6 +122,7 @@ export interface CliRuntimeDependencies extends TaskRunnerDependencies {
   agentProfileRepository?: AgentProfileRepository;
   conversationThreadRepository?: ConversationThreadRepository;
   conversationMessageRepository?: ConversationMessageRepository;
+  conversationThreadSummaryRepository?: ConversationThreadSummaryRepository;
   memoryItemRepository?: MemoryItemRepository;
   comparisonReportRepository?: ComparisonReportRepository;
   skillRepository?: SkillRepository;
@@ -134,6 +141,7 @@ export function createCliRuntime(
     dependencies.runArtifactRepository !== undefined ||
     dependencies.conversationThreadRepository !== undefined ||
     dependencies.conversationMessageRepository !== undefined ||
+    dependencies.conversationThreadSummaryRepository !== undefined ||
     dependencies.verificationResultRepository !== undefined ||
     dependencies.riskReportRepository !== undefined ||
     dependencies.runMetadataRepository !== undefined ||
@@ -180,6 +188,10 @@ export function createCliRuntime(
     dependencies.conversationMessageRepository ??
     sqliteRepositories?.conversationMessageRepository ??
     new InMemoryConversationMessageRepository();
+  const conversationThreadSummaryRepository =
+    dependencies.conversationThreadSummaryRepository ??
+    sqliteRepositories?.conversationThreadSummaryRepository ??
+    new InMemoryConversationThreadSummaryRepository();
   const verificationResultRepository =
     dependencies.verificationResultRepository ??
     sqliteRepositories?.verificationResultRepository ??
@@ -229,6 +241,7 @@ export function createCliRuntime(
     runArtifactRepository,
     conversationThreadRepository,
     conversationMessageRepository,
+    conversationThreadSummaryRepository,
     verificationResultRepository,
     riskReportRepository,
     runMetadataRepository,
@@ -948,6 +961,7 @@ async function runChatTurn(
       terminalStatus: result.run.status
     }
   });
+  await refreshChatThreadSummary(runtime, currentThread.id);
 
   io.stdout.write(renderAgentOutput(result));
   if (state.debug) {
@@ -991,6 +1005,9 @@ async function buildChatConversationBrief(input: {
       createdAt: input.currentMessageCreatedAt
     },
     messages,
+    threadSummary: await input.runtime.conversationThreadSummaryRepository.getByThreadId(
+      input.thread.id
+    ),
     projectContextReferences: [
       `project:${input.thread.projectId}`,
       "Agent Hub-owned project context store",
@@ -1068,6 +1085,40 @@ async function appendChatMessage(
     );
   }
   return message;
+}
+
+async function refreshChatThreadSummary(
+  runtime: CliRuntime,
+  threadId: string
+): Promise<ConversationThreadSummary> {
+  const messages = await runtime.conversationMessageRepository.listByThreadId(threadId);
+  const summaryInputMessages = await Promise.all(
+    messages
+      .filter((message) => message.kind !== "run_card")
+      .map((message) => toChatConversationContextMessage(runtime, message))
+  );
+  const built = new ConversationThreadSummaryBuilder().build({
+    messages: summaryInputMessages
+  });
+  const existing =
+    await runtime.conversationThreadSummaryRepository.getByThreadId(threadId);
+  const now = nowIso();
+  return runtime.conversationThreadSummaryRepository.upsert(
+    validateConversationThreadSummary({
+      id: existing?.id ?? createId("thread_summary"),
+      threadId,
+      summary: built.summary,
+      decisions: built.decisions,
+      openItems: built.openItems,
+      constraints: built.constraints,
+      lastKnownUserGoal: built.lastKnownUserGoal,
+      sourceMessageCount: built.sourceMessageCount,
+      sourceLatestMessageId: built.sourceLatestMessageId,
+      metadata: built.metadata,
+      createdAt: existing?.createdAt ?? now,
+      updatedAt: now
+    })
+  );
 }
 
 async function createChatThread(
@@ -1187,7 +1238,10 @@ async function renderChatThreadDetail(
   threadId: string
 ): Promise<void> {
   const thread = await requireChatThread(runtime, threadId);
-  const messages = await runtime.conversationMessageRepository.listByThreadId(threadId);
+  const [messages, summary] = await Promise.all([
+    runtime.conversationMessageRepository.listByThreadId(threadId),
+    runtime.conversationThreadSummaryRepository.getByThreadId(threadId)
+  ]);
   io.stdout.write(
     [
       `Thread ${thread.id}`,
@@ -1195,11 +1249,36 @@ async function renderChatThreadDetail(
       `project_id: ${thread.projectId}`,
       `created_at: ${thread.createdAt}`,
       `updated_at: ${thread.updatedAt}`,
+      ...formatThreadSummaryLines(summary),
       `messages: ${messages.length}`,
       ...messages.map(formatThreadMessageLine),
       ""
     ].join("\n")
   );
+}
+
+function formatThreadSummaryLines(
+  summary: ConversationThreadSummary | undefined
+): string[] {
+  if (!summary) {
+    return ["thread_summary: none"];
+  }
+  return [
+    "thread_summary:",
+    `summary: ${inlineText(summary.summary)}`,
+    summary.lastKnownUserGoal
+      ? `last_known_user_goal: ${inlineText(summary.lastKnownUserGoal)}`
+      : undefined,
+    ...formatThreadSummaryItems("decisions", summary.decisions),
+    ...formatThreadSummaryItems("open_items", summary.openItems),
+    ...formatThreadSummaryItems("constraints", summary.constraints),
+    `summary_source_messages: ${summary.sourceMessageCount}`,
+    `summary_updated_at: ${summary.updatedAt}`
+  ].filter((line): line is string => line !== undefined);
+}
+
+function formatThreadSummaryItems(label: string, items: string[]): string[] {
+  return items.map((item) => `${label}: ${inlineText(item)}`);
 }
 
 function formatThreadMessageLine(message: ConversationMessage): string {

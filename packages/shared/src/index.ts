@@ -161,6 +161,21 @@ export interface ConversationMessage {
   createdAt: string;
 }
 
+export interface ConversationThreadSummary {
+  id: string;
+  threadId: string;
+  summary: string;
+  decisions: string[];
+  openItems: string[];
+  constraints: string[];
+  lastKnownUserGoal?: string;
+  sourceMessageCount: number;
+  sourceLatestMessageId?: string;
+  metadata?: JsonObject;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface VerificationResult {
   id: string;
   taskRunId: string;

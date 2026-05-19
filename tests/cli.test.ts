@@ -1085,6 +1085,12 @@ describe("CLI", () => {
     expect(messages.filter((message) => message.role === "assistant")).toHaveLength(2);
     expect(messages.find((message) => message.role === "assistant")?.content)
       .toContain("# Fake Agent Output");
+    await expect(
+      runtime.conversationThreadSummaryRepository.getByThreadId(threads[0]?.id ?? "")
+    ).resolves.toMatchObject({
+      lastKnownUserGoal: "second thread-aware prompt",
+      sourceMessageCount: 4
+    });
 
     const secondRunId = messages.filter((message) => message.kind === "run_card")[1]?.runId;
     expect(secondRunId).toBeTruthy();
@@ -1094,10 +1100,13 @@ describe("CLI", () => {
     );
     expect(brief?.content).toContain("second thread-aware prompt");
     expect(brief?.content).toContain("first thread-aware prompt");
+    expect(brief?.content).toContain("## Thread Summary");
+    expect(brief?.content).toContain("Last known user goal: first thread-aware prompt");
     expect(brief?.content).toContain("# Fake Agent Output");
     expect(errors.join("")).toBe("");
     expect(output.join("")).toContain("Agent Hub chat");
     expect(output.join("")).toContain("Thread ");
+    expect(output.join("")).toContain("thread_summary:");
     expect(output.join("")).toContain("Exiting Agent Hub chat.");
   });
 
@@ -1153,6 +1162,8 @@ describe("CLI", () => {
     );
     expect(brief?.content).toContain("resume seed prompt");
     expect(brief?.content).toContain("resume follow-up prompt");
+    expect(brief?.content).toContain("## Thread Summary");
+    expect(brief?.content).toContain("Last known user goal: resume seed prompt");
     expect(firstErrors.join("")).toBe("");
     expect(secondErrors.join("")).toBe("");
     expect(secondOutput.join("")).toContain(`thread: ${threadId}`);
