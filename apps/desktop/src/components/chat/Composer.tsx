@@ -3,21 +3,25 @@ import {
   parseAgentMentions,
   resolveMentionedAgents
 } from "../../lib/mentions";
-import type { AgentId, ContextMode } from "../../lib/types";
+import type { AgentId, ContextMode, RunContinuationTarget } from "../../lib/types";
 import { MentionInput } from "./MentionInput";
 
 interface ComposerProps {
   isBusy: boolean;
   lastUsedAgents: AgentId[];
+  pendingContinueFrom?: RunContinuationTarget;
   disabledReason?: string;
   onSubmit(input: string, contextMode: ContextMode): Promise<void>;
+  onClearContinueFrom(): void;
 }
 
 export function Composer({
   isBusy,
   lastUsedAgents,
+  pendingContinueFrom,
   disabledReason,
-  onSubmit
+  onSubmit,
+  onClearContinueFrom
 }: ComposerProps): JSX.Element {
   const [input, setInput] = useState("");
   const [contextMode, setContextMode] = useState<ContextMode>("auto");
@@ -59,6 +63,18 @@ export function Composer({
               @{agent}
             </span>
           ))}
+          {pendingContinueFrom ? (
+            <span className="continue-chip">
+              Continue {shortId(pendingContinueFrom.parentRunId)}
+              <button
+                type="button"
+                aria-label="Clear continuation"
+                onClick={onClearContinueFrom}
+              >
+                x
+              </button>
+            </span>
+          ) : null}
         </div>
         <label className="context-select">
           <span>Context</span>
@@ -88,4 +104,8 @@ export function Composer({
       {localError ? <div className="inline-error">{localError}</div> : null}
     </form>
   );
+}
+
+function shortId(value: string): string {
+  return value.length <= 12 ? value : `${value.slice(0, 12)}...`;
 }

@@ -31,6 +31,32 @@ describe("GitWorktreeWorkspaceManager", () => {
     expect(shell.calls[3].command.args).toContain("core.hooksPath=/dev/null");
   });
 
+  it("supports explicit branch names and start points for continuation worktrees", async () => {
+    const sourceRepositoryPath = await createTestDirectory("workspace-source");
+    const workspaceBasePath = await createTestDirectory("workspace-base");
+    const shell = new MockShellExecutor(worktreeCreateResponses());
+    const manager = new GitWorktreeWorkspaceManager(shell);
+
+    const session = await manager.createSession({
+      sourceRepositoryPath,
+      workspaceBasePath,
+      taskId: "task_1",
+      runId: "run_2",
+      agentKind: "fake",
+      branchName: "agent-hub/task_1/fake/continue-run_1-run_2",
+      startPoint: "abc123"
+    });
+
+    expect(session.workspace.branchName).toBe(
+      "agent-hub/task_1/fake/continue-run_1-run_2"
+    );
+    expect(session.workspace.startPoint).toBe("abc123");
+    expect(shell.calls.at(-1)?.command.args).toContain("abc123");
+    expect(shell.calls.at(-1)?.command.args).toContain(
+      "agent-hub/task_1/fake/continue-run_1-run_2"
+    );
+  });
+
   it("rejects executable local git config before invoking git", async () => {
     const sourceRepositoryPath = await createTestDirectory(
       "workspace-malicious-config"

@@ -112,6 +112,8 @@ export interface TaskRun {
   status: TaskRunStatus;
   worktreePath?: string;
   branchName?: string;
+  parentRunId?: string;
+  parentMessageId?: string;
   startedAt?: string;
   completedAt?: string;
   createdAt: string;
@@ -420,6 +422,7 @@ export interface Workspace {
   taskId: string;
   runId: string;
   agentKind: AgentKind;
+  startPoint?: string;
   dryRun: boolean;
   sourceRepositoryDirty: boolean;
   cleanupPolicy: WorkspaceCleanupPolicy;

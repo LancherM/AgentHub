@@ -543,6 +543,21 @@ CREATE TABLE IF NOT EXISTS conversation_thread_summaries (
 CREATE INDEX IF NOT EXISTS idx_conversation_thread_summaries_thread
   ON conversation_thread_summaries(thread_id);
 `
+  },
+  {
+    version: 7,
+    sql: `
+ALTER TABLE task_runs
+  ADD COLUMN parent_run_id TEXT REFERENCES task_runs(id) ON DELETE SET NULL;
+
+ALTER TABLE task_runs
+  ADD COLUMN parent_message_id TEXT REFERENCES conversation_messages(id) ON DELETE SET NULL;
+
+CREATE INDEX IF NOT EXISTS idx_task_runs_parent_run
+  ON task_runs(parent_run_id);
+CREATE INDEX IF NOT EXISTS idx_task_runs_parent_message
+  ON task_runs(parent_message_id);
+`
   }
 ];
 
@@ -945,6 +960,8 @@ INSERT INTO task_runs (
   status,
   worktree_path,
   branch_name,
+  parent_run_id,
+  parent_message_id,
   started_at,
   completed_at,
   created_at,
@@ -957,6 +974,8 @@ INSERT INTO task_runs (
   ${sqlString(validRun.status)},
   ${sqlNullableString(validRun.worktreePath)},
   ${sqlNullableString(validRun.branchName)},
+  ${sqlNullableString(validRun.parentRunId)},
+  ${sqlNullableString(validRun.parentMessageId)},
   ${sqlNullableString(validRun.startedAt)},
   ${sqlNullableString(validRun.completedAt)},
   ${sqlString(validRun.createdAt)},
@@ -969,6 +988,8 @@ ON CONFLICT(id) DO UPDATE SET
   status = excluded.status,
   worktree_path = excluded.worktree_path,
   branch_name = excluded.branch_name,
+  parent_run_id = excluded.parent_run_id,
+  parent_message_id = excluded.parent_message_id,
   started_at = excluded.started_at,
   completed_at = excluded.completed_at,
   created_at = excluded.created_at,
@@ -1055,6 +1076,8 @@ SELECT
   status,
   worktree_path AS worktreePath,
   branch_name AS branchName,
+  parent_run_id AS parentRunId,
+  parent_message_id AS parentMessageId,
   started_at AS startedAt,
   completed_at AS completedAt,
   created_at AS createdAt,
@@ -1077,6 +1100,8 @@ SELECT
   status,
   worktree_path AS worktreePath,
   branch_name AS branchName,
+  parent_run_id AS parentRunId,
+  parent_message_id AS parentMessageId,
   started_at AS startedAt,
   completed_at AS completedAt,
   created_at AS createdAt,
@@ -1097,6 +1122,8 @@ SELECT
   status,
   worktree_path AS worktreePath,
   branch_name AS branchName,
+  parent_run_id AS parentRunId,
+  parent_message_id AS parentMessageId,
   started_at AS startedAt,
   completed_at AS completedAt,
   created_at AS createdAt,
@@ -1448,6 +1475,28 @@ WHERE id = ${sqlString(validMessage.id)};
     return messages.map((message) =>
       cloneConversationMessage(validateConversationMessage(message))
     );
+  }
+
+  async get(messageId: string): Promise<ConversationMessage | undefined> {
+    const rows = await this.database.query<ConversationMessageRow>(`
+SELECT
+  id,
+  thread_id AS threadId,
+  sequence,
+  role,
+  kind,
+  content,
+  agent_kind AS agentKind,
+  run_id AS runId,
+  status,
+  metadata_json AS metadataJson,
+  created_at AS createdAt
+FROM conversation_messages
+WHERE id = ${sqlString(messageId)}
+LIMIT 1;
+`);
+    const row = rows[0];
+    return row ? conversationMessageFromRow(row) : undefined;
   }
 
   async listByThreadId(threadId: string): Promise<ConversationMessage[]> {
@@ -1968,6 +2017,8 @@ interface TaskRunRow extends Record<string, unknown> {
   status: string;
   worktreePath: string | null;
   branchName: string | null;
+  parentRunId: string | null;
+  parentMessageId: string | null;
   startedAt: string | null;
   completedAt: string | null;
   createdAt: string;
@@ -2155,6 +2206,8 @@ function taskRunFromRow(row: TaskRunRow): TaskRun {
     status: row.status as TaskRunStatus,
     worktreePath: nullToUndefined(row.worktreePath),
     branchName: nullToUndefined(row.branchName),
+    parentRunId: nullToUndefined(row.parentRunId),
+    parentMessageId: nullToUndefined(row.parentMessageId),
     startedAt: nullToUndefined(row.startedAt),
     completedAt: nullToUndefined(row.completedAt),
     createdAt: row.createdAt,

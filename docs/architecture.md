@@ -117,6 +117,10 @@ thread-local summary deterministically from bounded transcript messages.
 `threads show <thread-id>` renders that summary beside the ordered transcript.
 The existing `agent-hub run` command and bare interactive shell remain
 stateless and do not read or write conversation threads.
+CLI chat adds one-shot code-state continuation controls with `/continue run
+<id>`, `/continue message <id>`, and `/continue clear`; these controls only
+populate the next `TaskRunner` input and do not promote thread context or
+accept any parent branch.
 
 `apps/desktop/electron/services/thread-service.ts` is the desktop conversation
 facade over those repositories. It parses safe `@fake`, `@codex`, and
@@ -157,8 +161,16 @@ available for pending runs and compatibility imports.
 
 The service maps desktop-facing agent IDs (`fake`, `codex`, `claude`) and run
 statuses (`queued`, `running`, `verifying`, `completed`, `failed`,
-`cancelled`) onto the existing core/SQLite contracts where possible. SQLite
-still stores the core run status enum, so the desktop-only `verifying` phase
+`cancelled`) onto the existing core/SQLite contracts where possible. Desktop
+continuation uses the same explicit intent shape over safe IPC:
+renderer run cards can select a parent run/message, the composer shows a
+clearable one-shot continuation chip, and `ThreadService` resolves
+message-linked runs before passing parent ids to `RunService`. The renderer does
+not receive filesystem, shell, Git, or SQLite access. Current desktop fake and
+unavailable-adapter paths require a retained parent worktree before recording
+continuation provenance and otherwise fail with a clear system message; real
+TaskRunner-backed desktop adapter execution remains separate follow-up wiring.
+SQLite still stores the core run status enum, so the desktop-only `verifying` phase
 is represented by live run events while the persisted core run remains
 `running`; core `succeeded` is exposed to the desktop renderer as `completed`.
 
@@ -207,6 +219,20 @@ generates a risk report, persists run metadata and structured run records
 through repository interfaces, records run status transitions, and applies
 workspace cleanup policy. The default cleanup policy is `never`, so worktrees
 are retained unless a caller explicitly selects cleanup behavior.
+
+Explicit code-state continuation is modeled on the run, not on the conversation
+transcript. `TaskRun` rows can reference `parentRunId` and optional
+`parentMessageId`; SQLite persists those links as nullable `task_runs`
+provenance columns. When `RunTaskInput.continueFrom` is supplied, the runner
+requires a terminal parent run with retained worktree metadata, resolves the
+parent worktree HEAD, creates a new isolated child worktree from that commit,
+and copies only safe parent changed regular files into the child worktree before
+adapter execution. Deletions are applied as deletions. Sensitive paths,
+`.git`/`.agent-hub`, path escapes, symlinks, and unsupported renames reject the
+continuation before a child run is created. The child run records a
+`code_state_provenance` artifact with parent ids, source worktree, source HEAD,
+and copied/deleted file lists; diff, verification, risk, and review records are
+still generated for the child run itself.
 
 Runner finalization is deliberately defensive after the task run row has been
 created. Post-adapter stages catch and convert failures from diff collection,

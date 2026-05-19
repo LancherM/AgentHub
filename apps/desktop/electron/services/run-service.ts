@@ -12,6 +12,7 @@ import {
   type RunArtifactRepository,
   type RunEvent as CoreRunEvent,
   type RunEventRepository,
+  type RunMetadataRepository,
   type Task,
   type TaskRepository,
   type TaskRun,
@@ -77,8 +78,14 @@ interface ActiveRun {
   promise: Promise<void>;
 }
 
-interface ParsedCreateRunInput extends Required<CreateRunInput> {
+interface ParsedCreateRunInput
+  extends Omit<
+    Required<CreateRunInput>,
+    "continueFromRunId" | "continueFromMessageId"
+  > {
   conversationBrief?: string | ConversationContextBrief;
+  continueFromRunId?: string;
+  continueFromMessageId?: string;
 }
 
 const desktopStatusTransitions: Record<RunStatus, readonly RunStatus[]> = {
@@ -117,6 +124,7 @@ class RepositoryRunService implements RunService {
   private readonly artifacts: RunArtifactRepository;
   private readonly verification: VerificationResultRepository;
   private readonly risks: RiskReportRepository;
+  private readonly metadata: RunMetadataRepository;
   private readonly emitter = new EventEmitter();
   private readonly activeRuns = new Map<string, ActiveRun>();
   private readonly runInputs = new Map<
@@ -135,6 +143,7 @@ class RepositoryRunService implements RunService {
     this.artifacts = context.repositories.runArtifactRepository;
     this.verification = context.repositories.verificationResultRepository;
     this.risks = context.repositories.riskReportRepository;
+    this.metadata = context.repositories.runMetadataRepository;
   }
 
   async listRuns(projectId?: string): Promise<RunSummary[]> {
@@ -158,7 +167,7 @@ class RepositoryRunService implements RunService {
           return undefined;
         }
         const events = await this.events.listByRunId(run.id);
-        return this.toRunSummary(run, task, project, events);
+        return await this.toRunSummary(run, task, project, events);
       })
     );
     return summaries
@@ -200,7 +209,7 @@ class RepositoryRunService implements RunService {
       ]);
     const summary = finalSummary(events) ?? statusSummary(run);
     return {
-      ...this.toRunSummary(run, task, project, events),
+      ...(await this.toRunSummary(run, task, project, events)),
       events: events.map(toRunEvent),
       changedFiles: diff.files.map((file) => file.path),
       verification,
@@ -231,6 +240,9 @@ class RepositoryRunService implements RunService {
     if (!project) {
       throw new Error(`project ${parsed.projectId} not found`);
     }
+    if (parsed.continueFromRunId) {
+      await this.requireContinuableParentRun(parsed.continueFromRunId);
+    }
 
     const createdAt = this.context.now();
     const task = await this.tasks.create(
@@ -250,6 +262,8 @@ class RepositoryRunService implements RunService {
         taskId: task.id,
         agentKind: toCoreAgentKind(parsed.agentId),
         status: "queued",
+        parentRunId: parsed.continueFromRunId,
+        parentMessageId: parsed.continueFromMessageId,
         createdAt,
         updatedAt: createdAt
       })
@@ -259,6 +273,7 @@ class RepositoryRunService implements RunService {
       contextMode: parsed.contextMode
     });
     await this.persistConversationBrief(run.id, parsed.conversationBrief);
+    await this.persistDesktopContinuationProvenance(run.id, parsed);
 
     queueMicrotask(() => {
       void this.startRun(run.id).catch((error) => {
@@ -266,7 +281,7 @@ class RepositoryRunService implements RunService {
       });
     });
 
-    return this.toRunSummary(run, task, project);
+    return await this.toRunSummary(run, task, project);
   }
 
   async startRun(runId: string): Promise<void> {
@@ -361,6 +376,26 @@ class RepositoryRunService implements RunService {
     const events = await this.events.listByRunId(runId);
     for (const event of events.map(toRunEvent)) {
       listener(event);
+    }
+  }
+
+  private async requireContinuableParentRun(parentRunId: string): Promise<void> {
+    const parentRun = await this.runs.get(parentRunId);
+    if (!parentRun) {
+      throw new Error(`parent run ${parentRunId} not found`);
+    }
+    if (
+      parentRun.status !== "succeeded" &&
+      parentRun.status !== "failed" &&
+      parentRun.status !== "cancelled"
+    ) {
+      throw new Error(`parent run ${parentRunId} must be terminal before continuation`);
+    }
+    const parentMetadata = await this.metadata.get(parentRunId);
+    if (parentMetadata?.workspaceCleanup?.retained !== true || !parentRun.worktreePath) {
+      throw new Error(
+        `parent run ${parentRunId} does not have a retained worktree for desktop continuation`
+      );
     }
   }
 
@@ -572,6 +607,42 @@ class RepositoryRunService implements RunService {
     );
   }
 
+  private async persistDesktopContinuationProvenance(
+    runId: string,
+    input: ParsedCreateRunInput
+  ): Promise<void> {
+    if (!input.continueFromRunId) {
+      return;
+    }
+    await this.artifacts.create(
+      validateRunArtifact({
+        id: this.context.nextId("artifact"),
+        taskRunId: runId,
+        kind: "code_state_provenance",
+        content: [
+          "# Agent Hub Code-State Provenance",
+          "",
+          "mode: continue_from_run",
+          `parent_run_id: ${input.continueFromRunId}`,
+          `parent_message_id: ${input.continueFromMessageId ?? "none"}`,
+          "desktop_execution: placeholder",
+          "copied_files:",
+          "- none",
+          "deleted_files:",
+          "- none",
+          ""
+        ].join("\n"),
+        metadata: {
+          mode: "continue_from_run",
+          parentRunId: input.continueFromRunId,
+          parentMessageId: input.continueFromMessageId,
+          source: "desktop_run_service"
+        },
+        createdAt: this.context.now()
+      })
+    );
+  }
+
   private async persistTerminalReview(
     runId: string,
     status: "completed" | "failed" | "cancelled"
@@ -652,13 +723,18 @@ class RepositoryRunService implements RunService {
     });
   }
 
-  private toRunSummary(
+  private async toRunSummary(
     run: TaskRun,
     task: Task,
     project: { id: string; name: string },
     events: CoreRunEvent[] = []
-  ): RunSummary {
+  ): Promise<RunSummary> {
     const eventUpdatedAt = events.at(-1)?.createdAt;
+    const metadata = await this.metadata.get(run.id);
+    const canContinueCodeState =
+      (run.status === "succeeded" || run.status === "failed" || run.status === "cancelled") &&
+      metadata?.workspaceCleanup?.retained === true &&
+      Boolean(run.worktreePath);
     return {
       id: run.id,
       projectId: project.id,
@@ -668,6 +744,9 @@ class RepositoryRunService implements RunService {
       taskPrompt: task.description ?? "",
       agentId: toAgentId(run.agentKind),
       status: this.currentDesktopStatus(run),
+      parentRunId: run.parentRunId,
+      parentMessageId: run.parentMessageId,
+      canContinueCodeState,
       createdAt: run.createdAt,
       updatedAt: eventUpdatedAt ?? run.updatedAt
     };
@@ -691,6 +770,15 @@ function parseCreateRunInput(input: CreateDesktopRunInput): ParsedCreateRunInput
   if (!input.projectId || typeof input.projectId !== "string") {
     throw new Error("projectId is required");
   }
+  if (input.continueFromRunId !== undefined) {
+    parseNonEmptyString(input.continueFromRunId, "continueFromRunId");
+  }
+  if (input.continueFromMessageId !== undefined) {
+    parseNonEmptyString(input.continueFromMessageId, "continueFromMessageId");
+  }
+  if (input.continueFromMessageId !== undefined && input.continueFromRunId === undefined) {
+    throw new Error("continueFromRunId is required when continueFromMessageId is provided");
+  }
   return {
     projectId: input.projectId,
     prompt,
@@ -698,8 +786,17 @@ function parseCreateRunInput(input: CreateDesktopRunInput): ParsedCreateRunInput
     agentId,
     contextMode,
     deliveryMode,
-    conversationBrief: input.conversationBrief
+    conversationBrief: input.conversationBrief,
+    continueFromRunId: input.continueFromRunId,
+    continueFromMessageId: input.continueFromMessageId
   };
+}
+
+function parseNonEmptyString(value: unknown, label: string): string {
+  if (typeof value !== "string" || value.trim().length === 0) {
+    throw new Error(`${label} must be a non-empty string`);
+  }
+  return value;
 }
 
 function parseAgentId(value: unknown): AgentId {

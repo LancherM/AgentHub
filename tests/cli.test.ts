@@ -10,7 +10,11 @@ import type {
   ProcessRunInput,
   ProcessRunner
 } from "@agent-hub/agent-adapters";
-import type { DiffCollectionResult, DiffCollectorService } from "@agent-hub/task-runner";
+import type {
+  ChangedFile,
+  DiffCollectionResult,
+  DiffCollectorService
+} from "@agent-hub/task-runner";
 import type { RiskReport } from "@agent-hub/core";
 import { createSqliteRepositories } from "@agent-hub/db";
 import { RiskReportGenerator, type RiskReportInput } from "@agent-hub/safety";
@@ -94,6 +98,91 @@ describe("CLI", () => {
       "--delivery-mode must be runtime_injection or worktree_overlay for task runs"
     );
     await expect(runtime.taskRepository.list()).resolves.toEqual([]);
+  });
+
+  it("continues code state from a message-linked retained run", async () => {
+    const projectRoot = await createTestDirectory("cli-project");
+    const runRoot = path.join(await createTestDirectory("cli-runs"), "runs");
+    const parentWorktree = await createTestDirectory("cli-parent-worktree");
+    await fs.mkdir(path.join(parentWorktree, "src"), { recursive: true });
+    await fs.writeFile(path.join(parentWorktree, "src", "carry.ts"), "carry\n", "utf8");
+    const runtime = createCliRuntime({
+      storageMode: "memory",
+      defaultRunRoot: runRoot,
+      workspaceManager: new TestWorkspaceManager(runRoot, {
+        "src/base.ts": "base\n"
+      }),
+      diffCollector: new ContinuationDiffCollector(parentWorktree, [
+        { path: "src/carry.ts", status: "untracked" }
+      ]),
+      shellExecutor: new MockShellExecutor([{ stdout: "abc123\n" }]),
+      verificationRunner: new VerificationRunner(new MockShellExecutor()),
+      idGenerator: new SequenceIdGenerator(),
+      clock: new FixedClock("2026-01-01T00:00:00.000Z")
+    });
+    await seedRetainedParentRun(runtime, projectRoot, parentWorktree);
+    await runtime.conversationThreadRepository.create({
+      id: "thread_parent",
+      projectId: "adhoc_project",
+      title: "Parent thread",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z"
+    });
+    await runtime.conversationMessageRepository.create({
+      id: "message_parent",
+      threadId: "thread_parent",
+      sequence: 0,
+      role: "tool",
+      kind: "run_card",
+      content: "Parent run",
+      agentKind: "fake",
+      runId: "run_parent",
+      status: "succeeded",
+      createdAt: "2026-01-01T00:00:00.000Z"
+    });
+    const output: string[] = [];
+    const errors: string[] = [];
+    const io = {
+      stdout: { write: (chunk: string) => { output.push(chunk); return true; } },
+      stderr: { write: (chunk: string) => { errors.push(chunk); return true; } }
+    };
+
+    await expect(
+      main([
+        "run",
+        "--continue-from-message",
+        "message_parent",
+        "@fake",
+        "continue from message"
+      ], io, projectRoot, runtime)
+    ).resolves.toBe(0);
+
+    const childRun = (await runtime.taskRunRepository.list()).find(
+      (run) => run.id !== "run_parent"
+    );
+    expect(childRun).toMatchObject({
+      parentRunId: "run_parent",
+      parentMessageId: "message_parent"
+    });
+    await expect(
+      fs.readFile(path.join(childRun?.worktreePath ?? "", "src", "carry.ts"), "utf8")
+    ).resolves.toBe("carry\n");
+    await expect(
+      runtime.runArtifactRepository.getLatestByRunIdAndKind(
+        childRun?.id ?? "",
+        "code_state_provenance"
+      )
+    ).resolves.toEqual(
+      expect.objectContaining({
+        content: expect.stringContaining("parent_message_id: message_parent")
+      })
+    );
+    await expect(
+      main(["runs", "show", childRun?.id ?? ""], io, projectRoot, runtime)
+    ).resolves.toBe(0);
+    expect(errors.join("")).toBe("");
+    expect(output.join("")).toContain("parent_run_id: run_parent");
+    expect(output.join("")).toContain("parent_message_id: message_parent");
   });
 
   it("routes @codex and --agent claude-code runs through process-backed adapters", async () => {
@@ -1925,6 +2014,52 @@ async function seedManualRun(
   });
 }
 
+async function seedRetainedParentRun(
+  runtime: ReturnType<typeof createCliRuntime>,
+  projectRoot: string,
+  parentWorktree: string
+): Promise<void> {
+  await runtime.taskRepository.create({
+    id: "task_parent",
+    projectId: "adhoc_project",
+    title: "Parent",
+    status: "completed",
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z"
+  });
+  await runtime.taskRunRepository.create({
+    id: "run_parent",
+    taskId: "task_parent",
+    agentKind: "fake",
+    status: "succeeded",
+    worktreePath: parentWorktree,
+    branchName: "agent-hub/task_parent/fake",
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z"
+  });
+  await runtime.runMetadataRepository.save({
+    runId: "run_parent",
+    workspace: {
+      path: parentWorktree,
+      branchName: "agent-hub/task_parent/fake",
+      sourceRepositoryPath: projectRoot,
+      workspaceBasePath: path.dirname(parentWorktree),
+      taskId: "task_parent",
+      runId: "run_parent",
+      agentKind: "fake",
+      dryRun: false,
+      sourceRepositoryDirty: false,
+      cleanupPolicy: "never"
+    },
+    workspaceCleanup: {
+      cleaned: false,
+      retained: true,
+      reason: "test retained parent",
+      commands: []
+    }
+  });
+}
+
 function riskReportForRun(
   id: string,
   taskRunId: string,
@@ -1948,20 +2083,32 @@ function riskReportForRun(
 }
 
 class TestWorkspaceManager implements WorkspaceManager {
-  constructor(private readonly runRoot: string) {}
+  constructor(
+    private readonly runRoot: string,
+    private readonly baseFiles: Record<string, string> = {}
+  ) {}
 
   async createSession(config: WorkspaceConfig): Promise<WorkspaceSession> {
-    const workspacePath = path.join(this.runRoot, `${config.taskId}-${config.agentKind}`);
+    const workspacePath = path.join(
+      this.runRoot,
+      `${config.taskId}-${config.agentKind}-${config.runId}`
+    );
     await fs.mkdir(workspacePath, { recursive: true });
+    for (const [relativePath, content] of Object.entries(this.baseFiles)) {
+      const filePath = path.join(workspacePath, relativePath);
+      await fs.mkdir(path.dirname(filePath), { recursive: true });
+      await fs.writeFile(filePath, content, "utf8");
+    }
     return {
       workspace: {
         path: workspacePath,
-        branchName: `agent-hub/${config.taskId}/${config.agentKind}`,
+        branchName: config.branchName ?? `agent-hub/${config.taskId}/${config.agentKind}`,
         sourceRepositoryPath: config.sourceRepositoryPath,
         workspaceBasePath: this.runRoot,
         taskId: config.taskId,
         runId: config.runId,
         agentKind: config.agentKind,
+        startPoint: config.startPoint,
         dryRun: config.dryRun ?? false,
         sourceRepositoryDirty: false,
         cleanupPolicy: config.cleanupPolicy ?? "never"
@@ -2000,6 +2147,38 @@ class StaticDiffCollector implements DiffCollectorService {
       },
       diff: this.diffText,
       fileSummaries: this.fileSummaries,
+      commands: []
+    };
+  }
+}
+
+class ContinuationDiffCollector extends StaticDiffCollector {
+  constructor(
+    private readonly parentWorktree: string,
+    private readonly parentChangedFiles: ChangedFile[]
+  ) {
+    super();
+  }
+
+  async collect(input: { workspacePath: string }): Promise<DiffCollectionResult> {
+    if (path.resolve(input.workspacePath) !== path.resolve(this.parentWorktree)) {
+      return super.collect(input);
+    }
+    return {
+      ok: true,
+      workspacePath: input.workspacePath,
+      isClean: this.parentChangedFiles.length === 0,
+      changedFiles: this.parentChangedFiles,
+      stat: {
+        filesChanged: this.parentChangedFiles.length,
+        insertions: this.parentChangedFiles.length,
+        deletions: 0,
+        text: `${this.parentChangedFiles.length} files changed`
+      },
+      diff: "",
+      fileSummaries: this.parentChangedFiles.map(
+        (file) => `${file.path}: ${file.status}`
+      ),
       commands: []
     };
   }

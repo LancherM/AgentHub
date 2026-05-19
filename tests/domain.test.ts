@@ -65,6 +65,21 @@ describe("domain model validation", () => {
         updatedAt: now
       }).status
     ).toBe("open");
+    expect(
+      validateTaskRun({
+        id: "run_child",
+        taskId: "task_1",
+        agentKind: "fake",
+        status: "queued",
+        parentRunId: "run_parent",
+        parentMessageId: "message_parent",
+        createdAt: now,
+        updatedAt: now
+      })
+    ).toMatchObject({
+      parentRunId: "run_parent",
+      parentMessageId: "message_parent"
+    });
 
     expect(() =>
       validateTaskRun({

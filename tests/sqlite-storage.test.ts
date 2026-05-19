@@ -31,7 +31,8 @@ describe("SQLite storage", () => {
       { version: 3 },
       { version: 4 },
       { version: 5 },
-      { version: 6 }
+      { version: 6 },
+      { version: 7 }
     ]);
     await expect(
       database.query<{ name: string }>(
@@ -149,6 +150,16 @@ describe("SQLite storage", () => {
       kind: "text",
       content: "Persist this thread.",
       createdAt
+    });
+    await first.taskRunRepository.create({
+      id: "run_2",
+      taskId: "task_1",
+      agentKind: "fake",
+      status: "queued",
+      parentRunId: "run_1",
+      parentMessageId: "message_2",
+      createdAt: updatedAt,
+      updatedAt
     });
     await first.conversationThreadSummaryRepository.upsert({
       id: "summary_1",
@@ -277,6 +288,13 @@ describe("SQLite storage", () => {
         branchName: "agent-hub/task_1/fake"
       })
     );
+    await expect(second.taskRunRepository.get("run_2")).resolves.toEqual(
+      expect.objectContaining({
+        id: "run_2",
+        parentRunId: "run_1",
+        parentMessageId: "message_2"
+      })
+    );
     await expect(second.taskRunRepository.getStatusTransitions("run_1")).resolves.toEqual([
       { runId: "run_1", status: "queued", at: createdAt },
       { runId: "run_1", status: "running", at: updatedAt },
@@ -322,6 +340,13 @@ describe("SQLite storage", () => {
         metadata: { card: true }
       })
     ]);
+    await expect(second.conversationMessageRepository.get("message_2")).resolves.toEqual(
+      expect.objectContaining({
+        id: "message_2",
+        runId: "run_1",
+        status: "running"
+      })
+    );
     await expect(
       second.conversationMessageRepository.update({
         id: "message_2",
@@ -802,7 +827,8 @@ VALUES (
       { version: 3 },
       { version: 4 },
       { version: 5 },
-      { version: 6 }
+      { version: 6 },
+      { version: 7 }
     ]);
   });
 
@@ -848,7 +874,8 @@ VALUES (
       { version: 3 },
       { version: 4 },
       { version: 5 },
-      { version: 6 }
+      { version: 6 },
+      { version: 7 }
     ]);
     await expect(repositories.database.execute(`
 INSERT INTO tasks (id, project_id, title, status, created_at, updated_at)

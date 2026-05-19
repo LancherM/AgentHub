@@ -147,6 +147,8 @@ export interface SendThreadMessageInput {
   text: string;
   contextMode?: ContextMode;
   agents?: AgentId[];
+  continueFromRunId?: string;
+  continueFromMessageId?: string;
 }
 
 export interface RunSummary {
@@ -158,6 +160,9 @@ export interface RunSummary {
   taskPrompt: string;
   agentId: AgentId;
   status: RunStatus;
+  parentRunId?: string;
+  parentMessageId?: string;
+  canContinueCodeState: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -196,6 +201,8 @@ export interface CreateRunInput {
   agentId: AgentId;
   contextMode: ContextMode;
   deliveryMode?: "runtime_injection" | "worktree_overlay";
+  continueFromRunId?: string;
+  continueFromMessageId?: string;
 }
 
 export interface ReviewSummary {
@@ -216,7 +223,14 @@ export interface ReviewSummary {
   acceptedAt?: string;
   rejectedAt?: string;
   reviewStatus: ReviewStatus;
+  parentRunId?: string;
+  parentMessageId?: string;
   message?: string;
+}
+
+export interface RunContinuationTarget {
+  parentRunId: string;
+  parentMessageId?: string;
 }
 
 export interface ChangedFile {

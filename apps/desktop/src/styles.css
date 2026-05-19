@@ -527,6 +527,32 @@ textarea:disabled {
   color: var(--cyan);
 }
 
+.continue-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 24px;
+  padding: 2px 6px 2px 8px;
+  border: 1px solid rgba(238, 238, 230, 0.24);
+  border-radius: 999px;
+  background: rgba(238, 238, 230, 0.08);
+  color: #f0ead8;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.continue-chip button {
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.12);
+  color: inherit;
+  font-size: 11px;
+  line-height: 18px;
+}
+
 .agent-run-card {
   overflow: hidden;
   border: 1px solid var(--line);

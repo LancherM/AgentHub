@@ -263,6 +263,7 @@ function Summary({
         <Metric label="Tests" value={summary.verificationStatus} />
         <Metric label="Risk" value={summary.riskLevel} />
         <Metric label="Memory" value={`${summary.memoryProposalCount}`} />
+        <Metric label="Parent" value={summary.parentRunId ?? "none"} />
       </section>
       <section>
         <div className="panel-label">Task</div>

@@ -26,7 +26,12 @@ import {
   type ContextFormatter,
   type TargetRepositoryMetadata
 } from "@agent-hub/context-compiler";
-import { DiffCollector, type DiffCollectionResult, type DiffCollectorService } from "./diff-collector";
+import {
+  DiffCollector,
+  type ChangedFile,
+  type DiffCollectionResult,
+  type DiffCollectorService
+} from "./diff-collector";
 import {
   createId,
   nowIso,
@@ -81,6 +86,7 @@ import {
   type WorkspaceCleanupResult,
   type WorkspaceManager
 } from "./workspace";
+import { safeGitCommand, safeGitExecutionOptions } from "./git-safety";
 
 export interface IdGenerator {
   nextId(prefix: string): string;
@@ -111,6 +117,33 @@ export interface RunTaskInput {
   conversationBrief?: string | ConversationContextBrief;
   userConstraints?: string[];
   executionHints?: string[];
+  continueFrom?: RunContinuationInput;
+}
+
+export interface RunContinuationInput {
+  parentRunId: string;
+  parentMessageId?: string;
+}
+
+export interface CodeStateProvenance {
+  mode: "continue_from_run";
+  parentRunId: string;
+  parentMessageId?: string;
+  sourceWorktreePath: string;
+  sourceBranchName?: string;
+  sourceHead: string;
+  copiedFiles: string[];
+  deletedFiles: string[];
+  blockedFiles: string[];
+  inheritedFileCount: number;
+  createdAt: string;
+}
+
+interface ResolvedContinuation extends RunContinuationInput {
+  sourceWorktreePath: string;
+  sourceBranchName?: string;
+  sourceHead: string;
+  changedFiles: ChangedFile[];
 }
 
 export interface RunResult {
@@ -214,6 +247,7 @@ export class TaskRunner {
   private readonly diffCollector: DiffCollectorService;
   private readonly verificationRunner: VerificationRunner;
   private readonly riskReportGenerator: RiskReportGenerator;
+  private readonly shellExecutor: ShellExecutor;
   private readonly idGenerator: IdGenerator;
   private readonly clock: Clock;
   private readonly defaultRunRoot: string;
@@ -254,6 +288,7 @@ export class TaskRunner {
       dependencies.verificationRunner ?? new VerificationRunner(shellExecutor);
     this.riskReportGenerator =
       dependencies.riskReportGenerator ?? new RiskReportGenerator();
+    this.shellExecutor = shellExecutor;
     this.idGenerator = dependencies.idGenerator ?? new DefaultIdGenerator();
     this.clock = dependencies.clock ?? new SystemClock();
     this.defaultRunRoot =
@@ -274,6 +309,9 @@ export class TaskRunner {
         "workspace base path must be outside the original project root"
       );
     }
+    const continuation = input.continueFrom
+      ? await this.resolveContinuation(input.continueFrom, projectRoot, input.projectId)
+      : undefined;
     const createdAt = this.clock.now();
     const task = validateTask({
       id: input.taskId ?? this.idGenerator.nextId("task"),
@@ -314,6 +352,8 @@ export class TaskRunner {
       taskId: task.id,
       agentKind: parsed.agentKind,
       status: "queued",
+      parentRunId: continuation?.parentRunId,
+      parentMessageId: continuation?.parentMessageId,
       createdAt,
       updatedAt: createdAt
     });
@@ -366,6 +406,10 @@ export class TaskRunner {
         taskId: task.id,
         runId: run.id,
         agentKind: parsed.agentKind,
+        branchName: continuation
+          ? continuationBranchName(task.id, parsed.agentKind, continuation.parentRunId, run.id)
+          : undefined,
+        startPoint: continuation?.sourceHead,
         cleanupPolicy: input.workspaceCleanupPolicy ?? "never",
         dryRun: input.dryRun
       });
@@ -421,6 +465,7 @@ export class TaskRunner {
     const warnings = [...contextBundle.warnings];
     let generatedFileBaselines: GeneratedFileBaseline[] = [];
     let workspaceCleanup: WorkspaceCleanupResult | undefined;
+    let codeStateProvenance: CodeStateProvenance | undefined;
     let diff: DiffCollectionResult = failedDiffResultFromError(
       worktreePath,
       "diff collection did not run"
@@ -472,6 +517,24 @@ export class TaskRunner {
       });
     } else {
       try {
+        if (continuation) {
+          codeStateProvenance = await this.applyContinuationToWorkspace({
+            continuation,
+            childWorktreePath: worktreePath,
+            createdAt: this.clock.now()
+          });
+          events.push({
+            type: "status",
+            message: `continued code state from ${continuation.parentRunId}`,
+            metadata: {
+              stage: "code_state_continuation",
+              parentRunId: continuation.parentRunId,
+              parentMessageId: continuation.parentMessageId,
+              copiedFiles: codeStateProvenance.copiedFiles,
+              deletedFiles: codeStateProvenance.deletedFiles
+            }
+          });
+        }
         const taskBrief = createContextTaskBrief({
           taskId: task.id,
           title: task.title,
@@ -623,6 +686,22 @@ export class TaskRunner {
         recordDiagnostic("conversation brief artifact persistence", error);
       }
     }
+    if (codeStateProvenance) {
+      try {
+        await this.runArtifactRepository.create(
+          createTextArtifact({
+            runId: run.id,
+            kind: "code_state_provenance",
+            content: renderCodeStateProvenance(codeStateProvenance),
+            metadata: codeStateProvenance as unknown as JsonObject,
+            clock: this.clock,
+            idGenerator: this.idGenerator
+          })
+        );
+      } catch (error) {
+        recordDiagnostic("code-state provenance artifact persistence", error);
+      }
+    }
     try {
       await this.verificationResultRepository.createMany(
         toPersistedVerificationResults(
@@ -748,6 +827,142 @@ export class TaskRunner {
             "run failed"
           : undefined
     });
+  }
+
+  private async resolveContinuation(
+    input: RunContinuationInput,
+    projectRoot: string,
+    projectId: string | undefined
+  ): Promise<ResolvedContinuation> {
+    if (!input.parentRunId.trim()) {
+      throw new TaskRunnerError("continueFrom.parentRunId is required");
+    }
+    const parentRun = await this.taskRunRepository.get(input.parentRunId);
+    if (!parentRun) {
+      throw new TaskRunnerError(`parent run ${input.parentRunId} not found`);
+    }
+    if (!isTerminalTaskRunStatus(parentRun.status)) {
+      throw new TaskRunnerError(
+        `parent run ${input.parentRunId} must be terminal before continuation`
+      );
+    }
+    const parentTask = await this.taskRepository.get(parentRun.taskId);
+    if (!parentTask) {
+      throw new TaskRunnerError(`parent task ${parentRun.taskId} not found`);
+    }
+    if (projectId !== undefined && parentTask.projectId !== projectId) {
+      throw new TaskRunnerError(
+        `parent run ${input.parentRunId} belongs to project ${parentTask.projectId}, not ${projectId}`
+      );
+    }
+
+    const metadata = await this.runMetadataRepository.get(parentRun.id);
+    if (metadata?.workspaceCleanup?.retained !== true) {
+      throw new TaskRunnerError(
+        `parent run ${parentRun.id} does not have a retained worktree`
+      );
+    }
+    const rawSourceWorktreePath = parentRun.worktreePath ?? metadata.workspace?.path;
+    if (!rawSourceWorktreePath || !path.isAbsolute(rawSourceWorktreePath)) {
+      throw new TaskRunnerError(
+        `parent run ${parentRun.id} does not have an absolute worktree path`
+      );
+    }
+    const sourceWorktreePath = path.resolve(rawSourceWorktreePath);
+    if (
+      metadata.workspace?.sourceRepositoryPath &&
+      !samePath(metadata.workspace.sourceRepositoryPath, projectRoot)
+    ) {
+      throw new TaskRunnerError(
+        `parent run ${parentRun.id} belongs to a different source repository`
+      );
+    }
+
+    await assertDirectoryExists(sourceWorktreePath, `parent run ${parentRun.id} worktree`);
+    const sourceHead = await this.resolveGitHead(sourceWorktreePath);
+    const parentDiff = await this.diffCollector.collect({
+      workspacePath: sourceWorktreePath,
+      excludePathPrefixes: [".agent-hub/"]
+    });
+    if (!parentDiff.ok) {
+      throw new TaskRunnerError(
+        `parent run ${parentRun.id} diff could not be inspected: ${parentDiff.error ?? "unknown error"}`
+      );
+    }
+    const blockedFiles = parentDiff.changedFiles.filter((file) =>
+      isBlockedContinuationFile(file)
+    );
+    if (blockedFiles.length > 0) {
+      throw new TaskRunnerError(
+        `parent run ${parentRun.id} cannot be continued because unsafe file paths changed: ${blockedFiles.map((file) => file.path).join(", ")}`
+      );
+    }
+
+    return {
+      parentRunId: parentRun.id,
+      parentMessageId: input.parentMessageId,
+      sourceWorktreePath,
+      sourceBranchName: parentRun.branchName ?? metadata.workspace?.branchName,
+      sourceHead,
+      changedFiles: parentDiff.changedFiles
+    };
+  }
+
+  private async resolveGitHead(worktreePath: string): Promise<string> {
+    const result = await this.shellExecutor.execute(
+      safeGitCommand(["rev-parse", "HEAD"]),
+      safeGitExecutionOptions({ cwd: worktreePath })
+    );
+    if (result.exitCode !== 0) {
+      throw new TaskRunnerError(
+        `could not resolve parent worktree HEAD: ${result.stderr.trim() || result.stdout.trim() || result.error || "git rev-parse failed"}`
+      );
+    }
+    return result.stdout.trim();
+  }
+
+  private async applyContinuationToWorkspace(input: {
+    continuation: ResolvedContinuation;
+    childWorktreePath: string;
+    createdAt: string;
+  }): Promise<CodeStateProvenance> {
+    const copiedFiles: string[] = [];
+    const deletedFiles: string[] = [];
+    const blockedFiles: string[] = [];
+    for (const file of input.continuation.changedFiles) {
+      try {
+        await copyContinuationFile({
+          sourceWorktreePath: input.continuation.sourceWorktreePath,
+          childWorktreePath: input.childWorktreePath,
+          file
+        });
+        if (file.status === "deleted") {
+          deletedFiles.push(file.path);
+        } else {
+          copiedFiles.push(file.path);
+        }
+      } catch (error) {
+        blockedFiles.push(`${file.path}: ${errorMessage(error)}`);
+      }
+    }
+    if (blockedFiles.length > 0) {
+      throw new TaskRunnerError(
+        `code-state continuation failed: ${blockedFiles.join("; ")}`
+      );
+    }
+    return {
+      mode: "continue_from_run",
+      parentRunId: input.continuation.parentRunId,
+      parentMessageId: input.continuation.parentMessageId,
+      sourceWorktreePath: input.continuation.sourceWorktreePath,
+      sourceBranchName: input.continuation.sourceBranchName,
+      sourceHead: input.continuation.sourceHead,
+      copiedFiles,
+      deletedFiles,
+      blockedFiles,
+      inheritedFileCount: copiedFiles.length + deletedFiles.length,
+      createdAt: input.createdAt
+    };
   }
 
   private async result(
@@ -980,6 +1195,24 @@ function parseRunDeliveryMode(
   );
 }
 
+function continuationBranchName(
+  taskId: string,
+  agentKind: AgentKind,
+  parentRunId: string,
+  runId: string
+): string {
+  return [
+    "agent-hub",
+    sanitizeSegment(taskId),
+    sanitizeSegment(agentKind),
+    `continue-${shortSegment(parentRunId)}-${shortSegment(runId)}`
+  ].join("/");
+}
+
+function shortSegment(value: string): string {
+  return sanitizeSegment(value).slice(0, 24);
+}
+
 async function createRunDirectory(
   runRoot: string,
   taskId: string,
@@ -1024,6 +1257,134 @@ function sanitizeSegment(value: string): string {
 
 function samePath(left: string, right: string): boolean {
   return path.resolve(left) === path.resolve(right);
+}
+
+function isTerminalTaskRunStatus(status: TaskRun["status"]): boolean {
+  return status === "succeeded" || status === "failed" || status === "cancelled";
+}
+
+async function assertDirectoryExists(directoryPath: string, label: string): Promise<void> {
+  try {
+    const stats = await fs.stat(directoryPath);
+    if (!stats.isDirectory()) {
+      throw new TaskRunnerError(`${label} is not a directory: ${directoryPath}`);
+    }
+  } catch (error) {
+    if (error instanceof TaskRunnerError) {
+      throw error;
+    }
+    throw new TaskRunnerError(`${label} is not available: ${directoryPath}`);
+  }
+}
+
+function isBlockedContinuationFile(file: ChangedFile): boolean {
+  const normalizedPath = normalizeContinuationPath(file.path);
+  if (normalizedPath === undefined) {
+    return true;
+  }
+  if (file.symlink || file.symlinkTarget !== undefined) {
+    return true;
+  }
+  if (file.status === "renamed") {
+    return true;
+  }
+  if (isSensitiveContinuationPath(normalizedPath)) {
+    return true;
+  }
+  return normalizedPath
+    .split("/")
+    .some((segment) => segment === ".git" || segment === ".agent-hub");
+}
+
+async function copyContinuationFile(input: {
+  sourceWorktreePath: string;
+  childWorktreePath: string;
+  file: ChangedFile;
+}): Promise<void> {
+  const relativePath = normalizeContinuationPath(input.file.path);
+  if (relativePath === undefined || isBlockedContinuationFile(input.file)) {
+    throw new Error("unsafe continuation path");
+  }
+  const childPath = safeContinuationPath(input.childWorktreePath, relativePath);
+  if (input.file.status === "deleted") {
+    await fs.rm(childPath, { force: true });
+    return;
+  }
+  const sourcePath = safeContinuationPath(input.sourceWorktreePath, relativePath);
+  const stats = await fs.lstat(sourcePath);
+  if (stats.isSymbolicLink()) {
+    throw new Error("symlink inheritance is not allowed");
+  }
+  if (!stats.isFile()) {
+    throw new Error("only regular files can be inherited");
+  }
+  await fs.mkdir(path.dirname(childPath), { recursive: true });
+  await fs.copyFile(sourcePath, childPath);
+}
+
+function safeContinuationPath(worktreePath: string, relativePath: string): string {
+  const resolvedWorktree = path.resolve(worktreePath);
+  const resolvedPath = path.resolve(resolvedWorktree, relativePath);
+  if (!isContinuationPathInside(resolvedPath, resolvedWorktree)) {
+    throw new Error("continuation path escapes the worktree");
+  }
+  return resolvedPath;
+}
+
+function normalizeContinuationPath(filePath: string): string | undefined {
+  const normalized = filePath.replace(/\\/g, "/").replace(/^\/+/, "");
+  if (
+    normalized.length === 0 ||
+    path.posix.isAbsolute(normalized) ||
+    normalized.split("/").some((segment) => segment === ".." || segment.length === 0)
+  ) {
+    return undefined;
+  }
+  return normalized;
+}
+
+function isContinuationPathInside(candidatePath: string, basePath: string): boolean {
+  const relative = path.relative(basePath, candidatePath);
+  return relative === "" || (!!relative && !relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
+function isSensitiveContinuationPath(filePath: string): boolean {
+  return /\.env(?:\.|$)/i.test(filePath) ||
+    /\.pem$/i.test(filePath) ||
+    /\.key$/i.test(filePath) ||
+    /(^|\/)id_rsa$/i.test(filePath) ||
+    /(^|\/)id_ed25519$/i.test(filePath) ||
+    /(^|\/)secrets?\./i.test(filePath) ||
+    /(^|\/)credentials?\./i.test(filePath) ||
+    /(^|\/)tokens?\./i.test(filePath);
+}
+
+function renderCodeStateProvenance(provenance: CodeStateProvenance): string {
+  return [
+    "# Agent Hub Code-State Provenance",
+    "",
+    `mode: ${provenance.mode}`,
+    `parent_run_id: ${provenance.parentRunId}`,
+    `parent_message_id: ${provenance.parentMessageId ?? "none"}`,
+    `source_worktree_path: ${provenance.sourceWorktreePath}`,
+    `source_branch_name: ${provenance.sourceBranchName ?? "none"}`,
+    `source_head: ${provenance.sourceHead}`,
+    `inherited_file_count: ${provenance.inheritedFileCount}`,
+    "copied_files:",
+    ...(provenance.copiedFiles.length === 0
+      ? ["- none"]
+      : provenance.copiedFiles.map((file) => `- ${file}`)),
+    "deleted_files:",
+    ...(provenance.deletedFiles.length === 0
+      ? ["- none"]
+      : provenance.deletedFiles.map((file) => `- ${file}`)),
+    "blocked_files:",
+    ...(provenance.blockedFiles.length === 0
+      ? ["- none"]
+      : provenance.blockedFiles.map((file) => `- ${file}`)),
+    `created_at: ${provenance.createdAt}`,
+    ""
+  ].join("\n");
 }
 
 function findLastExitEvent(events: AgentRunEvent[]): AgentRunEvent | undefined {

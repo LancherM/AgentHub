@@ -5,6 +5,7 @@ import type {
   ProjectSummary,
   RunDetail,
   RunInspectorTab,
+  RunContinuationTarget,
   ThreadDetail,
   ThreadMessage
 } from "../../lib/types";
@@ -19,8 +20,11 @@ interface ChatViewProps {
   runDetails: Record<string, RunDetail>;
   isBusy: boolean;
   lastUsedAgents: AgentId[];
+  pendingContinueFrom?: RunContinuationTarget;
   error?: string;
   onSubmit(input: string, contextMode: ContextMode): Promise<void>;
+  onContinueFromRun(target: RunContinuationTarget): void;
+  onClearContinueFrom(): void;
   onRunUpdated(run: RunDetail): void;
   onOpenInspector(runId: string, tab?: RunInspectorTab): void;
   onCancelRun(runId: string): Promise<void>;
@@ -34,8 +38,11 @@ export function ChatView({
   runDetails,
   isBusy,
   lastUsedAgents,
+  pendingContinueFrom,
   error,
   onSubmit,
+  onContinueFromRun,
+  onClearContinueFrom,
   onRunUpdated,
   onOpenInspector,
   onCancelRun,
@@ -77,6 +84,7 @@ export function ChatView({
             onRunUpdated={onRunUpdated}
             onOpenInspector={onOpenInspector}
             onCancelRun={onCancelRun}
+            onContinueFromRun={onContinueFromRun}
           />
         ) : (
           <div className="empty-chat project-onboarding">
@@ -100,8 +108,10 @@ export function ChatView({
       <Composer
         isBusy={isBusy}
         lastUsedAgents={lastUsedAgents}
+        pendingContinueFrom={pendingContinueFrom}
         disabledReason={disabledReason}
         onSubmit={onSubmit}
+        onClearContinueFrom={onClearContinueFrom}
       />
     </section>
   );

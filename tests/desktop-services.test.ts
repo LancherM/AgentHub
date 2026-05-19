@@ -871,6 +871,118 @@ describe("desktop services", () => {
     expect(artifact?.content).not.toContain("thread_title: New Chat");
   });
 
+  it("passes explicit desktop continuation provenance through thread run creation", async () => {
+    const fixture = await createFixture();
+    const context = createDesktopServiceContext(fixture.repositories);
+    const projects = createProjectService(context);
+    const memory = createMemoryService(context);
+    const review = createReviewService(context, { memoryService: memory });
+    const runs = createRunService(context, {
+      reviewService: review,
+      memoryService: memory,
+      fakeDelayMs: 5
+    });
+    const threads = createThreadService({ context, projects, runs });
+    const project = await projects.open(fixture.projectRoot);
+    const parentWorktree = path.join(path.dirname(fixture.databasePath), "parent");
+    await fs.mkdir(parentWorktree);
+    await fixture.repositories.taskRepository.create(
+      validateTask({
+        id: "task_parent",
+        projectId: project.id,
+        title: "Parent",
+        status: "completed",
+        createdAt: context.now(),
+        updatedAt: context.now()
+      })
+    );
+    await fixture.repositories.taskRunRepository.create(
+      validateTaskRun({
+        id: "run_parent",
+        taskId: "task_parent",
+        agentKind: "fake",
+        status: "succeeded",
+        worktreePath: parentWorktree,
+        branchName: "agent-hub/task_parent/fake",
+        createdAt: context.now(),
+        updatedAt: context.now()
+      })
+    );
+    await fixture.repositories.runMetadataRepository.save({
+      runId: "run_parent",
+      workspaceCleanup: {
+        cleaned: false,
+        retained: true,
+        reason: "test retained parent",
+        commands: []
+      }
+    });
+
+    const detail = await threads.sendMessage({
+      projectId: project.id,
+      text: "@fake continue desktop state",
+      contextMode: "auto",
+      continueFromRunId: "run_parent"
+    });
+    const run = detail.messages.find((message) => message.type === "agent_run");
+    if (!run) {
+      throw new Error("expected run card");
+    }
+    const persisted = await fixture.repositories.taskRunRepository.get(run.runId);
+    expect(persisted).toMatchObject({ parentRunId: "run_parent" });
+    await expect(review.getSummary(run.runId)).resolves.toMatchObject({
+      parentRunId: "run_parent"
+    });
+    await expect(
+      fixture.repositories.runArtifactRepository.getLatestByRunIdAndKind(
+        run.runId,
+        "code_state_provenance"
+      )
+    ).resolves.toMatchObject({
+      metadata: expect.objectContaining({
+        parentRunId: "run_parent",
+        source: "desktop_run_service"
+      })
+    });
+  });
+
+  it("rejects desktop continuation when the parent run has no retained worktree", async () => {
+    const fixture = await createFixture();
+    const context = createDesktopServiceContext(fixture.repositories);
+    const projects = createProjectService(context);
+    const memory = createMemoryService(context);
+    const review = createReviewService(context, { memoryService: memory });
+    const runs = createRunService(context, {
+      reviewService: review,
+      memoryService: memory,
+      fakeDelayMs: 5
+    });
+    const threads = createThreadService({ context, projects, runs });
+    const project = await projects.open(fixture.projectRoot);
+    const first = await threads.sendMessage({
+      projectId: project.id,
+      text: "@fake parent without worktree",
+      contextMode: "auto"
+    });
+    const parent = first.messages.find((message) => message.type === "agent_run");
+    if (!parent) {
+      throw new Error("expected parent run card");
+    }
+    await waitForRun(runs, parent.runId, "completed");
+
+    const second = await threads.sendMessage({
+      threadId: first.id,
+      text: "@fake should not continue",
+      contextMode: "auto",
+      continueFromRunId: parent.runId
+    });
+
+    expect(second.messages.at(-1)).toMatchObject({
+      type: "system",
+      text: expect.stringContaining("does not have a retained worktree")
+    });
+  });
+
   it("validates IPC run creation and rejects repo_export delivery", async () => {
     const fixture = await createFixture();
     const context = createDesktopServiceContext(fixture.repositories);

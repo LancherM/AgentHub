@@ -35,7 +35,7 @@ agent-hub context show --project-root <path> --project-id <project-id>
 agent-hub context build --project-root <path> --project-id <project-id> --task-id <task-id> --title <title> --prompt <prompt>
 agent-hub context export --project-root <path> --project-id <project-id> [--target repo] --dry-run|--write
 agent-hub [--db <path>] run --task <task-id> --agent fake|codex|claude-code
-agent-hub run [--repo <path>] [--workspace-base <path>] [--retain-on-failure] "@fake|@codex|@claude-code <task>"
+agent-hub run [--repo <path>] [--workspace-base <path>] [--retain-on-failure] [--continue-from-run <run-id>|--continue-from-message <message-id>] "@fake|@codex|@claude-code <task>"
 agent-hub [--db <path>] run event add --run-id <run-id> --type <type> --message <message>
 agent-hub [--db <path>] threads list
 agent-hub [--db <path>] threads show <thread-id>
@@ -64,7 +64,8 @@ single run and no conversation thread rows are created.
 `agent-hub chat` is the explicit persistent conversation mode. It creates or
 resumes a local SQLite-backed conversation thread, persists ordered user,
 run-card, and bounded assistant-output messages, and accepts `/thread new`,
-`/thread use <id>`, `/threads`, `/history`, and `/exit`. Natural-language chat
+`/thread use <id>`, `/threads`, `/history`, `/continue run <id>`, `/continue
+message <id>`, `/continue clear`, and `/exit`. Natural-language chat
 turns use the selected default agent, while leading `@fake`, `@codex`, or
 `@claude-code` prefixes route that turn to a specific adapter. Each chat turn
 builds a bounded conversation brief from prior thread messages with the shared
@@ -76,8 +77,10 @@ that summary for inspection. Thread summaries stay scoped to the thread and do
 not become approved project memory unless the user explicitly promotes them
 through the memory workflow. Full logs, diffs, verification results, risks, and
 memory proposals remain on the run evidence model rather than in message
-bodies. `agent-hub run` remains stateless and does not require or create a
-thread.
+bodies. Chat code-state continuation is one-shot: a `/continue` command applies
+only to the next natural-language turn and then clears. `agent-hub run` remains
+stateless and does not require or create a thread unless an explicit
+message-linked continuation id is supplied.
 
 The context commands initialize and inspect a project context store, build a
 task-specific context pack and task brief, and explicitly export managed
@@ -128,6 +131,21 @@ the task run to finish, then prints the final agent-facing output once. The
 pre-flight Git config check covers worktree-local config files, inline section
 comments, and dotted filter or diff driver names that could otherwise enable
 executable Git helpers during checkout.
+
+Code-state continuation is explicit opt-in only. `agent-hub run
+--continue-from-run <run-id>` and `agent-hub run --continue-from-message
+<message-id>` create a new isolated child worktree at the retained parent run's
+HEAD, copy safe changed regular files from the retained parent worktree, apply
+parent deletions, and then run the selected adapter in the child worktree.
+Continuation rejects non-terminal parents, missing or cleaned worktrees,
+sensitive paths, `.git`/`.agent-hub` paths, path escapes, symlinks, and
+unsupported renames before creating a child run. The child run stores
+`parent_run_id`, optional `parent_message_id`, and a `code_state_provenance`
+artifact with copied/deleted file lists and source HEAD. Review, risk, diff,
+verification, and memory evidence remain scoped to the child run. Continuation
+does not merge, push, accept branches, mutate the original checkout, or export
+repository context files.
+
 `runtime_injection` remains the default delivery mode. Codex and Claude Code
 receive the task brief/context through stdin-driven runtime injection and do
 not require repository-level `AGENTS.md` or `CLAUDE.md`. `worktree_overlay` is
