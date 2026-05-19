@@ -333,69 +333,44 @@ export class ConversationContextBuilder {
       ...defaultConversationContextBudget,
       ...(input.budget ?? {})
     };
-    const usableMessages =
+    const filteredMessages = input.messages.filter(
+      (message) => !isNoisyConversationMessage(message)
+    );
+    const selectedMessages =
       budget.maxRecentMessages <= 0
         ? []
-        : input.messages
-            .filter((message) => !isNoisyConversationMessage(message))
-            .slice(-budget.maxRecentMessages);
-    const omittedMessageCount = Math.max(0, input.messages.length - usableMessages.length);
+        : filteredMessages.slice(-budget.maxRecentMessages);
     const originalCharacterCount =
       input.currentTurn.content.length +
       threadSummaryCharacterCount(input.threadSummary) +
       input.messages.reduce((total, message) => total + messageContent(message).length, 0);
 
-    const lines: string[] = [
-      "# Agent Hub Conversation Brief",
-      "",
-      `thread_id: ${input.thread.id}`,
-      `thread_title: ${input.thread.title}`,
-      input.thread.projectId ? `project_id: ${input.thread.projectId}` : undefined,
-      `selected_agent: ${input.currentTurn.agentId}`,
-      input.currentTurn.contextMode ? `context_mode: ${input.currentTurn.contextMode}` : undefined,
-      input.currentTurn.deliveryMode ? `delivery_mode: ${input.currentTurn.deliveryMode}` : undefined,
-      "",
-      "## Budget",
-      "",
-      `max_recent_messages: ${budget.maxRecentMessages}`,
-      `max_total_characters: ${budget.maxTotalCharacters}`,
-      `max_per_message_characters: ${budget.maxPerMessageCharacters}`,
-      "",
-      "## Current Turn",
-      "",
-      truncateText(`User: ${input.currentTurn.content}`, budget.maxPerMessageCharacters),
-      "",
-      "## Recent Thread Context",
-      ""
-    ].filter((line): line is string => line !== undefined);
-
-    if (usableMessages.length === 0) {
-      lines.push("No prior thread messages were included.", "");
-    } else {
-      for (const message of usableMessages) {
-        lines.push(
-          `- ${truncateText(formatConversationMessage(message), budget.maxPerMessageCharacters)}`
-        );
-      }
-      lines.push("");
+    let usableMessages = selectedMessages;
+    let unboundedContent = renderConversationBriefContent(
+      input,
+      budget,
+      usableMessages
+    );
+    while (
+      usableMessages.length > 0 &&
+      unboundedContent.length > budget.maxTotalCharacters &&
+      hasRequiredTrailingContext(input)
+    ) {
+      usableMessages = usableMessages.slice(1);
+      unboundedContent = renderConversationBriefContent(
+        input,
+        budget,
+        usableMessages
+      );
     }
 
-    appendThreadSummarySection(lines, input.threadSummary, budget);
-
-    lines.push("## Project Context References", "");
-    const references = (input.projectContextReferences ?? [])
-      .map((reference) => reference.trim())
-      .filter(Boolean);
-    if (references.length === 0) {
-      lines.push("- Agent Hub project context store");
-    } else {
-      for (const reference of references) {
-        lines.push(`- ${truncateText(reference, budget.maxPerMessageCharacters)}`);
-      }
-    }
-
-    const unboundedContent = `${lines.join("\n").trimEnd()}\n`;
+    const omittedMessageCount = Math.max(0, input.messages.length - usableMessages.length);
     const renderedContent = truncateText(unboundedContent, budget.maxTotalCharacters);
+    const includedThreadSummary =
+      hasThreadSummary(input.threadSummary) &&
+      renderedContent.includes("## Thread Summary");
+    const prunedForTotalBudget = usableMessages.length < selectedMessages.length;
+
     return {
       renderedContent,
       metadata: {
@@ -408,16 +383,83 @@ export class ConversationContextBuilder {
         ),
         includedMessageCount: usableMessages.length,
         omittedMessageCount,
-        includedThreadSummary: hasThreadSummary(input.threadSummary),
+        includedThreadSummary,
         originalCharacterCount,
         renderedCharacterCount: renderedContent.length,
         truncated:
           renderedContent.length < unboundedContent.length ||
+          prunedForTotalBudget ||
           usableMessages.some((message) => messageContent(message).length > budget.maxPerMessageCharacters) ||
           threadSummaryCharacterCount(input.threadSummary) > budget.maxThreadSummaryCharacters
       }
     };
   }
+}
+
+function renderConversationBriefContent(
+  input: ConversationContextBuildInput,
+  budget: ConversationContextBudget,
+  usableMessages: ConversationContextMessage[]
+): string {
+  const lines: string[] = [
+    "# Agent Hub Conversation Brief",
+    "",
+    `thread_id: ${input.thread.id}`,
+    `thread_title: ${input.thread.title}`,
+    input.thread.projectId ? `project_id: ${input.thread.projectId}` : undefined,
+    `selected_agent: ${input.currentTurn.agentId}`,
+    input.currentTurn.contextMode ? `context_mode: ${input.currentTurn.contextMode}` : undefined,
+    input.currentTurn.deliveryMode ? `delivery_mode: ${input.currentTurn.deliveryMode}` : undefined,
+    "",
+    "## Budget",
+    "",
+    `max_recent_messages: ${budget.maxRecentMessages}`,
+    `max_total_characters: ${budget.maxTotalCharacters}`,
+    `max_per_message_characters: ${budget.maxPerMessageCharacters}`,
+    "",
+    "## Current Turn",
+    "",
+    truncateText(`User: ${input.currentTurn.content}`, budget.maxPerMessageCharacters),
+    "",
+    "## Recent Thread Context",
+    ""
+  ].filter((line): line is string => line !== undefined);
+
+  if (usableMessages.length === 0) {
+    lines.push("No prior thread messages were included.", "");
+  } else {
+    for (const message of usableMessages) {
+      lines.push(
+        `- ${truncateText(formatConversationMessage(message), budget.maxPerMessageCharacters)}`
+      );
+    }
+    lines.push("");
+  }
+
+  appendThreadSummarySection(lines, input.threadSummary, budget);
+
+  lines.push("## Project Context References", "");
+  const references = (input.projectContextReferences ?? [])
+    .map((reference) => reference.trim())
+    .filter(Boolean);
+  if (references.length === 0) {
+    lines.push("- Agent Hub project context store");
+  } else {
+    for (const reference of references) {
+      lines.push(`- ${truncateText(reference, budget.maxPerMessageCharacters)}`);
+    }
+  }
+
+  return `${lines.join("\n").trimEnd()}\n`;
+}
+
+function hasRequiredTrailingContext(input: ConversationContextBuildInput): boolean {
+  return (
+    hasThreadSummary(input.threadSummary) ||
+    (input.projectContextReferences ?? []).some(
+      (reference) => reference.trim().length > 0
+    )
+  );
 }
 
 const threadSummaryDecisionPrefixes = [

@@ -611,6 +611,30 @@ COMMIT;
 PRAGMA foreign_keys = ON;
 PRAGMA legacy_alter_table = OFF;
 `
+  },
+  {
+    version: 8,
+    sql: `
+CREATE TABLE IF NOT EXISTS conversation_thread_summaries (
+  id TEXT PRIMARY KEY,
+  thread_id TEXT NOT NULL UNIQUE,
+  summary TEXT NOT NULL,
+  decisions_json TEXT NOT NULL CHECK (json_valid(decisions_json)),
+  open_items_json TEXT NOT NULL CHECK (json_valid(open_items_json)),
+  constraints_json TEXT NOT NULL CHECK (json_valid(constraints_json)),
+  last_known_user_goal TEXT,
+  source_message_count INTEGER NOT NULL CHECK (source_message_count >= 0),
+  source_latest_message_id TEXT,
+  metadata_json TEXT CHECK (metadata_json IS NULL OR json_valid(metadata_json)),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (thread_id) REFERENCES conversation_threads(id) ON DELETE CASCADE,
+  FOREIGN KEY (source_latest_message_id) REFERENCES conversation_messages(id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_conversation_thread_summaries_thread
+  ON conversation_thread_summaries(thread_id);
+`
   }
 ];
 

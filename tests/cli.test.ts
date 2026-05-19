@@ -1783,6 +1783,75 @@ describe("CLI", () => {
     expect(output.join("")).toContain('"winner": "baseline"');
   });
 
+  it("treats low risk as lower than missing comparison risk", async () => {
+    const projectRoot = await createTestDirectory("cli-compare-risk-rank-project");
+    const databasePath = path.join(
+      await createTestDirectory("cli-compare-risk-rank-db"),
+      "agent-hub.sqlite"
+    );
+    const repositories = createSqliteRepositories({ databasePath });
+    await repositories.projectRepository.create({
+      id: "project_compare_risk_rank",
+      name: "Compare Risk Rank Project",
+      rootPath: projectRoot,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z"
+    });
+    await repositories.taskRepository.create({
+      id: "task_compare_risk_rank",
+      projectId: "project_compare_risk_rank",
+      title: "Compare risk ranks",
+      status: "open",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z"
+    });
+    await repositories.taskRunRepository.create({
+      id: "run_missing_risk",
+      taskId: "task_compare_risk_rank",
+      agentKind: "fake",
+      status: "succeeded",
+      createdAt: "2026-01-01T00:00:01.000Z",
+      updatedAt: "2026-01-01T00:00:01.000Z"
+    });
+    await repositories.taskRunRepository.create({
+      id: "run_low_risk",
+      taskId: "task_compare_risk_rank",
+      agentKind: "codex",
+      status: "succeeded",
+      createdAt: "2026-01-01T00:00:02.000Z",
+      updatedAt: "2026-01-01T00:00:02.000Z"
+    });
+    await repositories.riskReportRepository.create(
+      riskReportForRun("risk_low", "run_low_risk", "low")
+    );
+    const output: string[] = [];
+    const errors: string[] = [];
+    const io = {
+      stdout: { write: (chunk: string) => { output.push(chunk); return true; } },
+      stderr: { write: (chunk: string) => { errors.push(chunk); return true; } }
+    };
+
+    await expect(
+      main([
+        "--db",
+        databasePath,
+        "compare",
+        "--task-id",
+        "task_compare_risk_rank",
+        "--baseline",
+        "run_missing_risk",
+        "--candidate",
+        "run_low_risk"
+      ], io, projectRoot)
+    ).resolves.toBe(0);
+
+    expect(errors.join("")).toBe("");
+    expect(output.join("")).toContain("baseline_risk_factors: none");
+    expect(output.join("")).toContain("risk=low");
+    expect(output.join("")).toContain("summary_tradeoffs: candidate has lower risk");
+    expect(output.join("")).not.toContain("candidate has higher risk");
+  });
+
   it("rejects comparison when either run belongs to another task", async () => {
     const projectRoot = await createTestDirectory("cli-compare-mismatch-project");
     const databasePath = path.join(
