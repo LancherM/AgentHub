@@ -346,6 +346,78 @@ describe("task runner", () => {
     ]);
   });
 
+  it("passes explicit environment overrides to process-backed adapters", async () => {
+    const projectRoot = await createTestDirectory("agent-hub-project");
+    const runRoot = await createTestDirectory("agent-hub-runs");
+    const processRunner = new MockProcessRunner([
+      [{ type: "exit", exitCode: 0, signal: null }]
+    ]);
+    const runner = new TaskRunner({
+      defaultRunRoot: runRoot,
+      workspaceManager: new TestWorkspaceManager(runRoot),
+      diffCollector: new StaticDiffCollector(),
+      verificationRunner: new VerificationRunner(new MockShellExecutor()),
+      agentRegistry: new DefaultAgentRegistry([
+        new CodexAdapter({ processRunner })
+      ]),
+      idGenerator: new SequenceIdGenerator(),
+      clock: new FixedClock("2026-01-01T00:00:00.000Z")
+    });
+
+    const environmentOverrides = {
+      CUSTOM_ENV: "explicit",
+      HOME: undefined
+    };
+
+    const result = await runner.run({
+      projectRoot,
+      rawPrompt: "@codex use explicit environment",
+      environmentOverrides
+    });
+
+    expect(result.status).toBe("succeeded");
+    expect(processRunner.detectCalls[0].env).toEqual(environmentOverrides);
+    expect(processRunner.runCalls[0].env).toEqual(environmentOverrides);
+  });
+
+  it("does not pass arbitrary host environment through task-runner defaults", async () => {
+    const previousSecret = process.env.AGENT_HUB_TEST_SECRET;
+    process.env.AGENT_HUB_TEST_SECRET = "do-not-pass";
+    try {
+      const projectRoot = await createTestDirectory("agent-hub-project");
+      const runRoot = await createTestDirectory("agent-hub-runs");
+      const processRunner = new MockProcessRunner([
+        [{ type: "exit", exitCode: 0, signal: null }]
+      ]);
+      const runner = new TaskRunner({
+        defaultRunRoot: runRoot,
+        workspaceManager: new TestWorkspaceManager(runRoot),
+        diffCollector: new StaticDiffCollector(),
+        verificationRunner: new VerificationRunner(new MockShellExecutor()),
+        agentRegistry: new DefaultAgentRegistry([
+          new CodexAdapter({ processRunner })
+        ]),
+        idGenerator: new SequenceIdGenerator(),
+        clock: new FixedClock("2026-01-01T00:00:00.000Z")
+      });
+
+      const result = await runner.run({
+        projectRoot,
+        rawPrompt: "@codex use default environment"
+      });
+
+      expect(result.status).toBe("succeeded");
+      expect(processRunner.detectCalls[0].env).toBeUndefined();
+      expect(processRunner.runCalls[0].env).toBeUndefined();
+    } finally {
+      if (previousSecret === undefined) {
+        delete process.env.AGENT_HUB_TEST_SECRET;
+      } else {
+        process.env.AGENT_HUB_TEST_SECRET = previousSecret;
+      }
+    }
+  });
+
   it("includes adapter run events in risk report dangerous-command scanning", async () => {
     const projectRoot = await createTestDirectory("agent-hub-project");
     const runRoot = await createTestDirectory("agent-hub-runs");

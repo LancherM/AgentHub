@@ -20,7 +20,7 @@ export interface AgentRunInput {
   taskPrompt: string;
   contextBundle?: ContextBundle;
   contextMarkdown?: string;
-  environment?: Record<string, string>;
+  environment?: Record<string, string | undefined>;
 }
 
 export type AgentRunEvent =

@@ -102,6 +102,7 @@ export interface RunTaskInput {
   dryRun?: boolean;
   verificationCommands?: VerificationCommand[];
   stopOnVerificationFailure?: boolean;
+  environmentOverrides?: Record<string, string | undefined>;
   targetRepository?: Partial<TargetRepositoryMetadata>;
   userConstraints?: string[];
   executionHints?: string[];
@@ -502,7 +503,8 @@ export class TaskRunner {
             runtimeDirectory,
             taskId: task.id,
             taskTitle: task.title,
-            taskPrompt: parsed.taskPrompt
+            taskPrompt: parsed.taskPrompt,
+            environment: input.environmentOverrides
           })) {
             events.push(event);
           }

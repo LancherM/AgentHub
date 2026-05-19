@@ -155,10 +155,10 @@ The process-backed adapters use direct executable-plus-args spawning:
   detection from that worktree with the run environment. Missing CLI,
   authentication, or setup failures become failed run events and no real
   adapter process is started.
-- Child processes receive only Agent Hub's explicit environment overrides plus
-  a small inherited allowlist for path lookup, home/config/cache paths, temp
-  directories, locale/terminal flags, CI, and required Windows process
-  variables.
+- Task runs may provide explicit `environmentOverrides` for process-backed
+  adapters. Child processes receive only those overrides plus a small inherited
+  allowlist for path lookup, home/config/cache paths, temp directories,
+  locale/terminal flags, CI, and required Windows process variables.
 - stdout and stderr are captured as run events; structured JSONL output is
   parsed into message/status/error events when possible, while raw output is
   preserved.
