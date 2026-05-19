@@ -67,7 +67,9 @@ risk reports take precedence over the deterministic desktop fallback, including
 does not downgrade scanner output from sensitive path changes or dangerous
 instructions. `DiffService` uses persisted diff artifacts when available and
 can read retained worktrees with read-only Git commands through
-`DiffCollector`, `NodeShellExecutor`, and safe Git configuration. `RiskService`
+`DiffCollector`, `NodeShellExecutor`, and safe Git configuration. It redacts
+patch text before returning desktop review data when changed-file metadata or
+diff headers identify sensitive paths. `RiskService`
 is deterministic and evidence based; it classifies changed paths, verification
 failures, large diffs, dependency/config changes, generated files, and
 source-without-tests conditions without calling an LLM when no persisted
@@ -209,7 +211,9 @@ Persisted run review aggregation lives in `packages/task-runner`. The CLI
 parses `runs events <run-id>` and `runs diff <run-id> [--stat|--patch]`, then
 delegates repository-backed loading of ordered events, latest `git_diff`
 artifacts, changed-file metadata, diff stats, and patch truncation to the local
-package. This keeps review commands read-only and process-independent while
+package. That package redacts patch text for sensitive paths before CLI
+rendering, even when `--full` is requested. This keeps review commands
+read-only and process-independent while
 avoiding comparison or artifact aggregation logic in the CLI layer.
 
 Safety review is separated from report rendering. `SafetyScanner` scans the
@@ -356,8 +360,9 @@ focused runner tests and injected runtimes.
 
 Settings use the same domain validation before repository writes. Both
 in-memory and SQLite settings repositories reject secret-like key names such as
-API keys, tokens, passwords, private keys, and credentials, and they also reject
-string values that look like embedded secret assignments, bearer tokens, common
+API keys, tokens, secrets, passwords, private keys, and credentials across
+delimiter-separated and camelCase setting names, and they also reject string
+values that look like embedded secret assignments, bearer tokens, common
 service tokens, or private key blocks. Safe local UI and behavior flags remain
 valid setting values.
 
@@ -465,9 +470,9 @@ Agent Hub runtime. The workflow installs the pinned pnpm and Node versions from
 the root package, runs the same local validation commands documented for
 developers, uploads a built CLI package artifact for `main` and manual runs,
 and publishes that artifact to GitHub Releases only for `v*.*.*` tags. The
-artifact includes the workspace package sources, tests, CI workflow, and root
-TypeScript/Vitest configs so the root package scripts remain executable after
-extraction. Release publishing uses the repository-scoped `GITHUB_TOKEN` with
+artifact includes the workspace package sources, root scripts, tests, CI
+workflow, and root TypeScript/Vitest configs so the root package scripts remain
+executable after extraction. Release publishing uses the repository-scoped `GITHUB_TOKEN` with
 `contents: write` on the release job only. There is no deployment target,
 external backend, custom secret, remote task execution, or automatic code push
 in the CI/CD path.

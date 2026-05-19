@@ -131,7 +131,7 @@ function fromCollectedDiff(
   const files = diff.changedFiles.map((file) =>
     fromCollectedFile(file, summaryByPath.get(file.path))
   );
-  const patch = truncatePatch(diff.diff);
+  const patch = preparePatch(diff.diff, files.map((file) => file.path));
   const message =
     files.length === 0
       ? "No real repository files were modified."
@@ -158,7 +158,7 @@ function fromArtifact(
   const metadata = artifact.metadata;
   const summaries = stringArray(metadata.fileSummaries) ?? [];
   const files = changedFiles(metadata.changedFiles, summaries);
-  const patch = truncatePatch(artifact.content);
+  const patch = preparePatch(artifact.content, files.map((file) => file.path));
   const source = typeof metadata.source === "string" ? metadata.source : undefined;
   const placeholder = metadata.placeholder === true;
   const message =
@@ -276,6 +276,58 @@ function truncatePatch(value: string): { value: string; truncated: boolean } {
     value: `${value.slice(0, MAX_PATCH_CHARS)}\n\n[Diff truncated after ${MAX_PATCH_CHARS} characters.]`,
     truncated: true
   };
+}
+
+function preparePatch(
+  value: string,
+  changedPaths: string[]
+): { value: string; truncated: boolean } {
+  const sensitivePaths = sensitivePatchPaths(value, changedPaths);
+  if (sensitivePaths.length > 0) {
+    return {
+      value: `Patch redacted because sensitive file path changed: ${sensitivePaths.join(", ")}`,
+      truncated: false
+    };
+  }
+  return truncatePatch(value);
+}
+
+function sensitivePatchPaths(patch: string, changedPaths: string[]): string[] {
+  const paths = new Set<string>();
+  for (const filePath of changedPaths) {
+    if (isSensitiveFilePath(filePath)) {
+      paths.add(filePath);
+    }
+  }
+
+  for (const line of patch.split(/\r?\n/)) {
+    const pathFromHeader = diffPathFromHeader(line);
+    if (pathFromHeader && isSensitiveFilePath(pathFromHeader)) {
+      paths.add(pathFromHeader);
+    }
+  }
+
+  return [...paths].sort();
+}
+
+function diffPathFromHeader(line: string): string | undefined {
+  const gitMatch = line.match(/^diff --git a\/(.+?) b\/(.+)$/);
+  if (gitMatch) {
+    return gitMatch[2];
+  }
+  const markerMatch = line.match(/^(?:---|\+\+\+) [ab]\/(.+)$/);
+  return markerMatch?.[1];
+}
+
+function isSensitiveFilePath(filePath: string): boolean {
+  return /(^|\/)\.env(?:\.|$)/i.test(filePath) ||
+    /\.pem$/i.test(filePath) ||
+    /\.key$/i.test(filePath) ||
+    /(^|\/)id_rsa$/i.test(filePath) ||
+    /(^|\/)id_ed25519$/i.test(filePath) ||
+    /(^|\/)secrets?\./i.test(filePath) ||
+    /(^|\/)credentials?\./i.test(filePath) ||
+    /(^|\/)tokens?\./i.test(filePath);
 }
 
 function emptyDiff(runId: string, message: string): DiffSummary {

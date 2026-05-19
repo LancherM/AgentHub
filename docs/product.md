@@ -135,6 +135,9 @@ the ordered adapter/manual event stream stored in `run_events` across CLI
 processes. `runs diff <run-id> --stat` prints stored changed-file and diff-stat
 metadata, while `runs diff <run-id> --patch` prints the stored git diff artifact
 with default truncation and an explicit `--full` flag for complete local output.
+Patch output is still redacted when persisted changed-file metadata or diff
+headers identify sensitive paths such as `.env`, key, token, secret, or
+credential files.
 These commands inspect SQLite-backed evidence only; they do not rerun agents,
 modify worktrees, accept output, merge branches, or push code.
 
@@ -341,9 +344,11 @@ SQLite now enforces the important imported storage constraints at the database
 boundary. Tasks reference projects with cascade delete, task runs reference
 agent profiles when one is selected, task and run status values are checked,
 agent kinds are checked, JSON columns reject invalid JSON, and run event
-sequence numbers remain unique per run. Local settings reject secret-like keys
-and string values before they can be stored in SQLite or in-memory test
-repositories, so settings remain limited to safe local behavior preferences.
+sequence numbers remain unique per run. Local settings reject secret-like keys,
+including delimiter-separated and camelCase names such as `api_key`,
+`openaiApiKey`, `authToken`, and `clientSecret`, and reject secret-like string
+values before they can be stored in SQLite or in-memory test repositories, so
+settings remain limited to safe local behavior preferences.
 Ad-hoc CLI runs reuse an existing project for the same repository root. The
 first legacy ad-hoc root may still use `adhoc_project` for compatibility;
 additional ad-hoc roots get deterministic root-scoped project ids so tasks and
@@ -366,9 +371,9 @@ GitHub CI/CD is available for repository maintenance. Pull requests to `main`
 run the validation suite (`pnpm typecheck`, `pnpm lint`, `pnpm test`,
 `pnpm build`, and the desktop Electron/Vite bundle build). Pushes to `main`
 and manual workflow runs build a packaged CLI artifact from the workspace app/
-package directories, tests, the CI workflow, root package metadata, `README.md`,
-workspace/lock files, and root TypeScript/Vitest config files needed by those
-advertised validation scripts. They also build ad-hoc signed macOS desktop DMG
+package directories, root scripts, tests, the CI workflow, root package
+metadata, `README.md`, workspace/lock files, and root TypeScript/Vitest config
+files needed by those advertised validation scripts. They also build ad-hoc signed macOS desktop DMG
 artifacts for x64 and arm64 on GitHub-hosted macOS runners. Version tags that
 match `v*.*.*` create or update a GitHub Release with both the workspace
 package artifact and the DMG artifacts. The workflow publishes local release
