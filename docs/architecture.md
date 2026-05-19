@@ -281,11 +281,17 @@ external store path is:
 ```
 
 Repo-local context stores remain opt-in through `--mode repo_local`. Repository
-export remains opt-in through `context export --dry-run` or
-`context export --write`; dry-run produces previews without writing, while
-write mode updates managed blocks in `AGENTS.md` and optionally `CLAUDE.md`.
-Managed block replacement preserves user-authored content outside the block and
-does not treat fenced code examples of the markers as real blocks.
+export remains opt-in through `context export --target repo --dry-run` or
+`context export --target repo --write`; dry-run produces previews without
+writing, while write mode updates managed blocks in `AGENTS.md` and optionally
+`CLAUDE.md`. The CLI and context-compiler export boundary only accept the
+`repo` target, and omitting `--target` keeps that repo-export default for
+compatibility. Approved memory is part of the rendered context store export
+when `memory/approved.md` contains non-placeholder content; the
+`--include-approved-memory` flag does not broaden the boundary and only makes
+that default explicit in command output. Managed block replacement preserves
+user-authored content outside the block and does not treat fenced code examples
+of the markers as real blocks.
 
 `runtime_injection` is still the default delivery mode. In this mode the runner
 writes only worktree-local runtime files under `.agent-hub/tasks/<task-id>/` and

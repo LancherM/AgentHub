@@ -751,6 +751,9 @@ describe("CLI", () => {
         "project_1",
         "--agent-hub-home",
         agentHubHome,
+        "--target",
+        "repo",
+        "--include-approved-memory",
         "--dry-run"
       ], io, projectRoot)
     ).resolves.toBe(0);
@@ -760,7 +763,68 @@ describe("CLI", () => {
     expect(output.join("")).toContain("  - context/project.md");
     expect(output.join("")).toContain("Built context artifacts");
     expect(output.join("")).toContain("Previewed repo context export");
+    expect(output.join("")).toContain("target: repo");
+    expect(output.join("")).toContain("approved_memory: included_when_present");
+    expect(output.join("")).toContain(
+      "--include-approved-memory is already the default for repo context export"
+    );
     await expect(fs.access(path.join(projectRoot, "AGENTS.md"))).rejects.toThrow();
+  });
+
+  it("rejects unsupported context export targets", async () => {
+    const projectRoot = await createTestDirectory("cli-context-export-target-project");
+    const agentHubHome = await createTestDirectory("cli-context-export-target-home");
+    const output: string[] = [];
+    const errors: string[] = [];
+    const io = {
+      stdout: { write: (chunk: string) => { output.push(chunk); return true; } },
+      stderr: { write: (chunk: string) => { errors.push(chunk); return true; } }
+    };
+
+    await expect(
+      main([
+        "context",
+        "export",
+        "--project-root",
+        projectRoot,
+        "--project-id",
+        "project_1",
+        "--agent-hub-home",
+        agentHubHome,
+        "--target",
+        "workspace",
+        "--dry-run"
+      ], io, projectRoot)
+    ).resolves.toBe(1);
+
+    expect(output.join("")).toBe("");
+    expect(errors.join("")).toContain("--target must be repo");
+  });
+
+  it("rejects context export target without a value", async () => {
+    const projectRoot = await createTestDirectory("cli-context-export-missing-target-project");
+    const output: string[] = [];
+    const errors: string[] = [];
+    const io = {
+      stdout: { write: (chunk: string) => { output.push(chunk); return true; } },
+      stderr: { write: (chunk: string) => { errors.push(chunk); return true; } }
+    };
+
+    await expect(
+      main([
+        "context",
+        "export",
+        "--project-root",
+        projectRoot,
+        "--project-id",
+        "project_1",
+        "--target",
+        "--dry-run"
+      ], io, projectRoot)
+    ).resolves.toBe(1);
+
+    expect(output.join("")).toBe("");
+    expect(errors.join("")).toContain("--target requires a value");
   });
 
   it("rejects repo_export delivery mode for context builds", async () => {

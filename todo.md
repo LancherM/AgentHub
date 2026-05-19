@@ -150,6 +150,9 @@ pnpm lint
 
 ### 5. Make context export flags semantically strict
 
+Status: done
+Done: 2026-05-18 via codex/todo-5-context-export-flags; PR: https://github.com/LancherM/AgentHub/pull/44
+
 Prompt:
 
 You are working in `/Users/lan/agent-hub`. Tighten `agent-hub context export`
