@@ -130,8 +130,8 @@ The MVP must support:
 
 The current implementation is a CLI-first pnpm workspace with `apps/cli`,
 `apps/desktop`, and local core packages under `packages/`. The physical
-CLI/core package split is present, and the first Electron + React desktop shell
-exists as a thin local UI over main-process IPC.
+CLI/core package split is present, and the first Electron + React desktop
+conversation console exists as a thin local UI over main-process IPC.
 
 Implemented:
 
@@ -165,18 +165,20 @@ Implemented:
 - Memory proposal, listing, approval, rejection, and approved-memory writeback
   to the Agent Hub-owned context store.
 - Persisted comparison report generation for two runs of a task.
-- `apps/desktop` Electron + React shell with a three-pane local review layout,
+- `apps/desktop` Electron + React shell with a thread-first conversation layout,
   safe `window.agentHub` preload API, Electron main-process IPC handlers,
-  SQLite-backed project/run/review/memory service facades, and a
-  fake-agent-backed desktop run path that records local review rows without
-  modifying target repositories.
+  SQLite-backed project/thread/message/run/review/memory service facades,
+  inline run cards, fake-agent streaming and cancellation, bounded assistant
+  output messages, conversation brief artifacts, and an inspector drawer for
+  logs, diffs, verification, risks, and memory proposals.
 
 Not yet implemented:
 
-- Desktop TaskRunner integration for real Codex/Claude/fake agent execution,
-  live streaming, cancellation, verification configuration, retained-worktree
-  diff scanning, and approved-memory context-store writeback confirmation.
-- Automatic memory proposal generation from completed runs.
+- Desktop TaskRunner integration for real Codex/Claude adapter execution, real
+  verification configuration, approved-memory context-store writeback
+  confirmation, multi-agent comparison review, worktree lifecycle management,
+  and explicit merge/apply workflows.
+- Automatic memory proposal generation from completed CLI/task-runner runs.
 - Richer comparison scoring beyond the current persisted textual summary.
 
 ## Explicit Non-goals for MVP
@@ -267,7 +269,9 @@ The first desktop app is implemented as an Electron + React + Vite workspace
 package. It provides UI for:
 
 - Projects
-- Run details
+- Conversation threads
+- Inline run cards
+- Assistant output messages
 - Logs
 - Diff review
 - Verification
@@ -279,10 +283,13 @@ The desktop app must call the local core through Electron main-process IPC. The
 renderer must not directly access Node.js, shell, filesystem, SQLite, or git.
 It must not duplicate task orchestration logic.
 
-Current desktop run creation is fake-agent backed and persists SQLite review
-records only. It must not write files to target repositories, export context,
-merge, push, or create pull requests. Real TaskRunner/Codex/Claude integration
-is follow-up work behind the same IPC boundary.
+Current desktop run creation is fake-agent backed for the real streaming path
+and persists SQLite task/run/event, conversation, and review records. Mentioned
+`@codex` and `@claude` desktop runs create safe unavailable-adapter records
+instead of launching real adapters. Desktop runs must not write files to target
+repositories, export context, merge, push, or create pull requests. Real
+TaskRunner/Codex/Claude integration is follow-up work behind the same IPC
+boundary.
 
 ### packages/core
 

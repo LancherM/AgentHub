@@ -98,18 +98,21 @@ repositories, context store init/show/build/export, git worktree task runs,
 fake/Codex/Claude Code adapters, verification, diff collection, safety
 scanning, risk report persistence, memory workflows, comparison reports,
 interactive CLI mode, manual run-event recording, and the first Electron +
-React desktop shell.
+React desktop conversation console.
 
 The current physical layout is the imported `apps/` and `packages/` monorepo
 shape. The desktop shell lives under `apps/desktop` and is currently
-fake-agent-backed for run creation.
+fake-agent-backed for real streaming and cancellation. It persists local
+conversation, run, review, and memory proposal records through SQLite-backed
+main-process services.
 
 Still deferred:
 
-- Real desktop TaskRunner/Codex/Claude/fake execution, streaming,
-  cancellation, verification configuration, retained-worktree diff review, and
-  approved-memory writeback confirmation.
-- Automatic memory proposal generation from completed runs.
+- Real desktop TaskRunner integration for Codex/Claude adapter execution,
+  verification command configuration, approved-memory writeback confirmation,
+  multi-agent comparison review, worktree lifecycle management, and explicit
+  merge/apply workflows.
+- Automatic memory proposal generation from completed CLI/task-runner runs.
 - Richer comparison scoring beyond the current persisted textual summary.
 
 ## Hard Constraints For This Slice
