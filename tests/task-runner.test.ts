@@ -23,7 +23,8 @@ import {
   InMemoryRunEventRepository,
   InMemoryTaskRepository,
   InMemoryTaskRunRepository,
-  InMemoryVerificationResultRepository
+  InMemoryVerificationResultRepository,
+  InMemoryMemoryItemRepository
 } from "@agent-hub/core";
 import {
   FixedClock,
@@ -271,6 +272,52 @@ describe("task runner", () => {
     await expect(riskReportRepository.getLatestByRunId("run_0002")).resolves.toEqual(
       expect.objectContaining({ level: "medium" })
     );
+  });
+
+  it("creates proposed memory from persisted successful run evidence", async () => {
+    const projectRoot = await createTestDirectory("agent-hub-project");
+    const runRoot = await createTestDirectory("agent-hub-runs");
+    const memoryItemRepository = new InMemoryMemoryItemRepository();
+    const verificationResultRepository = new InMemoryVerificationResultRepository();
+    const runner = new TaskRunner({
+      defaultRunRoot: runRoot,
+      workspaceManager: new TestWorkspaceManager(runRoot),
+      diffCollector: new StaticDiffCollector(),
+      verificationRunner: new VerificationRunner(
+        new MockShellExecutor([{ exitCode: 0, stdout: "ok\n" }])
+      ),
+      verificationResultRepository,
+      memoryItemRepository,
+      idGenerator: new SequenceIdGenerator(),
+      clock: new FixedClock("2026-01-01T00:00:00.000Z")
+    });
+
+    const result = await runner.run({
+      projectRoot,
+      projectId: "project_memory",
+      rawPrompt: "@fake remember verification",
+      verificationCommands: [{ id: "test", command: "pnpm", args: ["test"] }]
+    });
+
+    await expect(
+      verificationResultRepository.listByRunId(result.run.id)
+    ).resolves.toEqual([
+        expect.objectContaining({
+          command: "pnpm test",
+          status: "passed"
+        })
+      ]);
+    await expect(
+      memoryItemRepository.listByProjectId("project_memory")
+    ).resolves.toEqual([
+        expect.objectContaining({
+          id: expect.stringMatching(/^memory_/),
+          taskId: result.task.id,
+          category: "workflow_rule",
+          status: "proposed",
+          content: "Verification command for this project is pnpm test."
+        })
+      ]);
   });
 
   it("passes compiled context to the fake adapter", async () => {
