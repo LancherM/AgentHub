@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { agentHubApi } from "../../lib/agentHubApi";
 import type {
   AgentRunMessage,
@@ -40,8 +40,41 @@ export function AgentRunCard({
     setReviewSummary(undefined);
   }, [initialRun, message.runId, message.status]);
 
+  const loadReviewSummary = useCallback(async (): Promise<void> => {
+    try {
+      const summary = await agentHubApi.review.getSummary(message.runId);
+      setReviewSummary(summary);
+    } catch {
+      setReviewSummary(undefined);
+    }
+  }, [message.runId]);
+
+  const loadRun = useCallback(
+    async (options: { includeReview?: boolean } = {}): Promise<void> => {
+      try {
+        const detail = await agentHubApi.runs.get(message.runId);
+        setRun(detail);
+        setEvents(detail.events);
+        setStatus(detail.status);
+        onRunUpdated(detail);
+        if (options.includeReview) {
+          await loadReviewSummary();
+        }
+      } catch (error) {
+        setStreamError(`Failed to load run: ${errorMessage(error)}`);
+      }
+    },
+    [loadReviewSummary, message.runId, onRunUpdated]
+  );
+
   useEffect(() => {
     let active = true;
+    if (!isActiveRunStatus(message.status)) {
+      return () => {
+        active = false;
+      };
+    }
+
     void loadRun();
     try {
       const unsubscribe = agentHubApi.runs.onEvent(message.runId, (event) => {
@@ -52,8 +85,9 @@ export function AgentRunCard({
         if (event.payload.status) {
           setStatus(event.payload.status);
         }
-        void loadRun();
-        void loadReviewSummary();
+        if (isTerminalRunEvent(event.type)) {
+          void loadRun({ includeReview: true });
+        }
       });
       return () => {
         active = false;
@@ -65,48 +99,28 @@ export function AgentRunCard({
         active = false;
       };
     }
+  }, [loadRun, message.runId, message.status]);
 
-    async function loadRun(): Promise<void> {
-      try {
-        const detail = await agentHubApi.runs.get(message.runId);
-        if (!active) {
-          return;
-        }
-        setRun(detail);
-        setEvents(detail.events);
-        setStatus(detail.status);
-        onRunUpdated(detail);
-        void loadReviewSummary();
-      } catch (error) {
-        if (active) {
-          setStreamError(`Failed to load run: ${errorMessage(error)}`);
-        }
-      }
+  useEffect(() => {
+    if (!expanded) {
+      return;
     }
+    void loadRun({ includeReview: true });
+  }, [expanded, loadRun]);
 
-    async function loadReviewSummary(): Promise<void> {
-      try {
-        const summary = await agentHubApi.review.getSummary(message.runId);
-        if (active) {
-          setReviewSummary(summary);
-        }
-      } catch {
-        if (active && isTerminalRunStatus(status)) {
-          setReviewSummary(undefined);
-        }
-      }
-    }
-  }, [message.runId, onRunUpdated]);
-
-  const latestLine = useMemo(() => latestEventText(events) ?? run?.summary, [
+  const latestLine = useMemo(() => latestEventText(events) ?? run?.summary ?? statusLine(status), [
     events,
-    run?.summary
+    run?.summary,
+    status
   ]);
-  const canCancel = status === "queued" || status === "running" || status === "verifying";
+  const canCancel = isActiveRunStatus(status);
   const visibleEvents = expanded ? events : events.slice(-4);
   const elapsed = run
     ? elapsedLabel(run.createdAt, events.at(-1)?.timestamp ?? new Date().toISOString())
     : "0s";
+  const headerMeta = run
+    ? `Started ${formatTime(run.createdAt)} · ${elapsed}`
+    : statusHeader(status);
   const simulationCopy =
     message.agentId === "fake"
       ? "Local simulated run. No real repository files are modified."
@@ -135,9 +149,7 @@ export function AgentRunCard({
             <strong>@{message.agentId}</strong>
             <RunStatusBadge status={status} compact />
           </div>
-          <span>
-            {run ? `Started ${formatTime(run.createdAt)} · ${elapsed}` : "Starting..."}
-          </span>
+          <span>{headerMeta}</span>
         </div>
         <div className="run-card-actions">
           {canCancel ? (
@@ -242,6 +254,52 @@ function reviewPills(
 
 function isTerminalRunStatus(status: RunStatus): boolean {
   return status === "completed" || status === "failed" || status === "cancelled";
+}
+
+function isActiveRunStatus(status: RunStatus): boolean {
+  return status === "queued" || status === "running" || status === "verifying";
+}
+
+function isTerminalRunEvent(type: RunEvent["type"]): boolean {
+  return type === "run_completed" || type === "run_failed" || type === "run_cancelled";
+}
+
+function statusLine(status: RunStatus): string {
+  if (status === "queued") {
+    return "Run is queued.";
+  }
+  if (status === "running") {
+    return "Run is in progress.";
+  }
+  if (status === "verifying") {
+    return "Run is being verified.";
+  }
+  if (status === "completed") {
+    return "Run completed. Expand to load review details.";
+  }
+  if (status === "cancelled") {
+    return "Run was cancelled. Expand to load review details.";
+  }
+  return "Run failed. Expand to load review details.";
+}
+
+function statusHeader(status: RunStatus): string {
+  if (status === "queued") {
+    return "Queued";
+  }
+  if (status === "running") {
+    return "Running";
+  }
+  if (status === "verifying") {
+    return "Verifying";
+  }
+  if (status === "completed") {
+    return "Completed · review loads on demand";
+  }
+  if (status === "cancelled") {
+    return "Cancelled · review loads on demand";
+  }
+  return "Failed · review loads on demand";
 }
 
 function eventText(event: RunEvent): string {
