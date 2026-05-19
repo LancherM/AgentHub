@@ -33,7 +33,7 @@ import {
   type VerificationResult
 } from "@agent-hub/core";
 import {
-  buildComparisonSummary,
+  buildComparisonReport,
   formatShellCommand,
   loadRunDiffReview,
   loadRunEventsReview,
@@ -1362,7 +1362,7 @@ async function compareRuns(
     const taskId = requiredFlag(args, "--task-id");
     const baselineRunId = requiredFlag(args, "--baseline");
     const candidateRunId = requiredFlag(args, "--candidate");
-    const summary = await buildComparisonSummary(
+    const comparison = await buildComparisonReport(
       {
         taskRepository: runtime.taskRepository,
         taskRunRepository: runtime.taskRunRepository,
@@ -1379,7 +1379,8 @@ async function compareRuns(
         taskId,
         baselineRunId,
         candidateRunId,
-        summary,
+        summary: comparison.summary,
+        details: comparison.details,
         createdAt: nowIso()
       })
     );
@@ -1388,6 +1389,9 @@ async function compareRuns(
         "Created comparison report",
         `id: ${report.id}`,
         report.summary,
+        report.details
+          ? `structured_signals:\n${JSON.stringify(report.details, null, 2)}`
+          : "structured_signals: none",
         ""
       ].join("\n")
     );

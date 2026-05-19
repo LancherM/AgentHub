@@ -219,8 +219,11 @@ The compare workflow generates a persisted comparison report for two runs of a
 task. `compare --task-id ... --baseline ... --candidate ...` compares changed
 files, diff stats, verification summaries, per-command verification outcomes,
 failed checks, risk levels, risk factors, and summary tradeoffs from persisted
-run artifacts and reports, then stores the summary in `comparison_reports`. It
-is a review aid only; it does not accept, merge, or push changes.
+run artifacts and reports, then stores both a readable summary and structured
+comparison details in `comparison_reports`. The structured details include
+changed-file overlap, diff-size deltas, verification and risk deltas, and a
+deterministic review score with explainable penalties. Comparison is a review
+aid only; it does not accept, merge, delete branches, or push changes.
 
 Agent Hub Desktop is now available as a local conversation console under
 `apps/desktop`. It starts with `pnpm --filter desktop dev` and presents a
@@ -410,6 +413,6 @@ assets only; it does not deploy a hosted service, notarize the desktop app, or
 change Agent Hub's local-first product model.
 
 Deferred product capabilities include richer Codex/Claude structured event
-mapping, automatic memory proposal generation from completed runs, richer
-comparison scoring, and real desktop TaskRunner/adapter execution beyond the
-current fake-agent-backed desktop run path.
+mapping, automatic memory proposal generation from completed runs, and real
+desktop TaskRunner/adapter execution beyond the current fake-agent-backed
+desktop run path.

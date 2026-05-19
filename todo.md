@@ -328,6 +328,9 @@ pnpm lint
 
 ### 10. Add structured comparison details and scoring
 
+Status: done
+Done: 2026-05-19 via codex/todo-10-comparison-scoring; PR: pending
+
 Prompt:
 
 You are working in `/Users/lan/agent-hub`. Extend the persisted comparison

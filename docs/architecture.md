@@ -426,11 +426,14 @@ placeholder content does not become a context-pack memory section.
 Comparison reports are generated from persisted run data rather than process
 memory or UI state. `packages/task-runner` loads each selected run, diff
 artifacts or legacy metadata, verification rows, and latest risk reports, then
-returns a textual summary that the CLI stores in `comparison_reports`. The
-summary includes changed-file overlap, per-run diff stats, verification
-summaries, per-command verification outcomes, failed checks, risk levels, risk
-factors, and summary tradeoffs. Comparison is review-only and performs no
-accept, merge, branch delete, or push action.
+returns a readable summary plus structured comparison details that the CLI
+stores in `comparison_reports`. The details JSON captures changed-file
+overlap, diff-size deltas, verification counts and failed-check deltas, risk
+rank deltas, risk factors, and a deterministic review score. The score starts
+from 100 and applies explainable penalties for non-succeeded status, higher
+risk, failed checks, skipped verification, and larger diff footprint; it is a
+review signal, not an acceptance decision. Comparison is review-only and
+performs no accept, merge, branch delete, or push action.
 
 The first desktop runtime integration is deliberately narrow. `apps/desktop`
 uses SQLite-backed services for project registration, run listing/detail,

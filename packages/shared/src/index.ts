@@ -180,6 +180,7 @@ export interface ComparisonReport {
   baselineRunId?: string;
   candidateRunId?: string;
   summary: string;
+  details?: JsonObject;
   createdAt: string;
 }
 
