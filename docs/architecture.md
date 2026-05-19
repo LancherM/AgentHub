@@ -151,6 +151,12 @@ API keys or tokens are not inherited accidentally. Callers may still provide
 explicit per-process environment overrides; an override value of `undefined`
 removes an allowlisted variable for that child.
 
+`RunTaskInput.environmentOverrides` is the task-runner boundary for those
+transient per-run process values. The task runner forwards the override map to
+process-backed adapter preflight and execution only; it does not persist the
+map, read credential files, or turn host environment variables into implicit
+run inputs.
+
 The CLI calls the runner rather than owning orchestration logic. The runner
 compiles context, creates a worktree workspace through a `WorkspaceManager`,
 selects adapters through a registry, passes generated context to the adapter as

@@ -57,7 +57,8 @@ describe("process-backed agent adapters", () => {
     expect(runner.runCalls[0]).toMatchObject({
       executable: "codex",
       args: ["exec", "--json", "-"],
-      cwd: input.worktreePath
+      cwd: input.worktreePath,
+      env: input.environment
     });
     expect(runner.runCalls[0].stdin).toContain("# Brief");
     expect(runner.runCalls[0].stdin).toContain("Context payload");
@@ -136,7 +137,12 @@ describe("process-backed agent adapters", () => {
     expect(runner.runCalls[0]).toMatchObject({
       executable: "claude",
       args: ["--print", "--output-format", "stream-json"],
-      cwd: input.worktreePath
+      cwd: input.worktreePath,
+      env: input.environment
+    });
+    expect(runner.detectCalls[0]).toMatchObject({
+      cwd: input.worktreePath,
+      env: input.environment
     });
     expect(runner.runCalls[0].stdin).toContain("Run inside the current isolated worktree");
     expect(events).toContainEqual(expect.objectContaining({

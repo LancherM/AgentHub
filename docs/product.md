@@ -159,6 +159,10 @@ The process-backed adapters use direct executable-plus-args spawning:
   a small inherited allowlist for path lookup, home/config/cache paths, temp
   directories, locale/terminal flags, CI, and required Windows process
   variables.
+- Local callers of the task-runner API may pass transient
+  `environmentOverrides` for a single run. Those values are forwarded to Codex
+  and Claude Code adapter detection and execution, but they are not stored as
+  settings, persisted as secrets, or expanded from arbitrary `process.env`.
 - stdout and stderr are captured as run events; structured JSONL output is
   parsed into message/status/error events when possible, while raw output is
   preserved.

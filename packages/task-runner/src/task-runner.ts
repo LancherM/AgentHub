@@ -77,6 +77,7 @@ import {
   type WorkspaceCleanupResult,
   type WorkspaceManager
 } from "./workspace";
+import type { ChildEnvironmentOverrides } from "@agent-hub/shared";
 
 export interface IdGenerator {
   nextId(prefix: string): string;
@@ -105,6 +106,7 @@ export interface RunTaskInput {
   targetRepository?: Partial<TargetRepositoryMetadata>;
   userConstraints?: string[];
   executionHints?: string[];
+  environmentOverrides?: ChildEnvironmentOverrides;
 }
 
 export interface RunResult {
@@ -502,7 +504,8 @@ export class TaskRunner {
             runtimeDirectory,
             taskId: task.id,
             taskTitle: task.title,
-            taskPrompt: parsed.taskPrompt
+            taskPrompt: parsed.taskPrompt,
+            environment: input.environmentOverrides
           })) {
             events.push(event);
           }

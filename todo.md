@@ -217,6 +217,9 @@ pnpm lint
 
 ### 7. Add explicit task-run environment override plumbing
 
+Status: done
+Done: 2026-05-19 via codex/todo-7-env-overrides-84fb; PR: pending
+
 Prompt:
 
 You are working in `/Users/lan/agent-hub`. Expose intentional environment

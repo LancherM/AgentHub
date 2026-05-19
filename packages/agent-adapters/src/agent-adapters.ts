@@ -1,6 +1,11 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import type { AgentKind, ContextBundle, JsonObject } from "@agent-hub/shared";
+import type {
+  AgentKind,
+  ChildEnvironmentOverrides,
+  ContextBundle,
+  JsonObject
+} from "@agent-hub/shared";
 import { NodeProcessRunner, type ProcessRunner } from "./process-runner";
 
 export interface AgentDetectionResult {
@@ -20,7 +25,7 @@ export interface AgentRunInput {
   taskPrompt: string;
   contextBundle?: ContextBundle;
   contextMarkdown?: string;
-  environment?: Record<string, string>;
+  environment?: ChildEnvironmentOverrides;
 }
 
 export type AgentRunEvent =
