@@ -72,14 +72,17 @@ Supported store files are:
 
 Skill files must include YAML-style frontmatter with `name` and `description`.
 Malformed or empty skills are skipped and surfaced as build/export warnings
-instead of being silently injected as generic text.
+instead of being silently injected as generic text. Skill display names are
+used in rendered context, while export and overlay file paths stay anchored to
+the context-store skill directory name.
 
 `context export --target repo --dry-run` previews repository writes.
 `context export --target repo --write` uses Agent Hub managed blocks in
 `AGENTS.md` and optionally `CLAUDE.md`, preserves user-authored content
 outside those blocks, and ignores marker examples inside fenced code blocks.
-If `--target` is provided, its only supported value is `repo`; omitting it
-keeps the same repo-export default for compatibility. Approved memory from the
+If `--target` is provided, its only supported value is `repo`, and the flag may
+only be provided once; omitting it keeps the same repo-export default for
+compatibility. Approved memory from the
 Agent Hub-owned context store is included in the managed context block when it
 contains non-placeholder content, and `--include-approved-memory` is accepted
 as an explicit acknowledgement of that default. Runtime context files are
@@ -247,7 +250,9 @@ context, current-turn context, and per-run context snapshots as separate
 layers. Desktop follow-up turns now build a bounded conversation brief before
 each run. The brief includes the current turn, recent thread messages, compact
 prior run summaries, project context-store references, and explicit
-character-budget metadata. Agent Hub persists that exact brief as a
+character-budget metadata. A zero recent-message budget includes no prior
+messages, and the first message in an empty thread uses the retitled thread
+name in the injected brief. Agent Hub persists that exact brief as a
 `conversation_brief` run artifact so review can inspect what was injected.
 The brief excludes raw lifecycle/debug events, logs, diffs, verification
 output, risk evidence, and other review artifacts. Durable assistant-message
