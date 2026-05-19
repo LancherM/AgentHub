@@ -632,7 +632,7 @@ describe("CLI", () => {
         "--run-id",
         "run_manual_invalid",
         "--type",
-        "tool",
+        "tool_call",
         "--message",
         "invalid type"
       ], io, projectRoot, runtime)
