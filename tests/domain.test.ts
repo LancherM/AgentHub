@@ -12,6 +12,7 @@ import {
   validateConversationMessage,
   validateConversationThread,
   validateMemoryItem,
+  validateRunEvent,
   validateMemoryStatusTransition,
   validateProject,
   validateSetting,
@@ -71,6 +72,37 @@ describe("domain model validation", () => {
         status: "review_ready" as never,
         createdAt: now,
         updatedAt: now
+      })
+    ).toThrow(DomainValidationError);
+  });
+
+  it("keeps run event types locked to the persisted MVP model", () => {
+    expect(
+      validateRunEvent({
+        id: "event_1",
+        taskRunId: "run_1",
+        sequence: 0,
+        type: "status",
+        message: "Tool call summarized as status metadata.",
+        metadata: {
+          adapterEvent: {
+            type: "tool_call",
+            name: "read_file"
+          }
+        },
+        createdAt
+      }).type
+    ).toBe("status");
+
+    expect(() =>
+      validateRunEvent({
+        id: "event_bad",
+        taskRunId: "run_1",
+        sequence: 0,
+        type: "tool_call" as never,
+        message: "First-class tool-call events are not in the MVP event model.",
+        metadata: {},
+        createdAt
       })
     ).toThrow(DomainValidationError);
   });

@@ -243,9 +243,12 @@ export class ConversationContextBuilder {
       ...defaultConversationContextBudget,
       ...(input.budget ?? {})
     };
-    const usableMessages = input.messages
-      .filter((message) => !isNoisyConversationMessage(message))
-      .slice(-budget.maxRecentMessages);
+    const usableMessages =
+      budget.maxRecentMessages <= 0
+        ? []
+        : input.messages
+            .filter((message) => !isNoisyConversationMessage(message))
+            .slice(-budget.maxRecentMessages);
     const omittedMessageCount = Math.max(0, input.messages.length - usableMessages.length);
     const originalCharacterCount =
       input.currentTurn.content.length +
@@ -696,7 +699,7 @@ export async function materializeWorktreeOverlay(input: {
     pushWarnings(warnings, skills.warnings);
     for (const skill of skills.items) {
       for (const base of [".claude/skills", ".agents/skills"]) {
-        const relativePath = path.join(base, sanitizePathSegment(skill.name), "SKILL.md");
+        const relativePath = path.join(base, skillExportDirectory(skill), "SKILL.md");
         const targetPath = path.join(worktreePath, relativePath);
         const existing = await readFileIfExists(targetPath);
         if (existing !== undefined && existing.trim().length > 0 && existing !== skill.content) {
@@ -756,7 +759,7 @@ export async function exportContextToRepository(
     pushWarnings(warnings, skills.warnings);
     for (const skill of skills.items) {
       for (const base of [".claude/skills", ".agents/skills"]) {
-        const relativePath = path.join(base, sanitizePathSegment(skill.name), "SKILL.md");
+        const relativePath = path.join(base, skillExportDirectory(skill), "SKILL.md");
         const targetPath = path.join(config.projectRoot, relativePath);
         changedFiles.push(normalizeRelativePath(relativePath));
         previews.push({ path: normalizeRelativePath(relativePath), content: skill.content });
@@ -1254,6 +1257,10 @@ function stripSkillMetadata(content: string): string | undefined {
   }
   const body = lines.slice(endIndex + 1).join("\n").trim();
   return body.length > 0 ? body : undefined;
+}
+
+function skillExportDirectory(skill: StoredSkill): string {
+  return sanitizePathSegment(skill.id);
 }
 
 function unquoteMetadataValue(value: string): string {

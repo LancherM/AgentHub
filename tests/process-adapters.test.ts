@@ -123,6 +123,41 @@ describe("process-backed agent adapters", () => {
     }));
   });
 
+  it("keeps structured tool-call output inside status events", async () => {
+    const runner = new MockProcessRunner([
+      [
+        {
+          type: "stdout",
+          data: "{\"type\":\"tool_call\",\"name\":\"read_file\",\"message\":\"read src/index.ts\"}\n"
+        },
+        { type: "exit", exitCode: 0, signal: null }
+      ]
+    ]);
+    const input = await createInput("codex-tool-call-adapter");
+
+    const events = await collect(new CodexAdapter({ processRunner: runner }).run(input));
+
+    expect(events).toContainEqual(expect.objectContaining({
+      type: "stdout",
+      message: expect.stringContaining("\"tool_call\"")
+    }));
+    expect(events).toContainEqual(expect.objectContaining({
+      type: "status",
+      message: "read src/index.ts",
+      metadata: {
+        adapterEvent: {
+          type: "tool_call",
+          name: "read_file",
+          message: "read src/index.ts"
+        }
+      }
+    }));
+    expect(events).not.toContainEqual(expect.objectContaining({
+      type: "message",
+      message: "read src/index.ts"
+    }));
+  });
+
   it("runs Claude Code in print mode without repository-level context files", async () => {
     const runner = new MockProcessRunner([
       [

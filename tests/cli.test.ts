@@ -632,7 +632,7 @@ describe("CLI", () => {
         "--run-id",
         "run_manual_invalid",
         "--type",
-        "tool",
+        "tool_call",
         "--message",
         "invalid type"
       ], io, projectRoot, runtime)
@@ -825,6 +825,35 @@ describe("CLI", () => {
 
     expect(output.join("")).toBe("");
     expect(errors.join("")).toContain("--target requires a value");
+  });
+
+  it("rejects repeated context export targets", async () => {
+    const projectRoot = await createTestDirectory("cli-context-export-repeated-target-project");
+    const output: string[] = [];
+    const errors: string[] = [];
+    const io = {
+      stdout: { write: (chunk: string) => { output.push(chunk); return true; } },
+      stderr: { write: (chunk: string) => { errors.push(chunk); return true; } }
+    };
+
+    await expect(
+      main([
+        "context",
+        "export",
+        "--project-root",
+        projectRoot,
+        "--project-id",
+        "project_1",
+        "--target",
+        "repo",
+        "--target",
+        "workspace",
+        "--dry-run"
+      ], io, projectRoot)
+    ).resolves.toBe(1);
+
+    expect(output.join("")).toBe("");
+    expect(errors.join("")).toContain("--target may only be provided once");
   });
 
   it("rejects repo_export delivery mode for context builds", async () => {

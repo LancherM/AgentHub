@@ -118,12 +118,15 @@ repositories, the desktop thread service separated from task runs, and a
 package-level conversation context builder. The builder runs outside the
 renderer, applies deterministic message-count and character budgets, and
 produces a conversation brief that is injected through the runtime context
-bundle and persisted as a `conversation_brief` run artifact. Project context,
-thread context, current-turn context, and run context remain distinct layers
-so thread-local decisions do not automatically promote into project approved
-memory. Follow-up turns prefer terminal assistant messages over run-card
-summaries for runs that have finished; run-card summaries remain available for
-pending runs and compatibility imports.
+bundle and persisted as a `conversation_brief` run artifact. A zero recent
+message budget includes no prior thread messages, and desktop first-turn runs
+reload the retitled thread before building the brief so pre-created empty
+threads do not inject stale `New Chat` titles. Project context, thread context,
+current-turn context, and run context remain distinct layers so thread-local
+decisions do not automatically promote into project approved memory. Follow-up
+turns prefer terminal assistant messages over run-card summaries for runs that
+have finished; run-card summaries remain available for pending runs and
+compatibility imports.
 
 The service maps desktop-facing agent IDs (`fake`, `codex`, `claude`) and run
 statuses (`queued`, `running`, `verifying`, `completed`, `failed`,
@@ -217,6 +220,12 @@ runner behavior. `run event add` loads the target run through
 the event through `RunEventRepository`, and derives the next sequence number
 from existing events for that run. This keeps manual notes in the same ordered
 event stream as adapter-captured output while avoiding any task execution.
+The persisted MVP event enum is intentionally closed to `stdout`, `stderr`,
+`message`, `status`, `error`, and `exit`. Agent CLI tool-call records are not a
+first-class storage type in this slice; process adapters preserve the original
+JSONL line as stdout and may emit a `status` event whose metadata contains the
+parsed adapter payload. Domain validation, SQLite checks, manual CLI event
+validation, and review rendering all use that same six-type model.
 
 Persisted run review aggregation lives in `packages/task-runner`. The CLI
 parses `runs events <run-id>` and `runs diff <run-id> [--stat|--patch]`, then
@@ -296,15 +305,18 @@ skill must declare both `name` and `description`; the context compiler uses the
 declared values in context bundles and skips empty or malformed skill files
 with deterministic warnings. Export and worktree overlay flows reuse the same
 parser, so malformed skills are not copied into `.claude/skills` or
-`.agents/skills`.
+`.agents/skills`. Export and overlay paths use the context-store directory id,
+not the frontmatter display name, so a malformed-looking display name cannot
+collapse paths outside the intended skill folder.
 
 Repo-local context stores remain opt-in through `--mode repo_local`. Repository
 export remains opt-in through `context export --target repo --dry-run` or
 `context export --target repo --write`; dry-run produces previews without
 writing, while write mode updates managed blocks in `AGENTS.md` and optionally
 `CLAUDE.md`. The CLI and context-compiler export boundary only accept the
-`repo` target, and omitting `--target` keeps that repo-export default for
-compatibility. Approved memory is part of the rendered context store export
+`repo` target, repeated `--target` flags are rejected, and omitting `--target`
+keeps that repo-export default for compatibility. Approved memory is part of
+the rendered context store export
 when `memory/approved.md` contains non-placeholder content; the
 `--include-approved-memory` flag does not broaden the boundary and only makes
 that default explicit in command output. Managed block replacement preserves

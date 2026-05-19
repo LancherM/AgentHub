@@ -85,6 +85,11 @@ The current domain model validates these values:
 - memory status: `proposed`, `approved`, `rejected`
 - risk level: `low`, `medium`, `high`, `blocking`
 
+The MVP deliberately keeps tool-call records inside the generic run-event
+model. Parsed tool-call-like adapter JSON is preserved as raw stdout and may
+produce a `status` event with the structured payload in metadata; `tool_call`
+is not a domain, SQLite, or manual CLI event type.
+
 ## Current Baseline Status
 
 The repository has moved beyond the original fake-only rebuild slice. The

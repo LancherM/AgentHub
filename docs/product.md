@@ -72,14 +72,17 @@ Supported store files are:
 
 Skill files must include YAML-style frontmatter with `name` and `description`.
 Malformed or empty skills are skipped and surfaced as build/export warnings
-instead of being silently injected as generic text.
+instead of being silently injected as generic text. Skill display names are
+used in rendered context, while export and overlay file paths stay anchored to
+the context-store skill directory name.
 
 `context export --target repo --dry-run` previews repository writes.
 `context export --target repo --write` uses Agent Hub managed blocks in
 `AGENTS.md` and optionally `CLAUDE.md`, preserves user-authored content
 outside those blocks, and ignores marker examples inside fenced code blocks.
-If `--target` is provided, its only supported value is `repo`; omitting it
-keeps the same repo-export default for compatibility. Approved memory from the
+If `--target` is provided, its only supported value is `repo`, and the flag may
+only be provided once; omitting it keeps the same repo-export default for
+compatibility. Approved memory from the
 Agent Hub-owned context store is included in the managed context block when it
 contains non-placeholder content, and `--include-approved-memory` is accepted
 as an explicit acknowledgement of that default. Runtime context files are
@@ -138,6 +141,12 @@ Manual event recording is available for persisted task runs:
 the run exists, validates the event type, appends through the
 `RunEventRepository`, and assigns the next sequence number after existing
 events for that run.
+For the locked MVP event model, the only first-class persisted run event types
+are `stdout`, `stderr`, `message`, `status`, `error`, and `exit`. Structured
+tool-call output from agent CLIs remains auditable as raw stdout and, when it
+can be parsed safely, as a `status` event with the original structured payload
+in metadata. Agent Hub does not promote tool-call records into assistant
+messages and does not add a separate `tool_call` event type in the MVP.
 
 Persisted run review is explicit and read-only. `runs events <run-id>` prints
 the ordered adapter/manual event stream stored in `run_events` across CLI
@@ -174,6 +183,8 @@ The process-backed adapters use direct executable-plus-args spawning:
 - stdout and stderr are captured as run events; structured JSONL output is
   parsed into message/status/error events when possible, while raw output is
   preserved.
+- structured tool-call-like JSONL output is preserved as stdout and summarized
+  as `status` metadata, not persisted as a first-class `tool_call` event.
 - non-zero process exits and signal exits make the run fail, but the task run,
   events, artifacts, verification rows, and risk report remain inspectable.
 - unsafe permission-bypass flags are not used.
@@ -250,7 +261,9 @@ layers. Desktop follow-up turns now build a bounded conversation brief before
 each run. The brief includes the current turn, recent thread messages,
 terminal assistant answers from prior runs, compact prior run summaries when
 no assistant answer exists yet, project context-store references, and explicit
-character-budget metadata. Agent Hub persists that exact brief as a
+character-budget metadata. A zero recent-message budget includes no prior
+messages, and the first message in an empty thread uses the retitled thread
+name in the injected brief. Agent Hub persists that exact brief as a
 `conversation_brief` run artifact so review can inspect what was injected.
 The brief excludes raw lifecycle/debug events, logs, diffs, verification
 output, risk evidence, and other review artifacts. Full evidence remains on

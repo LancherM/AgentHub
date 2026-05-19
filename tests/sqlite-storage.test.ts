@@ -477,6 +477,10 @@ VALUES ('run_bad_status', 'task_constraints', 'fake', 'review_ready', '${created
 INSERT INTO run_events (id, task_run_id, sequence, type, message, metadata_json, created_at)
 VALUES ('event_bad_json', 'run_constraints', 1, 'stdout', 'bad json', '{bad', '${createdAt}');
 `)).rejects.toThrow();
+    await expect(repositories.database.execute(`
+INSERT INTO run_events (id, task_run_id, sequence, type, message, metadata_json, created_at)
+VALUES ('event_tool_call', 'run_constraints', 1, 'tool_call', 'tool call', '{}', '${createdAt}');
+`)).rejects.toThrow();
     await expect(repositories.runEventRepository.create({
       id: "event_constraints_2",
       taskRunId: "run_constraints",

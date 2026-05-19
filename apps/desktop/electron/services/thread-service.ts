@@ -231,13 +231,14 @@ class RepositoryThreadService implements ThreadService {
     await this.reconcileAssistantMessages(thread.id);
 
     const userMessage = await this.appendUserMessage(thread.id, cleanedPrompt, agents);
-    const priorMessages = (await this.messages.listByThreadId(thread.id))
+    const currentThread = await this.requireThread(thread.id);
+    const priorMessages = (await this.messages.listByThreadId(currentThread.id))
       .filter((message) => message.id !== userMessage.id);
 
     for (const agentId of agents) {
       try {
         const conversationBrief = await this.buildConversationBrief({
-          thread,
+          thread: currentThread,
           currentTurn: cleanedPrompt,
           currentMessageCreatedAt: userMessage.createdAt,
           agentId,
@@ -245,7 +246,7 @@ class RepositoryThreadService implements ThreadService {
           priorMessages
         });
         const run = await this.dependencies.runs.createRun({
-          projectId: thread.projectId,
+          projectId: currentThread.projectId,
           prompt: cleanedPrompt,
           title: titleFromPrompt(cleanedPrompt),
           agentId,
@@ -253,17 +254,17 @@ class RepositoryThreadService implements ThreadService {
           deliveryMode: "runtime_injection",
           conversationBrief
         });
-        await this.appendAgentRunMessage(thread.id, run.id, agentId);
-        await this.appendAssistantOutputPlaceholder(thread.id, run.id, agentId);
+        await this.appendAgentRunMessage(currentThread.id, run.id, agentId);
+        await this.appendAssistantOutputPlaceholder(currentThread.id, run.id, agentId);
       } catch (error) {
         await this.appendSystemMessage(
-          thread.id,
+          currentThread.id,
           `@${agentId} could not start: ${errorMessage(error)}`
         );
       }
     }
 
-    return this.getThread(thread.id);
+    return this.getThread(currentThread.id);
   }
 
   private async buildConversationBrief(input: {
