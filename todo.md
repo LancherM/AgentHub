@@ -403,7 +403,7 @@ pnpm lint
 ### 12. Broaden focused hardening coverage
 
 Status: done
-Done: 2026-05-19 via codex/todo-12-hardening-coverage; PR: pending
+Done: 2026-05-19 via codex/todo-12-hardening-coverage; PR: https://github.com/LancherM/AgentHub/pull/63
 
 Prompt:
 
