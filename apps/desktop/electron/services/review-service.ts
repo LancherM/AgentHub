@@ -119,6 +119,8 @@ class RepositoryReviewService implements ReviewService {
       acceptedAt: decision.acceptedAt,
       rejectedAt: decision.rejectedAt,
       reviewStatus: decision.reviewStatus,
+      parentRunId: run.parentRunId,
+      parentMessageId: run.parentMessageId,
       message: decision.message ?? diff.message
     };
   }

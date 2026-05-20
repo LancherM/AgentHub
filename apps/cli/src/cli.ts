@@ -49,6 +49,7 @@ import {
   loadRunEventsReview,
   TaskRunner,
   type RunDiffReview,
+  type RunContinuationInput,
   type RunTaskInput,
   type TaskRunnerDependencies
 } from "@agent-hub/task-runner";
@@ -426,7 +427,7 @@ export function helpText(): string {
     "  agent-hub context build --project-root <path> --project-id <project-id> --task-id <task-id> --title <title> --prompt <prompt>",
     "  agent-hub context export --project-root <path> --project-id <project-id> [--target repo] --dry-run|--write",
     "  agent-hub [--db <path>] run --task <task-id> --agent fake|codex|claude-code [--workspace-base <path>]",
-    "  agent-hub [--db <path>] run [--repo <path>] [--workspace-base <path>] [--retain-on-failure] \"@fake|@codex|@claude-code <task>\"",
+    "  agent-hub [--db <path>] run [--repo <path>] [--workspace-base <path>] [--retain-on-failure] [--continue-from-run <run-id>|--continue-from-message <message-id>] \"@fake|@codex|@claude-code <task>\"",
     "  agent-hub [--db <path>] run event add --run-id <run-id> --type <type> --message <message>",
     "  agent-hub [--db <path>] threads list",
     "  agent-hub [--db <path>] threads show <thread-id>",
@@ -688,6 +689,7 @@ interface ChatState {
   retainOnFailure: boolean;
   dryRun: boolean;
   debug: boolean;
+  pendingContinueFrom?: RunContinuationInput;
 }
 
 export async function runChat(options: ChatOptions = {}): Promise<number> {
@@ -818,6 +820,7 @@ function renderChatBanner(state: ChatState): string {
     `project: ${state.projectRoot}`,
     `thread: ${state.threadId ?? "new"}`,
     `agent: ${state.selectedAgent}`,
+    "use /continue run <id> or /continue message <id> for one-shot code-state continuation",
     "type /exit to quit",
     ""
   ].join("\n");
@@ -865,6 +868,37 @@ async function handleChatSlash(
       return "continue";
     }
     await renderChatThreadDetail(io, runtime, state.threadId);
+    return "continue";
+  }
+  if (command === "/continue") {
+    const mode = rest[0];
+    const value = rest[1];
+    if (mode === "clear") {
+      state.pendingContinueFrom = undefined;
+      io.stdout.write("cleared pending code-state continuation\n");
+      return "continue";
+    }
+    if (mode !== "run" && mode !== "message") {
+      io.stderr.write("error: /continue requires run <id>, message <id>, or clear\n");
+      return "continue";
+    }
+    if (!value) {
+      io.stderr.write(`error: /continue ${mode} requires an id\n`);
+      return "continue";
+    }
+    try {
+      state.pendingContinueFrom = await resolveRunContinuation(
+        mode === "run"
+          ? { continueFromRunId: value }
+          : { continueFromMessageId: value },
+        runtime
+      );
+      io.stdout.write(
+        `next turn will continue from run: ${state.pendingContinueFrom?.parentRunId}\n`
+      );
+    } catch (error) {
+      io.stderr.write(`error: ${error instanceof Error ? error.message : String(error)}\n`);
+    }
     return "continue";
   }
   if (command === "/exit") {
@@ -920,7 +954,8 @@ async function runChatTurn(
     conversationBrief,
     workspaceBasePath: state.workspaceBasePath,
     workspaceCleanupPolicy: state.retainOnFailure ? "retain_on_failure" : undefined,
-    dryRun: state.dryRun
+    dryRun: state.dryRun,
+    continueFrom: state.pendingContinueFrom
   };
 
   let result: CliRunResult;
@@ -934,6 +969,8 @@ async function runChatTurn(
       metadata: { source: "cli_chat" }
     });
     throw error;
+  } finally {
+    state.pendingContinueFrom = undefined;
   }
 
   await appendChatMessage(runtime, currentThread.id, {
@@ -1283,6 +1320,7 @@ function formatThreadSummaryItems(label: string, items: string[]): string[] {
 
 function formatThreadMessageLine(message: ConversationMessage): string {
   const base = [
+    message.id,
     message.sequence,
     message.role,
     message.kind,
@@ -1825,6 +1863,8 @@ async function showRun(
       `status: ${run.status}`,
       `branch: ${run.branchName ?? "none"}`,
       `worktree_path: ${run.worktreePath ?? "none"}`,
+      `parent_run_id: ${run.parentRunId ?? "none"}`,
+      `parent_message_id: ${run.parentMessageId ?? "none"}`,
       `changed_files: ${changedFiles}`,
       `verification: ${verificationSummary}`,
       `risk: ${riskReport?.level ?? metadata?.riskReport?.level ?? "not available"}`,
@@ -2167,6 +2207,8 @@ function renderRunDebug(
     `- context_delivery: ${deliveryMode}`,
     `- worktree_path: ${result.worktreePath ?? "none"}`,
     `- branch_name: ${result.run.branchName ?? "none"}`,
+    `- parent_run_id: ${result.run.parentRunId ?? "none"}`,
+    `- parent_message_id: ${result.run.parentMessageId ?? "none"}`,
     `- task_brief_path: ${result.taskBriefPath ?? "none"}`,
     `- changed_files: ${result.diff?.changedFiles.length ?? 0}`,
     `- verification: ${result.verification?.summary ?? "not available"}`,
@@ -2289,6 +2331,8 @@ interface ParsedRunArgs {
   workspaceBasePath?: string;
   deliveryMode?: RunContextDeliveryMode;
   contextStoreRoot?: string;
+  continueFromRunId?: string;
+  continueFromMessageId?: string;
   retainOnFailure: boolean;
   dryRun: boolean;
   debug: boolean;
@@ -2299,6 +2343,7 @@ async function resolveRunInput(
   options: ParsedRunArgs,
   runtime: CliRuntime
 ): Promise<RunTaskInput> {
+  const continueFrom = await resolveRunContinuation(options, runtime);
   if (options.registeredTask) {
     if (!options.taskId) {
       throw new Error("--task requires an id");
@@ -2318,7 +2363,8 @@ async function resolveRunInput(
       projectId: task.projectId,
       title: task.title,
       taskPrompt: task.description ?? task.title,
-      agentKind
+      agentKind,
+      continueFrom
     };
   }
 
@@ -2333,7 +2379,8 @@ async function resolveRunInput(
       taskId: options.taskId,
       title: options.title,
       taskPrompt,
-      agentKind
+      agentKind,
+      continueFrom
     };
   }
 
@@ -2344,7 +2391,36 @@ async function resolveRunInput(
   return {
     projectRoot: options.projectRoot,
     rawPrompt: options.rawPrompt,
-    agentKind: parsed.agentKind
+    agentKind: parsed.agentKind,
+    continueFrom
+  };
+}
+
+async function resolveRunContinuation(
+  options: Pick<ParsedRunArgs, "continueFromRunId" | "continueFromMessageId">,
+  runtime: CliRuntime
+): Promise<RunContinuationInput | undefined> {
+  if (options.continueFromRunId && options.continueFromMessageId) {
+    throw new Error("--continue-from-run and --continue-from-message are mutually exclusive");
+  }
+  if (options.continueFromRunId) {
+    return { parentRunId: options.continueFromRunId };
+  }
+  if (!options.continueFromMessageId) {
+    return undefined;
+  }
+  const message = await runtime.conversationMessageRepository.get(
+    options.continueFromMessageId
+  );
+  if (!message) {
+    throw new Error(`message ${options.continueFromMessageId} not found`);
+  }
+  if (!message.runId) {
+    throw new Error(`message ${message.id} is not linked to a run`);
+  }
+  return {
+    parentRunId: message.runId,
+    parentMessageId: message.id
   };
 }
 
@@ -2360,6 +2436,8 @@ function parseRunArgs(args: string[], cwd: string): ParsedRunArgs {
   let workspaceBasePath: string | undefined;
   let deliveryMode: RunContextDeliveryMode | undefined;
   let contextStoreRoot: string | undefined;
+  let continueFromRunId: string | undefined;
+  let continueFromMessageId: string | undefined;
   let retainOnFailure = false;
   let dryRun = false;
   let debug = false;
@@ -2470,6 +2548,24 @@ function parseRunArgs(args: string[], cwd: string): ParsedRunArgs {
       index += 1;
       continue;
     }
+    if (parsingFlags && arg === "--continue-from-run") {
+      const value = args[index + 1];
+      if (!value) {
+        throw new Error("--continue-from-run requires a run id");
+      }
+      continueFromRunId = value;
+      index += 1;
+      continue;
+    }
+    if (parsingFlags && arg === "--continue-from-message") {
+      const value = args[index + 1];
+      if (!value) {
+        throw new Error("--continue-from-message requires a message id");
+      }
+      continueFromMessageId = value;
+      index += 1;
+      continue;
+    }
     if (parsingFlags && arg === "--retain-on-failure") {
       retainOnFailure = true;
       continue;
@@ -2497,6 +2593,8 @@ function parseRunArgs(args: string[], cwd: string): ParsedRunArgs {
     workspaceBasePath,
     deliveryMode,
     contextStoreRoot,
+    continueFromRunId,
+    continueFromMessageId,
     retainOnFailure,
     dryRun,
     debug,

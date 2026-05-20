@@ -16,6 +16,7 @@ interface AgentRunCardProps {
   onRunUpdated(run: RunDetail): void;
   onOpenInspector(runId: string, tab?: RunInspectorTab): void;
   onCancelRun(runId: string): Promise<void>;
+  onContinueFromRun(): void;
 }
 
 export function AgentRunCard({
@@ -23,7 +24,8 @@ export function AgentRunCard({
   initialRun,
   onRunUpdated,
   onOpenInspector,
-  onCancelRun
+  onCancelRun,
+  onContinueFromRun
 }: AgentRunCardProps): JSX.Element {
   const [run, setRun] = useState<RunDetail | undefined>(initialRun);
   const [events, setEvents] = useState<RunEvent[]>(initialRun?.events ?? []);
@@ -108,12 +110,24 @@ export function AgentRunCard({
     void loadRun({ includeReview: true });
   }, [expanded, loadRun]);
 
+  useEffect(() => {
+    if (!isTerminalRunStatus(message.status) || run) {
+      return;
+    }
+    void loadRun();
+  }, [loadRun, message.status, run]);
+
   const latestLine = useMemo(() => latestEventText(events) ?? run?.summary ?? statusLine(status), [
     events,
     run?.summary,
     status
   ]);
   const canCancel = isActiveRunStatus(status);
+  const canContinueCodeState =
+    isTerminalRunStatus(status) && run?.canContinueCodeState === true;
+  const continueDisabledTitle = run
+    ? "Continue requires a retained parent worktree"
+    : "Loading run provenance";
   const visibleEvents = expanded ? events : events.slice(-4);
   const elapsed = run
     ? elapsedLabel(run.createdAt, events.at(-1)?.timestamp ?? new Date().toISOString())
@@ -162,6 +176,21 @@ export function AgentRunCard({
               Cancel
             </button>
           ) : null}
+          {isTerminalRunStatus(status) ? (
+            <button
+              disabled={!canContinueCodeState}
+              title={canContinueCodeState ? "Continue from this run" : continueDisabledTitle}
+              onClick={(event) => {
+                event.stopPropagation();
+                if (!canContinueCodeState) {
+                  return;
+                }
+                onContinueFromRun();
+              }}
+            >
+              Continue
+            </button>
+          ) : null}
           <button
             onClick={(event) => {
               event.stopPropagation();
@@ -190,6 +219,9 @@ export function AgentRunCard({
           {latestLine ?? "Waiting for the first streamed event..."}
         </p>
         <p className="fake-boundary">{simulationCopy}</p>
+        {run?.parentRunId ? (
+          <p className="fake-boundary">Continues code state from {run.parentRunId}.</p>
+        ) : null}
         <div className="run-event-strip">
           {visibleEvents.length === 0 ? (
             <span className="muted-copy">No stream events yet.</span>

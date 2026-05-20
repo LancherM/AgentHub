@@ -126,6 +126,7 @@ export interface ConversationMessageRepository {
   create(message: ConversationMessage): Promise<ConversationMessage>;
   update(message: ConversationMessage): Promise<ConversationMessage>;
   createMany(messages: ConversationMessage[]): Promise<ConversationMessage[]>;
+  get(messageId: string): Promise<ConversationMessage | undefined>;
   listByThreadId(threadId: string): Promise<ConversationMessage[]>;
   countByThreadId(threadId: string): Promise<number>;
 }
@@ -529,6 +530,11 @@ export class InMemoryConversationMessageRepository
       created.push(await this.create(message));
     }
     return created;
+  }
+
+  async get(messageId: string): Promise<ConversationMessage | undefined> {
+    const message = this.messages.get(messageId);
+    return message ? cloneConversationMessage(message) : undefined;
   }
 
   async listByThreadId(threadId: string): Promise<ConversationMessage[]> {

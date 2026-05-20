@@ -274,7 +274,15 @@ function parseCreateRunInput(input: unknown): CreateRunInput {
     title,
     agentId,
     contextMode,
-    deliveryMode
+    deliveryMode,
+    continueFromRunId:
+      value.continueFromRunId === undefined
+        ? undefined
+        : parseId(value.continueFromRunId, "continueFromRunId"),
+    continueFromMessageId:
+      value.continueFromMessageId === undefined
+        ? undefined
+        : parseId(value.continueFromMessageId, "continueFromMessageId")
   };
 }
 
@@ -318,7 +326,15 @@ function parseSendThreadMessageInput(input: unknown): SendThreadMessageInput {
       value.projectId === undefined ? undefined : parseId(value.projectId, "projectId"),
     text,
     contextMode,
-    agents: value.agents === undefined ? undefined : parseAgentList(value.agents)
+    agents: value.agents === undefined ? undefined : parseAgentList(value.agents),
+    continueFromRunId:
+      value.continueFromRunId === undefined
+        ? undefined
+        : parseId(value.continueFromRunId, "continueFromRunId"),
+    continueFromMessageId:
+      value.continueFromMessageId === undefined
+        ? undefined
+        : parseId(value.continueFromMessageId, "continueFromMessageId")
   };
 }
 

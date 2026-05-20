@@ -237,6 +237,7 @@ class RepositoryThreadService implements ThreadService {
     await this.reconcileAssistantMessages(thread.id);
     await this.refreshThreadSummary(thread.id);
 
+    const continueFrom = await this.resolveContinuationInput(input);
     const userMessage = await this.appendUserMessage(thread.id, cleanedPrompt, agents);
     const currentThread = await this.requireThread(thread.id);
     const priorMessages = (await this.messages.listByThreadId(currentThread.id))
@@ -259,7 +260,9 @@ class RepositoryThreadService implements ThreadService {
           agentId,
           contextMode,
           deliveryMode: "runtime_injection",
-          conversationBrief
+          conversationBrief,
+          continueFromRunId: continueFrom?.parentRunId,
+          continueFromMessageId: continueFrom?.parentMessageId
         });
         await this.appendAgentRunMessage(currentThread.id, run.id, agentId);
         await this.appendAssistantOutputPlaceholder(currentThread.id, run.id, agentId);
@@ -272,6 +275,28 @@ class RepositoryThreadService implements ThreadService {
     }
 
     return this.getThread(currentThread.id);
+  }
+
+  private async resolveContinuationInput(
+    input: SendThreadMessageInput
+  ): Promise<{ parentRunId: string; parentMessageId?: string } | undefined> {
+    if (input.continueFromRunId && input.continueFromMessageId) {
+      throw new Error("continueFromRunId and continueFromMessageId are mutually exclusive");
+    }
+    if (input.continueFromRunId) {
+      return { parentRunId: input.continueFromRunId };
+    }
+    if (!input.continueFromMessageId) {
+      return undefined;
+    }
+    const message = await this.messages.get(input.continueFromMessageId);
+    if (!message) {
+      throw new Error(`message ${input.continueFromMessageId} not found`);
+    }
+    if (!message.runId) {
+      throw new Error(`message ${message.id} is not linked to a run`);
+    }
+    return { parentRunId: message.runId, parentMessageId: message.id };
   }
 
   private async buildConversationBrief(input: {

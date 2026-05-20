@@ -1,4 +1,9 @@
-import type { RunDetail, RunInspectorTab, ThreadMessage } from "../../lib/types";
+import type {
+  RunContinuationTarget,
+  RunDetail,
+  RunInspectorTab,
+  ThreadMessage
+} from "../../lib/types";
 import { AgentRunCard } from "./AgentRunCard";
 import { AssistantMessageBubble } from "./AssistantMessageBubble";
 import { SystemMessage } from "./SystemMessage";
@@ -10,6 +15,7 @@ interface MessageListProps {
   onRunUpdated(run: RunDetail): void;
   onOpenInspector(runId: string, tab?: RunInspectorTab): void;
   onCancelRun(runId: string): Promise<void>;
+  onContinueFromRun(target: RunContinuationTarget): void;
 }
 
 export function MessageList({
@@ -17,7 +23,8 @@ export function MessageList({
   runDetails,
   onRunUpdated,
   onOpenInspector,
-  onCancelRun
+  onCancelRun,
+  onContinueFromRun
 }: MessageListProps): JSX.Element {
   if (messages.length === 0) {
     return (
@@ -41,6 +48,12 @@ export function MessageList({
             onRunUpdated={onRunUpdated}
             onOpenInspector={onOpenInspector}
             onCancelRun={onCancelRun}
+            onContinueFromRun={() =>
+              onContinueFromRun({
+                parentRunId: message.runId,
+                parentMessageId: message.id
+              })
+            }
           />
         ) : message.type === "assistant" ? (
           <AssistantMessageBubble key={message.id} message={message} />

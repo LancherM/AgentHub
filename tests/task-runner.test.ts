@@ -13,6 +13,7 @@ import {
   MarkdownContextFormatter
 } from "@agent-hub/context-compiler";
 import type {
+  ChangedFile,
   DiffCollectionInput,
   DiffCollectionResult,
   DiffCollectorService
@@ -21,6 +22,7 @@ import {
   InMemoryRiskReportRepository,
   InMemoryRunArtifactRepository,
   InMemoryRunEventRepository,
+  InMemoryRunMetadataRepository,
   InMemoryTaskRepository,
   InMemoryTaskRunRepository,
   InMemoryVerificationResultRepository,
@@ -680,6 +682,172 @@ describe("task runner", () => {
     expect(result.workspaceCleanup?.retained).toBe(true);
   });
 
+  it("continues from a retained parent run by copying safe changed files into a new worktree", async () => {
+    const projectRoot = await createTestDirectory("agent-hub-project");
+    const runRoot = await createTestDirectory("agent-hub-runs");
+    const parentWorktree = await createTestDirectory("agent-hub-parent-worktree");
+    await fs.mkdir(path.join(parentWorktree, "src"), { recursive: true });
+    await fs.writeFile(path.join(parentWorktree, "src", "new.ts"), "new file\n", "utf8");
+    await fs.writeFile(
+      path.join(parentWorktree, "src", "existing.ts"),
+      "changed file\n",
+      "utf8"
+    );
+    const taskRepository = new InMemoryTaskRepository();
+    const taskRunRepository = new InMemoryTaskRunRepository();
+    const runMetadataRepository = new InMemoryRunMetadataRepository();
+    const runArtifactRepository = new InMemoryRunArtifactRepository();
+    await seedParentRun({
+      projectRoot,
+      parentWorktree,
+      taskRepository,
+      taskRunRepository,
+      runMetadataRepository
+    });
+    const diffCollector = new ContinuationDiffCollector(parentWorktree, [
+      { path: "src/new.ts", status: "untracked" },
+      { path: "src/existing.ts", status: "modified" },
+      { path: "src/remove.ts", status: "deleted" }
+    ]);
+    const runner = new TaskRunner({
+      defaultRunRoot: runRoot,
+      workspaceManager: new TestWorkspaceManager(runRoot, {
+        baseFiles: {
+          "src/existing.ts": "base file\n",
+          "src/remove.ts": "remove me\n"
+        }
+      }),
+      diffCollector,
+      shellExecutor: new MockShellExecutor([{ stdout: "abc123\n" }]),
+      verificationRunner: new VerificationRunner(new MockShellExecutor()),
+      taskRepository,
+      taskRunRepository,
+      runMetadataRepository,
+      runArtifactRepository,
+      idGenerator: new SequenceIdGenerator(),
+      clock: new FixedClock("2026-01-01T00:00:00.000Z")
+    });
+
+    const result = await runner.run({
+      projectRoot,
+      projectId: "project_1",
+      taskPrompt: "continue safely",
+      agentKind: "fake",
+      continueFrom: { parentRunId: "run_parent", parentMessageId: "message_parent" }
+    });
+
+    expect(result.run).toMatchObject({
+      parentRunId: "run_parent",
+      parentMessageId: "message_parent"
+    });
+    expect(result.run.branchName).toContain("continue-run_parent");
+    await expect(
+      fs.readFile(path.join(result.worktreePath ?? "", "src", "new.ts"), "utf8")
+    ).resolves.toBe("new file\n");
+    await expect(
+      fs.readFile(path.join(result.worktreePath ?? "", "src", "existing.ts"), "utf8")
+    ).resolves.toBe("changed file\n");
+    await expect(
+      fs.access(path.join(result.worktreePath ?? "", "src", "remove.ts"))
+    ).rejects.toThrow();
+    const provenance = await runArtifactRepository.getLatestByRunIdAndKind(
+      result.run.id,
+      "code_state_provenance"
+    );
+    expect(provenance?.content).toContain("parent_run_id: run_parent");
+    expect(provenance?.content).toContain("- src/new.ts");
+    expect(provenance?.content).toContain("- src/remove.ts");
+    expect(provenance?.metadata).toMatchObject({
+      parentRunId: "run_parent",
+      parentMessageId: "message_parent",
+      sourceHead: "abc123",
+      inheritedFileCount: 3
+    });
+  });
+
+  it("rejects continuation from non-terminal or unretained parent runs", async () => {
+    const projectRoot = await createTestDirectory("agent-hub-project");
+    const runRoot = await createTestDirectory("agent-hub-runs");
+    const taskRepository = new InMemoryTaskRepository();
+    const taskRunRepository = new InMemoryTaskRunRepository();
+    const runMetadataRepository = new InMemoryRunMetadataRepository();
+    await taskRepository.create({
+      id: "task_parent",
+      projectId: "project_1",
+      title: "Parent",
+      status: "open",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z"
+    });
+    await taskRunRepository.create({
+      id: "run_parent",
+      taskId: "task_parent",
+      agentKind: "fake",
+      status: "running",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z"
+    });
+    const runner = new TaskRunner({
+      defaultRunRoot: runRoot,
+      workspaceManager: new TestWorkspaceManager(runRoot),
+      diffCollector: new StaticDiffCollector(),
+      verificationRunner: new VerificationRunner(new MockShellExecutor()),
+      taskRepository,
+      taskRunRepository,
+      runMetadataRepository
+    });
+
+    await expect(
+      runner.run({
+        projectRoot,
+        projectId: "project_1",
+        taskPrompt: "continue",
+        agentKind: "fake",
+        continueFrom: { parentRunId: "run_parent" }
+      })
+    ).rejects.toThrow("must be terminal");
+  });
+
+  it("rejects sensitive and symlink continuation files before creating a child run", async () => {
+    const projectRoot = await createTestDirectory("agent-hub-project");
+    const runRoot = await createTestDirectory("agent-hub-runs");
+    const parentWorktree = await createTestDirectory("agent-hub-parent-worktree");
+    const taskRepository = new InMemoryTaskRepository();
+    const taskRunRepository = new InMemoryTaskRunRepository();
+    const runMetadataRepository = new InMemoryRunMetadataRepository();
+    await seedParentRun({
+      projectRoot,
+      parentWorktree,
+      taskRepository,
+      taskRunRepository,
+      runMetadataRepository
+    });
+    const runner = new TaskRunner({
+      defaultRunRoot: runRoot,
+      workspaceManager: new TestWorkspaceManager(runRoot),
+      diffCollector: new ContinuationDiffCollector(parentWorktree, [
+        { path: ".env.local", status: "modified" },
+        { path: "linked", status: "untracked", symlink: true }
+      ]),
+      shellExecutor: new MockShellExecutor([{ stdout: "abc123\n" }]),
+      verificationRunner: new VerificationRunner(new MockShellExecutor()),
+      taskRepository,
+      taskRunRepository,
+      runMetadataRepository
+    });
+
+    await expect(
+      runner.run({
+        projectRoot,
+        projectId: "project_1",
+        taskPrompt: "continue",
+        agentKind: "fake",
+        continueFrom: { parentRunId: "run_parent" }
+      })
+    ).rejects.toThrow("unsafe file paths changed");
+    await expect(taskRunRepository.list()).resolves.toHaveLength(1);
+  });
+
   it("runs verification commands with cwd set to the worktree", async () => {
     const projectRoot = await createTestDirectory("agent-hub-project");
     const runRoot = await createTestDirectory("agent-hub-runs");
@@ -987,6 +1155,54 @@ describe("task runner", () => {
   });
 });
 
+async function seedParentRun(input: {
+  projectRoot: string;
+  parentWorktree: string;
+  taskRepository: InMemoryTaskRepository;
+  taskRunRepository: InMemoryTaskRunRepository;
+  runMetadataRepository: InMemoryRunMetadataRepository;
+}): Promise<void> {
+  await input.taskRepository.create({
+    id: "task_parent",
+    projectId: "project_1",
+    title: "Parent",
+    status: "completed",
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z"
+  });
+  await input.taskRunRepository.create({
+    id: "run_parent",
+    taskId: "task_parent",
+    agentKind: "fake",
+    status: "succeeded",
+    worktreePath: input.parentWorktree,
+    branchName: "agent-hub/task_parent/fake",
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z"
+  });
+  await input.runMetadataRepository.save({
+    runId: "run_parent",
+    workspace: {
+      path: input.parentWorktree,
+      branchName: "agent-hub/task_parent/fake",
+      sourceRepositoryPath: input.projectRoot,
+      workspaceBasePath: path.dirname(input.parentWorktree),
+      taskId: "task_parent",
+      runId: "run_parent",
+      agentKind: "fake",
+      dryRun: false,
+      sourceRepositoryDirty: false,
+      cleanupPolicy: "never"
+    },
+    workspaceCleanup: {
+      cleaned: false,
+      retained: true,
+      reason: "test retained parent",
+      commands: []
+    }
+  });
+}
+
 function createTestRunner(runRoot: string): TaskRunner {
   return new TaskRunner({
     defaultRunRoot: runRoot,
@@ -1001,6 +1217,7 @@ function createTestRunner(runRoot: string): TaskRunner {
 interface TestWorkspaceManagerOptions {
   beforeRun?: (workspacePath: string) => Promise<void>;
   cleanup?: WorkspaceSession["cleanup"];
+  baseFiles?: Record<string, string>;
 }
 
 class TestWorkspaceManager implements WorkspaceManager {
@@ -1010,18 +1227,27 @@ class TestWorkspaceManager implements WorkspaceManager {
   ) {}
 
   async createSession(config: WorkspaceConfig): Promise<WorkspaceSession> {
-    const workspacePath = path.join(this.runRoot, `${config.taskId}-${config.agentKind}`);
+    const workspacePath = path.join(
+      this.runRoot,
+      `${config.taskId}-${config.agentKind}-${config.runId}`
+    );
     await fs.mkdir(workspacePath, { recursive: true });
+    for (const [relativePath, content] of Object.entries(this.options.baseFiles ?? {})) {
+      const filePath = path.join(workspacePath, relativePath);
+      await fs.mkdir(path.dirname(filePath), { recursive: true });
+      await fs.writeFile(filePath, content, "utf8");
+    }
     await this.options.beforeRun?.(workspacePath);
     return {
       workspace: {
         path: workspacePath,
-        branchName: `agent-hub/${config.taskId}/${config.agentKind}`,
+        branchName: config.branchName ?? `agent-hub/${config.taskId}/${config.agentKind}`,
         sourceRepositoryPath: config.sourceRepositoryPath,
         workspaceBasePath: this.runRoot,
         taskId: config.taskId,
         runId: config.runId,
         agentKind: config.agentKind,
+        startPoint: config.startPoint,
         dryRun: config.dryRun ?? false,
         sourceRepositoryDirty: false,
         cleanupPolicy: config.cleanupPolicy ?? "never"
@@ -1062,6 +1288,38 @@ class StaticDiffCollector implements DiffCollectorService {
       },
       diff: "",
       fileSummaries: ["fake-agent-output.md: untracked"],
+      commands: []
+    };
+  }
+}
+
+class ContinuationDiffCollector extends StaticDiffCollector {
+  constructor(
+    private readonly parentWorktree: string,
+    private readonly parentChangedFiles: ChangedFile[]
+  ) {
+    super();
+  }
+
+  async collect(input: DiffCollectionInput): Promise<DiffCollectionResult> {
+    if (path.resolve(input.workspacePath) !== path.resolve(this.parentWorktree)) {
+      return super.collect(input);
+    }
+    return {
+      ok: true,
+      workspacePath: input.workspacePath,
+      isClean: this.parentChangedFiles.length === 0,
+      changedFiles: this.parentChangedFiles,
+      stat: {
+        filesChanged: this.parentChangedFiles.length,
+        insertions: this.parentChangedFiles.length,
+        deletions: 0,
+        text: `${this.parentChangedFiles.length} files changed`
+      },
+      diff: "",
+      fileSummaries: this.parentChangedFiles.map(
+        (file) => `${file.path}: ${file.status}`
+      ),
       commands: []
     };
   }

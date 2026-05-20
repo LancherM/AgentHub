@@ -112,6 +112,8 @@ export function validateTaskRun(input: TaskRun): TaskRun {
   enumValue(input.status, taskRunStatuses, "taskRun.status", issues);
   optionalString(input.worktreePath, "taskRun.worktreePath", issues);
   optionalString(input.branchName, "taskRun.branchName", issues);
+  optionalString(input.parentRunId, "taskRun.parentRunId", issues);
+  optionalString(input.parentMessageId, "taskRun.parentMessageId", issues);
   optionalTimestamp(input.startedAt, "taskRun.startedAt", issues);
   optionalTimestamp(input.completedAt, "taskRun.completedAt", issues);
   timestamp(input.createdAt, "taskRun.createdAt", issues);

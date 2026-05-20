@@ -10,6 +10,7 @@ import type {
   ProjectSummary,
   RunDetail,
   RunInspectorTab,
+  RunContinuationTarget,
   ThreadDetail,
   ThreadMessage,
   ThreadSummary
@@ -26,6 +27,8 @@ export function App(): JSX.Element {
     { runId: string; tab?: RunInspectorTab } | undefined
   >();
   const [lastUsedAgents, setLastUsedAgents] = useState<AgentId[]>(["fake"]);
+  const [pendingContinueFrom, setPendingContinueFrom] =
+    useState<RunContinuationTarget | undefined>();
   const [isBusy, setIsBusy] = useState(true);
   const [error, setError] = useState<string | undefined>();
 
@@ -147,6 +150,7 @@ export function App(): JSX.Element {
 
   function createNewThread(): void {
     setError(undefined);
+    setPendingContinueFrom(undefined);
     setCurrentThread(undefined);
     setSelectedThreadId(undefined);
     setSelectedProjectId((current) => current ?? projects[0]?.id);
@@ -163,7 +167,9 @@ export function App(): JSX.Element {
         threadId: selectedThreadId,
         projectId: activeProjectId ?? projects[0]?.id,
         text: input,
-        contextMode
+        contextMode,
+        continueFromRunId: pendingContinueFrom?.parentRunId,
+        continueFromMessageId: pendingContinueFrom?.parentMessageId
       });
       setCurrentThread(detail);
       setSelectedThreadId(detail.id);
@@ -177,6 +183,7 @@ export function App(): JSX.Element {
       setError(errorMessage(err));
       throw err;
     } finally {
+      setPendingContinueFrom(undefined);
       setIsBusy(false);
     }
   }
@@ -202,8 +209,11 @@ export function App(): JSX.Element {
           runDetails={runDetails}
           isBusy={isBusy}
           lastUsedAgents={lastUsedAgents}
+          pendingContinueFrom={pendingContinueFrom}
           error={error}
           onSubmit={submitMessage}
+          onContinueFromRun={(target) => setPendingContinueFrom(target)}
+          onClearContinueFrom={() => setPendingContinueFrom(undefined)}
           onRunUpdated={handleRunUpdated}
           onOpenInspector={(runId, tab) => setSelectedInspector({ runId, tab })}
           onCancelRun={cancelRun}

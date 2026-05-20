@@ -24,6 +24,8 @@ export interface WorkspaceConfig {
   taskId: string;
   runId: string;
   agentKind: AgentKind;
+  branchName?: string;
+  startPoint?: string;
   cleanupPolicy?: WorkspaceCleanupPolicy;
   dryRun?: boolean;
 }
@@ -36,6 +38,7 @@ export interface Workspace {
   taskId: string;
   runId: string;
   agentKind: AgentKind;
+  startPoint?: string;
   dryRun: boolean;
   sourceRepositoryDirty: boolean;
   cleanupPolicy: WorkspaceCleanupPolicy;
@@ -75,7 +78,8 @@ export class GitWorktreeWorkspaceManager implements WorkspaceManager {
   async createSession(config: WorkspaceConfig): Promise<WorkspaceSession> {
     const normalized = normalizeWorkspaceConfig(config);
     const workspacePath = buildWorkspacePath(normalized);
-    const branchName = buildBranchName(normalized.taskId, normalized.agentKind);
+    const branchName =
+      normalized.branchName ?? buildBranchName(normalized.taskId, normalized.agentKind);
     const creationCommands: ShellResult[] = [];
 
     if (!normalized.dryRun) {
@@ -130,7 +134,14 @@ export class GitWorktreeWorkspaceManager implements WorkspaceManager {
     }
 
     const addResult = await this.shellExecutor.execute(
-      safeGitCommand(["worktree", "add", "-b", branchName, workspacePath, "HEAD"]),
+      safeGitCommand([
+        "worktree",
+        "add",
+        "-b",
+        branchName,
+        workspacePath,
+        normalized.startPoint ?? "HEAD"
+      ]),
       safeGitExecutionOptions({
         cwd: normalized.sourceRepositoryPath,
         dryRun: normalized.dryRun
@@ -147,6 +158,7 @@ export class GitWorktreeWorkspaceManager implements WorkspaceManager {
       taskId: normalized.taskId,
       runId: normalized.runId,
       agentKind: normalized.agentKind,
+      startPoint: normalized.startPoint,
       dryRun: normalized.dryRun,
       sourceRepositoryDirty,
       cleanupPolicy: normalized.cleanupPolicy
