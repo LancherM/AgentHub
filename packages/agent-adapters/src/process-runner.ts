@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import fs from "node:fs";
 import path from "node:path";
 import type { Readable, Writable } from "node:stream";
 import { buildChildProcessEnv } from "@agent-hub/shared";
@@ -97,9 +98,10 @@ export class NodeProcessRunner implements ProcessRunner {
 
     let child: SpawnedProcess;
     try {
+      const env = buildProcessRunnerEnv(input.env);
       child = this.spawner(input.executable, args, {
         cwd: path.resolve(input.cwd),
-        env: buildChildProcessEnv(input.env),
+        env,
         shell: false,
         stdio: ["pipe", "pipe", "pipe"]
       });
@@ -188,6 +190,107 @@ export class NodeProcessRunner implements ProcessRunner {
             : `process exited with code ${exitCode ?? "unknown"}`))
     };
   }
+}
+
+function buildProcessRunnerEnv(
+  overrides?: Record<string, string | undefined>
+): NodeJS.ProcessEnv {
+  const env = buildChildProcessEnv(overrides);
+  const cliLookupPath = buildCliLookupPath(env.PATH, env.HOME);
+  if (cliLookupPath) {
+    env.PATH = cliLookupPath;
+  } else {
+    delete env.PATH;
+  }
+  return env;
+}
+
+function buildCliLookupPath(
+  inheritedPath: string | undefined,
+  homeDirectory: string | undefined
+): string {
+  const existingPaths = splitPath(inheritedPath);
+  const candidates = [
+    process.env.NVM_BIN,
+    process.env.PNPM_HOME,
+    process.env.VOLTA_HOME ? path.join(process.env.VOLTA_HOME, "bin") : undefined,
+    homeDirectory ? path.join(homeDirectory, ".local", "bin") : undefined,
+    homeDirectory ? path.join(homeDirectory, "bin") : undefined,
+    ...findNvmNodeBinPaths(homeDirectory),
+    "/opt/homebrew/bin",
+    "/usr/local/bin"
+  ];
+  return [...existingPaths, ...dedupeExistingPaths(candidates, existingPaths)].join(
+    path.delimiter
+  );
+}
+
+function splitPath(value: string | undefined): string[] {
+  return (value ?? "")
+    .split(path.delimiter)
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+}
+
+function dedupeExistingPaths(
+  candidates: Array<string | undefined>,
+  existingPaths: string[]
+): string[] {
+  const seen = new Set(existingPaths.map(normalizePathForDedupe));
+  const result: string[] = [];
+  for (const candidate of candidates) {
+    if (!candidate || !fs.existsSync(candidate)) {
+      continue;
+    }
+    const normalized = normalizePathForDedupe(candidate);
+    if (seen.has(normalized)) {
+      continue;
+    }
+    seen.add(normalized);
+    result.push(candidate);
+  }
+  return result;
+}
+
+function findNvmNodeBinPaths(homeDirectory: string | undefined): string[] {
+  if (!homeDirectory) {
+    return [];
+  }
+  const versionsDirectory = path.join(homeDirectory, ".nvm", "versions", "node");
+  let versionNames: string[];
+  try {
+    versionNames = fs.readdirSync(versionsDirectory);
+  } catch {
+    return [];
+  }
+  return versionNames
+    .filter((versionName) => versionName.startsWith("v"))
+    .sort(compareNodeVersionNames)
+    .map((versionName) => path.join(versionsDirectory, versionName, "bin"));
+}
+
+function compareNodeVersionNames(left: string, right: string): number {
+  const leftParts = parseNodeVersionName(left);
+  const rightParts = parseNodeVersionName(right);
+  for (let index = 0; index < Math.max(leftParts.length, rightParts.length); index += 1) {
+    const diff = (rightParts[index] ?? 0) - (leftParts[index] ?? 0);
+    if (diff !== 0) {
+      return diff;
+    }
+  }
+  return left.localeCompare(right);
+}
+
+function parseNodeVersionName(versionName: string): number[] {
+  return versionName
+    .replace(/^v/, "")
+    .split(".")
+    .map((part) => Number.parseInt(part, 10))
+    .map((part) => (Number.isFinite(part) ? part : 0));
+}
+
+function normalizePathForDedupe(candidate: string): string {
+  return path.resolve(candidate);
 }
 
 class AsyncEventQueue<T> implements AsyncIterable<T> {

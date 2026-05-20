@@ -1,4 +1,6 @@
 import { EventEmitter } from "node:events";
+import fs from "node:fs/promises";
+import path from "node:path";
 import { PassThrough, Writable } from "node:stream";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
@@ -127,10 +129,43 @@ describe("NodeProcessRunner", () => {
       })
     );
 
-    expect(calls[0][2].env.PATH).toBe("/test/bin");
+    expect(calls[0][2].env.PATH?.split(path.delimiter)).toContain("/test/bin");
     expect(calls[0][2].env.HOME).toBeUndefined();
     expect(calls[0][2].env.CUSTOM_ENV).toBe("explicit");
     expect(calls[0][2].env.AGENT_HUB_TEST_SECRET).toBeUndefined();
+  });
+
+  it("adds common local CLI directories to PATH for GUI-launched processes", async () => {
+    const cwd = await createTestDirectory("process-runner-gui-path");
+    const home = await createTestDirectory("process-runner-home");
+    const localBin = path.join(home, ".local", "bin");
+    const nvmBin = path.join(home, ".nvm", "versions", "node", "v20.18.0", "bin");
+    await fs.mkdir(localBin, { recursive: true });
+    await fs.mkdir(nvmBin, { recursive: true });
+    vi.stubEnv("PATH", "/usr/bin");
+    vi.stubEnv("HOME", home);
+    const calls: Parameters<ProcessSpawner>[] = [];
+    const runner = new NodeProcessRunner((executable, args, options) => {
+      calls.push([executable, args, options]);
+      const child = new MockChildProcess();
+      queueMicrotask(() => {
+        child.close(0, null);
+      });
+      return child;
+    });
+
+    await collect(
+      runner.run({
+        executable: "codex",
+        cwd
+      })
+    );
+
+    const pathEntries = calls[0][2].env.PATH?.split(path.delimiter) ?? [];
+    expect(pathEntries).toContain("/usr/bin");
+    expect(pathEntries).toContain(localBin);
+    expect(pathEntries).toContain(nvmBin);
+    expect(pathEntries.indexOf("/usr/bin")).toBeLessThan(pathEntries.indexOf(nvmBin));
   });
 });
 

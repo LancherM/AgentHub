@@ -226,7 +226,9 @@ The process-backed adapters use direct executable-plus-args spawning:
 - Task runs may provide explicit `environmentOverrides` for process-backed
   adapters. Child processes receive only those overrides plus a small inherited
   allowlist for path lookup, home/config/cache paths, temp directories,
-  locale/terminal flags, CI, and required Windows process variables.
+  locale/terminal flags, CI, required Windows process variables, and existing
+  local CLI bin directories commonly omitted when the desktop app is launched
+  outside a login shell.
 - stdout and stderr are captured as run events; structured JSONL output is
   parsed into message/status/error events when possible, while raw output is
   preserved.

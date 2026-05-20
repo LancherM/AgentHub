@@ -211,6 +211,11 @@ API keys or tokens are not inherited accidentally. `RunTaskInput` exposes an
 explicit `environmentOverrides` field for process-backed task runs; those
 overrides are forwarded to adapter detection and execution, and an override
 value of `undefined` removes an allowlisted variable for that child.
+`ProcessRunner` also expands `PATH` with existing local CLI directories such as
+`~/.local/bin`, `~/bin`, discovered `~/.nvm/versions/node/*/bin` entries,
+`/opt/homebrew/bin`, and `/usr/local/bin`. This keeps GUI-launched desktop
+processes able to find locally installed `codex` and `claude` binaries without
+using a shell or inheriting arbitrary environment variables.
 
 The CLI calls the runner rather than owning orchestration logic. The runner
 compiles context, creates a worktree workspace through a `WorkspaceManager`,
