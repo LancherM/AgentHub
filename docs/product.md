@@ -138,8 +138,9 @@ Code-state continuation is explicit opt-in only. `agent-hub run
 HEAD, copy safe changed regular files from the retained parent worktree, apply
 parent deletions, and then run the selected adapter in the child worktree.
 Continuation rejects non-terminal parents, missing or cleaned worktrees,
-sensitive paths, `.git`/`.agent-hub` paths, path escapes, symlinks, and
-unsupported renames before creating a child run. The child run stores
+sensitive paths, `.git`/`.agent-hub` paths, path escapes, symlinks detected by
+diff metadata or preflight filesystem inspection, and unsupported renames
+before creating a child run. The child run stores
 `parent_run_id`, optional `parent_message_id`, and a `code_state_provenance`
 artifact with copied/deleted file lists and source HEAD. Review, risk, diff,
 verification, and memory evidence remain scoped to the child run. Continuation
@@ -276,9 +277,9 @@ comparison details in `comparison_reports`. The structured details include
 changed-file overlap, diff-size deltas, verification and risk deltas, and a
 deterministic review score with explainable penalties. Comparison is a review
 aid only; it does not accept, merge, delete branches, or push changes.
-Missing risk evidence is treated conservatively in tradeoff wording so a run
-with persisted `low` risk is not described as riskier than a run with no risk
-report.
+Missing risk evidence is treated conservatively in tradeoff wording and
+structured risk deltas: it ranks above persisted `low` and `medium` risk but
+below persisted `high` and `blocking` risk.
 
 Agent Hub Desktop is now available as a local conversation console under
 `apps/desktop`. It starts with `pnpm --filter desktop dev` and presents a
@@ -358,13 +359,12 @@ files, or creates pull requests. Memory proposals remain pending until the
 user approves or ignores them, and desktop approval updates Agent Hub local
 storage only.
 
-The selected run timeline receives live semantic events such as `run_started`,
-`context_compiled`, `agent_step`, `agent_output`, `verification_started`,
-`verification_finished`, `run_completed`, `run_failed`, and `run_cancelled`.
-Sidebar and card status update through the desktop status sequence
-`queued -> running -> verifying -> completed`, or to `failed`/`cancelled` for
-terminal interruptions. Running fake runs can be cancelled from their inline
-cards.
+The selected run timeline receives persisted TaskRunner events through the
+existing desktop subscription API. Fake runs and process-backed adapter
+preflight results are replayed to run cards and the inspector after TaskRunner
+finalization. Rich live adapter streaming and process-level cancellation remain
+follow-up desktop wiring; unsupported running cancellation returns a clear local
+error instead of pretending to stop a process.
 
 The renderer only calls the safe `window.agentHub` preload API. It has no
 direct Node.js, shell, filesystem, SQLite, or git access; privileged
@@ -374,19 +374,24 @@ operations go through Electron main-process IPC registered in
 subscription behavior remain testable in the root Vitest suite without loading
 Electron.
 
-The current desktop execution path is intentionally fake-agent backed for real
-streaming work. The main process `RunService` creates SQLite task/run rows,
-streams live events through an in-memory emitter, persists run events as the DB
-layer supports them, records simulated verification output, and stores
-placeholder diff/risk review rows that explicitly say no real files were
-modified. The fake runner never writes files into the selected target
-repository and does not export Agent Hub context files. Mentioned `@codex` and
-`@claude` desktop runs currently create safe placeholder run records that fail
-with an explicit "not wired yet" message instead of launching real adapters.
-CodexAdapter, ClaudeCodeAdapter, real TaskRunner streaming/cancellation, real
-verification command configuration, approved-memory context-store writeback,
-multi-agent comparison review, worktree lifecycle management, and explicit
-merge/apply workflows remain follow-up desktop wiring tasks.
+The current desktop execution path is TaskRunner-backed in the Electron main
+process. `RunService` still creates the queued desktop task/run rows needed for
+stable renderer IDs, then calls the shared `TaskRunner` with the desktop SQLite
+repositories. `@fake` runs through `FakeAgentAdapter` in an isolated worktree
+and exposes real diff, skipped verification, risk, logs, metadata, and proposed
+memory evidence. Mentioned `@codex` and `@claude` runs invoke the local
+process-backed adapter preflight through TaskRunner; unavailable CLIs fail as
+inspectable persisted run events instead of service crashes. Desktop runs do
+not write Agent Hub context files into the target repository root, merge, push,
+export repository context, apply code, or approve memory automatically. Current
+desktop paths accept run-linked or message-linked continuation requests,
+validate that supplied message ids still belong to the requested parent run,
+require a retained worktree before continuing code state, and otherwise fail
+with a clear system message. Live TaskRunner streaming/cancellation, real
+desktop verification command configuration, approved-memory context-store
+writeback, multi-agent comparison review, worktree lifecycle management, and
+explicit merge/apply workflows remain
+follow-up desktop wiring tasks.
 
 SQLite is stored in Agent Hub-owned application data by default, not in the
 target project repository. `AGENT_HUB_HOME` can point Agent Hub at an alternate
@@ -478,6 +483,6 @@ assets only; it does not deploy a hosted service, notarize the desktop app, or
 change Agent Hub's local-first product model.
 
 Deferred product capabilities include richer Codex/Claude structured event
-mapping, automatic memory proposal generation from completed runs, mapping, richer comparison scoring, 
-and real desktop TaskRunner/adapter execution beyond the current fake-agent-backed
-desktop run path.
+mapping, live desktop TaskRunner streaming and process-level cancellation, real
+desktop verification configuration, approved-memory writeback confirmation,
+multi-agent comparison review, and explicit desktop apply/merge workflows.

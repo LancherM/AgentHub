@@ -280,28 +280,32 @@ class RepositoryThreadService implements ThreadService {
   private async resolveContinuationInput(
     input: SendThreadMessageInput
   ): Promise<{ parentRunId: string; parentMessageId?: string } | undefined> {
-    if (input.continueFromMessageId) {
+    if (input.continueFromRunId) {
+      if (!input.continueFromMessageId) {
+        return { parentRunId: input.continueFromRunId };
+      }
       const message = await this.messages.get(input.continueFromMessageId);
       if (!message) {
         throw new Error(`message ${input.continueFromMessageId} not found`);
       }
-      if (!message.runId) {
-        throw new Error(`message ${message.id} is not linked to a run`);
-      }
-      if (input.continueFromRunId && input.continueFromRunId !== message.runId) {
+      if (message.runId !== input.continueFromRunId) {
         throw new Error(
-          `continueFromRunId ${input.continueFromRunId} does not match message ${message.id} run ${message.runId}`
+          `message ${message.id} is not linked to run ${input.continueFromRunId}`
         );
       }
-      return {
-        parentRunId: input.continueFromRunId ?? message.runId,
-        parentMessageId: message.id
-      };
+      return { parentRunId: input.continueFromRunId, parentMessageId: message.id };
     }
-    if (input.continueFromRunId) {
-      return { parentRunId: input.continueFromRunId };
+    if (!input.continueFromMessageId) {
+      return undefined;
     }
-    return undefined;
+    const message = await this.messages.get(input.continueFromMessageId);
+    if (!message) {
+      throw new Error(`message ${input.continueFromMessageId} not found`);
+    }
+    if (!message.runId) {
+      throw new Error(`message ${message.id} is not linked to a run`);
+    }
+    return { parentRunId: message.runId, parentMessageId: message.id };
   }
 
   private async buildConversationBrief(input: {

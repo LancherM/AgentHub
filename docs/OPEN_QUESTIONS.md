@@ -11,10 +11,12 @@ SQLite". Earlier rebuild prompts used narrower "Night" slices that stopped at
 fake-agent execution or deferred SQLite.
 
 Current decision: phase numbers are historical planning labels only. The
-current code has moved beyond the fake-only slice and includes SQLite, real
-process adapters, safety/risk reports, memory workflows, comparison reports,
-and manual run-event recording. Do not infer missing capabilities from older
-Night 1 through Night 3 reports without checking the code.
+current code has moved beyond the fake-only slice and includes the `apps/` plus
+`packages/` workspace split, SQLite, real process adapters, safety/risk
+reports, memory workflows, automatic proposed-memory generation, structured
+comparison scoring, manual run-event recording, and the first local desktop
+shell. Do not infer missing capabilities from older Night 1 through Night 3
+reports without checking the code.
 
 ## Run Status Naming
 
@@ -58,9 +60,19 @@ remote execution, or browser UI.
 ## Package Layout Timing
 
 The imported architecture targets a monorepo with `apps/` and `packages/`.
-The current implementation remains a single root TypeScript package with clear
-module boundaries under `src/`.
 
-Current decision: keep the root package layout for this baseline. Split into
-physical packages only when the user explicitly asks for that work or when a
-separate task first extracts stable shared contracts.
+Current decision: the physical workspace split is complete. Current code uses
+`apps/cli` for command-line behavior, `apps/desktop` for the thin Electron
+shell, and local core packages under `packages/`. Any older references to a
+single root `src/` package are historical notes, not current architecture.
+
+## Desktop Execution Scope
+
+The current repository includes the first Electron + React desktop conversation
+console, so older notes saying "desktop UI is not implemented" are stale.
+
+Current decision: desktop remains a thin local shell over Electron main-process
+IPC and SQLite-backed services. Real desktop TaskRunner integration for
+Codex/Claude execution, real verification configuration, approved-memory
+writeback confirmation, multi-agent comparison review, worktree lifecycle
+management, and explicit merge/apply workflows remain deferred follow-up work.

@@ -167,29 +167,29 @@ statuses (`queued`, `running`, `verifying`, `completed`, `failed`,
 continuation uses the same explicit intent shape over safe IPC:
 renderer run cards can select a parent run/message, the composer shows a
 clearable one-shot continuation chip, and `ThreadService` resolves
-message-linked runs before passing parent ids to `RunService`. The renderer does
-not receive filesystem, shell, Git, or SQLite access. Current desktop fake and
-unavailable-adapter paths require a retained parent worktree before recording
-continuation provenance and otherwise fail with a clear system message; real
-TaskRunner-backed desktop adapter execution remains separate follow-up wiring.
+message-linked runs before passing parent ids to `RunService`. If both a run id
+and message id are supplied, `ThreadService` validates that the message is still
+linked to that parent run before forwarding the pair. The renderer does not
+receive filesystem, shell, Git, or SQLite access. Current desktop
+TaskRunner-backed paths require a retained parent worktree before continuing
+code state and otherwise fail with a clear system message.
 SQLite still stores the core run status enum, so the desktop-only `verifying` phase
 is represented by live run events while the persisted core run remains
 `running`; core `succeeded` is exposed to the desktop renderer as `completed`.
 
-Desktop Phase 3 real execution remains fake-agent only. The main process starts
-`apps/desktop/electron/services/fake-agent-runner.ts`, which emits semantic
-events over time and responds to `AbortController` cancellation. The runner
-does not read or write target repository files. `RunService` persists
-task/run rows, run events, simulated verification rows, and placeholder
-diff/risk review rows through the existing local repositories, then broadcasts
-each event through an in-memory emitter. Terminal run output is also promoted
-into bounded assistant transcript messages for future thread context, but that
-promotion does not change execution semantics or duplicate full evidence into
-message bodies. The renderer can mention `@codex` and `@claude` so multi-agent
-thread flows are visible, but those runs are safe main-process placeholders
-that fail with an explicit "not wired yet" event and do not invoke adapters,
-create worktrees, or modify repositories. Real Codex and Claude Code execution
-remains behind the same IPC boundary as follow-up TaskRunner integration.
+Desktop real execution now enters the shared `TaskRunner` from the Electron
+main process. `RunService` pre-creates the queued task/run rows for stable
+renderer IDs, then constructs TaskRunner with the same SQLite repositories and
+a desktop ID generator that reuses the queued run id. `@fake` executes through
+`FakeAgentAdapter` in an isolated worktree, while `@codex` and `@claude` use the
+process-backed Codex and Claude Code adapters, including local preflight. If a
+CLI is unavailable or unauthenticated, the run fails inspectably through
+persisted events and review evidence instead of crashing the service. Terminal
+run output is also promoted into bounded assistant transcript messages for
+future thread context, but that promotion does not change execution semantics or
+duplicate full evidence into message bodies. Live adapter streaming and
+process-level cancellation remain separate follow-up wiring; running
+TaskRunner-backed cancellation returns an explicit unsupported error.
 
 Desktop packaging is a local release concern layered over that shell. The
 workspace keeps Electron/Vite bundling in `apps/desktop`, then uses
@@ -230,8 +230,9 @@ requires a terminal parent run with retained worktree metadata, resolves the
 parent worktree HEAD, creates a new isolated child worktree from that commit,
 and copies only safe parent changed regular files into the child worktree before
 adapter execution. Deletions are applied as deletions. Sensitive paths,
-`.git`/`.agent-hub`, path escapes, symlinks, and unsupported renames reject the
-continuation before a child run is created. The child run records a
+`.git`/`.agent-hub`, path escapes, symlinks detected by diff metadata or
+preflight `lstat`, and unsupported renames reject the continuation before a
+child run is created. The child run records a
 `code_state_provenance` artifact with parent ids, source worktree, source HEAD,
 and copied/deleted file lists; diff, verification, risk, and review records are
 still generated for the child run itself.
@@ -507,7 +508,8 @@ returns a readable summary plus structured comparison details that the CLI
 stores in `comparison_reports`. The details JSON captures changed-file
 overlap, diff-size deltas, verification counts and failed-check deltas, risk
 rank deltas, risk factors, and a deterministic review score. Missing risk data
-is ranked conservatively above low risk for tradeoff wording. The score starts
+is ranked conservatively above persisted `low` and `medium` risk and below
+persisted `high` and `blocking` risk for tradeoff wording. The score starts
 from 100 and applies explainable penalties for non-succeeded status, higher
 risk, failed checks, skipped verification, and larger diff footprint; it is a
 review signal, not an acceptance decision. Comparison is review-only and
@@ -516,16 +518,14 @@ performs no accept, merge, branch delete, or push action.
 The first desktop runtime integration is deliberately narrow. `apps/desktop`
 uses SQLite-backed services for project registration, run listing/detail,
 inspector review tabs, verification rows, risk reports, and memory proposal
-decisions. `runs.create` records a desktop run through repository interfaces,
-emits IPC run events, persists a placeholder diff artifact, persists simulated
-or unavailable verification state, and persists a local review risk report.
-For `@fake`, the run streams semantic fake-agent events. For `@codex` and
-`@claude`, the run records a safe unavailable-adapter event instead of
-launching a process. It does not call TaskRunner yet, create worktrees, invoke
-Codex or Claude Code, run real verification commands, export repository
-context, merge, push, or write files into the target repository. Real
-TaskRunner and adapter execution can be wired behind the same IPC/service
-interfaces in a later slice.
+decisions. `runs.create` records a queued desktop run through repository
+interfaces, then the main process calls TaskRunner with those same repositories.
+TaskRunner creates the isolated worktree, materializes runtime-only task
+artifacts, runs `FakeAgentAdapter`, `CodexAdapter`, or `ClaudeCodeAdapter`,
+collects diffs, records skipped verification when no commands are configured,
+persists risk and metadata, and generates proposed memory for successful runs.
+It does not export repository context, merge, push, approve memory, or apply
+code automatically.
 
 All adapters run against an isolated worktree and refuse to run when that
 directory is the original project root or when the generated task brief is
@@ -598,9 +598,8 @@ Desktop is no longer architectural only. The first shell lives under
 `apps/desktop`, calls local services through Electron IPC, and renders projects,
 conversation threads, inline run cards, diffs, verification, risk, and memory
 proposal data from local SQLite repositories. It does not add an API server.
-Its first real streaming path remains fake-agent backed, while Codex and Claude
-mentions are represented by safe unavailable-adapter run records until real
-TaskRunner, CodexAdapter, and ClaudeCodeAdapter execution are wired behind the
-same IPC boundary. The inspector accept/reject flow records review decisions
-only; merge, push, PR creation, worktree cleanup, repository context export,
-and code application remain explicit future workflows.
+Desktop run creation now reuses TaskRunner and the shared fake/Codex/Claude
+adapter layer from the Electron main process. The inspector accept/reject flow
+records review decisions only; merge, push, PR creation, worktree cleanup,
+repository context export, and code application remain explicit future
+workflows.
