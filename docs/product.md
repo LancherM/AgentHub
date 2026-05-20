@@ -130,7 +130,9 @@ Command mode intentionally uses post-run rendering for the MVP: it waits for
 the task run to finish, then prints the final agent-facing output once. The
 pre-flight Git config check covers worktree-local config files, inline section
 comments, and dotted filter or diff driver names that could otherwise enable
-executable Git helpers during checkout.
+executable Git helpers during checkout. Repository-local `core.hooksPath`
+settings are allowed for normal developer repositories because Agent Hub's own
+Git calls override hooks to `/dev/null`.
 
 Code-state continuation is explicit opt-in only. `agent-hub run
 --continue-from-run <run-id>` and `agent-hub run --continue-from-message

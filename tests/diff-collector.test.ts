@@ -70,7 +70,7 @@ describe("DiffCollector", () => {
     await fs.mkdir(path.join(workspacePath, ".git"));
     await fs.writeFile(
       path.join(workspacePath, ".git", "config"),
-      "[core]\n	hooksPath = .githooks\n",
+      "[core]\n	fsmonitor = ./fsmonitor-poc.sh\n",
       "utf8"
     );
     const shell = new MockShellExecutor();
@@ -79,6 +79,22 @@ describe("DiffCollector", () => {
       /executable local git config/
     );
     expect(shell.calls).toHaveLength(0);
+  });
+
+  it("allows repository-local hooksPath because git commands override it", async () => {
+    const workspacePath = await createTestDirectory("diff-local-hooks-path");
+    await fs.mkdir(path.join(workspacePath, ".git"));
+    await fs.writeFile(
+      path.join(workspacePath, ".git", "config"),
+      "[core]\n	hooksPath = .githooks\n",
+      "utf8"
+    );
+    const shell = new MockShellExecutor();
+
+    const result = await new DiffCollector(shell).collect({ workspacePath });
+
+    expect(result.ok).toBe(true);
+    expect(shell.calls[0].command.args).toContain("core.hooksPath=/dev/null");
   });
 
   it("keeps modified generated overlays while excluding unchanged generated files", async () => {
