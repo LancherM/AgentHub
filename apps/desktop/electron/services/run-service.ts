@@ -1,24 +1,26 @@
 import { EventEmitter } from "node:events";
+import os from "node:os";
+import path from "node:path";
 import type { ConversationContextBrief } from "@agent-hub/context-compiler";
 import {
-  validateRiskReport,
-  validateRunArtifact,
   validateRunEvent,
   validateTask,
   validateTaskRun,
-  validateVerificationResult,
   type ProjectRepository,
-  type RiskReportRepository,
-  type RunArtifactRepository,
   type RunEvent as CoreRunEvent,
   type RunEventRepository,
   type RunMetadataRepository,
   type Task,
   type TaskRepository,
   type TaskRun,
-  type TaskRunRepository,
-  type VerificationResultRepository
+  type TaskRunRepository
 } from "@agent-hub/core";
+import {
+  TaskRunner,
+  type Clock,
+  type IdGenerator,
+  type TaskRunnerDependencies
+} from "@agent-hub/task-runner";
 import type {
   AgentKind as CoreAgentKind,
   JsonObject,
@@ -35,10 +37,6 @@ import type {
   RunStatus,
   RunSummary
 } from "../../src/lib/types";
-import {
-  runFakeAgent,
-  type FakeAgentRunnerEvent
-} from "./fake-agent-runner";
 import type { MemoryService } from "./memory-service";
 import type { DesktopServiceContext } from "./project-service";
 import type { ReviewService } from "./review-service";
@@ -57,7 +55,8 @@ export interface RunService {
 export interface RunServiceDependencies {
   reviewService: ReviewService;
   memoryService: MemoryService;
-  fakeDelayMs?: number;
+  taskRunnerDependencies?: TaskRunnerDependencies;
+  workspaceBasePath?: string;
 }
 
 export interface CreateDesktopRunInput extends CreateRunInput {
@@ -73,7 +72,6 @@ export interface ConversationRunSnapshot {
 }
 
 interface ActiveRun {
-  controller: AbortController;
   status: RunStatus;
   promise: Promise<void>;
 }
@@ -121,16 +119,10 @@ class RepositoryRunService implements RunService {
   private readonly tasks: TaskRepository;
   private readonly runs: TaskRunRepository;
   private readonly events: RunEventRepository;
-  private readonly artifacts: RunArtifactRepository;
-  private readonly verification: VerificationResultRepository;
-  private readonly risks: RiskReportRepository;
   private readonly metadata: RunMetadataRepository;
   private readonly emitter = new EventEmitter();
   private readonly activeRuns = new Map<string, ActiveRun>();
-  private readonly runInputs = new Map<
-    string,
-    { prompt: string; contextMode: CreateRunInput["contextMode"] }
-  >();
+  private readonly runInputs = new Map<string, ParsedCreateRunInput>();
 
   constructor(
     private readonly context: DesktopServiceContext,
@@ -140,9 +132,6 @@ class RepositoryRunService implements RunService {
     this.tasks = context.repositories.taskRepository;
     this.runs = context.repositories.taskRunRepository;
     this.events = context.repositories.runEventRepository;
-    this.artifacts = context.repositories.runArtifactRepository;
-    this.verification = context.repositories.verificationResultRepository;
-    this.risks = context.repositories.riskReportRepository;
     this.metadata = context.repositories.runMetadataRepository;
   }
 
@@ -268,12 +257,7 @@ class RepositoryRunService implements RunService {
         updatedAt: createdAt
       })
     );
-    this.runInputs.set(run.id, {
-      prompt: parsed.prompt,
-      contextMode: parsed.contextMode
-    });
-    await this.persistConversationBrief(run.id, parsed.conversationBrief);
-    await this.persistDesktopContinuationProvenance(run.id, parsed);
+    this.runInputs.set(run.id, parsed);
 
     queueMicrotask(() => {
       void this.startRun(run.id).catch((error) => {
@@ -300,19 +284,18 @@ class RepositoryRunService implements RunService {
     if (!task) {
       throw new Error(`task ${run.taskId} not found`);
     }
-    const agentId = toAgentId(run.agentKind);
+    const project = await this.projects.get(task.projectId);
+    if (!project) {
+      throw new Error(`project ${task.projectId} not found`);
+    }
 
-    const controller = new AbortController();
     const active: ActiveRun = {
-      controller,
-      status: "queued",
+      status: "running",
       promise: Promise.resolve()
     };
     this.activeRuns.set(runId, active);
 
-    active.promise = (agentId === "fake"
-      ? this.executeFakeRun(run, task, active)
-      : this.executeUnavailableAgentRun(run.id, agentId, active))
+    active.promise = this.executeTaskRunnerRun(run, task, project, active)
       .catch((error) => this.failActiveRun(runId, error))
       .finally(() => {
         this.activeRuns.delete(runId);
@@ -333,21 +316,22 @@ class RepositoryRunService implements RunService {
     const active = this.activeRuns.get(runId);
     if (!active) {
       await this.transitionRunStatus(runId, "cancelled");
-      const event = await this.persistRunnerEvent(runId, {
+      const event = await this.persistDesktopEvent(runId, {
         type: "run_cancelled",
+        message: "Run cancelled before TaskRunner execution started.",
         payload: {
           phase: "final",
           status: "cancelled",
-          message: "Run cancelled before the fake agent started."
+          message: "Run cancelled before TaskRunner execution started."
         }
       });
       this.emitLiveEvent(event);
-      await this.persistTerminalReview(runId, "cancelled");
       return;
     }
 
-    active.controller.abort();
-    await active.promise;
+    throw new Error(
+      "TaskRunner-backed desktop cancellation is not available until progress and cancellation wiring lands."
+    );
   }
 
   subscribe(runId: string, listener: (event: RunEvent) => void): () => void {
@@ -399,92 +383,73 @@ class RepositoryRunService implements RunService {
     }
   }
 
-  private async executeFakeRun(
+  private async executeTaskRunnerRun(
     run: TaskRun,
     task: Task,
+    project: { id: string; rootPath: string },
     active: ActiveRun
   ): Promise<void> {
-    await runFakeAgent(
-      {
-        prompt: task.description ?? task.title,
-        contextMode: this.runInputs.get(run.id)?.contextMode ?? "auto",
-        signal: active.controller.signal,
-        delayMs: this.dependencies.fakeDelayMs
-      },
-      async (event) => {
-        if (isTerminalStatus(active.status)) {
-          return;
-        }
-        await this.applyRunnerEvent(run.id, event);
-      }
+    const input = this.runInputs.get(run.id);
+    if (!input) {
+      throw new Error(`run ${run.id} is missing desktop execution input`);
+    }
+
+    const runner = this.createTaskRunner(run.id);
+    const result = await runner.run({
+      projectRoot: project.rootPath,
+      taskPrompt: input.prompt,
+      agentKind: run.agentKind,
+      taskId: task.id,
+      projectId: task.projectId,
+      title: task.title,
+      deliveryMode: input.deliveryMode,
+      conversationBrief: input.conversationBrief,
+      workspaceBasePath: this.desktopWorkspaceBasePath(),
+      workspaceCleanupPolicy: "never",
+      continueFrom: input.continueFromRunId
+        ? {
+            parentRunId: input.continueFromRunId,
+            parentMessageId: input.continueFromMessageId
+          }
+        : undefined
+    });
+
+    active.status = toDesktopRunStatus(result.run.status);
+    await this.emitPersistedEvents(run.id);
+  }
+
+  private createTaskRunner(runId: string): TaskRunner {
+    const defaultRunRoot = this.desktopWorkspaceBasePath();
+    return new TaskRunner({
+      ...this.dependencies.taskRunnerDependencies,
+      defaultRunRoot,
+      taskRepository: this.tasks,
+      taskRunRepository: this.runs,
+      runEventRepository: this.events,
+      runArtifactRepository: this.context.repositories.runArtifactRepository,
+      verificationResultRepository:
+        this.context.repositories.verificationResultRepository,
+      riskReportRepository: this.context.repositories.riskReportRepository,
+      memoryItemRepository: this.context.repositories.memoryItemRepository,
+      runMetadataRepository: this.metadata,
+      idGenerator: new DesktopTaskRunnerIdGenerator(this.context, runId),
+      clock: new DesktopTaskRunnerClock(this.context)
+    });
+  }
+
+  private desktopWorkspaceBasePath(): string {
+    return path.resolve(
+      this.dependencies.workspaceBasePath ??
+        this.dependencies.taskRunnerDependencies?.defaultRunRoot ??
+        path.join(os.homedir(), ".agent-hub", "worktrees")
     );
   }
 
-  private async executeUnavailableAgentRun(
-    runId: string,
-    agentId: Exclude<AgentId, "fake">,
-    active: ActiveRun
-  ): Promise<void> {
-    if (active.controller.signal.aborted) {
-      await this.applyRunnerEvent(runId, {
-        type: "run_cancelled",
-        payload: {
-          phase: "final",
-          status: "cancelled",
-          message: `@${agentId} was cancelled before desktop execution started.`
-        }
-      });
-      return;
+  private async emitPersistedEvents(runId: string): Promise<void> {
+    const events = await this.events.listByRunId(runId);
+    for (const event of events.map(toRunEvent)) {
+      this.emitLiveEvent(event);
     }
-
-    await this.applyRunnerEvent(runId, {
-      type: "run_started",
-      payload: {
-        phase: "lifecycle",
-        status: "running",
-        message: `Desktop received @${agentId}, but real adapter execution is not wired yet.`
-      }
-    });
-    await this.applyRunnerEvent(runId, {
-      type: "run_failed",
-      payload: {
-        phase: "final",
-        status: "failed",
-        message: `@${agentId} desktop execution is not wired yet. No repository files were modified.`
-      }
-    });
-  }
-
-  private async applyRunnerEvent(
-    runId: string,
-    event: FakeAgentRunnerEvent
-  ): Promise<void> {
-    if (isTerminalEvent(event.type)) {
-      const persisted = await this.persistRunnerEvent(runId, event);
-      if (event.type === "run_completed") {
-        await this.transitionRunStatus(runId, "completed");
-        await this.persistTerminalReview(runId, "completed");
-      } else if (event.type === "run_failed") {
-        await this.transitionRunStatus(runId, "failed");
-        await this.persistTerminalReview(runId, "failed");
-      } else {
-        await this.transitionRunStatus(runId, "cancelled");
-        await this.persistTerminalReview(runId, "cancelled");
-      }
-      this.emitLiveEvent(persisted);
-      return;
-    }
-
-    if (event.type === "run_started") {
-      await this.transitionRunStatus(runId, "running");
-    } else if (event.type === "verification_started") {
-      await this.transitionRunStatus(runId, "verifying");
-    } else if (event.type === "verification_finished") {
-      await this.persistVerification(runId, event.payload);
-    }
-
-    const persisted = await this.persistRunnerEvent(runId, event);
-    this.emitLiveEvent(persisted);
   }
 
   private async transitionRunStatus(
@@ -537,20 +502,23 @@ class RepositoryRunService implements RunService {
     }
   }
 
-  private async persistRunnerEvent(
+  private async persistDesktopEvent(
     runId: string,
-    event: FakeAgentRunnerEvent
+    event: {
+      type: RunEventType;
+      message: string;
+      payload: RunEventPayload;
+    }
   ): Promise<RunEvent> {
     const sequence = await this.events.countByRunId(runId);
     const createdAt = this.context.now();
-    const message = eventMessage(event);
     const coreEvent = await this.events.create(
       validateRunEvent({
         id: this.context.nextId("event"),
         taskRunId: runId,
         sequence,
         type: toCoreRunEventType(event.type),
-        message,
+        message: event.message,
         metadata: {
           ...event.payload,
           desktopEventType: event.type
@@ -559,145 +527,6 @@ class RepositoryRunService implements RunService {
       })
     );
     return toRunEvent(coreEvent);
-  }
-
-  private async persistVerification(
-    runId: string,
-    payload: RunEventPayload
-  ): Promise<void> {
-    const now = this.context.now();
-    await this.verification.create(
-      validateVerificationResult({
-        id: this.context.nextId("verification"),
-        taskRunId: runId,
-        command:
-          typeof payload.command === "string"
-            ? payload.command
-            : "pnpm test -- simulated",
-        status: payload.passed === false ? "failed" : "passed",
-        exitCode: payload.passed === false ? 1 : 0,
-        stdout:
-          typeof payload.message === "string"
-            ? payload.message
-            : "Simulated verification completed.",
-        startedAt: now,
-        completedAt: now,
-        createdAt: now
-      })
-    );
-  }
-
-  private async persistConversationBrief(
-    runId: string,
-    brief: ParsedCreateRunInput["conversationBrief"]
-  ): Promise<void> {
-    const artifact = conversationBriefArtifact(brief);
-    if (!artifact) {
-      return;
-    }
-    await this.artifacts.create(
-      validateRunArtifact({
-        id: this.context.nextId("artifact"),
-        taskRunId: runId,
-        kind: "conversation_brief",
-        content: artifact.content,
-        metadata: artifact.metadata,
-        createdAt: this.context.now()
-      })
-    );
-  }
-
-  private async persistDesktopContinuationProvenance(
-    runId: string,
-    input: ParsedCreateRunInput
-  ): Promise<void> {
-    if (!input.continueFromRunId) {
-      return;
-    }
-    await this.artifacts.create(
-      validateRunArtifact({
-        id: this.context.nextId("artifact"),
-        taskRunId: runId,
-        kind: "code_state_provenance",
-        content: [
-          "# Agent Hub Code-State Provenance",
-          "",
-          "mode: continue_from_run",
-          `parent_run_id: ${input.continueFromRunId}`,
-          `parent_message_id: ${input.continueFromMessageId ?? "none"}`,
-          "desktop_execution: placeholder",
-          "copied_files:",
-          "- none",
-          "deleted_files:",
-          "- none",
-          ""
-        ].join("\n"),
-        metadata: {
-          mode: "continue_from_run",
-          parentRunId: input.continueFromRunId,
-          parentMessageId: input.continueFromMessageId,
-          source: "desktop_run_service"
-        },
-        createdAt: this.context.now()
-      })
-    );
-  }
-
-  private async persistTerminalReview(
-    runId: string,
-    status: "completed" | "failed" | "cancelled"
-  ): Promise<void> {
-    const now = this.context.now();
-    await this.artifacts.create(
-      validateRunArtifact({
-        id: this.context.nextId("artifact"),
-        taskRunId: runId,
-        kind: "git_diff",
-        content: "No real files were modified by this desktop run.\n",
-        metadata: {
-          changedFiles: [],
-          fileSummaries: [],
-          placeholder: true,
-          stat: {
-            filesChanged: 0,
-            insertions: 0,
-            deletions: 0,
-            text: "0 files changed"
-          },
-          source: "desktop_fake_run",
-          terminalStatus: status
-        },
-        createdAt: now
-      })
-    );
-
-    await this.risks.create(
-      validateRiskReport({
-        id: this.context.nextId("risk"),
-        taskRunId: runId,
-        level: status === "failed" ? "medium" : "low",
-        summary:
-          status === "completed"
-            ? "Desktop run completed without repository changes."
-            : status === "cancelled"
-              ? "Desktop run was cancelled without repository changes."
-              : "Desktop run failed before making repository changes.",
-        changedFiles: [],
-        verificationSummary:
-          status === "completed"
-            ? "Simulated verification passed."
-            : "No completed verification output is available.",
-        failedChecks: status === "failed" ? ["desktop fake run failed"] : [],
-        riskFactors: ["This desktop execution path did not modify project files."],
-        manualReviewChecklist: [
-          "No code was generated or applied by this desktop run."
-        ],
-        acceptanceRecommendation:
-          "Review only. This desktop run did not produce changes to accept, merge, push, or export.",
-        findings: [],
-        createdAt: now
-      })
-    );
   }
 
   private emitLiveEvent(event: RunEvent): void {
@@ -713,14 +542,18 @@ class RepositoryRunService implements RunService {
     if (!run || isTerminalStatus(this.currentDesktopStatus(run))) {
       return;
     }
-    await this.applyRunnerEvent(runId, {
+    const message = error instanceof Error ? error.message : String(error);
+    await this.transitionRunStatus(runId, "failed");
+    const event = await this.persistDesktopEvent(runId, {
       type: "run_failed",
+      message,
       payload: {
         phase: "final",
         status: "failed",
-        message: error instanceof Error ? error.message : String(error)
+        message
       }
     });
+    this.emitLiveEvent(event);
   }
 
   private async toRunSummary(
@@ -750,6 +583,31 @@ class RepositoryRunService implements RunService {
       createdAt: run.createdAt,
       updatedAt: eventUpdatedAt ?? run.updatedAt
     };
+  }
+}
+
+class DesktopTaskRunnerIdGenerator implements IdGenerator {
+  private runIdClaimed = false;
+
+  constructor(
+    private readonly context: DesktopServiceContext,
+    private readonly runId: string
+  ) {}
+
+  nextId(prefix: string): string {
+    if (prefix === "run" && !this.runIdClaimed) {
+      this.runIdClaimed = true;
+      return this.runId;
+    }
+    return this.context.nextId(prefix);
+  }
+}
+
+class DesktopTaskRunnerClock implements Clock {
+  constructor(private readonly context: DesktopServiceContext) {}
+
+  now(): string {
+    return this.context.now();
   }
 }
 
@@ -882,7 +740,7 @@ function toSemanticType(event: CoreRunEvent): RunEventType {
     return "run_failed";
   }
   if (event.type === "exit") {
-    return "run_completed";
+    return event.metadata.exitCode === 0 ? "run_completed" : "agent_step";
   }
   const phase =
     typeof event.metadata.phase === "string" ? event.metadata.phase : undefined;
@@ -893,16 +751,6 @@ function toSemanticType(event: CoreRunEvent): RunEventType {
     return "verification_finished";
   }
   return "agent_step";
-}
-
-function eventMessage(event: FakeAgentRunnerEvent): string {
-  if (typeof event.payload.message === "string") {
-    return event.payload.message;
-  }
-  if (typeof event.payload.summary === "string") {
-    return event.payload.summary;
-  }
-  return event.type.replaceAll("_", " ");
 }
 
 function titleFromPrompt(prompt: string): string {
@@ -939,40 +787,6 @@ function statusSummary(run: TaskRun): string {
 
 function isTerminalStatus(status: RunStatus): boolean {
   return status === "completed" || status === "failed" || status === "cancelled";
-}
-
-function conversationBriefArtifact(
-  brief: ParsedCreateRunInput["conversationBrief"]
-): { content: string; metadata: JsonObject } | undefined {
-  if (brief === undefined) {
-    return undefined;
-  }
-  if (typeof brief === "string") {
-    const content = brief.trim();
-    return content.length > 0
-      ? {
-          content: `${content}\n`,
-          metadata: {
-            source: "desktop_thread_service",
-            characterCount: content.length
-          }
-        }
-      : undefined;
-  }
-  const content = brief.renderedContent.trim();
-  return content.length > 0
-    ? {
-        content: `${content}\n`,
-        metadata: {
-          source: "desktop_thread_service",
-          ...brief.metadata
-        }
-      }
-    : undefined;
-}
-
-function isTerminalEvent(type: RunEventType): boolean {
-  return type === "run_completed" || type === "run_failed" || type === "run_cancelled";
 }
 
 function eventChannel(runId: string): string {

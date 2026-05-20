@@ -137,8 +137,8 @@ export function AgentRunCard({
     : statusHeader(status);
   const simulationCopy =
     message.agentId === "fake"
-      ? "Local simulated run. No real repository files are modified."
-      : `Local placeholder for @${message.agentId}. Real desktop adapter execution is not wired yet.`;
+      ? "Local TaskRunner fake run in an isolated worktree. The project root is not modified."
+      : `Local TaskRunner run for @${message.agentId} in an isolated worktree. Unavailable CLIs fail with persisted evidence.`;
 
   async function cancel(): Promise<void> {
     setCancelError(undefined);
