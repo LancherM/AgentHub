@@ -460,6 +460,7 @@ assets only; it does not deploy a hosted service, notarize the desktop app, or
 change Agent Hub's local-first product model.
 
 Deferred product capabilities include richer Codex/Claude structured event
-mapping, automatic memory proposal generation from completed runs, mapping, richer comparison scoring, 
-and real desktop TaskRunner/adapter execution beyond the current fake-agent-backed
-desktop run path.
+mapping, real desktop TaskRunner/adapter execution beyond the current
+fake-agent-backed desktop run path, real desktop verification configuration,
+approved-memory writeback confirmation, multi-agent comparison review, and
+explicit desktop apply/merge workflows.

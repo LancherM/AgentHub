@@ -93,12 +93,13 @@ is not a domain, SQLite, or manual CLI event type.
 ## Current Baseline Status
 
 The repository has moved beyond the original fake-only rebuild slice. The
-current baseline includes the root TypeScript package, domain models, SQLite
+current baseline includes the TypeScript workspace, domain models, SQLite
 repositories, context store init/show/build/export, git worktree task runs,
 fake/Codex/Claude Code adapters, verification, diff collection, safety
-scanning, risk report persistence, memory workflows, comparison reports,
-interactive CLI mode, manual run-event recording, and the first Electron +
-React desktop conversation console.
+scanning, risk report persistence, memory workflows, automatic proposed-memory
+generation from completed runs, structured comparison reports with
+deterministic scoring, interactive CLI mode, manual run-event recording, and
+the first Electron + React desktop conversation console.
 
 The current physical layout is the imported `apps/` and `packages/` monorepo
 shape. The desktop shell lives under `apps/desktop` and is currently
@@ -112,8 +113,6 @@ Still deferred:
   verification command configuration, approved-memory writeback confirmation,
   multi-agent comparison review, worktree lifecycle management, and explicit
   merge/apply workflows.
-- Automatic memory proposal generation from completed CLI/task-runner runs.
-- Richer comparison scoring beyond the current persisted textual summary.
 
 ## Hard Constraints For This Slice
 
@@ -158,7 +157,9 @@ using the next sequence number after existing events for the run.
 
 The Night 2 and Night 3 sections below are retained as historical reports. Their
 deferred-gap lists describe earlier rebuild boundaries and must not be read as
-the current implementation status.
+the current implementation status. References to root-level `src/` files in
+those reports are historical paths from before the current `apps/` and
+`packages/` workspace split.
 
 ## Night 2 Phase Boundary
 
