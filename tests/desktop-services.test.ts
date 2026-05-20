@@ -468,26 +468,28 @@ describe("desktop services", () => {
         .filter((message) => message.type === "agent_run")
         .map((message) => message.status)
     ).toEqual(["completed", "failed"]);
+    const assistantMessages = refreshed.messages.filter(
+      (message) => message.type === "assistant"
+    );
     expect(
-      refreshed.messages
-        .filter((message) => message.type === "assistant")
-        .map((message) => ({
-          agentId: message.agentId,
-          status: message.status,
-          text: message.text
-        }))
+      assistantMessages.map((message) => ({
+        agentId: message.agentId,
+        status: message.status
+      }))
     ).toEqual([
       {
         agentId: "fake",
-        status: "completed",
-        text: "fake agent completed"
+        status: "completed"
       },
       {
         agentId: "codex",
-        status: "failed",
-        text: "Codex preflight failed: Codex CLI unavailable: desktop test unavailable"
+        status: "failed"
       }
     ]);
+    expect(assistantMessages[0]?.text).toBe("fake agent completed");
+    expect(assistantMessages[1]?.text).toContain(
+      "Codex preflight failed: Codex CLI unavailable: desktop test unavailable"
+    );
     expect(
       refreshed.messages
         .filter((message) => message.type === "assistant")
