@@ -162,9 +162,11 @@ Implemented:
   artifacts.
 - Safety scanning and risk report persistence for sensitive paths, dangerous
   commands, risky diffs, large deletions, and binary file changes.
-- Memory proposal, listing, approval, rejection, and approved-memory writeback
-  to the Agent Hub-owned context store.
-- Persisted comparison report generation for two runs of a task.
+- Memory proposal, listing, approval, rejection, approved-memory writeback to
+  the Agent Hub-owned context store, and conservative automatic proposed-memory
+  generation from completed task-runner evidence.
+- Persisted comparison report generation for two runs of a task, including
+  structured comparison details and deterministic review scoring.
 - `apps/desktop` Electron + React shell with a thread-first conversation layout,
   safe `window.agentHub` preload API, Electron main-process IPC handlers,
   SQLite-backed project/thread/message/run/review/memory service facades,
@@ -178,8 +180,6 @@ Not yet implemented:
   verification configuration, approved-memory context-store writeback
   confirmation, multi-agent comparison review, worktree lifecycle management,
   and explicit merge/apply workflows.
-- Automatic memory proposal generation from completed CLI/task-runner runs.
-- Richer comparison scoring beyond the current persisted textual summary.
 
 ## Explicit Non-goals for MVP
 
@@ -251,8 +251,13 @@ Implemented commands:
 - `agent-hub task history`
 - `agent-hub run`
 - `agent-hub run event add`
+- `agent-hub chat`
+- `agent-hub threads list`
+- `agent-hub threads show`
 - `agent-hub tasks list`
 - `agent-hub runs list`
+- `agent-hub runs events`
+- `agent-hub runs diff`
 - `agent-hub runs show`
 - `agent-hub risks show`
 - `agent-hub compare`
@@ -394,8 +399,9 @@ Current status:
 
 - Worktree creation, adapter execution, verification commands, diff collection,
   and task run summaries are implemented.
-- Comparison reports are currently generated from persisted run data in the CLI
-  layer. Keep this review-only and local; do not accept, merge, or push changes.
+- Automatic proposed-memory generation and comparison report aggregation run
+  from persisted local run evidence. Comparison remains review-only and local;
+  do not accept, merge, or push changes.
 
 ### packages/safety
 
