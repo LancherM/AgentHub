@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import {
+  validateConversationMessage,
   validateRunArtifact,
   validateRiskReport,
   validateTask,
@@ -917,21 +918,43 @@ describe("desktop services", () => {
         commands: []
       }
     });
+    const thread = await threads.createThread({ projectId: project.id });
+    await fixture.repositories.conversationMessageRepository.create(
+      validateConversationMessage({
+        id: "message_parent",
+        threadId: thread.id,
+        sequence: 0,
+        role: "tool",
+        kind: "run_card",
+        content: "Parent run",
+        agentKind: "fake",
+        runId: "run_parent",
+        status: "succeeded",
+        createdAt: context.now()
+      })
+    );
 
     const detail = await threads.sendMessage({
-      projectId: project.id,
+      threadId: thread.id,
       text: "@fake continue desktop state",
       contextMode: "auto",
-      continueFromRunId: "run_parent"
+      continueFromRunId: "run_parent",
+      continueFromMessageId: "message_parent"
     });
-    const run = detail.messages.find((message) => message.type === "agent_run");
-    if (!run) {
+    const run = detail.messages.find(
+      (message) => message.type === "agent_run" && message.runId !== "run_parent"
+    );
+    if (!run || run.type !== "agent_run") {
       throw new Error("expected run card");
     }
     const persisted = await fixture.repositories.taskRunRepository.get(run.runId);
-    expect(persisted).toMatchObject({ parentRunId: "run_parent" });
+    expect(persisted).toMatchObject({
+      parentRunId: "run_parent",
+      parentMessageId: "message_parent"
+    });
     await expect(review.getSummary(run.runId)).resolves.toMatchObject({
-      parentRunId: "run_parent"
+      parentRunId: "run_parent",
+      parentMessageId: "message_parent"
     });
     await expect(
       fixture.repositories.runArtifactRepository.getLatestByRunIdAndKind(
@@ -941,6 +964,7 @@ describe("desktop services", () => {
     ).resolves.toMatchObject({
       metadata: expect.objectContaining({
         parentRunId: "run_parent",
+        parentMessageId: "message_parent",
         source: "desktop_run_service"
       })
     });

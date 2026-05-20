@@ -648,11 +648,11 @@ function riskRank(risk: string): number {
     case "medium":
       return 2;
     case "high":
-      return 3;
-    case "blocking":
       return 4;
+    case "blocking":
+      return 5;
     default:
-      return 2;
+      return 3;
   }
 }
 

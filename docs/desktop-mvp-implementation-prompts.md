@@ -136,6 +136,10 @@ Scope:
 - Add or refactor an Electron main-process execution service that calls
   TaskRunner with the desktop SQLite repositories.
 - Keep window.agentHub.runs.* and window.agentHub.threads.* stable.
+- Keep one canonical run row per desktop run card. Do not pre-create a
+  placeholder run and then let TaskRunner create a second disconnected run; use
+  the TaskRunner-created run id for the thread run card, or extend TaskRunner
+  with an explicit caller-supplied run id before wiring desktop to it.
 - Preserve the current fake desktop UX, but run fake through TaskRunner rather
   than apps/desktop/electron/services/fake-agent-runner.ts when this can be done
   without regressing tests.
@@ -161,6 +165,8 @@ Acceptance:
 - A desktop `@fake` run uses TaskRunner evidence and still renders a completed
   run card, assistant output, diff, verification, risk, logs, and memory
   proposals.
+- The run id visible through the desktop run card is the same run id that owns
+  TaskRunner events, artifacts, diff, verification, risk, and memory proposals.
 - A desktop `@codex` run attempts the real local Codex adapter through
   TaskRunner. If Codex is unavailable, the run fails inspectably with persisted
   events rather than a service crash.
@@ -468,4 +474,3 @@ The smallest useful real desktop MVP is Phases 1 through 4:
 
 Phases 5 and 6 complete the richer review loop by adding desktop comparison and
 approved-memory writeback. Phase 7 is the release-candidate hardening pass.
-
