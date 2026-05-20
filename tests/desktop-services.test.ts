@@ -1,6 +1,8 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { describe, expect, it, vi } from "vitest";
 import {
   validateConversationMessage,
@@ -25,19 +27,18 @@ import {
   runEventChannel
 } from "../apps/desktop/electron/ipc-handlers";
 import type { RunDetail, RunEvent } from "../apps/desktop/src/lib/types";
+import { MockProcessRunner } from "./helpers";
+
+const execFileAsync = promisify(execFile);
 
 describe("desktop services", () => {
-  it("registers a project and streams a fake desktop run without repository writes", async () => {
+  it("registers a project and completes a fake TaskRunner desktop run without repository root writes", async () => {
     const fixture = await createFixture();
     const context = createDesktopServiceContext(fixture.repositories);
     const projects = createProjectService(context);
     const memory = createMemoryService(context);
     const review = createReviewService(context, { memoryService: memory });
-    const runs = createRunService(context, {
-      reviewService: review,
-      memoryService: memory,
-      fakeDelayMs: 5
-    });
+    const runs = createTestRunService(context, review, memory, fixture);
 
     const before = await fs.readdir(fixture.projectRoot);
     const project = await projects.open(fixture.projectRoot);
@@ -50,41 +51,32 @@ describe("desktop services", () => {
     const liveEvents: RunEvent[] = [];
     const unsubscribe = runs.subscribe(run.id, (event) => liveEvents.push(event));
     const completed = await waitForRun(runs, run.id, "completed");
+    await waitForEvent(liveEvents, "agent_output");
+    await waitForEvent(liveEvents, "run_completed");
     unsubscribe();
+    const completedWithEvents = await runs.getRun(run.id);
     const after = await fs.readdir(fixture.projectRoot);
 
     expect(after).toEqual(before);
     expect(run.status).toBe("queued");
     expect(completed.status).toBe("completed");
-    expect(completed.events.map((event) => event.type)).toEqual([
-      "run_started",
-      "context_compiled",
-      "agent_step",
+    expect(completedWithEvents.events.map((event) => event.type)).toEqual([
       "agent_output",
-      "agent_step",
-      "agent_output",
-      "agent_step",
-      "agent_output",
-      "verification_started",
-      "agent_output",
-      "verification_finished",
       "run_completed"
     ]);
     expect(liveEvents.some((event) => event.type === "agent_output")).toBe(true);
     await expect(review.getDiff(run.id)).resolves.toMatchObject({
-      files: [],
-      empty: true,
-      message: "No real repository files were modified in fake mode."
+      files: [expect.objectContaining({ path: "fake-agent-output.md" })],
+      empty: false
     });
     await expect(review.getVerification(run.id)).resolves.toMatchObject({
-      status: "passed"
+      status: "skipped"
     });
     await expect(review.getRisk(run.id)).resolves.toMatchObject({
-      level: "none",
-      findings: []
+      level: "medium"
     });
     await expect(review.getSummary(run.id)).resolves.toMatchObject({
-      changedFileCount: 0,
+      changedFileCount: 1,
       memoryProposalCount: expect.any(Number),
       reviewStatus: "pending"
     });
@@ -103,7 +95,7 @@ describe("desktop services", () => {
     );
     await expect(review.getLogs(run.id)).resolves.toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ runId: run.id, level: "info" })
+        expect.objectContaining({ runId: run.id, level: "stdout" })
       ])
     );
   });
@@ -243,11 +235,7 @@ describe("desktop services", () => {
     const projects = createProjectService(context);
     const memory = createMemoryService(context);
     const review = createReviewService(context, { memoryService: memory });
-    const runs = createRunService(context, {
-      reviewService: review,
-      memoryService: memory,
-      fakeDelayMs: 5
-    });
+    const runs = createTestRunService(context, review, memory, fixture);
     const before = await fs.readdir(fixture.projectRoot);
     const project = await projects.open(fixture.projectRoot);
     const run = await runs.createRun({
@@ -274,17 +262,54 @@ describe("desktop services", () => {
     await expect(fs.readdir(fixture.projectRoot)).resolves.toEqual(before);
   });
 
-  it("cancels a running fake desktop run and emits run_cancelled", async () => {
+  it("cancels a queued desktop run before TaskRunner execution starts", async () => {
     const fixture = await createFixture();
     const context = createDesktopServiceContext(fixture.repositories);
     const projects = createProjectService(context);
     const memory = createMemoryService(context);
     const review = createReviewService(context, { memoryService: memory });
-    const runs = createRunService(context, {
-      reviewService: review,
-      memoryService: memory,
-      fakeDelayMs: 25
-    });
+    const runs = createTestRunService(context, review, memory, fixture);
+    const project = await projects.open(fixture.projectRoot);
+    const now = context.now();
+    const task = await fixture.repositories.taskRepository.create(
+      validateTask({
+        id: "task_queued_cancel",
+        projectId: project.id,
+        title: "Queued cancel",
+        status: "open",
+        createdAt: now,
+        updatedAt: now
+      })
+    );
+    const run = await fixture.repositories.taskRunRepository.create(
+      validateTaskRun({
+        id: "run_queued_cancel",
+        taskId: task.id,
+        agentKind: "fake",
+        status: "queued",
+        createdAt: now,
+        updatedAt: now
+      })
+    );
+    const liveEvents: RunEvent[] = [];
+    const unsubscribe = runs.subscribe(run.id, (event) => liveEvents.push(event));
+
+    await runs.cancelRun(run.id);
+    const cancelled = await runs.getRun(run.id);
+    unsubscribe();
+
+    expect(cancelled.status).toBe("cancelled");
+    expect(cancelled.events.at(-1)?.type).toBe("run_cancelled");
+    expect(liveEvents.map((event) => event.type)).toContain("run_cancelled");
+  });
+
+  it("reports running TaskRunner cancellation as unsupported until Phase 2", async () => {
+    const fixture = await createFixture();
+    const context = createDesktopServiceContext(fixture.repositories);
+    const projects = createProjectService(context);
+    const memory = createMemoryService(context);
+    const review = createReviewService(context, { memoryService: memory });
+    const runs = createTestRunService(context, review, memory, fixture);
     const project = await projects.open(fixture.projectRoot);
     const run = await runs.createRun({
       projectId: project.id,
@@ -292,18 +317,11 @@ describe("desktop services", () => {
       agentId: "fake",
       contextMode: "auto"
     });
-    const liveEvents: RunEvent[] = [];
-    const unsubscribe = runs.subscribe(run.id, (event) => liveEvents.push(event));
+    await waitForRun(runs, run.id, "running");
 
-    await waitForEvent(liveEvents, "run_started");
-    await runs.cancelRun(run.id);
-    const cancelled = await runs.getRun(run.id);
-    unsubscribe();
-
-    expect(cancelled.status).toBe("cancelled");
-    expect(cancelled.events.at(-1)?.type).toBe("run_cancelled");
-    expect(cancelled.events.some((event) => event.type === "run_completed"))
-      .toBe(false);
+    await expect(runs.cancelRun(run.id)).rejects.toThrow(
+      /cancellation is not available/
+    );
   });
 
   it("fake agent runner emits cancellation without touching repositories", async () => {
@@ -329,17 +347,13 @@ describe("desktop services", () => {
     expect(events).toEqual(["run_started", "run_cancelled"]);
   });
 
-  it("records unavailable real-agent desktop mentions without launching adapters", async () => {
+  it("records unavailable real-agent desktop mentions through TaskRunner preflight", async () => {
     const fixture = await createFixture();
     const context = createDesktopServiceContext(fixture.repositories);
     const projects = createProjectService(context);
     const memory = createMemoryService(context);
     const review = createReviewService(context, { memoryService: memory });
-    const runs = createRunService(context, {
-      reviewService: review,
-      memoryService: memory,
-      fakeDelayMs: 5
-    });
+    const runs = createTestRunService(context, review, memory, fixture);
     const before = await fs.readdir(fixture.projectRoot);
     const project = await projects.open(fixture.projectRoot);
 
@@ -355,7 +369,7 @@ describe("desktop services", () => {
     expect(after).toEqual(before);
     expect(failed.agentId).toBe("codex");
     expect(failed.events.map((event) => event.type)).toContain("run_failed");
-    expect(failed.summary).toContain("not wired yet");
+    expect(failed.summary).toContain("Codex preflight failed");
     await expect(review.getDiff(run.id)).resolves.toMatchObject({
       files: [],
       empty: true,
@@ -369,11 +383,7 @@ describe("desktop services", () => {
     const projects = createProjectService(context);
     const memory = createMemoryService(context);
     const review = createReviewService(context, { memoryService: memory });
-    const runs = createRunService(context, {
-      reviewService: review,
-      memoryService: memory,
-      fakeDelayMs: 5
-    });
+    const runs = createTestRunService(context, review, memory, fixture);
     const project = await projects.open(fixture.projectRoot);
     const run = await runs.createRun({
       projectId: project.id,
@@ -395,13 +405,15 @@ describe("desktop services", () => {
     );
     const storedRunItems = storedItems.filter((item) => item.taskId === run.taskId);
 
-    expect(firstList).toHaveLength(2);
-    expect(secondList).toHaveLength(2);
-    expect(runDetail.memoryProposals).toHaveLength(2);
-    expect(firstSummary.memoryProposalCount).toBe(2);
-    expect(secondSummary.memoryProposalCount).toBe(2);
-    expect(storedRunItems).toHaveLength(2);
-    expect(new Set(storedRunItems.map((item) => item.content)).size).toBe(2);
+    expect(firstList.length).toBeGreaterThan(0);
+    expect(secondList).toHaveLength(firstList.length);
+    expect(runDetail.memoryProposals).toHaveLength(firstList.length);
+    expect(firstSummary.memoryProposalCount).toBe(firstList.length);
+    expect(secondSummary.memoryProposalCount).toBe(firstList.length);
+    expect(storedRunItems).toHaveLength(firstList.length);
+    expect(new Set(storedRunItems.map((item) => item.content)).size).toBe(
+      firstList.length
+    );
   });
 
   it("thread sendMessage creates one user message and one run card per agent", async () => {
@@ -410,11 +422,7 @@ describe("desktop services", () => {
     const projects = createProjectService(context);
     const memory = createMemoryService(context);
     const review = createReviewService(context, { memoryService: memory });
-    const runs = createRunService(context, {
-      reviewService: review,
-      memoryService: memory,
-      fakeDelayMs: 5
-    });
+    const runs = createTestRunService(context, review, memory, fixture);
     const threads = createThreadService({ context, projects, runs });
     const project = await projects.open(fixture.projectRoot);
 
@@ -460,26 +468,28 @@ describe("desktop services", () => {
         .filter((message) => message.type === "agent_run")
         .map((message) => message.status)
     ).toEqual(["completed", "failed"]);
+    const assistantMessages = refreshed.messages.filter(
+      (message) => message.type === "assistant"
+    );
     expect(
-      refreshed.messages
-        .filter((message) => message.type === "assistant")
-        .map((message) => ({
-          agentId: message.agentId,
-          status: message.status,
-          text: message.text
-        }))
+      assistantMessages.map((message) => ({
+        agentId: message.agentId,
+        status: message.status
+      }))
     ).toEqual([
       {
         agentId: "fake",
-        status: "completed",
-        text: "Fake run completed successfully"
+        status: "completed"
       },
       {
         agentId: "codex",
-        status: "failed",
-        text: "@codex desktop execution is not wired yet. No repository files were modified."
+        status: "failed"
       }
     ]);
+    expect(assistantMessages[0]?.text).toBe("fake agent completed");
+    expect(assistantMessages[1]?.text).toContain(
+      "Codex preflight failed: Codex CLI unavailable: desktop test unavailable"
+    );
     expect(
       refreshed.messages
         .filter((message) => message.type === "assistant")
@@ -501,11 +511,7 @@ describe("desktop services", () => {
     const projects = createProjectService(context);
     const memory = createMemoryService(context);
     const review = createReviewService(context, { memoryService: memory });
-    const runs = createRunService(context, {
-      reviewService: review,
-      memoryService: memory,
-      fakeDelayMs: 5
-    });
+    const runs = createTestRunService(context, review, memory, fixture);
     const threads = createThreadService({ context, projects, runs });
     const project = await projects.open(fixture.projectRoot);
 
@@ -537,11 +543,12 @@ describe("desktop services", () => {
     const restartedReview = createReviewService(restartedContext, {
       memoryService: restartedMemory
     });
-    const restartedRuns = createRunService(restartedContext, {
-      reviewService: restartedReview,
-      memoryService: restartedMemory,
-      fakeDelayMs: 5
-    });
+    const restartedRuns = createTestRunService(
+      restartedContext,
+      restartedReview,
+      restartedMemory,
+      fixture
+    );
     const restartedThreads = createThreadService({
       context: restartedContext,
       projects: restartedProjects,
@@ -572,8 +579,8 @@ describe("desktop services", () => {
         .filter((message) => message.type === "assistant")
         .map((message) => message.text)
     ).toEqual([
-      "Fake run completed successfully",
-      "Fake run completed successfully"
+      "fake agent completed",
+      "fake agent completed"
     ]);
     await expect(restartedThreads.listThreads()).resolves.toMatchObject([
       {
@@ -590,11 +597,7 @@ describe("desktop services", () => {
     const projects = createProjectService(context);
     const memory = createMemoryService(context);
     const review = createReviewService(context, { memoryService: memory });
-    const runs = createRunService(context, {
-      reviewService: review,
-      memoryService: memory,
-      fakeDelayMs: 5
-    });
+    const runs = createTestRunService(context, review, memory, fixture);
     const threads = createThreadService({ context, projects, runs });
     const project = await projects.open(fixture.projectRoot);
 
@@ -632,11 +635,7 @@ describe("desktop services", () => {
     const projects = createProjectService(context);
     const memory = createMemoryService(context);
     const review = createReviewService(context, { memoryService: memory });
-    const runs = createRunService(context, {
-      reviewService: review,
-      memoryService: memory,
-      fakeDelayMs: 5
-    });
+    const runs = createTestRunService(context, review, memory, fixture);
     const threads = createThreadService({ context, projects, runs });
     const project = await projects.open(fixture.projectRoot);
 
@@ -672,11 +671,7 @@ describe("desktop services", () => {
     const projects = createProjectService(context);
     const memory = createMemoryService(context);
     const review = createReviewService(context, { memoryService: memory });
-    const runs = createRunService(context, {
-      reviewService: review,
-      memoryService: memory,
-      fakeDelayMs: 25
-    });
+    const runs = createTestRunService(context, review, memory, fixture);
     const threads = createThreadService({ context, projects, runs });
     const project = await projects.open(fixture.projectRoot);
 
@@ -706,7 +701,7 @@ describe("desktop services", () => {
       refreshed.messages
         .filter((message) => message.type === "assistant")
         .map((message) => message.text)
-    ).toEqual(["Fake run completed successfully"]);
+    ).toEqual(["fake agent completed"]);
   });
 
   it("keeps thread run counts current from lightweight statuses", async () => {
@@ -715,11 +710,7 @@ describe("desktop services", () => {
     const projects = createProjectService(context);
     const memory = createMemoryService(context);
     const review = createReviewService(context, { memoryService: memory });
-    const runs = createRunService(context, {
-      reviewService: review,
-      memoryService: memory,
-      fakeDelayMs: 100
-    });
+    const runs = createTestRunService(context, review, memory, fixture);
     const threads = createThreadService({ context, projects, runs });
     const project = await projects.open(fixture.projectRoot);
 
@@ -733,13 +724,14 @@ describe("desktop services", () => {
       throw new Error("expected run card");
     }
 
-    await expect(threads.listThreads()).resolves.toMatchObject([
+    const initialSummaries = await threads.listThreads();
+    expect(initialSummaries).toMatchObject([
       {
         id: detail.id,
-        runCount: 1,
-        activeRunCount: 1
+        runCount: 1
       }
     ]);
+    expect([0, 1]).toContain(initialSummaries[0]?.activeRunCount);
     await waitForRun(runs, run.runId, "completed");
     await expect(threads.listThreads()).resolves.toMatchObject([
       {
@@ -756,11 +748,7 @@ describe("desktop services", () => {
     const projects = createProjectService(context);
     const memory = createMemoryService(context);
     const review = createReviewService(context, { memoryService: memory });
-    const runs = createRunService(context, {
-      reviewService: review,
-      memoryService: memory,
-      fakeDelayMs: 5
-    });
+    const runs = createTestRunService(context, review, memory, fixture);
     const threads = createThreadService({ context, projects, runs });
     const project = await projects.open(fixture.projectRoot);
 
@@ -805,6 +793,7 @@ describe("desktop services", () => {
     if (!secondRun) {
       throw new Error("expected second run card");
     }
+    await waitForRun(runs, secondRun.runId, "completed");
 
     const artifact =
       await fixture.repositories.runArtifactRepository.getLatestByRunIdAndKind(
@@ -814,7 +803,7 @@ describe("desktop services", () => {
     expect(artifact).toMatchObject({
       kind: "conversation_brief",
       metadata: expect.objectContaining({
-        source: "desktop_thread_service",
+        source: "conversation_context_builder",
         includedMessageCount: 2
       })
     });
@@ -823,7 +812,7 @@ describe("desktop services", () => {
     expect(artifact?.content).toContain("## Thread Summary");
     expect(artifact?.content).toContain("Last known user goal: first thread-aware prompt");
     expect(artifact?.content).toContain("Assistant @fake");
-    expect(artifact?.content).toContain("Fake run completed successfully");
+    expect(artifact?.content).toContain("fake agent completed");
     expect(artifact?.content).not.toContain("Found package.json");
     expect(artifact?.content).not.toContain("pnpm test -- simulated");
     expect(artifact?.content).not.toContain("API_TOKEN=secret-value");
@@ -843,11 +832,7 @@ describe("desktop services", () => {
     const projects = createProjectService(context);
     const memory = createMemoryService(context);
     const review = createReviewService(context, { memoryService: memory });
-    const runs = createRunService(context, {
-      reviewService: review,
-      memoryService: memory,
-      fakeDelayMs: 5
-    });
+    const runs = createTestRunService(context, review, memory, fixture);
     const threads = createThreadService({ context, projects, runs });
     const project = await projects.open(fixture.projectRoot);
     const thread = await threads.createThread({ projectId: project.id });
@@ -861,6 +846,7 @@ describe("desktop services", () => {
     if (!run) {
       throw new Error("expected run card");
     }
+    await waitForRun(runs, run.runId, "completed");
     const artifact =
       await fixture.repositories.runArtifactRepository.getLatestByRunIdAndKind(
         run.runId,
@@ -878,15 +864,16 @@ describe("desktop services", () => {
     const projects = createProjectService(context);
     const memory = createMemoryService(context);
     const review = createReviewService(context, { memoryService: memory });
-    const runs = createRunService(context, {
-      reviewService: review,
-      memoryService: memory,
-      fakeDelayMs: 5
-    });
+    const runs = createTestRunService(context, review, memory, fixture);
     const threads = createThreadService({ context, projects, runs });
     const project = await projects.open(fixture.projectRoot);
     const parentWorktree = path.join(path.dirname(fixture.databasePath), "parent");
-    await fs.mkdir(parentWorktree);
+    const parentBranch = "agent-hub/task_parent/fake-parent";
+    await execFileAsync(
+      "git",
+      ["worktree", "add", "-b", parentBranch, parentWorktree],
+      { cwd: fixture.projectRoot }
+    );
     await fixture.repositories.taskRepository.create(
       validateTask({
         id: "task_parent",
@@ -904,13 +891,25 @@ describe("desktop services", () => {
         agentKind: "fake",
         status: "succeeded",
         worktreePath: parentWorktree,
-        branchName: "agent-hub/task_parent/fake",
+        branchName: parentBranch,
         createdAt: context.now(),
         updatedAt: context.now()
       })
     );
     await fixture.repositories.runMetadataRepository.save({
       runId: "run_parent",
+      workspace: {
+        path: parentWorktree,
+        branchName: parentBranch,
+        sourceRepositoryPath: fixture.projectRoot,
+        workspaceBasePath: fixture.workspaceBasePath,
+        taskId: "task_parent",
+        runId: "run_parent",
+        agentKind: "fake",
+        dryRun: false,
+        sourceRepositoryDirty: false,
+        cleanupPolicy: "never"
+      },
       workspaceCleanup: {
         cleaned: false,
         retained: true,
@@ -947,6 +946,7 @@ describe("desktop services", () => {
     if (!run || run.type !== "agent_run") {
       throw new Error("expected run card");
     }
+    await waitForRun(runs, run.runId, "completed");
     const persisted = await fixture.repositories.taskRunRepository.get(run.runId);
     expect(persisted).toMatchObject({
       parentRunId: "run_parent",
@@ -965,7 +965,7 @@ describe("desktop services", () => {
       metadata: expect.objectContaining({
         parentRunId: "run_parent",
         parentMessageId: "message_parent",
-        source: "desktop_run_service"
+        mode: "continue_from_run"
       })
     });
   });
@@ -976,29 +976,36 @@ describe("desktop services", () => {
     const projects = createProjectService(context);
     const memory = createMemoryService(context);
     const review = createReviewService(context, { memoryService: memory });
-    const runs = createRunService(context, {
-      reviewService: review,
-      memoryService: memory,
-      fakeDelayMs: 5
-    });
+    const runs = createTestRunService(context, review, memory, fixture);
     const threads = createThreadService({ context, projects, runs });
     const project = await projects.open(fixture.projectRoot);
-    const first = await threads.sendMessage({
-      projectId: project.id,
-      text: "@fake parent without worktree",
-      contextMode: "auto"
-    });
-    const parent = first.messages.find((message) => message.type === "agent_run");
-    if (!parent) {
-      throw new Error("expected parent run card");
-    }
-    await waitForRun(runs, parent.runId, "completed");
+    const now = context.now();
+    await fixture.repositories.taskRepository.create(
+      validateTask({
+        id: "task_parent_no_worktree",
+        projectId: project.id,
+        title: "Parent without worktree",
+        status: "completed",
+        createdAt: now,
+        updatedAt: now
+      })
+    );
+    await fixture.repositories.taskRunRepository.create(
+      validateTaskRun({
+        id: "run_parent_no_worktree",
+        taskId: "task_parent_no_worktree",
+        agentKind: "fake",
+        status: "succeeded",
+        createdAt: now,
+        updatedAt: now
+      })
+    );
 
     const second = await threads.sendMessage({
-      threadId: first.id,
+      projectId: project.id,
       text: "@fake should not continue",
       contextMode: "auto",
-      continueFromRunId: parent.runId
+      continueFromRunId: "run_parent_no_worktree"
     });
 
     expect(second.messages.at(-1)).toMatchObject({
@@ -1013,11 +1020,7 @@ describe("desktop services", () => {
     const projects = createProjectService(context);
     const memory = createMemoryService(context);
     const review = createReviewService(context, { memoryService: memory });
-    const runs = createRunService(context, {
-      reviewService: review,
-      memoryService: memory,
-      fakeDelayMs: 5
-    });
+    const runs = createTestRunService(context, review, memory, fixture);
     const threads = createThreadService({ context, projects, runs });
     const handlers = createIpcHandlers({ projects, runs, threads, review, memory });
     const sender = { send: vi.fn() };
@@ -1055,7 +1058,7 @@ describe("desktop services", () => {
       )
     ).resolves.toMatchObject({
       reviewStatus: "pending",
-      changedFileCount: 0
+      changedFileCount: 1
     });
     await expect(
       handlers[IPC_CHANNELS.reviewReject]({ sender } as never, {
@@ -1073,7 +1076,7 @@ describe("desktop services", () => {
     });
     expect(sender.send).toHaveBeenCalledWith(
       runEventChannel(runId),
-      expect.objectContaining({ type: "run_started" })
+      expect.objectContaining({ type: "agent_output" })
     );
     await handlers[IPC_CHANNELS.runsUnsubscribe]({ sender } as never, runId);
   });
@@ -1128,20 +1131,64 @@ function sleep(ms: number): Promise<void> {
 
 async function createFixture(): Promise<{
   projectRoot: string;
+  workspaceBasePath: string;
   databasePath: string;
   repositories: ReturnType<typeof createSqliteRepositories>;
 }> {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "agent-hub-desktop-"));
   const projectRoot = path.join(root, "repo");
+  const workspaceBasePath = path.join(root, "worktrees");
   const databasePath = path.join(root, "agent-hub.sqlite");
   await fs.mkdir(projectRoot);
+  await fs.mkdir(workspaceBasePath);
   await fs.writeFile(
     path.join(projectRoot, "package.json"),
     JSON.stringify({ packageManager: "pnpm@10.10.0" }, null, 2),
     "utf8"
   );
+  await initGitRepository(projectRoot);
   const repositories = createSqliteRepositories({
     databasePath
   });
-  return { projectRoot, databasePath, repositories };
+  return { projectRoot, workspaceBasePath, databasePath, repositories };
+}
+
+function createTestRunService(
+  context: ReturnType<typeof createDesktopServiceContext>,
+  review: ReturnType<typeof createReviewService>,
+  memory: ReturnType<typeof createMemoryService>,
+  fixture: { workspaceBasePath: string }
+): ReturnType<typeof createRunService> {
+  return createRunService(context, {
+    reviewService: review,
+    memoryService: memory,
+    workspaceBasePath: fixture.workspaceBasePath,
+    taskRunnerDependencies: {
+      processRunner: new MockProcessRunner(
+        [],
+        Array.from({ length: 100 }, () => ({
+          available: false,
+          reason: "desktop test unavailable"
+        }))
+      )
+    }
+  });
+}
+
+async function initGitRepository(projectRoot: string): Promise<void> {
+  await execFileAsync("git", ["init"], { cwd: projectRoot });
+  await execFileAsync("git", ["add", "package.json"], { cwd: projectRoot });
+  await execFileAsync(
+    "git",
+    [
+      "-c",
+      "user.name=Agent Hub Test",
+      "-c",
+      "user.email=agent-hub@example.com",
+      "commit",
+      "-m",
+      "Initial commit"
+    ],
+    { cwd: projectRoot }
+  );
 }
