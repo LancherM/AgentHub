@@ -170,16 +170,17 @@ Implemented:
 - `apps/desktop` Electron + React shell with a thread-first conversation layout,
   safe `window.agentHub` preload API, Electron main-process IPC handlers,
   SQLite-backed project/thread/message/run/review/memory service facades,
-  inline run cards, fake-agent streaming and cancellation, bounded assistant
-  output messages, conversation brief artifacts, and an inspector drawer for
-  logs, diffs, verification, risks, and memory proposals.
+  inline run cards, bounded assistant output messages, conversation brief
+  artifacts, TaskRunner-backed fake/Codex/Claude desktop runs in isolated
+  worktrees, and an inspector drawer for logs, diffs, verification, risks, and
+  memory proposals.
 
 Not yet implemented:
 
-- Desktop TaskRunner integration for real Codex/Claude adapter execution, real
-  verification configuration, approved-memory context-store writeback
-  confirmation, multi-agent comparison review, worktree lifecycle management,
-  and explicit merge/apply workflows.
+- Desktop real verification configuration, live TaskRunner streaming and
+  cancellation, approved-memory context-store writeback confirmation,
+  multi-agent comparison review, explicit worktree lifecycle controls, and
+  explicit merge/apply workflows.
 
 ## Explicit Non-goals for MVP
 
