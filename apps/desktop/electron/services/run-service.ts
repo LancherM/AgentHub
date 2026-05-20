@@ -740,7 +740,7 @@ function toSemanticType(event: CoreRunEvent): RunEventType {
     return "run_failed";
   }
   if (event.type === "exit") {
-    return event.metadata.exitCode === 0 ? "run_completed" : "agent_step";
+    return event.metadata.exitCode === 0 ? "run_completed" : "run_failed";
   }
   const phase =
     typeof event.metadata.phase === "string" ? event.metadata.phase : undefined;
