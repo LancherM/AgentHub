@@ -553,8 +553,10 @@ interpreted as shell commands. Git operations additionally go through the
 Git safety helpers, which set non-interactive/hardened Git environment and
 command-line config overrides, disable external diff/textconv for diff
 collection, and reject repository-local Git config keys such as `core.fsmonitor`,
-`core.hooksPath`, executable filters, external diff drivers, textconv commands,
-and config includes before invoking Git. The local Git config scanner checks the
+executable filters, external diff drivers, textconv commands, and config
+includes before invoking Git. Repository-local `core.hooksPath` is allowed
+because Agent Hub Git invocations explicitly override it with `/dev/null`. The
+local Git config scanner checks the
 repository config, common config, and worktree config files, and its parser
 accepts Git-style section comments and subsection names that contain dots so
 filter and diff driver helpers cannot bypass the pre-flight gate.

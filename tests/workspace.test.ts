@@ -128,6 +128,32 @@ describe("GitWorktreeWorkspaceManager", () => {
     }
   );
 
+  it("allows repository-local hooksPath because git commands override it", async () => {
+    const sourceRepositoryPath = await createTestDirectory(
+      "workspace-local-hooks-path"
+    );
+    const workspaceBasePath = await createTestDirectory("workspace-base");
+    await fs.mkdir(path.join(sourceRepositoryPath, ".git"));
+    await fs.writeFile(
+      path.join(sourceRepositoryPath, ".git", "config"),
+      "[core]\n	hooksPath = .githooks\n",
+      "utf8"
+    );
+    const shell = new MockShellExecutor(worktreeCreateResponses());
+    const manager = new GitWorktreeWorkspaceManager(shell);
+
+    const session = await manager.createSession({
+      sourceRepositoryPath,
+      workspaceBasePath,
+      taskId: "task_1",
+      runId: "run_1",
+      agentKind: "fake"
+    });
+
+    expect(session.workspace.branchName).toBe("agent-hub/task_1/fake");
+    expect(shell.calls[0].command.args).toContain("core.hooksPath=/dev/null");
+  });
+
   it("rejects unsafe workspace base paths inside the source repository", async () => {
     const sourceRepositoryPath = await createTestDirectory("workspace-source");
     const workspaceBasePath = path.join(sourceRepositoryPath, ".agent-hub", "runs");

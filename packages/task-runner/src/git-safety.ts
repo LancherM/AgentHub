@@ -150,7 +150,6 @@ function normalizeGitConfigSection(section: string): string {
 function isUnsafeLocalGitConfigKey(key: string): boolean {
   return (
     key === "core.fsmonitor" ||
-    key === "core.hookspath" ||
     key === "diff.external" ||
     key === "interactive.difffilter" ||
     key === "include.path" ||
