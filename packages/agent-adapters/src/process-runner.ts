@@ -196,6 +196,14 @@ function buildProcessRunnerEnv(
   overrides?: Record<string, string | undefined>
 ): NodeJS.ProcessEnv {
   const env = buildChildProcessEnv(overrides);
+  if (
+    overrides &&
+    Object.prototype.hasOwnProperty.call(overrides, "PATH") &&
+    overrides.PATH === undefined
+  ) {
+    delete env.PATH;
+    return env;
+  }
   const cliLookupPath = buildCliLookupPath(env.PATH, env.HOME);
   if (cliLookupPath) {
     env.PATH = cliLookupPath;

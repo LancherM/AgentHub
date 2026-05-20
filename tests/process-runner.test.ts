@@ -167,6 +167,34 @@ describe("NodeProcessRunner", () => {
     expect(pathEntries).toContain(nvmBin);
     expect(pathEntries.indexOf("/usr/bin")).toBeLessThan(pathEntries.indexOf(nvmBin));
   });
+
+  it("does not rebuild PATH when an explicit override removes it", async () => {
+    const cwd = await createTestDirectory("process-runner-path-removal");
+    const home = await createTestDirectory("process-runner-path-removal-home");
+    await fs.mkdir(path.join(home, ".local", "bin"), { recursive: true });
+    vi.stubEnv("PATH", "/usr/bin");
+    vi.stubEnv("HOME", home);
+    const calls: Parameters<ProcessSpawner>[] = [];
+    const runner = new NodeProcessRunner((executable, args, options) => {
+      calls.push([executable, args, options]);
+      const child = new MockChildProcess();
+      queueMicrotask(() => {
+        child.close(0, null);
+      });
+      return child;
+    });
+
+    await collect(
+      runner.run({
+        executable: "/usr/bin/true",
+        cwd,
+        env: { PATH: undefined }
+      })
+    );
+
+    expect(calls[0][2].env.PATH).toBeUndefined();
+    expect(calls[0][2].env.HOME).toBe(home);
+  });
 });
 
 class MockChildProcess extends EventEmitter implements SpawnedProcess {
