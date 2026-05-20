@@ -142,6 +142,24 @@ describe("DiffCollector", () => {
     expect(result.diff).toBe("");
   });
 
+  it("does not exclude user files whose names only share a generated prefix", async () => {
+    const workspacePath = await createTestDirectory("diff-prefix-false-positive");
+    await fs.writeFile(path.join(workspacePath, ".agent-hub-cache.txt"), "keep\n", "utf8");
+    const shell = new MockShellExecutor([
+      { stdout: "?? .agent-hub-cache.txt\n?? .agent-hub/tasks/task_1/brief.md\n" },
+      { stdout: " 2 files changed, 2 insertions(+)\n" },
+      { stdout: "" }
+    ]);
+
+    const result = await new DiffCollector(shell).collect({ workspacePath });
+
+    expect(result.changedFiles).toEqual([
+      { path: ".agent-hub-cache.txt", status: "untracked" }
+    ]);
+    expect(result.diff).toContain("+++ b/.agent-hub-cache.txt");
+    expect(result.diff).not.toContain(".agent-hub/tasks/task_1/brief.md");
+  });
+
   it("excludes unchanged generated untracked overlays but includes agent-modified overlays", async () => {
     const workspacePath = await createTestDirectory("diff-untracked-overlay");
     await fs.writeFile(path.join(workspacePath, "AGENTS.md"), "generated\nagent edit\n", "utf8");
@@ -188,6 +206,31 @@ describe("DiffCollector", () => {
       { path: "image.bin", status: "untracked", binary: true, sizeBytes: 3 }
     ]);
     expect(result.fileSummaries).toContain("image.bin: untracked, binary, 3 bytes");
+  });
+
+  it("keeps binary metadata for tracked binary diffs", async () => {
+    const workspacePath = await createTestDirectory("diff-tracked-binary");
+    await fs.writeFile(path.join(workspacePath, "logo.png"), Buffer.from([0, 1, 2]));
+    const shell = new MockShellExecutor([
+      { stdout: " M logo.png\n" },
+      { stdout: " 1 file changed\n" },
+      { stdout: "-\t-\tlogo.png\n" },
+      { stdout: "Binary files a/logo.png and b/logo.png differ\n" },
+      { stdout: "" }
+    ]);
+
+    const result = await new DiffCollector(shell).collect({ workspacePath });
+
+    expect(result.changedFiles).toEqual([
+      { path: "logo.png", status: "modified", binary: true, sizeBytes: 3 }
+    ]);
+    expect(result.fileSummaries).toContain("logo.png: modified, binary, 3 bytes");
+    expect(result.diff).toContain("Binary files a/logo.png and b/logo.png differ");
+    expect(result.stat).toMatchObject({
+      filesChanged: 1,
+      insertions: 0,
+      deletions: 0
+    });
   });
 
   it("records untracked symlinks without reading their targets", async () => {

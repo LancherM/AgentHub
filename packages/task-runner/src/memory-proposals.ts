@@ -43,8 +43,18 @@ interface ProposalCandidate {
 }
 
 const DEFAULT_MAX_PROPOSALS_PER_TASK = 2;
-const SENSITIVE_COMMAND_MEMORY_PATTERN =
-  /\b(api[_-]?key|token|secret|password|passwd|private[_-]?key|credential|authorization|bearer)\b/i;
+const sensitiveCommandTerms = new Set([
+  "token",
+  "secret",
+  "password",
+  "passwd",
+  "credential",
+  "credentials",
+  "authorization",
+  "bearer",
+  "apikey",
+  "privatekey"
+]);
 
 export async function generateMemoryProposalsFromCompletedRun(
   repositories: MemoryProposalGenerationRepositories,
@@ -171,8 +181,25 @@ function firstSafeVerificationCommand(
         command.length <= 160 &&
         !command.includes("\n") &&
         !/simulated/i.test(command) &&
-        !SENSITIVE_COMMAND_MEMORY_PATTERN.test(command)
+        !containsSensitiveCommandTerm(command)
     );
+}
+
+function containsSensitiveCommandTerm(command: string): boolean {
+  const terms = splitCommandTerms(command);
+  return terms.some((term, index) =>
+    sensitiveCommandTerms.has(term) ||
+    (term === "api" && terms[index + 1] === "key") ||
+    (term === "private" && terms[index + 1] === "key")
+  );
+}
+
+function splitCommandTerms(command: string): string[] {
+  return command
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .split(/[^A-Za-z0-9]+/)
+    .map((term) => term.toLowerCase())
+    .filter((term) => term.length > 0);
 }
 
 function changedFilePaths(

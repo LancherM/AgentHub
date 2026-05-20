@@ -68,6 +68,24 @@ describe("NodeProcessRunner", () => {
     });
   });
 
+  it("reports non-zero detection exits as unavailable with process output", async () => {
+    const runner = new NodeProcessRunner(() => {
+      const child = new MockChildProcess();
+      queueMicrotask(() => {
+        child.stderr.write("not authenticated\n");
+        child.close(2, null);
+      });
+      return child;
+    });
+
+    await expect(
+      runner.detect({ executable: "agent", args: ["--version"] })
+    ).resolves.toEqual({
+      available: false,
+      reason: "not authenticated"
+    });
+  });
+
   it("captures non-zero and signal exits", async () => {
     const cwd = await createTestDirectory("process-runner-signal");
     const runner = new NodeProcessRunner(() => {

@@ -30,6 +30,7 @@ import {
 } from "@agent-hub/core";
 import {
   FixedClock,
+  generateMemoryProposalsFromCompletedRun,
   SequenceIdGenerator,
   TaskRunner,
   TaskRunnerError
@@ -322,6 +323,86 @@ describe("task runner", () => {
           content: "Verification command for this project is pnpm test."
         })
       ]);
+  });
+
+  it("does not propose secret-like verification commands as memory", async () => {
+    const taskRepository = new InMemoryTaskRepository();
+    const taskRunRepository = new InMemoryTaskRunRepository();
+    const runArtifactRepository = new InMemoryRunArtifactRepository();
+    const verificationResultRepository = new InMemoryVerificationResultRepository();
+    const riskReportRepository = new InMemoryRiskReportRepository();
+    const memoryItemRepository = new InMemoryMemoryItemRepository();
+    await taskRepository.create({
+      id: "task_secret_memory",
+      projectId: "project_secret_memory",
+      title: "Secret memory",
+      status: "open",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z"
+    });
+    await taskRunRepository.create({
+      id: "run_secret_memory",
+      taskId: "task_secret_memory",
+      agentKind: "fake",
+      status: "succeeded",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z"
+    });
+    await verificationResultRepository.createMany([
+      {
+        id: "verification_env_api_key",
+        taskRunId: "run_secret_memory",
+        command: "OPENAI_API_KEY=redacted pnpm test",
+        status: "passed",
+        exitCode: 0,
+        createdAt: "2026-01-01T00:00:00.000Z"
+      },
+      {
+        id: "verification_env_token",
+        taskRunId: "run_secret_memory",
+        command: "GITHUB_TOKEN=redacted pnpm test",
+        status: "passed",
+        exitCode: 0,
+        createdAt: "2026-01-01T00:00:00.000Z"
+      },
+      {
+        id: "verification_camel_api_key",
+        taskRunId: "run_secret_memory",
+        command: "pnpm test --openaiApiKey=redacted",
+        status: "passed",
+        exitCode: 0,
+        createdAt: "2026-01-01T00:00:00.000Z"
+      },
+      {
+        id: "verification_client_secret",
+        taskRunId: "run_secret_memory",
+        command: "pnpm test --clientSecret=redacted",
+        status: "passed",
+        exitCode: 0,
+        createdAt: "2026-01-01T00:00:00.000Z"
+      }
+    ]);
+
+    await expect(
+      generateMemoryProposalsFromCompletedRun(
+        {
+          taskRunRepository,
+          taskRepository,
+          runArtifactRepository,
+          verificationResultRepository,
+          riskReportRepository,
+          memoryItemRepository
+        },
+        {
+          runId: "run_secret_memory",
+          idGenerator: new SequenceIdGenerator(),
+          clock: new FixedClock("2026-01-01T00:00:00.000Z")
+        }
+      )
+    ).resolves.toEqual([]);
+    await expect(
+      memoryItemRepository.listByProjectId("project_secret_memory")
+    ).resolves.toEqual([]);
   });
 
   it("passes compiled context to the fake adapter", async () => {

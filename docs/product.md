@@ -259,12 +259,13 @@ items, `memory approve` marks an item approved and appends it to the Agent
 Hub-owned context store at `memory/approved.md`, and `memory reject` marks it
 rejected. Successful task runs may also generate a small number of
 conservative proposed memory items from persisted run evidence such as
-verification rows and diff metadata. These generated items are visible through
-the same `memory list` command and still start as `proposed`; Agent Hub does
-not auto-approve, auto-write, or inject them. Context builds read approved
-memory only from the context store and ignore the default `# Approved Memory`
-placeholder, so proposed, rejected, and empty placeholder memory items are not
-injected into future task briefs.
+verification rows and diff metadata, while skipping secret-like verification
+command text. These generated items are visible through the same `memory list`
+command and still start as `proposed`; Agent Hub does not auto-approve,
+auto-write, or inject them. Context builds read approved memory only from the
+context store and ignore the default `# Approved Memory` placeholder, so
+proposed, rejected, and empty placeholder memory items are not injected into
+future task briefs.
 
 The compare workflow generates a persisted comparison report for two runs of a
 task. `compare --task-id ... --baseline ... --candidate ...` compares changed
@@ -275,6 +276,9 @@ comparison details in `comparison_reports`. The structured details include
 changed-file overlap, diff-size deltas, verification and risk deltas, and a
 deterministic review score with explainable penalties. Comparison is a review
 aid only; it does not accept, merge, delete branches, or push changes.
+Missing risk evidence is treated conservatively in tradeoff wording so a run
+with persisted `low` risk is not described as riskier than a run with no risk
+report.
 
 Agent Hub Desktop is now available as a local conversation console under
 `apps/desktop`. It starts with `pnpm --filter desktop dev` and presents a
@@ -432,12 +436,16 @@ settings, and status transitions.
 SQLite now enforces the important imported storage constraints at the database
 boundary. Tasks reference projects with cascade delete, task runs reference
 agent profiles when one is selected, task and run status values are checked,
-agent kinds are checked, JSON columns reject invalid JSON, and run event
-sequence numbers remain unique per run. Local settings reject secret-like keys,
+agent kinds are checked, JSON columns reject invalid JSON, risk report list
+fields are constrained to JSON arrays, and run event sequence numbers remain
+unique per run. Local settings reject secret-like keys,
 including delimiter-separated and camelCase names such as `api_key`,
 `openaiApiKey`, `authToken`, and `clientSecret`, and reject secret-like string
 values before they can be stored in SQLite or in-memory test repositories, so
 settings remain limited to safe local behavior preferences.
+SQLite initialization also includes an idempotent conversation-summary table
+backfill so local databases that recorded an intermediate migration marker can
+still gain `conversation_thread_summaries` on upgrade.
 Ad-hoc CLI runs reuse an existing project for the same repository root. The
 first legacy ad-hoc root may still use `adhoc_project` for compatibility;
 additional ad-hoc roots get deterministic root-scoped project ids so tasks and

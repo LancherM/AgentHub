@@ -652,7 +652,7 @@ function riskRank(risk: string): number {
     case "blocking":
       return 4;
     default:
-      return 0;
+      return 2;
   }
 }
 
