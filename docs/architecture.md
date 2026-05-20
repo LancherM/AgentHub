@@ -167,12 +167,15 @@ statuses (`queued`, `running`, `verifying`, `completed`, `failed`,
 continuation uses the same explicit intent shape over safe IPC:
 renderer run cards can select a parent run/message, the composer shows a
 clearable one-shot continuation chip, and `ThreadService` resolves
-message-linked runs before passing parent ids to `RunService`. The renderer does
-not receive filesystem, shell, Git, or SQLite access. Current desktop
+message-linked runs before passing parent ids to `RunService`. If both a run id
+and message id are supplied, `ThreadService` validates that the message is still
+linked to that parent run before forwarding the pair. The renderer does not
+receive filesystem, shell, Git, or SQLite access. Current desktop
 TaskRunner-backed paths require a retained parent worktree before continuing
-code state and otherwise fail with a clear system message. SQLite still stores
-the core run status enum, so core `succeeded` is exposed to the desktop
-renderer as `completed`.
+code state and otherwise fail with a clear system message.
+SQLite still stores the core run status enum, so the desktop-only `verifying` phase
+is represented by live run events while the persisted core run remains
+`running`; core `succeeded` is exposed to the desktop renderer as `completed`.
 
 Desktop real execution now enters the shared `TaskRunner` from the Electron
 main process. `RunService` pre-creates the queued task/run rows for stable
@@ -227,8 +230,9 @@ requires a terminal parent run with retained worktree metadata, resolves the
 parent worktree HEAD, creates a new isolated child worktree from that commit,
 and copies only safe parent changed regular files into the child worktree before
 adapter execution. Deletions are applied as deletions. Sensitive paths,
-`.git`/`.agent-hub`, path escapes, symlinks, and unsupported renames reject the
-continuation before a child run is created. The child run records a
+`.git`/`.agent-hub`, path escapes, symlinks detected by diff metadata or
+preflight `lstat`, and unsupported renames reject the continuation before a
+child run is created. The child run records a
 `code_state_provenance` artifact with parent ids, source worktree, source HEAD,
 and copied/deleted file lists; diff, verification, risk, and review records are
 still generated for the child run itself.
@@ -504,7 +508,8 @@ returns a readable summary plus structured comparison details that the CLI
 stores in `comparison_reports`. The details JSON captures changed-file
 overlap, diff-size deltas, verification counts and failed-check deltas, risk
 rank deltas, risk factors, and a deterministic review score. Missing risk data
-is ranked conservatively above low risk for tradeoff wording. The score starts
+is ranked conservatively above persisted `low` and `medium` risk and below
+persisted `high` and `blocking` risk for tradeoff wording. The score starts
 from 100 and applies explainable penalties for non-succeeded status, higher
 risk, failed checks, skipped verification, and larger diff footprint; it is a
 review signal, not an acceptance decision. Comparison is review-only and

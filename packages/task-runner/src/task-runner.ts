@@ -892,9 +892,17 @@ export class TaskRunner {
     const blockedFiles = parentDiff.changedFiles.filter((file) =>
       isBlockedContinuationFile(file)
     );
-    if (blockedFiles.length > 0) {
+    const unsafeSourceFiles = await unsafeContinuationSourceFiles(
+      sourceWorktreePath,
+      parentDiff.changedFiles
+    );
+    const unsafeFiles = [
+      ...blockedFiles.map((file) => file.path),
+      ...unsafeSourceFiles
+    ];
+    if (unsafeFiles.length > 0) {
       throw new TaskRunnerError(
-        `parent run ${parentRun.id} cannot be continued because unsafe file paths changed: ${blockedFiles.map((file) => file.path).join(", ")}`
+        `parent run ${parentRun.id} cannot be continued because unsafe file paths changed: ${unsafeFiles.join(", ")}`
       );
     }
 
@@ -1294,6 +1302,33 @@ function isBlockedContinuationFile(file: ChangedFile): boolean {
   return normalizedPath
     .split("/")
     .some((segment) => segment === ".git" || segment === ".agent-hub");
+}
+
+async function unsafeContinuationSourceFiles(
+  sourceWorktreePath: string,
+  files: ChangedFile[]
+): Promise<string[]> {
+  const unsafeFiles: string[] = [];
+  for (const file of files) {
+    if (file.status === "deleted" || isBlockedContinuationFile(file)) {
+      continue;
+    }
+    const relativePath = normalizeContinuationPath(file.path);
+    if (relativePath === undefined) {
+      unsafeFiles.push(file.path);
+      continue;
+    }
+    try {
+      const sourcePath = safeContinuationPath(sourceWorktreePath, relativePath);
+      const stats = await fs.lstat(sourcePath);
+      if (stats.isSymbolicLink() || !stats.isFile()) {
+        unsafeFiles.push(file.path);
+      }
+    } catch {
+      unsafeFiles.push(file.path);
+    }
+  }
+  return unsafeFiles;
 }
 
 async function copyContinuationFile(input: {

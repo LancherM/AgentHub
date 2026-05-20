@@ -1840,7 +1840,7 @@ describe("CLI", () => {
             failedCheckDelta: 1
           }),
           risk: expect.objectContaining({
-            rankDelta: 3
+            rankDelta: 4
           }),
           score: expect.objectContaining({
             baseline: 97,
@@ -1872,7 +1872,7 @@ describe("CLI", () => {
     expect(output.join("")).toContain('"winner": "baseline"');
   });
 
-  it("treats low risk as lower than missing comparison risk", async () => {
+  it("treats low and medium risks as lower than missing comparison risk", async () => {
     const projectRoot = await createTestDirectory("cli-compare-risk-rank-project");
     const databasePath = path.join(
       await createTestDirectory("cli-compare-risk-rank-db"),
@@ -1910,8 +1910,19 @@ describe("CLI", () => {
       createdAt: "2026-01-01T00:00:02.000Z",
       updatedAt: "2026-01-01T00:00:02.000Z"
     });
+    await repositories.taskRunRepository.create({
+      id: "run_medium_risk",
+      taskId: "task_compare_risk_rank",
+      agentKind: "claude-code",
+      status: "succeeded",
+      createdAt: "2026-01-01T00:00:03.000Z",
+      updatedAt: "2026-01-01T00:00:03.000Z"
+    });
     await repositories.riskReportRepository.create(
       riskReportForRun("risk_low", "run_low_risk", "low")
+    );
+    await repositories.riskReportRepository.create(
+      riskReportForRun("risk_medium", "run_medium_risk", "medium")
     );
     const output: string[] = [];
     const errors: string[] = [];
@@ -1938,6 +1949,29 @@ describe("CLI", () => {
     expect(output.join("")).toContain("baseline_risk_factors: none");
     expect(output.join("")).toContain("risk=low");
     expect(output.join("")).toContain("summary_tradeoffs: candidate has lower risk");
+    expect(output.join("")).toContain('"rankDelta": -2');
+    expect(output.join("")).not.toContain("candidate has higher risk");
+
+    output.length = 0;
+    errors.length = 0;
+    await expect(
+      main([
+        "--db",
+        databasePath,
+        "compare",
+        "--task-id",
+        "task_compare_risk_rank",
+        "--baseline",
+        "run_missing_risk",
+        "--candidate",
+        "run_medium_risk"
+      ], io, projectRoot)
+    ).resolves.toBe(0);
+
+    expect(errors.join("")).toBe("");
+    expect(output.join("")).toContain("risk=medium");
+    expect(output.join("")).toContain("summary_tradeoffs: candidate has lower risk");
+    expect(output.join("")).toContain('"rankDelta": -1');
     expect(output.join("")).not.toContain("candidate has higher risk");
   });
 

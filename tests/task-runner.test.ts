@@ -848,6 +848,48 @@ describe("task runner", () => {
     await expect(taskRunRepository.list()).resolves.toHaveLength(1);
   });
 
+  it("rejects tracked symlink continuation files before creating a child run", async () => {
+    const projectRoot = await createTestDirectory("agent-hub-project");
+    const runRoot = await createTestDirectory("agent-hub-runs");
+    const parentWorktree = await createTestDirectory("agent-hub-parent-worktree");
+    const targetFile = path.join(parentWorktree, "target.txt");
+    await fs.writeFile(targetFile, "target\n", "utf8");
+    await fs.symlink(targetFile, path.join(parentWorktree, "linked.txt"));
+    const taskRepository = new InMemoryTaskRepository();
+    const taskRunRepository = new InMemoryTaskRunRepository();
+    const runMetadataRepository = new InMemoryRunMetadataRepository();
+    await seedParentRun({
+      projectRoot,
+      parentWorktree,
+      taskRepository,
+      taskRunRepository,
+      runMetadataRepository
+    });
+    const runner = new TaskRunner({
+      defaultRunRoot: runRoot,
+      workspaceManager: new TestWorkspaceManager(runRoot),
+      diffCollector: new ContinuationDiffCollector(parentWorktree, [
+        { path: "linked.txt", status: "modified" }
+      ]),
+      shellExecutor: new MockShellExecutor([{ stdout: "abc123\n" }]),
+      verificationRunner: new VerificationRunner(new MockShellExecutor()),
+      taskRepository,
+      taskRunRepository,
+      runMetadataRepository
+    });
+
+    await expect(
+      runner.run({
+        projectRoot,
+        projectId: "project_1",
+        taskPrompt: "continue",
+        agentKind: "fake",
+        continueFrom: { parentRunId: "run_parent" }
+      })
+    ).rejects.toThrow("unsafe file paths changed");
+    await expect(taskRunRepository.list()).resolves.toHaveLength(1);
+  });
+
   it("runs verification commands with cwd set to the worktree", async () => {
     const projectRoot = await createTestDirectory("agent-hub-project");
     const runRoot = await createTestDirectory("agent-hub-runs");
