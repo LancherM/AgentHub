@@ -208,6 +208,37 @@ describe("ContextCompiler", () => {
     });
   });
 
+  it("preserves thread summaries within the total conversation budget", () => {
+    const brief = new ConversationContextBuilder().build({
+      thread: { id: "thread_summary_budget", title: "Summary budget", projectId: "project_1" },
+      currentTurn: { content: "Continue", agentId: "fake" },
+      messages: Array.from({ length: 12 }, (_, index) => ({
+        id: `message_${index}`,
+        role: "user" as const,
+        content: `Long prior message ${index}: ${"x".repeat(2_100)}`
+      })),
+      threadSummary: {
+        summary: "Summarized older thread decisions.",
+        decisions: ["Keep the renderer sandboxed"],
+        openItems: ["Run focused regression tests"],
+        constraints: ["Do not promote thread summaries to approved memory"],
+        lastKnownUserGoal: "Continue the implementation",
+        sourceMessageCount: 80
+      },
+      projectContextReferences: ["project:project_1"]
+    });
+
+    expect(brief.renderedContent.length).toBeLessThanOrEqual(12_000);
+    expect(brief.renderedContent).toContain("## Thread Summary");
+    expect(brief.renderedContent).toContain("Keep the renderer sandboxed");
+    expect(brief.renderedContent).toContain("## Project Context References");
+    expect(brief.metadata).toMatchObject({
+      includedThreadSummary: true,
+      truncated: true
+    });
+    expect(brief.metadata.includedMessageCount).toBeLessThan(12);
+  });
+
   it("includes conversation briefs in context bundles before project context", async () => {
     const bundle = await new DefaultContextCompiler({
       projectContextProvider: new StaticProjectContextProvider({

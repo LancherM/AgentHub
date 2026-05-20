@@ -32,7 +32,8 @@ describe("SQLite storage", () => {
       { version: 4 },
       { version: 5 },
       { version: 6 },
-      { version: 7 }
+      { version: 7 },
+      { version: 8 }
     ]);
     await expect(
       database.query<{ name: string }>(
@@ -834,7 +835,8 @@ VALUES (
       { version: 4 },
       { version: 5 },
       { version: 6 },
-      { version: 7 }
+      { version: 7 },
+      { version: 8 }
     ]);
   });
 
@@ -881,7 +883,8 @@ VALUES (
       { version: 4 },
       { version: 5 },
       { version: 6 },
-      { version: 7 }
+      { version: 7 },
+      { version: 8 }
     ]);
     await expect(repositories.database.execute(`
 INSERT INTO tasks (id, project_id, title, status, created_at, updated_at)
@@ -895,6 +898,64 @@ VALUES (
   'run_after_migration_bad', 'task_legacy', 'missing_profile', 'fake', 'queued', '${createdAt}', '${createdAt}'
 );
 `)).rejects.toThrow();
+  });
+
+  it("backfills conversation summary storage after a stale version 6 marker", async () => {
+    const baseDirectory = await createTestDirectory("sqlite-migration-v8-summary-backfill");
+    const databasePath = path.join(baseDirectory, "agent-hub.sqlite");
+    const sourcePath = path.join(baseDirectory, "source").replaceAll("'", "''");
+    await initializeSqliteThroughVersion(databasePath, 5);
+    await runSqlite(databasePath, `
+INSERT INTO schema_migrations (version, applied_at)
+VALUES (6, '${createdAt}');
+INSERT INTO projects (id, name, root_path, created_at, updated_at)
+VALUES ('project_summary_legacy', 'Summary Legacy', '${sourcePath}', '${createdAt}', '${createdAt}');
+INSERT INTO conversation_threads (id, project_id, title, created_at, updated_at)
+VALUES ('thread_summary_legacy', 'project_summary_legacy', 'Legacy summary thread', '${createdAt}', '${createdAt}');
+INSERT INTO conversation_messages (id, thread_id, sequence, role, kind, content, created_at)
+VALUES ('message_summary_legacy', 'thread_summary_legacy', 0, 'user', 'text', 'Persist summary after branch upgrade.', '${createdAt}');
+`);
+
+    const repositories = createSqliteRepositories({ databasePath });
+    await repositories.database.ensureInitialized();
+
+    await expect(
+      repositories.database.query<{ name: string }>(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'conversation_thread_summaries';"
+      )
+    ).resolves.toEqual([{ name: "conversation_thread_summaries" }]);
+    await expect(
+      repositories.conversationThreadSummaryRepository.upsert({
+        id: "summary_after_backfill",
+        threadId: "thread_summary_legacy",
+        summary: "Summarized 1 thread message.",
+        decisions: [],
+        openItems: ["Persist summary after branch upgrade"],
+        constraints: [],
+        lastKnownUserGoal: "Persist summary after branch upgrade.",
+        sourceMessageCount: 1,
+        sourceLatestMessageId: "message_summary_legacy",
+        createdAt,
+        updatedAt
+      })
+    ).resolves.toMatchObject({
+      id: "summary_after_backfill",
+      threadId: "thread_summary_legacy"
+    });
+    await expect(
+      repositories.database.query<{ version: number }>(
+        "SELECT version FROM schema_migrations ORDER BY version ASC;"
+      )
+    ).resolves.toEqual([
+      { version: 1 },
+      { version: 2 },
+      { version: 3 },
+      { version: 4 },
+      { version: 5 },
+      { version: 6 },
+      { version: 7 },
+      { version: 8 }
+    ]);
   });
 
   it("migrates risk report JSON columns to array-constrained storage", async () => {

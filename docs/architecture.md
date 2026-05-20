@@ -147,8 +147,10 @@ budgets, and produces a conversation brief that is injected through the runtime
 context bundle and persisted as a `conversation_brief` run artifact. Context
 ordering is current turn, recent messages, thread summary, then project
 context. A zero recent-message budget includes no prior thread messages, and
-desktop first-turn runs reload the retitled thread before building the brief so
-pre-created empty threads do not inject stale `New Chat` titles. Project
+recent messages are reduced when needed so thread summaries and project
+references remain inside the total brief budget. Desktop first-turn runs reload
+the retitled thread before building the brief so pre-created empty threads do
+not inject stale `New Chat` titles. Project
 context, thread context, current-turn context, and run context remain distinct
 layers so thread-local decisions do not automatically promote into project
 approved memory. Follow-up turns prefer terminal assistant messages over
@@ -419,6 +421,10 @@ Migration version 7 rebuilds `risk_reports` so list-shaped risk evidence is
 constrained as JSON arrays at the SQLite boundary. Existing legacy scalar or
 object-shaped risk list payloads are normalized to empty arrays during the
 local migration rather than being exposed through the typed repositories.
+Migration version 8 repeats the `conversation_thread_summaries` table creation
+with `IF NOT EXISTS` as a compatibility backfill for databases that recorded an
+intermediate version 6 marker before the thread-summary migration reached
+`main`.
 
 Repository implementations enforce the imported state diagrams before writing
 status updates. Tasks may move `open -> running -> completed`, return from
@@ -462,10 +468,11 @@ After a task run is finalized and persisted as `succeeded`, the task runner
 reloads durable run evidence through repositories before generating memory
 proposals. The generator uses conservative signals such as persisted
 verification commands, diff changed-file metadata, and the latest risk report;
-it does not inspect transient adapter state or write to the approved-memory
-context store. Generated items are deduplicated by normalized project content,
-capped per task, and created only as `proposed` memory rows. A generation
-failure is reported as a run warning without changing the completed run status.
+it skips secret-like verification command text, does not inspect transient
+adapter state, and does not write to the approved-memory context store.
+Generated items are deduplicated by normalized project content, capped per
+task, and created only as `proposed` memory rows. A generation failure is
+reported as a run warning without changing the completed run status.
 
 Comparison reports are generated from persisted run data rather than process
 memory or UI state. `packages/task-runner` loads each selected run, diff
@@ -473,7 +480,8 @@ artifacts or legacy metadata, verification rows, and latest risk reports, then
 returns a readable summary plus structured comparison details that the CLI
 stores in `comparison_reports`. The details JSON captures changed-file
 overlap, diff-size deltas, verification counts and failed-check deltas, risk
-rank deltas, risk factors, and a deterministic review score. The score starts
+rank deltas, risk factors, and a deterministic review score. Missing risk data
+is ranked conservatively above low risk for tradeoff wording. The score starts
 from 100 and applies explainable penalties for non-succeeded status, higher
 risk, failed checks, skipped verification, and larger diff footprint; it is a
 review signal, not an acceptance decision. Comparison is review-only and
