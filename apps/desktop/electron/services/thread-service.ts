@@ -280,11 +280,20 @@ class RepositoryThreadService implements ThreadService {
   private async resolveContinuationInput(
     input: SendThreadMessageInput
   ): Promise<{ parentRunId: string; parentMessageId?: string } | undefined> {
-    if (input.continueFromRunId && input.continueFromMessageId) {
-      throw new Error("continueFromRunId and continueFromMessageId are mutually exclusive");
-    }
     if (input.continueFromRunId) {
-      return { parentRunId: input.continueFromRunId };
+      if (!input.continueFromMessageId) {
+        return { parentRunId: input.continueFromRunId };
+      }
+      const message = await this.messages.get(input.continueFromMessageId);
+      if (!message) {
+        throw new Error(`message ${input.continueFromMessageId} not found`);
+      }
+      if (message.runId !== input.continueFromRunId) {
+        throw new Error(
+          `message ${message.id} is not linked to run ${input.continueFromRunId}`
+        );
+      }
+      return { parentRunId: input.continueFromRunId, parentMessageId: message.id };
     }
     if (!input.continueFromMessageId) {
       return undefined;
