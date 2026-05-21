@@ -698,9 +698,10 @@ export class TaskRunner {
     }
 
     const adapterExitBeforeVerification = findLastExitEvent(events);
-    const adapterCancelled =
-      input.signal?.aborted === true ||
-      isCancellationExit(adapterExitBeforeVerification, input.signal);
+    const adapterCancelled = isCancellationExit(
+      adapterExitBeforeVerification,
+      input.signal
+    );
     await emitRunEvent(
       progressEvent("verification_started", "Verification stage started.", {
         phase: "verification",
@@ -753,7 +754,8 @@ export class TaskRunner {
 
     const exitEvent = findLastExitEvent(events);
     const runCancelled =
-      input.signal?.aborted === true || isCancellationExit(exitEvent, input.signal);
+      isCancellationExit(exitEvent, input.signal) ||
+      didVerificationObserveCancellation(verification, input.signal);
     const adapterSucceeded =
       exitEvent?.type === "exit" && exitEvent.exitCode === 0;
     let status: RunStatus =
@@ -1216,6 +1218,14 @@ function isCancellationExit(
     event?.type === "exit" &&
     event.signal !== undefined &&
     event.signal !== null;
+}
+
+function didVerificationObserveCancellation(
+  verification: VerificationSuiteResult,
+  signal: AbortSignal | undefined
+): boolean {
+  return signal?.aborted === true &&
+    verification.results.some((result) => result.signal !== null && result.signal !== undefined);
 }
 
 function skippedVerificationSuite(summary: string): VerificationSuiteResult {
