@@ -1,32 +1,99 @@
+> ⚠️ Note: Agent Hub is still in early development and is not yet ready for production or stable day-to-day workflows.
+
 # Agent Hub
 
-Agent Hub is a local-first, CLI-first developer tool for orchestrating coding
-agents in isolated git worktrees. The current implementation uses the imported
-workspace shape: `apps/cli` is a thin CLI over local packages in `packages/`,
-and `apps/desktop` is the first Electron + React shell over the same local
-storage and review services.
+[中文说明](README_CN.md)
 
-## Repository Layout
+Agent Hub is a **local-first, CLI-first** developer tool for orchestrating coding agents (such as Codex, Claude Code, and Fake Agent) in isolated git worktrees, then reviewing and comparing their outputs.
+
+The repository is already runnable and includes core workflows, but it is still evolving quickly.
+
+## What problem does this project solve?
+
+In multi-agent coding workflows, teams and individuals often run into the same issues:
+
+- Task context is fragmented and hard to reuse.
+- Agent execution is difficult to trace end-to-end.
+- Running agents directly in the main checkout can pollute the working tree.
+- Risky changes (sensitive files, dangerous commands) are not consistently scanned.
+
+Agent Hub addresses these problems with local, auditable workflows:
+
+- Build task-specific context packs and briefs.
+- Run agents in isolated worktrees and collect logs, verification, diffs, and risks.
+- Compare multiple runs for the same task.
+- Manage long-term memory through a proposal → approval lifecycle.
+
+## Core principles
+
+- **Local-first**: local persistence by default (SQLite + local files)
+- **CLI-first**: CLI is the primary interface; desktop is a local graphical shell
+- **Non-invasive context delivery**: runtime injection by default instead of rewriting user repos
+- **Clear safety boundaries**: runs stay in isolated worktrees, with no automatic merge / push / PR creation
+
+## Repository layout
 
 ```text
-apps/cli                 CLI parser, interactive shell, command rendering
-apps/desktop             Electron + React desktop shell
-packages/shared          Shared types, enums, and utility contracts
-packages/core            Domain validation and repository interfaces
-packages/db              SQLite schema, migrations, and repositories
-packages/context-compiler Context stores, context packs, briefs, and export
-packages/task-runner     Worktrees, verification, diffs, risk orchestration
-packages/agent-adapters  Fake, Codex, and Claude Code adapters
-packages/safety          Dangerous-command, sensitive-path, and risk scanning
-tests                    Cross-package Vitest coverage
+apps/cli                  CLI entrypoint and interactive workflows
+apps/desktop              Electron + React desktop shell
+packages/shared           Shared types and utilities
+packages/core             Domain models and service interfaces
+packages/db               SQLite schema and repositories
+packages/context-compiler Context compilation, briefs, and export logic
+packages/task-runner      Worktrees, task execution, verification, and diff collection
+packages/agent-adapters   Fake/Codex/Claude Code adapters
+packages/safety           Risk scanning and safety checks
+tests                     Cross-package test coverage
 ```
 
-The desktop app is local-first. The renderer only calls the safe
-`window.agentHub` preload API; privileged local operations go through Electron
-main-process IPC. It does not add a web server, login, cloud sync, remote
-execution, automatic merge, automatic push, or automatic pull request behavior.
+## Current capabilities (high-level)
 
-## Commands
+- CLI workflows for projects, tasks, runs, events, risks, memory, and comparison
+- Local SQLite persistence for project/task/run/event/risk/memory/comparison data
+- Context build pipeline that compiles Agent Hub-owned context into brief/context pack artifacts
+- Adapter-based execution for Fake, Codex, and Claude Code in isolated worktrees
+- Run artifacts including logs, verification results, git diffs, and risk reports
+- Memory workflow: propose, approve/reject, and approved-memory writeback
+- Initial desktop shell with thread view, run cards, and inspector panels (logs/diff/risks/memory)
+
+## Areas still in progress
+
+- Full desktop streaming execution UX, including cancellation controls
+- Richer verification configuration and visualization in desktop workflows
+- More advanced multi-agent comparison and scoring depth
+
+## Quick start
+
+### 1) Install dependencies
+
+```sh
+pnpm install
+```
+
+### 2) Run common checks
+
+```sh
+pnpm typecheck
+pnpm test
+pnpm lint
+pnpm build
+```
+
+If global `pnpm` is unavailable, use the repo-local binary:
+
+```sh
+./node_modules/.bin/pnpm typecheck
+./node_modules/.bin/pnpm test
+./node_modules/.bin/pnpm lint
+```
+
+### 3) Start the desktop shell (dev mode)
+
+```sh
+./node_modules/.bin/pnpm --filter desktop dev
+```
+
+## CLI command reference
 
 ```sh
 agent-hub [--project <path>] [--agent fake|codex|claude-code]
@@ -53,62 +120,4 @@ agent-hub [--db <path>] memory propose --project-id <project-id> --category <cat
 agent-hub [--db <path>] memory approve --memory-id <memory-id>
 agent-hub [--db <path>] memory reject --memory-id <memory-id>
 agent-hub [--db <path>] compare --task-id <task-id> --baseline <run-id> --candidate <run-id>
-```
-
-## Current Capabilities
-
-- Provides a first desktop shell with project/run navigation, a run timeline,
-  New Run modal, and Summary/Diff/Tests/Risk/Memory review tabs.
-- Uses SQLite by default for local project, task, run, event, artifact,
-  verification, risk, memory, comparison, skill, and settings persistence.
-- Keeps in-memory repositories available for injected tests and focused runner
-  verification.
-- Builds non-invasive task context and task briefs from Agent Hub-owned context
-  stores.
-- Supports explicit repository context export with dry-run preview and managed
-  blocks.
-- Runs fake, Codex, and Claude Code adapters inside isolated worktrees.
-- Injects task brief/context at runtime by default; optional worktree overlays
-  stay inside the isolated worktree.
-- Captures run events, verification results, git diffs, run artifacts, and risk
-  reports.
-- Allows manual event recording with `run event add`; appended events use the
-  next sequence number for the selected run.
-- Shows persisted run event streams and collected git diff artifacts with
-  explicit `runs events` and `runs diff` review commands.
-- Supports explicit memory proposal, approval, rejection, and approved-memory
-  writeback.
-- Generates persisted comparison reports for two runs of a task.
-- Does not add cloud sync, accounts, remote execution, automatic merges,
-  automatic pushes, or automatic pull requests.
-
-## Current Gaps
-
-- Desktop TaskRunner integration for real Codex/Claude/fake execution,
-  streaming, cancellation, verification configuration, retained-worktree diff
-  review, and approved-memory writeback confirmation.
-- Automatic memory proposal generation from completed runs.
-- Richer comparison scoring beyond the persisted textual summary.
-
-## Validation
-
-```sh
-pnpm typecheck
-pnpm test
-pnpm lint
-pnpm build
-```
-
-If global `pnpm` is unavailable, use the repo-local binary:
-
-```sh
-./node_modules/.bin/pnpm typecheck
-./node_modules/.bin/pnpm test
-./node_modules/.bin/pnpm lint
-```
-
-Run the desktop shell locally with:
-
-```sh
-./node_modules/.bin/pnpm --filter desktop dev
 ```
