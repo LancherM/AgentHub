@@ -150,8 +150,12 @@ export class NodeProcessRunner implements ProcessRunner {
     if (input.signal) {
       const abort = (): void => {
         if (!closed) {
-          abortSignalSent = "SIGTERM";
-          child.kill(abortSignalSent);
+          const signal: NodeJS.Signals = "SIGTERM";
+          abortSignalSent = signal;
+          const signalSent = child.kill(signal);
+          if (!signalSent) {
+            abortSignalSent = undefined;
+          }
         }
       };
       input.signal.addEventListener("abort", abort, { once: true });

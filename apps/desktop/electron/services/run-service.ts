@@ -423,8 +423,8 @@ class RepositoryRunService implements RunService {
         : undefined
     });
 
-    await this.emitPersistedEvents(run.id);
     active.status = toDesktopRunStatus(result.run.status);
+    await this.emitPersistedEvents(run.id);
   }
 
   private createTaskRunner(runId: string): TaskRunner {
