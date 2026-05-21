@@ -187,9 +187,13 @@ CLI is unavailable or unauthenticated, the run fails inspectably through
 persisted events and review evidence instead of crashing the service. Terminal
 run output is also promoted into bounded assistant transcript messages for
 future thread context, but that promotion does not change execution semantics or
-duplicate full evidence into message bodies. Live adapter streaming and
-process-level cancellation remain separate follow-up wiring; running
-TaskRunner-backed cancellation returns an explicit unsupported error.
+duplicate full evidence into message bodies. TaskRunner accepts a progress hook
+and abort signal for desktop execution. The hook lets `RunService` persist and
+emit context, worktree, adapter, verification, and terminal lifecycle events
+while the run is active, then replay those same rows to late subscribers. The
+abort signal flows through adapters into `NodeProcessRunner`; running desktop
+cancellation sends `SIGTERM` to process-backed agents and records cancelled
+state only for runs that were actually stopped or had not started.
 
 Desktop packaging is a local release concern layered over that shell. The
 workspace keeps Electron/Vite bundling in `apps/desktop`, then uses

@@ -11,6 +11,7 @@ export interface ProcessRunInput {
   stdin?: string;
   env?: Record<string, string | undefined>;
   timeoutMs?: number;
+  signal?: AbortSignal;
 }
 
 export type ProcessRunEvent =
@@ -83,6 +84,8 @@ export class NodeProcessRunner implements ProcessRunner {
     const args = [...(input.args ?? [])];
     let closed = false;
     let timeout: NodeJS.Timeout | undefined;
+    let removeAbortListener: (() => void) | undefined;
+    let abortSignalSent: NodeJS.Signals | string | undefined;
 
     const finish = (event: ProcessRunEvent): void => {
       if (closed) {
@@ -92,9 +95,17 @@ export class NodeProcessRunner implements ProcessRunner {
       if (timeout) {
         clearTimeout(timeout);
       }
+      removeAbortListener?.();
       queue.push(event);
       queue.close();
     };
+
+    if (input.signal?.aborted) {
+      queue.push({ type: "exit", exitCode: null, signal: "SIGTERM" });
+      queue.close();
+      yield* queue;
+      return;
+    }
 
     let child: SpawnedProcess;
     try {
@@ -129,8 +140,23 @@ export class NodeProcessRunner implements ProcessRunner {
       finish({ type: "exit", exitCode: 1, signal: null });
     });
     child.on("close", (exitCode, signal) => {
-      finish({ type: "exit", exitCode, signal });
+      finish({
+        type: "exit",
+        exitCode,
+        signal: signal ?? abortSignalSent ?? null
+      });
     });
+
+    if (input.signal) {
+      const abort = (): void => {
+        if (!closed) {
+          abortSignalSent = "SIGTERM";
+          child.kill(abortSignalSent);
+        }
+      };
+      input.signal.addEventListener("abort", abort, { once: true });
+      removeAbortListener = () => input.signal?.removeEventListener("abort", abort);
+    }
 
     if (input.timeoutMs !== undefined) {
       timeout = setTimeout(() => {

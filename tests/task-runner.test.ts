@@ -4,7 +4,12 @@ import { describe, expect, it } from "vitest";
 import {
   CodexAdapter,
   DefaultAgentRegistry,
-  FakeAgentAdapter
+  FakeAgentAdapter,
+  type ProcessDetectionInput,
+  type ProcessDetectionResult,
+  type ProcessRunEvent,
+  type ProcessRunInput,
+  type ProcessRunner
 } from "@agent-hub/agent-adapters";
 import {
   DefaultContextCompiler,
@@ -13,6 +18,7 @@ import {
   MarkdownContextFormatter
 } from "@agent-hub/context-compiler";
 import type {
+  AgentRunEvent,
   ChangedFile,
   DiffCollectionInput,
   DiffCollectionResult,
@@ -257,10 +263,21 @@ describe("task runner", () => {
       "running",
       "succeeded"
     ]);
-    await expect(runEventRepository.listByRunId("run_0002")).resolves.toEqual([
-      expect.objectContaining({ sequence: 0, type: "stdout" }),
-      expect.objectContaining({ sequence: 1, type: "exit" })
-    ]);
+    await expect(runEventRepository.listByRunId("run_0002")).resolves.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          sequence: 0,
+          type: "status",
+          metadata: expect.objectContaining({ desktopEventType: "context_compiled" })
+        }),
+        expect.objectContaining({ type: "stdout" }),
+        expect.objectContaining({ type: "exit" }),
+        expect.objectContaining({
+          type: "status",
+          metadata: expect.objectContaining({ desktopEventType: "run_completed" })
+        })
+      ])
+    );
     await expect(
       runArtifactRepository.getLatestByRunIdAndKind("run_0002", "git_diff")
     ).resolves.toEqual(
@@ -276,6 +293,107 @@ describe("task runner", () => {
     ]);
     await expect(riskReportRepository.getLatestByRunId("run_0002")).resolves.toEqual(
       expect.objectContaining({ level: "medium" })
+    );
+  });
+
+  it("emits deterministic progress events through the task-runner hook", async () => {
+    const projectRoot = await createTestDirectory("agent-hub-project");
+    const runRoot = await createTestDirectory("agent-hub-runs");
+    const observed: AgentRunEvent[] = [];
+    const runner = new TaskRunner({
+      defaultRunRoot: runRoot,
+      workspaceManager: new TestWorkspaceManager(runRoot),
+      diffCollector: new StaticDiffCollector(),
+      verificationRunner: new VerificationRunner(new MockShellExecutor()),
+      agentRegistry: new DefaultAgentRegistry([
+        new FakeAgentAdapter({ stepDelayMs: 1 })
+      ]),
+      idGenerator: new SequenceIdGenerator(),
+      clock: new FixedClock("2026-01-01T00:00:00.000Z")
+    });
+
+    const result = await runner.run({
+      projectRoot,
+      rawPrompt: "@fake stream progress",
+      onEvent: (event) => {
+        observed.push(event);
+      }
+    });
+
+    expect(result.status).toBe("succeeded");
+    expect(observed.map((event) => event.metadata?.desktopEventType)).toEqual(
+      expect.arrayContaining([
+        "context_compiled",
+        "run_started",
+        "agent_step",
+        "verification_started",
+        "verification_finished",
+        "run_completed"
+      ])
+    );
+    expect(observed.some((event) => event.type === "stdout")).toBe(true);
+    expect(observed.at(-1)?.metadata?.desktopEventType).toBe("run_completed");
+  });
+
+  it("cancels before adapter execution when the abort signal is already set", async () => {
+    const projectRoot = await createTestDirectory("agent-hub-project");
+    const runRoot = await createTestDirectory("agent-hub-runs");
+    const controller = new AbortController();
+    controller.abort();
+    const runner = new TaskRunner({
+      defaultRunRoot: runRoot,
+      workspaceManager: new TestWorkspaceManager(runRoot),
+      diffCollector: new StaticDiffCollector(),
+      verificationRunner: new VerificationRunner(new MockShellExecutor()),
+      idGenerator: new SequenceIdGenerator(),
+      clock: new FixedClock("2026-01-01T00:00:00.000Z")
+    });
+
+    const result = await runner.run({
+      projectRoot,
+      rawPrompt: "@fake cancel before start",
+      signal: controller.signal
+    });
+
+    expect(result.status).toBe("cancelled");
+    expect(result.run.status).toBe("cancelled");
+    expect(result.worktreePath).toBeUndefined();
+    expect(result.events.at(-1)?.metadata?.desktopEventType).toBe("run_cancelled");
+  });
+
+  it("cancels a process-backed adapter only when the abort signal stops it", async () => {
+    const projectRoot = await createTestDirectory("agent-hub-project");
+    const runRoot = await createTestDirectory("agent-hub-runs");
+    const controller = new AbortController();
+    const processRunner = new AbortableMockProcessRunner(controller);
+    const runner = new TaskRunner({
+      defaultRunRoot: runRoot,
+      workspaceManager: new TestWorkspaceManager(runRoot),
+      diffCollector: new StaticDiffCollector(),
+      verificationRunner: new VerificationRunner(new MockShellExecutor()),
+      agentRegistry: new DefaultAgentRegistry([
+        new CodexAdapter({ processRunner })
+      ]),
+      idGenerator: new SequenceIdGenerator(),
+      clock: new FixedClock("2026-01-01T00:00:00.000Z")
+    });
+
+    const result = await runner.run({
+      projectRoot,
+      rawPrompt: "@codex cancel process",
+      signal: controller.signal
+    });
+
+    expect(result.status).toBe("cancelled");
+    expect(result.run.status).toBe("cancelled");
+    expect(processRunner.runCalls[0].signal).toBe(controller.signal);
+    expect(result.events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ type: "exit", signal: "SIGTERM" }),
+        expect.objectContaining({
+          metadata: expect.objectContaining({ desktopEventType: "run_cancelled" })
+        })
+      ])
     );
   });
 
@@ -500,15 +618,21 @@ describe("task runner", () => {
 
     expect(result.status).toBe("failed");
     expect(result.run.status).toBe("failed");
-    await expect(runEventRepository.listByRunId(result.run.id)).resolves.toEqual([
-      expect.objectContaining({ type: "status", message: "Codex preflight passed" }),
-      expect.objectContaining({ type: "status", message: "starting Codex" }),
-      expect.objectContaining({ type: "stderr", message: "codex failed\n" }),
-      expect.objectContaining({
-        type: "exit",
-        metadata: expect.objectContaining({ exitCode: 2, signal: null })
-      })
-    ]);
+    await expect(runEventRepository.listByRunId(result.run.id)).resolves.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ type: "status", message: "Codex preflight passed" }),
+        expect.objectContaining({ type: "status", message: "starting Codex" }),
+        expect.objectContaining({ type: "stderr", message: "codex failed\n" }),
+        expect.objectContaining({
+          type: "exit",
+          metadata: expect.objectContaining({ exitCode: 2, signal: null })
+        }),
+        expect.objectContaining({
+          type: "status",
+          metadata: expect.objectContaining({ desktopEventType: "run_failed" })
+        })
+      ])
+    );
   });
 
   it("preflights unavailable real adapters into failed run events without launching them", async () => {
@@ -538,13 +662,18 @@ describe("task runner", () => {
     expect(result.status).toBe("failed");
     expect(processRunner.detectCalls).toHaveLength(1);
     expect(processRunner.runCalls).toHaveLength(0);
-    expect(result.events).toEqual([
-      expect.objectContaining({
-        type: "error",
-        message: "Codex preflight failed: Codex CLI unavailable: not authenticated"
-      }),
-      expect.objectContaining({ type: "exit", exitCode: 1 })
-    ]);
+    expect(result.events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "error",
+          message: "Codex preflight failed: Codex CLI unavailable: not authenticated"
+        }),
+        expect.objectContaining({ type: "exit", exitCode: 1 }),
+        expect.objectContaining({
+          metadata: expect.objectContaining({ desktopEventType: "run_failed" })
+        })
+      ])
+    );
   });
 
   it("passes explicit environment overrides to process-backed adapters", async () => {
@@ -945,10 +1074,18 @@ describe("task runner", () => {
       commandId: "danger",
       stderr: expect.stringContaining("refusing to execute dangerous command")
     });
-    await expect(runEventRepository.listByRunId(result.run.id)).resolves.toEqual([
-      expect.objectContaining({ type: "stdout" }),
-      expect.objectContaining({ type: "exit" })
-    ]);
+    await expect(runEventRepository.listByRunId(result.run.id)).resolves.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ type: "stdout" }),
+        expect.objectContaining({ type: "exit" }),
+        expect.objectContaining({
+          metadata: expect.objectContaining({ desktopEventType: "verification_started" })
+        }),
+        expect.objectContaining({
+          metadata: expect.objectContaining({ desktopEventType: "run_failed" })
+        })
+      ])
+    );
   });
 
   it("finalizes a failed run when diff collection throws", async () => {
@@ -1381,6 +1518,25 @@ class ThrowingDiffCollector implements DiffCollectorService {
 
   async collect(): Promise<DiffCollectionResult> {
     throw new Error(this.message);
+  }
+}
+
+class AbortableMockProcessRunner implements ProcessRunner {
+  readonly runCalls: ProcessRunInput[] = [];
+  readonly detectCalls: ProcessDetectionInput[] = [];
+
+  constructor(private readonly controller: AbortController) {}
+
+  async *run(input: ProcessRunInput): AsyncIterable<ProcessRunEvent> {
+    this.runCalls.push(input);
+    yield { type: "stdout", data: "started\n" };
+    this.controller.abort();
+    yield { type: "exit", exitCode: null, signal: "SIGTERM" };
+  }
+
+  async detect(input: ProcessDetectionInput): Promise<ProcessDetectionResult> {
+    this.detectCalls.push(input);
+    return { available: true, version: "mock" };
   }
 }
 

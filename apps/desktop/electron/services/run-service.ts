@@ -17,6 +17,7 @@ import {
 } from "@agent-hub/core";
 import {
   TaskRunner,
+  type AgentRunEvent,
   type Clock,
   type IdGenerator,
   type TaskRunnerDependencies
@@ -73,6 +74,7 @@ export interface ConversationRunSnapshot {
 
 interface ActiveRun {
   status: RunStatus;
+  controller: AbortController;
   promise: Promise<void>;
 }
 
@@ -291,6 +293,7 @@ class RepositoryRunService implements RunService {
 
     const active: ActiveRun = {
       status: "running",
+      controller: new AbortController(),
       promise: Promise.resolve()
     };
     this.activeRuns.set(runId, active);
@@ -329,9 +332,9 @@ class RepositoryRunService implements RunService {
       return;
     }
 
-    throw new Error(
-      "TaskRunner-backed desktop cancellation is not available until progress and cancellation wiring lands."
-    );
+    if (!active.controller.signal.aborted) {
+      active.controller.abort();
+    }
   }
 
   subscribe(runId: string, listener: (event: RunEvent) => void): () => void {
@@ -406,6 +409,12 @@ class RepositoryRunService implements RunService {
       conversationBrief: input.conversationBrief,
       workspaceBasePath: this.desktopWorkspaceBasePath(),
       workspaceCleanupPolicy: "never",
+      signal: active.controller.signal,
+      onEvent: async (event) => {
+        const persisted = await this.persistTaskRunnerEvent(run.id, event);
+        this.applyLiveEventStatus(run.id, persisted);
+        this.emitLiveEvent(persisted);
+      },
       continueFrom: input.continueFromRunId
         ? {
             parentRunId: input.continueFromRunId,
@@ -414,8 +423,8 @@ class RepositoryRunService implements RunService {
         : undefined
     });
 
-    active.status = toDesktopRunStatus(result.run.status);
     await this.emitPersistedEvents(run.id);
+    active.status = toDesktopRunStatus(result.run.status);
   }
 
   private createTaskRunner(runId: string): TaskRunner {
@@ -448,6 +457,7 @@ class RepositoryRunService implements RunService {
   private async emitPersistedEvents(runId: string): Promise<void> {
     const events = await this.events.listByRunId(runId);
     for (const event of events.map(toRunEvent)) {
+      this.applyLiveEventStatus(runId, event);
       this.emitLiveEvent(event);
     }
   }
@@ -527,6 +537,44 @@ class RepositoryRunService implements RunService {
       })
     );
     return toRunEvent(coreEvent);
+  }
+
+  private async persistTaskRunnerEvent(
+    runId: string,
+    event: AgentRunEvent
+  ): Promise<RunEvent> {
+    const sequence = await this.events.countByRunId(runId);
+    const createdAt = this.context.now();
+    const metadata: JsonObject = { ...(event.metadata ?? {}) };
+    if (event.type === "exit") {
+      metadata.exitCode = event.exitCode;
+      if (event.signal !== undefined) {
+        metadata.signal = event.signal;
+      }
+    }
+    const coreEvent = await this.events.create(
+      validateRunEvent({
+        id: this.context.nextId("event"),
+        taskRunId: runId,
+        sequence,
+        type: event.type,
+        message: event.message,
+        metadata,
+        createdAt
+      })
+    );
+    return toRunEvent(coreEvent);
+  }
+
+  private applyLiveEventStatus(runId: string, event: RunEvent): void {
+    const status = event.payload.status;
+    if (!status) {
+      return;
+    }
+    const active = this.activeRuns.get(runId);
+    if (active) {
+      active.status = status;
+    }
   }
 
   private emitLiveEvent(event: RunEvent): void {

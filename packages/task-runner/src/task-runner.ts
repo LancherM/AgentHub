@@ -88,6 +88,8 @@ import {
 } from "./workspace";
 import { safeGitCommand, safeGitExecutionOptions } from "./git-safety";
 
+export type { AgentRunEvent } from "@agent-hub/agent-adapters";
+
 export interface IdGenerator {
   nextId(prefix: string): string;
 }
@@ -118,6 +120,8 @@ export interface RunTaskInput {
   userConstraints?: string[];
   executionHints?: string[];
   continueFrom?: RunContinuationInput;
+  onEvent?: (event: AgentRunEvent) => void | Promise<void>;
+  signal?: AbortSignal;
 }
 
 export interface RunContinuationInput {
@@ -358,14 +362,76 @@ export class TaskRunner {
       updatedAt: createdAt
     });
     await this.taskRunRepository.create(run);
+    const events: AgentRunEvent[] = [];
+    const warnings = [...contextBundle.warnings];
+    const emitRunEvent = async (event: AgentRunEvent): Promise<void> => {
+      events.push(event);
+      if (!input.onEvent) {
+        return;
+      }
+      try {
+        await input.onEvent(event);
+      } catch (error) {
+        warnings.push(`run event listener failed: ${errorMessage(error)}`);
+      }
+    };
+
+    await emitRunEvent(
+      progressEvent(
+        "context_compiled",
+        "Context compiled for runtime injection.",
+        {
+          phase: "context",
+          deliveryMode: parsed.deliveryMode,
+          contextBundleId: contextBundle.id,
+          sectionCount: contextBundle.sections.length
+        }
+      )
+    );
+
+    if (input.signal?.aborted) {
+      await emitRunEvent(
+        progressEvent("run_cancelled", "Run cancelled before execution started.", {
+          phase: "final",
+          status: "cancelled"
+        })
+      );
+      await this.persistNewRunEvents(run.id, events, warnings);
+      const cancelledAt = this.clock.now();
+      const cancelledRun = await this.taskRunRepository.updateStatus(
+        run.id,
+        "cancelled",
+        cancelledAt
+      );
+      const reopenedTask = await this.taskRepository.updateStatus(
+        currentTask.id,
+        "open",
+        cancelledAt
+      );
+      return this.result({
+        ok: false,
+        task: reopenedTask,
+        run: cancelledRun,
+        events,
+        status: "cancelled",
+        contextBundle,
+        contextMarkdown,
+        warnings,
+        error: "Run cancelled before execution started."
+      });
+    }
 
     const adapter = this.agentRegistry.get(parsed.agentKind);
     if (!adapter) {
       const message = `agent ${parsed.agentKind} is not registered`;
-      const events: AgentRunEvent[] = [{ type: "error", message }];
-      await this.runEventRepository.createMany(
-        toPersistedRunEvents(run.id, events, this.clock, this.idGenerator)
+      await emitRunEvent({ type: "error", message });
+      await emitRunEvent(
+        progressEvent("run_failed", message, {
+          phase: "final",
+          status: "failed"
+        })
       );
+      await this.persistNewRunEvents(run.id, events, warnings);
       await this.taskRunRepository.updateStatus(
         run.id,
         "running",
@@ -390,7 +456,7 @@ export class TaskRunner {
         status: "failed",
         contextBundle,
         contextMarkdown,
-        warnings: [...contextBundle.warnings],
+        warnings,
         error: message
       });
     }
@@ -415,10 +481,14 @@ export class TaskRunner {
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      const events: AgentRunEvent[] = [{ type: "error", message }];
-      await this.runEventRepository.createMany(
-        toPersistedRunEvents(run.id, events, this.clock, this.idGenerator)
+      await emitRunEvent({ type: "error", message });
+      await emitRunEvent(
+        progressEvent("run_failed", message, {
+          phase: "final",
+          status: "failed"
+        })
       );
+      await this.persistNewRunEvents(run.id, events, warnings);
       await this.taskRunRepository.updateStatus(
         run.id,
         "running",
@@ -443,7 +513,7 @@ export class TaskRunner {
         status: "failed",
         contextBundle,
         contextMarkdown,
-        warnings: [...contextBundle.warnings],
+        warnings,
         error: message
       });
     }
@@ -461,8 +531,6 @@ export class TaskRunner {
     let taskBriefPath: string | undefined;
     let taskBriefArtifactContent: string | undefined;
     const runtimeDirectory = path.join(worktreePath, ".agent-hub", "tasks", task.id);
-    const events: AgentRunEvent[] = [];
-    const warnings = [...contextBundle.warnings];
     let generatedFileBaselines: GeneratedFileBaseline[] = [];
     let workspaceCleanup: WorkspaceCleanupResult | undefined;
     let codeStateProvenance: CodeStateProvenance | undefined;
@@ -504,13 +572,27 @@ export class TaskRunner {
       "running",
       this.clock.now()
     );
+    await emitRunEvent(
+      progressEvent("run_started", "TaskRunner execution started.", {
+        phase: "lifecycle",
+        status: "running",
+        worktreePath
+      })
+    );
+    await emitRunEvent(
+      progressEvent("agent_step", "Isolated worktree is ready.", {
+        phase: "agent",
+        worktreePath,
+        branchName: workspaceSession.workspace.branchName
+      })
+    );
 
     if (input.dryRun) {
-      events.push({
+      await emitRunEvent({
         type: "status",
         message: "dry-run mode skipped fake adapter execution"
       });
-      events.push({
+      await emitRunEvent({
         type: "exit",
         message: "dry-run completed",
         exitCode: 0
@@ -523,7 +605,7 @@ export class TaskRunner {
             childWorktreePath: worktreePath,
             createdAt: this.clock.now()
           });
-          events.push({
+          await emitRunEvent({
             type: "status",
             message: `continued code state from ${continuation.parentRunId}`,
             metadata: {
@@ -566,6 +648,7 @@ export class TaskRunner {
         }
 
         try {
+          let adapterEventSeen = false;
           for await (const event of adapter.run({
             originalProjectRoot: projectRoot,
             worktreePath,
@@ -577,12 +660,22 @@ export class TaskRunner {
             taskId: task.id,
             taskTitle: task.title,
             taskPrompt: parsed.taskPrompt,
-            environment: input.environmentOverrides
+            environment: input.environmentOverrides,
+            signal: input.signal
           })) {
-            events.push(event);
+            if (!adapterEventSeen) {
+              adapterEventSeen = true;
+              await emitRunEvent(
+                progressEvent("agent_step", "Agent adapter started.", {
+                  phase: "agent",
+                  agentKind: parsed.agentKind
+                })
+              );
+            }
+            await emitRunEvent(event);
           }
         } catch (error) {
-          events.push({
+          await emitRunEvent({
             type: "error",
             message: error instanceof Error ? error.message : String(error)
           });
@@ -604,20 +697,43 @@ export class TaskRunner {
       diff = failedDiffResultFromError(worktreePath, error);
     }
 
-    try {
-      verification = await this.verificationRunner.run({
-        cwd: worktreePath,
-        commands: input.verificationCommands,
-        stopOnFailure: input.stopOnVerificationFailure,
-        dryRun: input.dryRun
-      });
-    } catch (error) {
-      recordDiagnostic("verification", error);
-      verification = failedVerificationSuiteFromError(
-        error,
-        input.verificationCommands
-      );
+    const adapterExitBeforeVerification = findLastExitEvent(events);
+    const adapterCancelled = isCancellationExit(
+      adapterExitBeforeVerification,
+      input.signal
+    );
+    await emitRunEvent(
+      progressEvent("verification_started", "Verification stage started.", {
+        phase: "verification",
+        status: "verifying",
+        skipped: adapterCancelled
+      })
+    );
+    if (adapterCancelled) {
+      verification = skippedVerificationSuite("Verification skipped because the run was cancelled.");
+    } else {
+      try {
+        verification = await this.verificationRunner.run({
+          cwd: worktreePath,
+          commands: input.verificationCommands,
+          stopOnFailure: input.stopOnVerificationFailure,
+          dryRun: input.dryRun
+        });
+      } catch (error) {
+        recordDiagnostic("verification", error);
+        verification = failedVerificationSuiteFromError(
+          error,
+          input.verificationCommands
+        );
+      }
     }
+    await emitRunEvent(
+      progressEvent("verification_finished", verification.summary, {
+        phase: "verification",
+        passed: verification.status === "passed",
+        summary: verification.summary
+      })
+    );
     if (verification.missingCommandConfig) {
       warnings.push(MISSING_VERIFICATION_COMMANDS_WARNING);
     }
@@ -636,10 +752,13 @@ export class TaskRunner {
     }
 
     const exitEvent = findLastExitEvent(events);
+    const runCancelled = isCancellationExit(exitEvent, input.signal);
     const adapterSucceeded =
       exitEvent?.type === "exit" && exitEvent.exitCode === 0;
     let status: RunStatus =
-      adapterSucceeded &&
+      runCancelled
+        ? "cancelled"
+        : adapterSucceeded &&
       diff.ok &&
       verification.status !== "failed" &&
       !finalizationFailed
@@ -722,7 +841,7 @@ export class TaskRunner {
       }
     }
 
-    status = status === "succeeded" && !finalizationFailed ? "succeeded" : "failed";
+    status = finalRunStatus(status, finalizationFailed);
 
     try {
       workspaceCleanup = await workspaceSession.cleanup({
@@ -737,7 +856,7 @@ export class TaskRunner {
         commands: []
       };
     }
-    status = status === "succeeded" && !finalizationFailed ? "succeeded" : "failed";
+    status = finalRunStatus(status, finalizationFailed);
 
     try {
       await this.runMetadataRepository.save({
@@ -751,12 +870,19 @@ export class TaskRunner {
     } catch (error) {
       recordDiagnostic("run metadata persistence", error);
     }
-    status = status === "succeeded" && !finalizationFailed ? "succeeded" : "failed";
+    status = finalRunStatus(status, finalizationFailed);
+
+    await emitRunEvent(
+      progressEvent(finalDesktopEventType(status), finalRunMessage(status, finalizationError), {
+        phase: "final",
+        status: toDesktopStatus(status),
+        summary: finalRunMessage(status, finalizationError),
+        assistantOutput: false
+      })
+    );
 
     try {
-      await this.runEventRepository.createMany(
-        toPersistedRunEvents(run.id, events, this.clock, this.idGenerator)
-      );
+      await this.persistNewRunEvents(run.id, events, warnings);
     } catch (error) {
       const message = `run event persistence failed: ${errorMessage(error)}`;
       warnings.push(message);
@@ -983,6 +1109,32 @@ export class TaskRunner {
       )
     };
   }
+
+  private async persistNewRunEvents(
+    runId: string,
+    events: AgentRunEvent[],
+    warnings: string[]
+  ): Promise<void> {
+    const existingCount = await this.runEventRepository.countByRunId(runId);
+    const newEvents = events.slice(existingCount);
+    if (newEvents.length === 0) {
+      return;
+    }
+    try {
+      await this.runEventRepository.createMany(
+        toPersistedRunEvents(
+          runId,
+          newEvents,
+          this.clock,
+          this.idGenerator,
+          existingCount
+        )
+      );
+    } catch (error) {
+      warnings.push(`run event persistence failed: ${errorMessage(error)}`);
+      throw error;
+    }
+  }
 }
 
 export async function runTask(input: RunTaskInput): Promise<RunResult> {
@@ -1000,11 +1152,86 @@ export function createTaskBriefFromTask(task: Task, contextMarkdown = ""): TaskB
   });
 }
 
+function progressEvent(
+  desktopEventType: string,
+  message: string,
+  metadata: JsonObject = {}
+): AgentRunEvent {
+  return {
+    type: "status",
+    message,
+    metadata: compactMetadata({
+      ...metadata,
+      desktopEventType,
+      message
+    })
+  };
+}
+
+function compactMetadata(metadata: JsonObject): JsonObject {
+  return Object.fromEntries(
+    Object.entries(metadata).filter(([, value]) => value !== undefined)
+  ) as JsonObject;
+}
+
+function finalRunStatus(status: RunStatus, finalizationFailed: boolean): RunStatus {
+  if (status === "cancelled") {
+    return "cancelled";
+  }
+  return status === "succeeded" && !finalizationFailed ? "succeeded" : "failed";
+}
+
+function finalDesktopEventType(status: RunStatus): string {
+  if (status === "succeeded") {
+    return "run_completed";
+  }
+  if (status === "cancelled") {
+    return "run_cancelled";
+  }
+  return "run_failed";
+}
+
+function toDesktopStatus(status: RunStatus): string {
+  return status === "succeeded" ? "completed" : status;
+}
+
+function finalRunMessage(status: RunStatus, error: string | undefined): string {
+  if (status === "succeeded") {
+    return "Run completed.";
+  }
+  if (status === "cancelled") {
+    return "Run cancelled.";
+  }
+  return error ?? "Run failed.";
+}
+
+function isCancellationExit(
+  event: AgentRunEvent | undefined,
+  signal: AbortSignal | undefined
+): boolean {
+  return signal?.aborted === true &&
+    event?.type === "exit" &&
+    event.signal !== undefined &&
+    event.signal !== null;
+}
+
+function skippedVerificationSuite(summary: string): VerificationSuiteResult {
+  return {
+    status: "skipped",
+    results: [],
+    failedCommands: [],
+    missingCommandConfig: false,
+    summary,
+    durationMs: 0
+  };
+}
+
 function toPersistedRunEvents(
   runId: string,
   events: AgentRunEvent[],
   clock: Clock,
-  idGenerator: IdGenerator
+  idGenerator: IdGenerator,
+  sequenceOffset = 0
 ): RunEvent[] {
   return events.map((event, sequence) => {
     const metadata: JsonObject = { ...(event.metadata ?? {}) };
@@ -1017,7 +1244,7 @@ function toPersistedRunEvents(
     return validateRunEvent({
       id: idGenerator.nextId("event"),
       taskRunId: runId,
-      sequence,
+      sequence: sequenceOffset + sequence,
       type: event.type,
       message: event.message,
       metadata,

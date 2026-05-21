@@ -592,7 +592,7 @@ describe("CLI", () => {
     expect(queryOutput.join("")).toContain(`${taskId}\tcompleted\t${projectId}\tRegistered fake task`);
     expect(queryOutput.join("")).toContain(`Task ${taskId}`);
     expect(queryOutput.join("")).toContain("runs: 1");
-    expect(queryOutput.join("")).toContain("events: 2");
+    expect(queryOutput.join("")).toContain("events: 8");
   });
 
   it("keeps ad-hoc SQLite projects scoped to their repository roots", async () => {
