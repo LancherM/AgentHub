@@ -79,6 +79,21 @@ export class NodeShellExecutor implements ShellExecutor {
       };
     }
 
+    if (options.signal?.aborted) {
+      return {
+        command: normalizeCommand(command),
+        cwd,
+        stdout: "",
+        stderr: "",
+        exitCode: null,
+        signal: "SIGTERM",
+        durationMs: Date.now() - start,
+        timedOut: false,
+        dryRun: false,
+        error: "terminated by SIGTERM"
+      };
+    }
+
     return new Promise<ShellResult>((resolve) => {
       const child = this.spawner(command.executable, command.args ?? [], {
         cwd,
@@ -101,11 +116,7 @@ export class NodeShellExecutor implements ShellExecutor {
       const abortHandler = (): void => {
         child.kill("SIGTERM");
       };
-      if (options.signal?.aborted) {
-        abortHandler();
-      } else {
-        options.signal?.addEventListener("abort", abortHandler, { once: true });
-      }
+      options.signal?.addEventListener("abort", abortHandler, { once: true });
       const cleanup = (): void => {
         if (timeout) {
           clearTimeout(timeout);

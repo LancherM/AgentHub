@@ -73,6 +73,24 @@ describe("NodeShellExecutor", () => {
     expect(calls[0][2].env.CUSTOM_ENV).toBe("explicit");
     expect(calls[0][2].env.AGENT_HUB_TEST_SECRET).toBeUndefined();
   });
+
+  it("does not spawn when the abort signal is already set", async () => {
+    const cwd = await createTestDirectory("shell-executor-abort-before-spawn");
+    const controller = new AbortController();
+    controller.abort();
+    const spawner = vi.fn<ShellSpawner>(() => new MockShellProcess());
+    const executor = new NodeShellExecutor(spawner);
+
+    const result = await executor.execute(
+      { executable: "node", args: ["--version"] },
+      { cwd, signal: controller.signal }
+    );
+
+    expect(spawner).not.toHaveBeenCalled();
+    expect(result.exitCode).toBeNull();
+    expect(result.signal).toBe("SIGTERM");
+    expect(result.error).toBe("terminated by SIGTERM");
+  });
 });
 
 class MockShellProcess extends EventEmitter implements SpawnedShellProcess {
