@@ -371,7 +371,8 @@ readiness, adapter output, verification start/finish, and terminal
 completion/failure/cancellation. Late run-card or inspector subscribers replay
 the persisted timeline exactly once. Running cancellation is backed by an
 `AbortSignal`: fake runs stop cooperatively, process-backed Codex/Claude runs
-send `SIGTERM` through the shared process runner, and the desktop records
+send `SIGTERM` through the shared process runner, verification commands receive
+the same signal through the shared shell executor, and the desktop records
 cancelled status only when execution was stopped or had not started.
 
 The renderer only calls the safe `window.agentHub` preload API. It has no

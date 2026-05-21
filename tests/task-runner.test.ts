@@ -1048,6 +1048,59 @@ describe("task runner", () => {
     );
   });
 
+  it("cancels a run while verification is executing", async () => {
+    const projectRoot = await createTestDirectory("agent-hub-project");
+    const runRoot = await createTestDirectory("agent-hub-runs");
+    const controller = new AbortController();
+    const shell = new MockShellExecutor([
+      (_command, options) => {
+        expect(options.signal).toBe(controller.signal);
+        controller.abort();
+        return { exitCode: null, signal: "SIGTERM" };
+      }
+    ]);
+    const runEventRepository = new InMemoryRunEventRepository();
+    const runner = new TaskRunner({
+      defaultRunRoot: runRoot,
+      workspaceManager: new TestWorkspaceManager(runRoot),
+      diffCollector: new StaticDiffCollector(),
+      verificationRunner: new VerificationRunner(shell),
+      runEventRepository,
+      idGenerator: new SequenceIdGenerator(),
+      clock: new FixedClock("2026-01-01T00:00:00.000Z")
+    });
+
+    const result = await runner.run({
+      projectRoot,
+      rawPrompt: "@fake verify cancellable",
+      verificationCommands: [{ id: "test", command: "pnpm", args: ["test"] }],
+      signal: controller.signal
+    });
+
+    expect(result.status).toBe("cancelled");
+    expect(result.run.status).toBe("cancelled");
+    expect(result.verification).toMatchObject({
+      status: "skipped",
+      results: [
+        expect.objectContaining({
+          status: "skipped",
+          signal: "SIGTERM",
+          skippedReason: "Run cancelled during verification."
+        })
+      ]
+    });
+    await expect(runEventRepository.listByRunId(result.run.id)).resolves.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          metadata: expect.objectContaining({ desktopEventType: "verification_started" })
+        }),
+        expect.objectContaining({
+          metadata: expect.objectContaining({ desktopEventType: "run_cancelled" })
+        })
+      ])
+    );
+  });
+
   it("converts dangerous verification commands into an inspectable failed run", async () => {
     const projectRoot = await createTestDirectory("agent-hub-project");
     const runRoot = await createTestDirectory("agent-hub-runs");

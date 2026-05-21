@@ -698,10 +698,9 @@ export class TaskRunner {
     }
 
     const adapterExitBeforeVerification = findLastExitEvent(events);
-    const adapterCancelled = isCancellationExit(
-      adapterExitBeforeVerification,
-      input.signal
-    );
+    const adapterCancelled =
+      input.signal?.aborted === true ||
+      isCancellationExit(adapterExitBeforeVerification, input.signal);
     await emitRunEvent(
       progressEvent("verification_started", "Verification stage started.", {
         phase: "verification",
@@ -717,7 +716,8 @@ export class TaskRunner {
           cwd: worktreePath,
           commands: input.verificationCommands,
           stopOnFailure: input.stopOnVerificationFailure,
-          dryRun: input.dryRun
+          dryRun: input.dryRun,
+          signal: input.signal
         });
       } catch (error) {
         recordDiagnostic("verification", error);
@@ -752,7 +752,8 @@ export class TaskRunner {
     }
 
     const exitEvent = findLastExitEvent(events);
-    const runCancelled = isCancellationExit(exitEvent, input.signal);
+    const runCancelled =
+      input.signal?.aborted === true || isCancellationExit(exitEvent, input.signal);
     const adapterSucceeded =
       exitEvent?.type === "exit" && exitEvent.exitCode === 0;
     let status: RunStatus =
@@ -872,11 +873,18 @@ export class TaskRunner {
     }
     status = finalRunStatus(status, finalizationFailed);
 
+    const errorEvent = events.find((event) => event.type === "error");
+    const failureMessage =
+      finalizationError ??
+      errorEvent?.message ??
+      diff.error ??
+      verification.failedCommands[0]?.stderr;
+    const finalMessage = finalRunMessage(status, failureMessage);
     await emitRunEvent(
-      progressEvent(finalDesktopEventType(status), finalRunMessage(status, finalizationError), {
+      progressEvent(finalDesktopEventType(status), finalMessage, {
         phase: "final",
         status: toDesktopStatus(status),
-        summary: finalRunMessage(status, finalizationError),
+        summary: finalMessage,
         assistantOutput: false
       })
     );
@@ -926,7 +934,6 @@ export class TaskRunner {
     }
 
     const fakeOutput = extractFakeOutput(events);
-    const errorEvent = events.find((event) => event.type === "error");
 
     return this.result({
       ok: status === "succeeded",
@@ -946,11 +953,7 @@ export class TaskRunner {
       warnings,
       error:
         status === "failed"
-          ? finalizationError ??
-            errorEvent?.message ??
-            diff.error ??
-            verification.failedCommands[0]?.stderr ??
-            "run failed"
+          ? finalizationError ?? failureMessage ?? "run failed"
           : undefined
     });
   }

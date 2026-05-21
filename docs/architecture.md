@@ -191,9 +191,10 @@ duplicate full evidence into message bodies. TaskRunner accepts a progress hook
 and abort signal for desktop execution. The hook lets `RunService` persist and
 emit context, worktree, adapter, verification, and terminal lifecycle events
 while the run is active, then replay those same rows to late subscribers. The
-abort signal flows through adapters into `NodeProcessRunner`; running desktop
-cancellation sends `SIGTERM` to process-backed agents and records cancelled
-state only for runs that were actually stopped or had not started.
+abort signal flows through adapters into `NodeProcessRunner` and verification
+shell execution; running desktop cancellation sends `SIGTERM` to process-backed
+agents or verification commands and records cancelled state only for runs that
+were actually stopped or had not started.
 
 Desktop packaging is a local release concern layered over that shell. The
 workspace keeps Electron/Vite bundling in `apps/desktop`, then uses
@@ -579,12 +580,14 @@ Verification commands run with the isolated worktree as cwd. Dangerous command
 rejection is represented as a failed verification command, and shell results
 rejection is represented as a failed verification command. `VerificationRunner`
 passes a 10-minute timeout to `ShellExecutor` when a command omits `timeoutMs`,
-while explicit command timeouts remain overrides. Shell results carry timeout
-and signal metadata so callers can distinguish command failures from process
-termination. If a run has no configured verification commands, the verification
-suite remains skipped and the task runner adds a warning to `RunResult.warnings`;
-normal CLI output stays agent-facing, while debug output renders the warning
-through the existing run-summary path.
+while explicit command timeouts remain overrides. Desktop abort signals are
+forwarded to `ShellExecutor`, so cancellation can terminate a running
+verification command and preserve the run as `cancelled`. Shell results carry
+timeout and signal metadata so callers can distinguish command failures from
+process termination. If a run has no configured verification commands, the
+verification suite remains skipped and the task runner adds a warning to
+`RunResult.warnings`; normal CLI output stays agent-facing, while debug output
+renders the warning through the existing run-summary path.
 
 The physical package split is present and now includes both user-facing app
 packages. Cross-package contracts flow through `packages/shared` and

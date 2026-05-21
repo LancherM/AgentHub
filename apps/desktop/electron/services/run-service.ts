@@ -568,7 +568,7 @@ class RepositoryRunService implements RunService {
 
   private applyLiveEventStatus(runId: string, event: RunEvent): void {
     const status = event.payload.status;
-    if (!status) {
+    if (!status || isTerminalStatus(status)) {
       return;
     }
     const active = this.activeRuns.get(runId);

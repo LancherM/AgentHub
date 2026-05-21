@@ -16,6 +16,7 @@ export interface ShellExecutionOptions {
   timeoutMs?: number;
   env?: Record<string, string | undefined>;
   dryRun?: boolean;
+  signal?: AbortSignal;
 }
 
 export { formatShellCommand };
@@ -97,6 +98,20 @@ export class NodeShellExecutor implements ShellExecutor {
               child.kill("SIGTERM");
             }, options.timeoutMs)
           : undefined;
+      const abortHandler = (): void => {
+        child.kill("SIGTERM");
+      };
+      if (options.signal?.aborted) {
+        abortHandler();
+      } else {
+        options.signal?.addEventListener("abort", abortHandler, { once: true });
+      }
+      const cleanup = (): void => {
+        if (timeout) {
+          clearTimeout(timeout);
+        }
+        options.signal?.removeEventListener("abort", abortHandler);
+      };
 
       child.stdout?.setEncoding("utf8");
       child.stderr?.setEncoding("utf8");
@@ -112,9 +127,7 @@ export class NodeShellExecutor implements ShellExecutor {
           return;
         }
         settled = true;
-        if (timeout) {
-          clearTimeout(timeout);
-        }
+        cleanup();
         resolve({
           command: normalizeCommand(command),
           cwd,
@@ -134,9 +147,7 @@ export class NodeShellExecutor implements ShellExecutor {
           return;
         }
         settled = true;
-        if (timeout) {
-          clearTimeout(timeout);
-        }
+        cleanup();
         resolve({
           command: normalizeCommand(command),
           cwd,
