@@ -32,7 +32,8 @@ import {
   InMemoryTaskRepository,
   InMemoryTaskRunRepository,
   InMemoryVerificationResultRepository,
-  InMemoryMemoryItemRepository
+  InMemoryMemoryItemRepository,
+  validateRunEvent
 } from "@agent-hub/core";
 import {
   FixedClock,
@@ -333,6 +334,55 @@ describe("task runner", () => {
     );
     expect(observed.some((event) => event.type === "stdout")).toBe(true);
     expect(observed.at(-1)?.metadata?.desktopEventType).toBe("run_completed");
+  });
+
+  it("backfills missing persisted run events by sequence without duplicating later events", async () => {
+    const runEventRepository = new InMemoryRunEventRepository();
+    let persistedEventId = 0;
+    const runner = new TaskRunner({
+      runEventRepository,
+      idGenerator: {
+        nextId: (prefix: string) => `${prefix}_persist_${++persistedEventId}`
+      },
+      clock: new FixedClock("2026-01-01T00:00:00.000Z")
+    });
+    const runId = "run_backfill";
+    await runEventRepository.createMany([
+      validateRunEvent({
+        id: "event_0001",
+        taskRunId: runId,
+        sequence: 0,
+        type: "status",
+        message: "first",
+        metadata: {},
+        createdAt: "2026-01-01T00:00:00.000Z"
+      }),
+      validateRunEvent({
+        id: "event_0002",
+        taskRunId: runId,
+        sequence: 2,
+        type: "status",
+        message: "third",
+        metadata: {},
+        createdAt: "2026-01-01T00:00:00.000Z"
+      })
+    ]);
+
+    await (runner as unknown as { persistNewRunEvents: Function }).persistNewRunEvents(
+      runId,
+      [
+        { type: "status", message: "first" },
+        { type: "status", message: "second" },
+        { type: "status", message: "third" }
+      ],
+      []
+    );
+
+    await expect(runEventRepository.listByRunId(runId)).resolves.toEqual([
+      expect.objectContaining({ sequence: 0, message: "first" }),
+      expect.objectContaining({ sequence: 1, message: "second" }),
+      expect.objectContaining({ sequence: 2, message: "third" })
+    ]);
   });
 
   it("cancels before adapter execution when the abort signal is already set", async () => {
