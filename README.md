@@ -1,74 +1,76 @@
-> ⚠️ 注意：Agent Hub 仍处于早期开发阶段，暂时不可用于生产或稳定日常工作流。
+> ⚠️ Note: Agent Hub is still in early development and is not yet ready for production or stable day-to-day workflows.
 
 # Agent Hub
 
-Agent Hub 是一个 **local-first、CLI-first** 的开发者工具，用于在隔离的 git worktree 中编排和对比编码代理（例如 Codex、Claude Code、Fake Agent）的任务执行结果。
+[中文说明](README_CN.md)
 
-当前仓库已经具备可运行的基础能力，但整体仍在快速演进中。
+Agent Hub is a **local-first, CLI-first** developer tool for orchestrating coding agents (such as Codex, Claude Code, and Fake Agent) in isolated git worktrees, then reviewing and comparing their outputs.
 
-## 这个项目解决什么问题
+The repository is already runnable and includes core workflows, but it is still evolving quickly.
 
-在多代理协作场景里，常见问题是：
+## What problem does this project solve?
 
-- 任务上下文分散，提示词难复用
-- 代理执行过程不可追踪，结果难比较
-- 直接在主仓库运行代理容易污染工作区
-- 风险变更（敏感文件、危险命令）缺乏统一扫描
+In multi-agent coding workflows, teams and individuals often run into the same issues:
 
-Agent Hub 的目标是通过本地化能力解决这些问题：
+- Task context is fragmented and hard to reuse.
+- Agent execution is difficult to trace end-to-end.
+- Running agents directly in the main checkout can pollute the working tree.
+- Risky changes (sensitive files, dangerous commands) are not consistently scanned.
 
-- 为任务生成结构化上下文包（context pack）和任务简报（brief）
-- 在隔离 worktree 中运行代理并收集事件、验证结果、diff、风险
-- 对同一任务的不同运行结果进行本地对比
-- 通过“提议 -> 审批”流程管理长期记忆
+Agent Hub addresses these problems with local, auditable workflows:
 
-## 核心原则
+- Build task-specific context packs and briefs.
+- Run agents in isolated worktrees and collect logs, verification, diffs, and risks.
+- Compare multiple runs for the same task.
+- Manage long-term memory through a proposal → approval lifecycle.
 
-- **Local-first**：默认本地存储（SQLite + 本地文件）
-- **CLI-first**：CLI 是第一入口；桌面端是本地核心能力的图形壳层
-- **无侵入上下文注入**：默认 runtime injection，而不是改写用户仓库
-- **安全边界清晰**：任务运行在独立 worktree，不自动 merge / push / 开 PR
+## Core principles
 
-## 仓库结构
+- **Local-first**: local persistence by default (SQLite + local files)
+- **CLI-first**: CLI is the primary interface; desktop is a local graphical shell
+- **Non-invasive context delivery**: runtime injection by default instead of rewriting user repos
+- **Clear safety boundaries**: runs stay in isolated worktrees, with no automatic merge / push / PR creation
+
+## Repository layout
 
 ```text
-apps/cli                  CLI 入口与交互命令
-apps/desktop              Electron + React 桌面壳层
-packages/shared           共享类型与工具
-packages/core             领域模型与服务接口
-packages/db               SQLite schema 与仓储
-packages/context-compiler 上下文编译、任务简报、导出逻辑
-packages/task-runner      worktree、任务执行、验证、diff 汇总
-packages/agent-adapters   Fake/Codex/Claude Code 适配器
-packages/safety           风险扫描与安全检查
-tests                     跨包测试
+apps/cli                  CLI entrypoint and interactive workflows
+apps/desktop              Electron + React desktop shell
+packages/shared           Shared types and utilities
+packages/core             Domain models and service interfaces
+packages/db               SQLite schema and repositories
+packages/context-compiler Context compilation, briefs, and export logic
+packages/task-runner      Worktrees, task execution, verification, and diff collection
+packages/agent-adapters   Fake/Codex/Claude Code adapters
+packages/safety           Risk scanning and safety checks
+tests                     Cross-package test coverage
 ```
 
-## 当前已实现能力（概要）
+## Current capabilities (high-level)
 
-- CLI 工作流：项目、任务、运行、事件、风险、记忆、对比等命令
-- 本地 SQLite 持久化：项目/任务/运行/事件/风险/记忆/对比等数据
-- 上下文构建：从 Agent Hub 自有上下文存储生成 brief/context pack
-- 运行模式：支持 Fake、Codex、Claude Code 适配器（在隔离 worktree 中运行）
-- 工件产出：运行日志、verification 结果、git diff、风险报告
-- 记忆机制：memory proposal + approve/reject + approved memory 写回
-- 桌面端初版：对话线程、运行卡片、检查器抽屉（日志/diff/风险/记忆）
+- CLI workflows for projects, tasks, runs, events, risks, memory, and comparison
+- Local SQLite persistence for project/task/run/event/risk/memory/comparison data
+- Context build pipeline that compiles Agent Hub-owned context into brief/context pack artifacts
+- Adapter-based execution for Fake, Codex, and Claude Code in isolated worktrees
+- Run artifacts including logs, verification results, git diffs, and risk reports
+- Memory workflow: propose, approve/reject, and approved-memory writeback
+- Initial desktop shell with thread view, run cards, and inspector panels (logs/diff/risks/memory)
 
-## 仍在完善中的部分
+## Areas still in progress
 
-- 桌面端对真实任务运行的完整流式体验与取消控制
-- 更完整的 verification 配置与可视化
-- 更丰富的跨代理评审/对比维度
+- Full desktop streaming execution UX, including cancellation controls
+- Richer verification configuration and visualization in desktop workflows
+- More advanced multi-agent comparison and scoring depth
 
-## 快速开始
+## Quick start
 
-### 1) 安装依赖
+### 1) Install dependencies
 
 ```sh
 pnpm install
 ```
 
-### 2) 常用检查
+### 2) Run common checks
 
 ```sh
 pnpm typecheck
@@ -77,7 +79,7 @@ pnpm lint
 pnpm build
 ```
 
-如果全局没有 `pnpm`，可使用仓库本地二进制：
+If global `pnpm` is unavailable, use the repo-local binary:
 
 ```sh
 ./node_modules/.bin/pnpm typecheck
@@ -85,13 +87,13 @@ pnpm build
 ./node_modules/.bin/pnpm lint
 ```
 
-### 3) 启动桌面端（开发模式）
+### 3) Start the desktop shell (dev mode)
 
 ```sh
 ./node_modules/.bin/pnpm --filter desktop dev
 ```
 
-## CLI 命令参考
+## CLI command reference
 
 ```sh
 agent-hub [--project <path>] [--agent fake|codex|claude-code]
