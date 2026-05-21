@@ -78,7 +78,9 @@ describe("NodeShellExecutor", () => {
     const cwd = await createTestDirectory("shell-executor-abort-before-spawn");
     const controller = new AbortController();
     controller.abort();
-    const spawner = vi.fn<ShellSpawner>(() => new MockShellProcess());
+    const spawner = vi.fn<Parameters<ShellSpawner>, ReturnType<ShellSpawner>>(
+      () => new MockShellProcess()
+    );
     const executor = new NodeShellExecutor(spawner);
 
     const result = await executor.execute(
