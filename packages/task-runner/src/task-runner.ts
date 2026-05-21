@@ -1118,19 +1118,19 @@ export class TaskRunner {
     events: AgentRunEvent[],
     warnings: string[]
   ): Promise<void> {
-    const existingCount = await this.runEventRepository.countByRunId(runId);
-    const newEvents = events.slice(existingCount);
+    const persistedEvents = await this.runEventRepository.listByRunId(runId);
+    const persistedSequences = new Set(persistedEvents.map((event) => event.sequence));
+    const newEventsWithSequence = events
+      .map((event, sequence) => ({ event, sequence }))
+      .filter(({ sequence }) => !persistedSequences.has(sequence));
+    const newEvents = newEventsWithSequence.map(({ event }) => event);
     if (newEvents.length === 0) {
       return;
     }
     try {
       await this.runEventRepository.createMany(
-        toPersistedRunEvents(
-          runId,
-          newEvents,
-          this.clock,
-          this.idGenerator,
-          existingCount
+        newEventsWithSequence.map(({ event, sequence }) =>
+          toPersistedRunEvent(runId, event, sequence, this.clock, this.idGenerator)
         )
       );
     } catch (error) {
@@ -1229,30 +1229,28 @@ function skippedVerificationSuite(summary: string): VerificationSuiteResult {
   };
 }
 
-function toPersistedRunEvents(
+function toPersistedRunEvent(
   runId: string,
-  events: AgentRunEvent[],
+  event: AgentRunEvent,
+  sequence: number,
   clock: Clock,
-  idGenerator: IdGenerator,
-  sequenceOffset = 0
-): RunEvent[] {
-  return events.map((event, sequence) => {
-    const metadata: JsonObject = { ...(event.metadata ?? {}) };
-    if (event.type === "exit") {
-      metadata.exitCode = event.exitCode;
-      if (event.signal !== undefined) {
-        metadata.signal = event.signal;
-      }
+  idGenerator: IdGenerator
+): RunEvent {
+  const metadata: JsonObject = { ...(event.metadata ?? {}) };
+  if (event.type === "exit") {
+    metadata.exitCode = event.exitCode;
+    if (event.signal !== undefined) {
+      metadata.signal = event.signal;
     }
-    return validateRunEvent({
-      id: idGenerator.nextId("event"),
-      taskRunId: runId,
-      sequence: sequenceOffset + sequence,
-      type: event.type,
-      message: event.message,
-      metadata,
-      createdAt: clock.now()
-    });
+  }
+  return validateRunEvent({
+    id: idGenerator.nextId("event"),
+    taskRunId: runId,
+    sequence,
+    type: event.type,
+    message: event.message,
+    metadata,
+    createdAt: clock.now()
   });
 }
 
