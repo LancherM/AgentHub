@@ -215,7 +215,8 @@ value of `undefined` removes an allowlisted variable for that child.
 `~/.local/bin`, `~/bin`, discovered `~/.nvm/versions/node/*/bin` entries,
 `/opt/homebrew/bin`, and `/usr/local/bin`. This keeps GUI-launched desktop
 processes able to find locally installed `codex` and `claude` binaries without
-using a shell or inheriting arbitrary environment variables.
+using a shell or inheriting arbitrary environment variables. An explicit
+`PATH: undefined` override disables this lookup for that child process.
 
 The CLI calls the runner rather than owning orchestration logic. The runner
 compiles context, creates a worktree workspace through a `WorkspaceManager`,
