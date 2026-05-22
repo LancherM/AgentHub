@@ -22,12 +22,23 @@ import { createRunService } from "../apps/desktop/electron/services/run-service"
 import { createThreadService } from "../apps/desktop/electron/services/thread-service";
 import { runFakeAgent } from "../apps/desktop/electron/services/fake-agent-runner";
 import {
+  CodexAdapter,
+  DefaultAgentRegistry,
+  FakeAgentAdapter,
+  type ProcessDetectionInput,
+  type ProcessDetectionResult,
+  type ProcessRunEvent,
+  type ProcessRunInput,
+  type ProcessRunner
+} from "@agent-hub/agent-adapters";
+import {
   createIpcHandlers,
   IPC_CHANNELS,
   runEventChannel
 } from "../apps/desktop/electron/ipc-handlers";
 import type { RunDetail, RunEvent } from "../apps/desktop/src/lib/types";
 import { MockProcessRunner } from "./helpers";
+import type { TaskRunnerDependencies } from "@agent-hub/task-runner";
 
 const execFileAsync = promisify(execFile);
 
@@ -60,10 +71,16 @@ describe("desktop services", () => {
     expect(after).toEqual(before);
     expect(run.status).toBe("queued");
     expect(completed.status).toBe("completed");
-    expect(completedWithEvents.events.map((event) => event.type)).toEqual([
-      "agent_output",
-      "run_completed"
-    ]);
+    expect(completedWithEvents.events.map((event) => event.type)).toEqual(
+      expect.arrayContaining([
+        "context_compiled",
+        "run_started",
+        "agent_output",
+        "verification_started",
+        "verification_finished",
+        "run_completed"
+      ])
+    );
     expect(liveEvents.some((event) => event.type === "agent_output")).toBe(true);
     await expect(review.getDiff(run.id)).resolves.toMatchObject({
       files: [expect.objectContaining({ path: "fake-agent-output.md" })],
@@ -303,7 +320,7 @@ describe("desktop services", () => {
     expect(liveEvents.map((event) => event.type)).toContain("run_cancelled");
   });
 
-  it("reports running TaskRunner cancellation as unsupported until Phase 2", async () => {
+  it("replays persisted run events exactly once to late subscribers", async () => {
     const fixture = await createFixture();
     const context = createDesktopServiceContext(fixture.repositories);
     const projects = createProjectService(context);
@@ -313,15 +330,122 @@ describe("desktop services", () => {
     const project = await projects.open(fixture.projectRoot);
     const run = await runs.createRun({
       projectId: project.id,
+      prompt: "Replay this completed run.",
+      agentId: "fake",
+      contextMode: "auto"
+    });
+    await waitForRun(runs, run.id, "completed");
+    const replayed: RunEvent[] = [];
+
+    const unsubscribe = runs.subscribe(run.id, (event) => replayed.push(event));
+    await waitForEvent(replayed, "run_completed");
+    unsubscribe();
+
+    expect(new Set(replayed.map((event) => event.id)).size).toBe(replayed.length);
+    const refreshed = await runs.getRun(run.id);
+    expect(replayed.map((event) => event.id)).toEqual(
+      refreshed.events.map((event) => event.id)
+    );
+  });
+
+  it("emits live progress before final TaskRunner persistence completes", async () => {
+    const fixture = await createFixture();
+    const context = createDesktopServiceContext(fixture.repositories);
+    const projects = createProjectService(context);
+    const memory = createMemoryService(context);
+    const review = createReviewService(context, { memoryService: memory });
+    const runs = createTestRunService(context, review, memory, fixture, {
+      agentRegistry: new DefaultAgentRegistry([
+        new FakeAgentAdapter({ stepDelayMs: 100 })
+      ])
+    });
+    const project = await projects.open(fixture.projectRoot);
+    const run = await runs.createRun({
+      projectId: project.id,
+      prompt: "Stream progress before finalization.",
+      agentId: "fake",
+      contextMode: "auto"
+    });
+    const liveEvents: RunEvent[] = [];
+    const unsubscribe = runs.subscribe(run.id, (event) => liveEvents.push(event));
+
+    await waitForEvent(liveEvents, "run_started");
+    const inProgress = await runs.getRun(run.id);
+    unsubscribe();
+
+    expect(inProgress.status).toBe("running");
+    expect(inProgress.events.map((event) => event.type)).toContain("run_started");
+    await waitForRun(runs, run.id, "completed");
+  });
+
+  it("cancels a running fake TaskRunner-backed desktop run", async () => {
+    const fixture = await createFixture();
+    const context = createDesktopServiceContext(fixture.repositories);
+    const projects = createProjectService(context);
+    const memory = createMemoryService(context);
+    const review = createReviewService(context, { memoryService: memory });
+    const runs = createTestRunService(context, review, memory, fixture, {
+      agentRegistry: new DefaultAgentRegistry([
+        new FakeAgentAdapter({ stepDelayMs: 100 })
+      ])
+    });
+    const project = await projects.open(fixture.projectRoot);
+    const run = await runs.createRun({
+      projectId: project.id,
       prompt: "Cancel this run.",
       agentId: "fake",
       contextMode: "auto"
     });
+    const liveEvents: RunEvent[] = [];
+    const unsubscribe = runs.subscribe(run.id, (event) => liveEvents.push(event));
     await waitForRun(runs, run.id, "running");
 
-    await expect(runs.cancelRun(run.id)).rejects.toThrow(
-      /cancellation is not available/
+    await runs.cancelRun(run.id);
+    await waitForEvent(liveEvents, "run_cancelled");
+    const cancelled = await waitForRun(runs, run.id, "cancelled");
+    unsubscribe();
+
+    expect(cancelled.events.map((event) => event.type)).toContain("run_cancelled");
+    expect(cancelled.events.at(-1)?.type).toBe("run_cancelled");
+  });
+
+  it("cancels a process-backed desktop run with signaled evidence", async () => {
+    const fixture = await createFixture();
+    const context = createDesktopServiceContext(fixture.repositories);
+    const projects = createProjectService(context);
+    const memory = createMemoryService(context);
+    const review = createReviewService(context, { memoryService: memory });
+    const processRunner = new DesktopAbortProcessRunner();
+    const runs = createTestRunService(context, review, memory, fixture, {
+      agentRegistry: new DefaultAgentRegistry([
+        new CodexAdapter({ processRunner })
+      ])
+    });
+    const project = await projects.open(fixture.projectRoot);
+    const run = await runs.createRun({
+      projectId: project.id,
+      prompt: "Cancel process-backed run.",
+      agentId: "codex",
+      contextMode: "auto"
+    });
+    const liveEvents: RunEvent[] = [];
+    const unsubscribe = runs.subscribe(run.id, (event) => liveEvents.push(event));
+    await waitForEvent(liveEvents, "agent_output");
+
+    await runs.cancelRun(run.id);
+    const cancelled = await waitForRun(runs, run.id, "cancelled");
+    unsubscribe();
+
+    expect(processRunner.runCalls[0].signal?.aborted).toBe(true);
+    expect(cancelled.events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "run_cancelled",
+          payload: expect.objectContaining({ status: "cancelled" })
+        })
+      ])
     );
+    expect(cancelled.events.some((event) => event.payload.signal === "SIGTERM")).toBe(true);
   });
 
   it("fake agent runner emits cancellation without touching repositories", async () => {
@@ -1157,7 +1281,8 @@ function createTestRunService(
   context: ReturnType<typeof createDesktopServiceContext>,
   review: ReturnType<typeof createReviewService>,
   memory: ReturnType<typeof createMemoryService>,
-  fixture: { workspaceBasePath: string }
+  fixture: { workspaceBasePath: string },
+  taskRunnerDependencies: TaskRunnerDependencies = {}
 ): ReturnType<typeof createRunService> {
   return createRunService(context, {
     reviewService: review,
@@ -1170,9 +1295,33 @@ function createTestRunService(
           available: false,
           reason: "desktop test unavailable"
         }))
-      )
+      ),
+      ...taskRunnerDependencies
     }
   });
+}
+
+class DesktopAbortProcessRunner implements ProcessRunner {
+  readonly runCalls: ProcessRunInput[] = [];
+  readonly detectCalls: ProcessDetectionInput[] = [];
+
+  async *run(input: ProcessRunInput): AsyncIterable<ProcessRunEvent> {
+    this.runCalls.push(input);
+    yield { type: "stdout", data: "started\n" };
+    await new Promise<void>((resolve) => {
+      if (input.signal?.aborted) {
+        resolve();
+        return;
+      }
+      input.signal?.addEventListener("abort", () => resolve(), { once: true });
+    });
+    yield { type: "exit", exitCode: null, signal: "SIGTERM" };
+  }
+
+  async detect(input: ProcessDetectionInput): Promise<ProcessDetectionResult> {
+    this.detectCalls.push(input);
+    return { available: true, version: "mock" };
+  }
 }
 
 async function initGitRepository(projectRoot: string): Promise<void> {

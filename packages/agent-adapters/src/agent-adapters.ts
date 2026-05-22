@@ -21,6 +21,7 @@ export interface AgentRunInput {
   contextBundle?: ContextBundle;
   contextMarkdown?: string;
   environment?: Record<string, string | undefined>;
+  signal?: AbortSignal;
 }
 
 export type AgentRunEvent =
@@ -72,6 +73,7 @@ export class DefaultAgentRegistry implements AgentRegistry {
 export interface FakeAgentAdapterOptions {
   fail?: boolean;
   failureMessage?: string;
+  stepDelayMs?: number;
 }
 
 export interface ProcessAgentAdapterOptions {
@@ -97,6 +99,10 @@ export class FakeAgentAdapter implements AgentAdapter {
   }
 
   async *run(input: AgentRunInput): AsyncIterable<AgentRunEvent> {
+    if (input.signal?.aborted) {
+      yield* cancelledEvents("FakeAgentAdapter cancelled before execution.");
+      return;
+    }
     if (this.options.fail) {
       yield* failureEvents(
         this.options.failureMessage ?? "FakeAgentAdapter configured failure."
@@ -160,7 +166,19 @@ export class FakeAgentAdapter implements AgentAdapter {
       input.contextMarkdown?.trim() ?? "No context payload was provided."
     ].join("\n");
 
+    try {
+      await delay(this.options.stepDelayMs ?? 0, input.signal);
+    } catch {
+      yield* cancelledEvents("FakeAgentAdapter cancelled before writing output.");
+      return;
+    }
     await fs.writeFile(outputPath, `${output}\n`, "utf8");
+    try {
+      await delay(this.options.stepDelayMs ?? 0, input.signal);
+    } catch {
+      yield* cancelledEvents("FakeAgentAdapter cancelled after writing output.");
+      return;
+    }
 
     yield {
       type: "stdout",
@@ -307,6 +325,56 @@ function* failureEvents(
   };
 }
 
+function* cancelledEvents(message: string): Iterable<AgentRunEvent> {
+  yield {
+    type: "exit",
+    message,
+    exitCode: 1,
+    signal: "SIGTERM",
+    metadata: {
+      cancelled: true,
+      signal: "SIGTERM"
+    }
+  };
+}
+
+function delay(ms: number, signal: AbortSignal | undefined): Promise<void> {
+  if (ms <= 0) {
+    if (signal?.aborted) {
+      return Promise.reject(new AbortError());
+    }
+    return Promise.resolve();
+  }
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new AbortError());
+      return;
+    }
+    let timeout: ReturnType<typeof setTimeout>;
+    let abort = (): void => undefined;
+    const cleanup = (): void => {
+      signal?.removeEventListener("abort", abort);
+    };
+    abort = (): void => {
+      clearTimeout(timeout);
+      cleanup();
+      reject(new AbortError());
+    };
+    timeout = setTimeout(() => {
+      cleanup();
+      resolve();
+    }, ms);
+    signal?.addEventListener("abort", abort, { once: true });
+  });
+}
+
+class AbortError extends Error {
+  constructor() {
+    super("agent run cancelled");
+    this.name = "AbortError";
+  }
+}
+
 async function detectProcessAgent(input: {
   displayName: string;
   executable: string;
@@ -357,6 +425,10 @@ async function* runProcessAgentWithPreflight(input: {
   const validation = await validateProcessAgentInput(input.input);
   if (!validation.ok) {
     yield* failureEvents(validation.message);
+    return;
+  }
+  if (input.input.signal?.aborted) {
+    yield* cancelledEvents(`${input.displayName} cancelled before preflight.`);
     return;
   }
 
@@ -411,6 +483,10 @@ async function* runProcessAgent(input: {
     yield* failureEvents(validation.message);
     return;
   }
+  if (input.input.signal?.aborted) {
+    yield* cancelledEvents(`${input.displayName} cancelled before process start.`);
+    return;
+  }
 
   const parser = new StructuredOutputParser(input.displayName);
   const stdin = buildRuntimeStdin(input.input, validation.taskBrief);
@@ -431,7 +507,8 @@ async function* runProcessAgent(input: {
       cwd: path.resolve(input.input.worktreePath),
       stdin,
       env: input.input.environment,
-      timeoutMs: input.timeoutMs
+      timeoutMs: input.timeoutMs,
+      signal: input.input.signal
     })) {
       if (event.type === "stdout") {
         yield { type: "stdout", message: event.data };

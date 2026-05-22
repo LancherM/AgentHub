@@ -22,6 +22,7 @@ export interface VerificationRunInput {
   commands?: VerificationCommand[];
   stopOnFailure?: boolean;
   dryRun?: boolean;
+  signal?: AbortSignal;
 }
 
 export interface VerificationCommandResult {
@@ -74,10 +75,16 @@ export class VerificationRunner {
 
     const results: VerificationCommandResult[] = [];
     let stoppedAfterFailure = false;
+    let stoppedAfterCancellation = false;
 
     for (const command of commands) {
       if (stoppedAfterFailure) {
         results.push(skippedResult(command, "Skipped after an earlier failure."));
+        continue;
+      }
+      if (stoppedAfterCancellation || input.signal?.aborted) {
+        stoppedAfterCancellation = true;
+        results.push(skippedResult(command, "Skipped because the run was cancelled."));
         continue;
       }
 
@@ -88,13 +95,22 @@ export class VerificationRunner {
         const shellResult = await this.shellExecutor.execute(shellCommand, {
           cwd: input.cwd,
           timeoutMs: command.timeoutMs ?? DEFAULT_VERIFICATION_COMMAND_TIMEOUT_MS,
-          dryRun: input.dryRun
+          dryRun: input.dryRun,
+          signal: input.signal
         });
-        result = toVerificationResult(command, shellResult, input.dryRun ?? false);
+        result = toVerificationResult(
+          command,
+          shellResult,
+          input.dryRun ?? false,
+          input.signal?.aborted === true
+        );
       } catch (error) {
         result = failedVerificationResult(command, shellCommand, error);
       }
       results.push(result);
+      if (input.signal?.aborted) {
+        stoppedAfterCancellation = true;
+      }
 
       if (result.status === "failed" && shouldStopOnFailure(command, input)) {
         stoppedAfterFailure = true;
@@ -125,13 +141,20 @@ function toShellCommand(command: VerificationCommand): ShellCommand {
 function toVerificationResult(
   command: VerificationCommand,
   shellResult: ShellResult,
-  dryRun: boolean
+  dryRun: boolean,
+  cancelled: boolean
 ): VerificationCommandResult {
   return {
     commandId: command.id,
     label: command.label ?? command.id,
     command: shellResult.command,
-    status: dryRun ? "skipped" : shellResult.exitCode === 0 ? "passed" : "failed",
+    status: cancelled
+      ? "skipped"
+      : dryRun
+        ? "skipped"
+        : shellResult.exitCode === 0
+          ? "passed"
+          : "failed",
     stdout: shellResult.stdout,
     stderr: shellResult.stderr,
     exitCode: shellResult.exitCode,
@@ -139,7 +162,11 @@ function toVerificationResult(
     durationMs: shellResult.durationMs,
     timedOut: shellResult.timedOut,
     dryRun: shellResult.dryRun,
-    skippedReason: dryRun ? "Dry-run mode did not execute this command." : undefined,
+    skippedReason: cancelled
+      ? "Run cancelled during verification."
+      : dryRun
+        ? "Dry-run mode did not execute this command."
+        : undefined,
     error: shellResult.error
   };
 }

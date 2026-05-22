@@ -103,6 +103,66 @@ describe("NodeProcessRunner", () => {
     ).resolves.toEqual([{ type: "exit", exitCode: null, signal: "SIGTERM" }]);
   });
 
+  it("kills a running child process when the abort signal fires", async () => {
+    const cwd = await createTestDirectory("process-runner-abort");
+    const controller = new AbortController();
+    const children: MockChildProcess[] = [];
+    const runner = new NodeProcessRunner(() => {
+      const child = new MockChildProcess();
+      children.push(child);
+      queueMicrotask(() => {
+        child.stdout.write("started\n");
+        controller.abort();
+      });
+      return child;
+    });
+
+    const events = await collect(
+      runner.run({ executable: "agent", cwd, signal: controller.signal })
+    );
+
+    expect(events).toEqual([
+      { type: "stdout", data: "started\n" },
+      { type: "exit", exitCode: null, signal: "SIGTERM" }
+    ]);
+    expect(children[0].killedWith).toBe("SIGTERM");
+  });
+
+  it("preserves abort signal evidence when a child exits with a code after SIGTERM", async () => {
+    const cwd = await createTestDirectory("process-runner-abort-code");
+    const controller = new AbortController();
+    const runner = new NodeProcessRunner(() => {
+      const child = new MockChildProcess({
+        closeWithCodeOnKill: 143
+      });
+      queueMicrotask(() => {
+        controller.abort();
+      });
+      return child;
+    });
+
+    await expect(
+      collect(runner.run({ executable: "agent", cwd, signal: controller.signal }))
+    ).resolves.toEqual([{ type: "exit", exitCode: 143, signal: "SIGTERM" }]);
+  });
+
+  it("does not report SIGTERM when abort tries to kill an already-exited child", async () => {
+    const cwd = await createTestDirectory("process-runner-abort-race");
+    const controller = new AbortController();
+    const runner = new NodeProcessRunner(() => {
+      const child = new MockChildProcess({ killReturnsFalse: true });
+      queueMicrotask(() => {
+        controller.abort();
+        child.close(1, null);
+      });
+      return child;
+    });
+
+    await expect(
+      collect(runner.run({ executable: "agent", cwd, signal: controller.signal }))
+    ).resolves.toEqual([{ type: "exit", exitCode: 1, signal: null }]);
+  });
+
   it("uses an allowlisted child environment plus explicit overrides", async () => {
     const cwd = await createTestDirectory("process-runner-env");
     vi.stubEnv("PATH", "/test/bin");
@@ -202,13 +262,28 @@ class MockChildProcess extends EventEmitter implements SpawnedProcess {
   readonly stderr = new PassThrough();
   readonly stdinCapture = new CaptureWritable();
   readonly stdin = this.stdinCapture;
+  killedWith: string | number | NodeJS.Signals | undefined;
+
+  constructor(
+    private readonly options: { closeWithCodeOnKill?: number; killReturnsFalse?: boolean } = {}
+  ) {
+    super();
+  }
 
   close(code: number | null, signal: NodeJS.Signals | string | null): void {
     this.emit("close", code, signal);
   }
 
   kill(signal?: NodeJS.Signals | string | number): boolean {
-    this.close(null, signal === undefined ? "SIGTERM" : String(signal));
+    this.killedWith = signal === undefined ? "SIGTERM" : signal;
+    if (this.options.killReturnsFalse) {
+      return false;
+    }
+    if (this.options.closeWithCodeOnKill !== undefined) {
+      this.close(this.options.closeWithCodeOnKill, null);
+    } else {
+      this.close(null, signal === undefined ? "SIGTERM" : String(signal));
+    }
     return true;
   }
 }

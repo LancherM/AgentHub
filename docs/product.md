@@ -365,11 +365,15 @@ user approves or ignores them, and desktop approval updates Agent Hub local
 storage only.
 
 The selected run timeline receives persisted TaskRunner events through the
-existing desktop subscription API. Fake runs and process-backed adapter
-preflight results are replayed to run cards and the inspector after TaskRunner
-finalization. Rich live adapter streaming and process-level cancellation remain
-follow-up desktop wiring; unsupported running cancellation returns a clear local
-error instead of pretending to stop a process.
+existing desktop subscription API. TaskRunner now emits deterministic progress
+events while a run is active, including context compilation, isolated worktree
+readiness, adapter output, verification start/finish, and terminal
+completion/failure/cancellation. Late run-card or inspector subscribers replay
+the persisted timeline exactly once. Running cancellation is backed by an
+`AbortSignal`: fake runs stop cooperatively, process-backed Codex/Claude runs
+send `SIGTERM` through the shared process runner, verification commands receive
+the same signal through the shared shell executor, and the desktop records
+cancelled status only when execution was stopped or had not started.
 
 The renderer only calls the safe `window.agentHub` preload API. It has no
 direct Node.js, shell, filesystem, SQLite, or git access; privileged
@@ -392,10 +396,9 @@ export repository context, apply code, or approve memory automatically. Current
 desktop paths accept run-linked or message-linked continuation requests,
 validate that supplied message ids still belong to the requested parent run,
 require a retained worktree before continuing code state, and otherwise fail
-with a clear system message. Live TaskRunner streaming/cancellation, real
-desktop verification command configuration, approved-memory context-store
-writeback, multi-agent comparison review, worktree lifecycle management, and
-explicit merge/apply workflows remain
+with a clear system message. Real desktop verification command configuration,
+approved-memory context-store writeback, multi-agent comparison review,
+worktree lifecycle management, and explicit merge/apply workflows remain
 follow-up desktop wiring tasks.
 
 SQLite is stored in Agent Hub-owned application data by default, not in the
@@ -488,6 +491,6 @@ assets only; it does not deploy a hosted service, notarize the desktop app, or
 change Agent Hub's local-first product model.
 
 Deferred product capabilities include richer Codex/Claude structured event
-mapping, live desktop TaskRunner streaming and process-level cancellation, real
-desktop verification configuration, approved-memory writeback confirmation,
-multi-agent comparison review, and explicit desktop apply/merge workflows.
+mapping, real desktop verification configuration, approved-memory writeback
+confirmation, multi-agent comparison review, and explicit desktop apply/merge
+workflows.

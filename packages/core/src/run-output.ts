@@ -51,6 +51,10 @@ function isStructuredOutputEvent(
   event: AgentOutputEvent,
   options: { includeTerminalSummaries: boolean }
 ): boolean {
+  if (event.metadata?.assistantOutput === false) {
+    return false;
+  }
+
   if (event.type === "message" || event.type === "error") {
     return true;
   }
