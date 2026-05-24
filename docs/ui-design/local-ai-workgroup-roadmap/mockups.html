@@ -3,22 +3,26 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Agent Hub Local AI Workgroup UI Mockups</title>
+    <title>Agent Hub Workgroup UI Mockups</title>
     <style>
       :root {
-        --ink: #17211f;
-        --deep: #20312d;
-        --panel: #fffdf8;
-        --surface: #f4f1ea;
-        --line: #d6cec1;
-        --muted: #6f746f;
-        --teal: #23746f;
-        --leaf: #4f7d45;
-        --amber: #b7722d;
-        --brick: #a64538;
-        --violet: #65549a;
-        --blue: #3d6791;
-        --paper: #fbf7ee;
+        --bg: #081016;
+        --chrome: #0d1720;
+        --side: #0f1c24;
+        --panel: #101d27;
+        --panel-2: #142331;
+        --line: #263747;
+        --line-soft: rgba(255, 255, 255, 0.08);
+        --text: #edf5f3;
+        --muted: #95a4ae;
+        --soft: #c8d3d2;
+        --blue: #3a82ff;
+        --cyan: #26c6bc;
+        --green: #3cc76a;
+        --amber: #f29f31;
+        --orange: #ff7d38;
+        --violet: #9b6bff;
+        --red: #ef5f58;
       }
 
       * {
@@ -27,89 +31,134 @@
 
       body {
         margin: 0;
-        background: #d7d1c6;
-        color: var(--ink);
-        font-family: "Avenir Next", "Gill Sans", "Trebuchet MS", sans-serif;
+        background:
+          radial-gradient(circle at 18% 12%, rgba(38, 198, 188, 0.12), transparent 28%),
+          radial-gradient(circle at 82% 8%, rgba(58, 130, 255, 0.1), transparent 32%),
+          #05090d;
+        color: var(--text);
+        font-family:
+          "Avenir Next",
+          "SF Pro Text",
+          "Segoe UI",
+          sans-serif;
       }
 
       .mockup {
         width: 1440px;
         height: 960px;
         margin: 40px auto;
-        padding: 18px;
-        background:
-          linear-gradient(90deg, rgba(35, 116, 111, 0.08) 0 1px, transparent 1px 100%),
-          linear-gradient(180deg, rgba(166, 69, 56, 0.06) 0 1px, transparent 1px 100%),
-          var(--surface);
-        background-size: 36px 36px;
+        padding: 10px;
+        background: linear-gradient(135deg, #0b131a, #111b22 48%, #0b1218);
       }
 
       .app {
         height: 100%;
         display: grid;
-        grid-template-columns: 250px minmax(0, 1fr) 344px;
-        grid-template-rows: 54px minmax(0, 1fr);
-        border: 1px solid #b9b0a2;
-        background: var(--panel);
-        box-shadow: 0 22px 52px rgba(39, 34, 27, 0.18);
+        grid-template-columns: 270px minmax(0, 1fr) 378px;
+        grid-template-rows: 42px minmax(0, 1fr);
+        overflow: hidden;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--bg);
+        box-shadow: 0 24px 70px rgba(0, 0, 0, 0.42);
       }
 
       .topbar {
         grid-column: 1 / 4;
-        display: flex;
+        display: grid;
+        grid-template-columns: 270px minmax(0, 1fr) 378px;
         align-items: center;
-        justify-content: space-between;
-        padding: 0 18px 0 20px;
         border-bottom: 1px solid var(--line);
-        background: #f8f5ee;
+        background: #0a131b;
       }
 
-      .brand {
+      .traffic {
         display: flex;
-        align-items: center;
-        gap: 12px;
-        font-weight: 760;
-        letter-spacing: 0;
+        gap: 8px;
+        padding-left: 16px;
       }
 
-      .mark {
-        width: 24px;
-        height: 24px;
-        border-radius: 5px;
-        background: conic-gradient(from 45deg, var(--teal), var(--amber), var(--brick), var(--teal));
-        border: 1px solid rgba(23, 33, 31, 0.25);
+      .traffic span {
+        width: 12px;
+        height: 12px;
+        border-radius: 50%;
+      }
+
+      .traffic span:nth-child(1) {
+        background: #ff5f57;
+      }
+
+      .traffic span:nth-child(2) {
+        background: #febc2e;
+      }
+
+      .traffic span:nth-child(3) {
+        background: #28c840;
+      }
+
+      .window-title {
+        justify-self: center;
+        color: var(--soft);
+        font-weight: 700;
+        letter-spacing: 0;
       }
 
       .top-actions {
         display: flex;
+        justify-content: flex-end;
         align-items: center;
-        gap: 10px;
+        gap: 12px;
+        padding-right: 16px;
         color: var(--muted);
         font-size: 13px;
       }
 
-      .pill,
-      .button,
-      .chip,
-      .badge {
-        border: 1px solid var(--line);
-        background: #fffbf2;
-        border-radius: 7px;
-        padding: 5px 8px;
+      .icon {
+        width: 24px;
+        height: 24px;
+        display: grid;
+        place-items: center;
+        border: 1px solid var(--line-soft);
+        border-radius: 6px;
+      }
+
+      .avatar,
+      .topic-icon {
+        width: 34px;
+        height: 34px;
+        display: grid;
+        place-items: center;
+        flex: 0 0 auto;
+        border-radius: 50%;
+        color: #ffffff;
         font-size: 12px;
-        font-weight: 650;
-        white-space: nowrap;
+        font-weight: 800;
+        background: var(--blue);
       }
 
-      .pill.dark {
-        color: #f8f0dd;
-        background: var(--deep);
-        border-color: var(--deep);
+      .avatar.cyan,
+      .topic-icon.cyan {
+        background: var(--cyan);
       }
 
-      .button {
-        color: var(--ink);
-        background: #f5ead8;
+      .avatar.green {
+        background: var(--green);
+      }
+
+      .avatar.amber {
+        background: var(--amber);
+      }
+
+      .avatar.orange {
+        background: var(--orange);
+      }
+
+      .avatar.violet {
+        background: var(--violet);
+      }
+
+      .avatar.red {
+        background: var(--red);
       }
 
       .sidebar {
@@ -118,191 +167,270 @@
         display: flex;
         flex-direction: column;
         gap: 16px;
-        padding: 18px;
-        background: #21302d;
-        color: #f6f0e2;
+        padding: 14px;
+        background: linear-gradient(180deg, #101d27, #0d1820);
+        border-right: 1px solid var(--line);
       }
 
-      .sidebar h3,
-      .right h3,
-      .main h3 {
-        margin: 0;
-        font-size: 12px;
-        letter-spacing: 0.08em;
-        text-transform: uppercase;
-        color: inherit;
-      }
-
-      .project-card {
-        padding: 12px;
-        border: 1px solid rgba(255, 255, 255, 0.16);
+      .project-switcher {
+        display: grid;
+        grid-template-columns: 38px minmax(0, 1fr) 18px;
+        gap: 10px;
+        align-items: center;
+        min-height: 58px;
+        padding: 10px;
+        border: 1px solid var(--line);
         border-radius: 8px;
-        background: rgba(255, 255, 255, 0.06);
+        background: rgba(255, 255, 255, 0.03);
       }
 
-      .project-card strong {
-        display: block;
-        font-size: 17px;
+      .brand-mark {
+        width: 34px;
+        height: 34px;
+        display: grid;
+        place-items: center;
+        border: 1px solid rgba(58, 130, 255, 0.6);
+        border-radius: 8px;
+        color: var(--blue);
+        font-weight: 900;
       }
 
-      .small {
+      .project-name,
+      .row-title {
+        overflow: hidden;
+        color: var(--text);
+        font-weight: 720;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .small,
+      .row-subtitle,
+      .time {
         color: var(--muted);
         font-size: 12px;
-        line-height: 1.45;
+        line-height: 1.4;
       }
 
-      .sidebar .small {
-        color: #cfc9ba;
-      }
-
-      .nav-list,
-      .stack {
+      .section {
         display: flex;
         flex-direction: column;
-        gap: 8px;
+        gap: 7px;
       }
 
-      .nav-item {
+      .section-label {
         display: flex;
         justify-content: space-between;
         align-items: center;
-        min-height: 34px;
-        padding: 8px 10px;
-        border: 1px solid rgba(255, 255, 255, 0.12);
-        border-radius: 7px;
-        color: #f8f2e5;
-        background: rgba(255, 255, 255, 0.04);
-      }
-
-      .nav-item.active {
-        color: #17211f;
-        background: #f1d6ab;
-        border-color: #f1d6ab;
-      }
-
-      .nav-item .count {
+        padding: 0 6px;
+        color: #84939d;
         font-size: 11px;
-        opacity: 0.82;
+        font-weight: 800;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      .project-row,
+      .topic-row,
+      .status-row {
+        display: grid;
+        grid-template-columns: 24px minmax(0, 1fr) auto;
+        gap: 9px;
+        align-items: center;
+        min-height: 36px;
+        padding: 7px 8px;
+        border: 1px solid transparent;
+        border-radius: 7px;
+        color: var(--soft);
+        background: transparent;
+      }
+
+      .project-row.selected,
+      .topic-row.selected {
+        border-color: rgba(58, 130, 255, 0.32);
+        background: rgba(58, 130, 255, 0.18);
+      }
+
+      .project-dot,
+      .topic-hash,
+      .status-dot {
+        width: 18px;
+        height: 18px;
+        display: grid;
+        place-items: center;
+        border-radius: 50%;
+        color: var(--blue);
+        font-weight: 900;
+      }
+
+      .project-dot {
+        background: rgba(58, 130, 255, 0.22);
+      }
+
+      .topic-hash {
+        color: var(--muted);
+        font-size: 18px;
+      }
+
+      .status-dot {
+        width: 10px;
+        height: 10px;
+        align-self: center;
+        background: var(--green);
+      }
+
+      .count,
+      .pill,
+      .chip,
+      .review-state {
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        padding: 3px 7px;
+        color: var(--soft);
+        background: rgba(255, 255, 255, 0.04);
+        font-size: 11px;
+        font-weight: 720;
+        white-space: nowrap;
+      }
+
+      .pill.blue,
+      .chip.blue {
+        border-color: rgba(58, 130, 255, 0.4);
+        color: #9fc2ff;
+        background: rgba(58, 130, 255, 0.18);
+      }
+
+      .pill.green,
+      .chip.green {
+        border-color: rgba(60, 199, 106, 0.38);
+        color: #83e5a2;
+        background: rgba(60, 199, 106, 0.14);
+      }
+
+      .pill.amber,
+      .chip.amber {
+        border-color: rgba(242, 159, 49, 0.45);
+        color: #ffc06f;
+        background: rgba(242, 159, 49, 0.16);
+      }
+
+      .pill.violet,
+      .chip.violet {
+        border-color: rgba(155, 107, 255, 0.42);
+        color: #c7b2ff;
+        background: rgba(155, 107, 255, 0.16);
+      }
+
+      .pill.red,
+      .chip.red {
+        border-color: rgba(239, 95, 88, 0.45);
+        color: #ffaaa5;
+        background: rgba(239, 95, 88, 0.14);
+      }
+
+      .footer-state {
+        margin-top: auto;
+        padding-top: 12px;
+        border-top: 1px solid var(--line-soft);
       }
 
       .main {
         grid-column: 2;
         grid-row: 2;
+        display: grid;
+        grid-template-rows: auto minmax(0, 1fr) auto;
         min-width: 0;
-        padding: 22px 24px;
-        overflow: hidden;
-        background: #fbf8f1;
+        background:
+          linear-gradient(180deg, rgba(20, 35, 49, 0.74), rgba(8, 16, 22, 0.92)),
+          var(--bg);
       }
 
-      .right {
-        grid-column: 3;
-        grid-row: 2;
-        padding: 18px;
-        border-left: 1px solid var(--line);
-        background: #f6efe4;
-        overflow: hidden;
-      }
-
-      .section-header,
-      .row,
-      .tabs,
-      .composer {
-        display: flex;
+      .room-header {
+        display: grid;
+        grid-template-columns: 58px minmax(0, 1fr) auto;
+        gap: 14px;
         align-items: center;
+        min-height: 96px;
+        padding: 18px 20px 14px;
+        border-bottom: 1px solid var(--line);
       }
 
-      .section-header {
-        justify-content: space-between;
-        gap: 16px;
-        margin-bottom: 18px;
-      }
-
-      .title-block h1 {
-        margin: 0 0 5px;
+      .topic-icon {
+        width: 52px;
+        height: 52px;
+        border-radius: 12px;
         font-size: 28px;
-        line-height: 1.05;
+        background: rgba(58, 130, 255, 0.16);
+        border: 1px solid rgba(58, 130, 255, 0.54);
+      }
+
+      .room-title {
+        margin: 0 0 4px;
+        font-size: 26px;
         letter-spacing: 0;
       }
 
-      .title-block p {
+      .room-subtitle {
         margin: 0;
         color: var(--muted);
         font-size: 13px;
       }
 
-      .timeline {
+      .room-actions {
+        display: flex;
+        gap: 8px;
+      }
+
+      .chat-scroll {
+        overflow: hidden;
+        padding: 16px 22px;
+      }
+
+      .message-list {
         display: flex;
         flex-direction: column;
         gap: 12px;
       }
 
-      .event,
-      .panel,
-      .table,
-      .editor,
-      .artifact,
-      .callout {
-        border: 1px solid var(--line);
+      .message {
+        display: grid;
+        grid-template-columns: 36px minmax(0, 1fr) 46px;
+        gap: 10px;
+        align-items: start;
+      }
+
+      .message-body {
+        min-width: 0;
+        padding: 9px 12px;
+        border: 1px solid var(--line-soft);
         border-radius: 8px;
-        background: var(--panel);
+        background: rgba(255, 255, 255, 0.025);
       }
 
-      .event {
-        display: grid;
-        grid-template-columns: 38px minmax(0, 1fr) auto;
-        gap: 12px;
-        padding: 12px;
+      .message.user .message-body {
+        border-color: rgba(58, 130, 255, 0.26);
+        background: rgba(58, 130, 255, 0.08);
       }
 
-      .event.system {
-        background: #f8efe0;
-        border-color: #d8b77f;
+      .message.system .message-body {
+        border-color: rgba(242, 159, 49, 0.26);
+        background: rgba(242, 159, 49, 0.08);
       }
 
-      .event.warning {
-        background: #fff3ee;
-        border-color: #d7998f;
+      .message-head {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 5px;
       }
 
-      .avatar {
-        width: 34px;
-        height: 34px;
-        border-radius: 7px;
-        display: grid;
-        place-items: center;
-        color: #fffdf8;
-        font-size: 12px;
-        font-weight: 800;
-        background: var(--teal);
+      .message-head strong {
+        font-size: 14px;
       }
 
-      .avatar.amber {
-        background: var(--amber);
-      }
-
-      .avatar.brick {
-        background: var(--brick);
-      }
-
-      .avatar.violet {
-        background: var(--violet);
-      }
-
-      .avatar.blue {
-        background: var(--blue);
-      }
-
-      .event h2 {
-        margin: 0 0 5px;
-        font-size: 15px;
-      }
-
-      .event p,
-      .panel p,
-      .artifact p,
-      .callout p {
+      .message p {
         margin: 0;
-        color: #4c514d;
+        color: #d2dcde;
         font-size: 13px;
         line-height: 1.45;
       }
@@ -314,751 +442,596 @@
         margin-top: 8px;
       }
 
-      .chip.teal {
-        color: #0f4d48;
-        background: #e1f1ec;
-        border-color: #a6cec6;
-      }
-
-      .chip.amber {
-        color: #6c3d0f;
-        background: #f5e5c9;
-        border-color: #d8b77f;
-      }
-
-      .chip.brick {
-        color: #7c2c22;
-        background: #f7ddd8;
-        border-color: #d99a90;
-      }
-
-      .chip.violet {
-        color: #48367a;
-        background: #e9e3f5;
-        border-color: #bdb1df;
-      }
-
-      .chip.blue {
-        color: #244e76;
-        background: #e1edf7;
-        border-color: #a8c2d8;
-      }
-
-      .run-grid {
-        display: grid;
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-        gap: 10px;
-        margin-top: 10px;
-      }
-
       .run-card {
-        border: 1px solid #d2c7b6;
-        border-radius: 7px;
-        background: #fffaf0;
-        padding: 10px;
-      }
-
-      .run-card strong {
-        display: block;
-        margin-bottom: 4px;
-        font-size: 13px;
-      }
-
-      .tabs {
-        gap: 6px;
-        margin: 10px 0 14px;
-        overflow: hidden;
-      }
-
-      .tab {
-        border: 1px solid var(--line);
-        border-radius: 7px;
-        padding: 7px 9px;
-        background: #fffaf1;
-        color: #545b56;
-        font-size: 12px;
-        font-weight: 700;
-      }
-
-      .tab.active {
-        background: var(--deep);
-        color: #fff4dc;
-        border-color: var(--deep);
-      }
-
-      .panel {
-        padding: 12px;
-        margin-bottom: 10px;
-      }
-
-      .panel h4,
-      .artifact h4,
-      .callout h4 {
-        margin: 0 0 7px;
-        font-size: 14px;
-      }
-
-      .metric-grid {
         display: grid;
-        grid-template-columns: repeat(3, minmax(0, 1fr));
+        grid-template-columns: minmax(0, 1fr) auto;
         gap: 10px;
-        margin: 12px 0;
-      }
-
-      .metric {
-        border: 1px solid var(--line);
-        border-radius: 8px;
+        margin-top: 9px;
         padding: 10px;
-        background: #fffaf1;
-      }
-
-      .metric strong {
-        display: block;
-        font-size: 22px;
-        line-height: 1;
-      }
-
-      .metric span {
-        display: block;
-        margin-top: 5px;
-        color: var(--muted);
-        font-size: 11px;
-      }
-
-      .table {
-        overflow: hidden;
-      }
-
-      .table-row {
-        display: grid;
-        grid-template-columns: 1.1fr 0.8fr 0.8fr 0.7fr;
-        gap: 10px;
-        align-items: center;
-        min-height: 45px;
-        padding: 9px 12px;
-        border-bottom: 1px solid var(--line);
-        font-size: 13px;
-      }
-
-      .table-row.header {
-        min-height: 36px;
-        background: #eee6d9;
-        color: #5e635e;
-        font-size: 11px;
-        font-weight: 800;
-        letter-spacing: 0.06em;
-        text-transform: uppercase;
-      }
-
-      .table-row:last-child {
-        border-bottom: 0;
-      }
-
-      .two-col {
-        display: grid;
-        grid-template-columns: minmax(0, 1fr) minmax(0, 0.86fr);
-        gap: 14px;
-      }
-
-      .kanban {
-        display: grid;
-        grid-template-columns: repeat(3, minmax(0, 1fr));
-        gap: 12px;
-      }
-
-      .lane {
-        border: 1px solid var(--line);
+        border: 1px solid rgba(38, 198, 188, 0.26);
         border-radius: 8px;
-        background: #fdf8ef;
-        padding: 10px;
+        background: rgba(38, 198, 188, 0.07);
       }
 
-      .lane h4 {
-        margin: 0 0 9px;
+      .run-card h3 {
+        margin: 0 0 4px;
         font-size: 13px;
-      }
-
-      .mini-card {
-        border: 1px solid #d4cab9;
-        border-radius: 7px;
-        background: #fffdf8;
-        padding: 9px;
-        margin-bottom: 8px;
-        font-size: 12px;
       }
 
       .composer {
-        position: absolute;
-        left: 24px;
-        right: 24px;
-        bottom: 22px;
+        display: grid;
+        grid-template-columns: 34px minmax(0, 1fr) 34px 34px;
         gap: 10px;
+        align-items: center;
+        margin: 0 16px 14px;
         padding: 10px;
         border: 1px solid var(--line);
         border-radius: 8px;
-        background: #fffdf8;
+        background: rgba(255, 255, 255, 0.035);
       }
 
-      .composer span {
-        color: #636861;
+      .composer-input {
+        color: var(--muted);
         font-size: 13px;
       }
 
-      .relative {
-        position: relative;
-        height: 100%;
+      .send {
+        color: #ffffff;
+        background: var(--blue);
+        border-color: rgba(58, 130, 255, 0.6);
+      }
+
+      .right {
+        grid-column: 3;
+        grid-row: 2;
+        padding: 14px;
+        overflow: hidden;
+        background: linear-gradient(180deg, #101d27, #0a131b);
+        border-left: 1px solid var(--line);
+      }
+
+      .review-tabs {
+        display: flex;
+        gap: 4px;
+        padding-bottom: 10px;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .review-tabs span {
+        padding: 6px 8px;
+        border-radius: 6px;
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .review-tabs .active {
+        color: #ffffff;
+        background: rgba(58, 130, 255, 0.2);
+      }
+
+      .review-stack {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        padding-top: 12px;
+      }
+
+      .review-card {
+        padding: 12px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: rgba(255, 255, 255, 0.035);
+      }
+
+      .review-card h3 {
+        margin: 0 0 8px;
+        font-size: 14px;
+      }
+
+      .review-card p,
+      .kv-row {
+        margin: 0;
+        color: #c8d3d2;
+        font-size: 12px;
+        line-height: 1.45;
+      }
+
+      .kv-row {
+        display: grid;
+        grid-template-columns: 112px minmax(0, 1fr);
+        gap: 8px;
+        padding: 4px 0;
+      }
+
+      .kv-row span:first-child {
+        color: var(--muted);
       }
 
       .phase-label {
-        color: var(--muted);
-        font-size: 12px;
-        font-weight: 750;
-        letter-spacing: 0.09em;
-        text-transform: uppercase;
-      }
-
-      .split-main {
-        display: grid;
-        grid-template-columns: minmax(0, 1fr) 300px;
-        gap: 14px;
-      }
-
-      .dense-list {
-        display: flex;
-        flex-direction: column;
-        gap: 7px;
-      }
-
-      .list-line {
-        display: flex;
-        justify-content: space-between;
-        gap: 10px;
-        padding: 8px 0;
-        border-bottom: 1px solid var(--line);
-        font-size: 13px;
-      }
-
-      .status-dot {
-        width: 8px;
-        height: 8px;
-        border-radius: 50%;
-        background: var(--leaf);
-        display: inline-block;
-        margin-right: 6px;
-      }
-
-      .wire {
-        display: grid;
-        grid-template-columns: 1fr 1fr;
-        gap: 10px;
-      }
-
-      .workflow-map {
-        display: grid;
-        grid-template-columns: repeat(4, minmax(0, 1fr));
-        gap: 10px;
-        margin: 14px 0;
-      }
-
-      .step {
-        border: 1px solid var(--line);
-        border-radius: 8px;
-        background: #fffaf1;
-        padding: 10px;
-        min-height: 92px;
-      }
-
-      .step strong {
-        display: block;
-        margin-bottom: 5px;
-        font-size: 13px;
-      }
-
-      .screen-note {
-        position: absolute;
-        right: 18px;
-        bottom: 14px;
-        color: #7c756a;
+        color: #9aa9b0;
         font-size: 11px;
-      }
-
-      .role-chip {
-        display: inline-flex;
-        align-items: center;
-        gap: 6px;
-      }
-
-      .role-chip::before {
-        content: "";
-        width: 8px;
-        height: 8px;
-        border-radius: 50%;
-        background: var(--teal);
-      }
-
-      .phase-07 .app,
-      .phase-08 .app {
-        grid-template-columns: 220px minmax(0, 1fr) 390px;
-      }
-
-      .phase-12 .app {
-        grid-template-columns: 236px minmax(0, 1fr) 380px;
+        font-weight: 850;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
       }
     </style>
   </head>
   <body>
-    <article class="mockup phase-02" id="phase-02" data-file="phase-02-rooms.png">
-      <div class="app">
-        <header class="topbar">
-          <div class="brand"><span class="mark"></span> Agent Hub <span class="phase-label">Phase 2 rooms</span></div>
-          <div class="top-actions"><span>Local SQLite</span><span class="pill dark">No sync</span><span class="button">New room</span></div>
-        </header>
-        <aside class="sidebar">
-          <div class="project-card">
-            <strong>agent-hub</strong>
-            <span class="small">Project room workspace</span>
-          </div>
-          <div class="stack">
-            <h3>Rooms</h3>
-            <div class="nav-list">
-              <div class="nav-item active"><span># planning</span><span class="count">live</span></div>
-              <div class="nav-item"><span># general</span><span class="count">12</span></div>
-              <div class="nav-item"><span># research</span><span class="count">4</span></div>
-              <div class="nav-item"><span># review</span><span class="count">3</span></div>
-              <div class="nav-item"><span># knowledge</span><span class="count">8</span></div>
-            </div>
-          </div>
-          <div class="stack">
-            <h3>Team</h3>
-            <div class="nav-item"><span>@researcher</span><span class="count">ready</span></div>
-            <div class="nav-item"><span>@engineer</span><span class="count">codex</span></div>
-          </div>
-          <div class="stack">
-            <h3>Task Status</h3>
-            <div class="nav-item"><span>Running</span><span class="count">2</span></div>
-            <div class="nav-item"><span>Needs review</span><span class="count">5</span></div>
-          </div>
-        </aside>
-        <main class="main relative">
-          <div class="section-header">
-            <div class="title-block">
-              <h1>#planning</h1>
-              <p>ConversationThread-backed room with default local project rooms.</p>
-            </div>
-            <span class="pill">Pinned room</span>
-          </div>
-          <div class="timeline">
-            <div class="event">
-              <div class="avatar">ME</div>
-              <div>
-                <h2>Plan the local AI workgroup launch order</h2>
-                <p>@researcher check the roadmap deltas. @engineer outline the implementation slice.</p>
-                <div class="chips"><span class="chip teal">room: #planning</span><span class="chip amber">thread metadata</span></div>
-              </div>
-              <span class="small">09:24</span>
-            </div>
-            <div class="event system">
-              <div class="avatar amber">AH</div>
-              <div>
-                <h2>Default rooms available</h2>
-                <p>#general, #planning, #research, #review, and #knowledge are seeded for this project.</p>
-              </div>
-              <span class="badge">system</span>
-            </div>
-            <div class="event">
-              <div class="avatar blue">EN</div>
-              <div>
-                <h2>@engineer run card</h2>
-                <p>TaskRunner-backed run remains in the room timeline. Inspector evidence is lazy-loaded.</p>
-                <div class="chips"><span class="chip blue">Codex adapter</span><span class="chip teal">worktree isolated</span></div>
-              </div>
-              <span class="badge">running</span>
-            </div>
-          </div>
-          <div class="composer"><span class="pill">@researcher</span><span>Message #planning with role mentions...</span></div>
-        </main>
-        <aside class="right">
-          <h3>Room Details</h3>
-          <div class="panel">
-            <h4>Metadata</h4>
-            <div class="dense-list">
-              <div class="list-line"><span>roomHandle</span><strong>#planning</strong></div>
-              <div class="list-line"><span>roomType</span><strong>default</strong></div>
-              <div class="list-line"><span>backing store</span><strong>conversation_threads</strong></div>
-            </div>
-          </div>
-          <div class="panel">
-            <h4>Local-first status</h4>
-            <p><span class="status-dot"></span>Renderer uses IPC. No repository context files are written by default.</p>
-          </div>
-        </aside>
-      </div>
-    </article>
+    <div id="root"></div>
+    <script>
+      const currentTabs = ["Summary", "Diff", "Tests", "Risk", "Memory", "Logs"];
 
-    <article class="mockup phase-03" id="phase-03" data-file="phase-03-mention-task-grouping.png">
-      <div class="app">
-        <header class="topbar">
-          <div class="brand"><span class="mark"></span> Agent Hub <span class="phase-label">Phase 3 task grouping</span></div>
-          <div class="top-actions"><span class="pill dark">Shared task</span><span class="button">Add assignment</span></div>
-        </header>
-        <aside class="sidebar">
-          <div class="project-card"><strong>agent-hub</strong><span class="small">#research</span></div>
-          <div class="stack">
-            <h3>Rooms</h3>
-            <div class="nav-item active"><span># research</span><span class="count">1 task</span></div>
-            <div class="nav-item"><span># planning</span><span class="count">3</span></div>
-            <div class="nav-item"><span># review</span><span class="count">2</span></div>
-          </div>
-          <div class="stack">
-            <h3>Assignments</h3>
-            <div class="nav-item"><span>@researcher</span><span class="count">running</span></div>
-            <div class="nav-item"><span>@qa</span><span class="count">queued</span></div>
-            <div class="nav-item"><span>@engineer</span><span class="count">ready</span></div>
-          </div>
-        </aside>
-        <main class="main relative">
-          <div class="section-header">
-            <div class="title-block">
-              <h1>One instruction, one task</h1>
-              <p>Role fan-out is grouped under a shared task and visible run cluster.</p>
-            </div>
-            <span class="pill">task T-184</span>
-          </div>
-          <div class="timeline">
-            <div class="event">
-              <div class="avatar">ME</div>
-              <div>
-                <h2>@researcher @qa analyze the retained-worktree flow</h2>
-                <p>The original room message remains the source for all participant assignments.</p>
-                <div class="chips"><span class="chip teal">source message</span><span class="chip amber">room: #research</span></div>
-              </div>
-              <span class="small">10:13</span>
-            </div>
-            <div class="event system">
-              <div class="avatar amber">T</div>
-              <div>
-                <h2>Task created: T-184</h2>
-                <p>Assignments are linked to the same task id before executable runs are created.</p>
-                <div class="run-grid">
-                  <div class="run-card"><strong>@researcher</strong><span class="small">executor: agent_adapter / fake</span></div>
-                  <div class="run-card"><strong>@qa</strong><span class="small">executor: agent_adapter / codex</span></div>
+      const phases = [
+        {
+          id: "phase-02",
+          file: "phase-02-rooms.png",
+          label: "Phase 2 Rooms",
+          topic: "# planning",
+          subtitle: "ConversationThread becomes a room/topic without replacing the current chat path.",
+          activeTopic: "planning",
+          selectedProject: "agenthub-core",
+          messages: [
+            user("MK", "09:00", "Use the existing thread list as project topics. Keep the center as a normal chat conversation."),
+            system("AH", "09:01", "Default topics can map to existing conversation threads: #general, #planning, #research, #review, #knowledge.", ["thread metadata", "no room table"]),
+            agent("Fake", "09:02", "I created a room metadata preview. The current renderer still calls window.agentHub.threads.*.", ["runtime injection", "SQLite thread"], "completed")
+          ],
+          reviewTitle: "Selected Topic",
+          review: [
+            ["Backing store", "conversation_threads"],
+            ["Current IPC", "threads.list / get / create / sendMessage"],
+            ["Review boundary", "Run evidence loads only when selected"]
+          ],
+          cards: [
+            card("Compatibility", "Older threads remain readable as custom topics."),
+            card("Simplification", "No team list here; left side is Projects plus Topics only.")
+          ]
+        },
+        {
+          id: "phase-03",
+          file: "phase-03-mention-task-grouping.png",
+          label: "Phase 3 Grouping",
+          topic: "# research",
+          subtitle: "One prompt fans out into linked run cards while staying in the same IM-style thread.",
+          activeTopic: "research",
+          selectedProject: "agenthub-core",
+          messages: [
+            user("MK", "10:13", "@fake @codex analyze the retained-worktree handoff and summarize risks."),
+            system("AH", "10:14", "Created one shared task shell and linked two current adapter runs.", ["task row", "run cards"]),
+            agent("Fake", "10:16", "Drafted a bounded summary with no repository side effects.", ["run 311", "completed"], "completed"),
+            agent("Codex", "10:17", "Codex preflight is inspectable; unavailable CLIs fail as persisted events.", ["run 312", "inspect"], "running")
+          ],
+          reviewTitle: "Grouped Runs",
+          review: [
+            ["Current behavior", "one run per selected agent"],
+            ["Design target", "shared task id appears in metadata"],
+            ["Evidence", "each run opens the same inspector tabs"]
+          ],
+          cards: [
+            card("RunService", "CreateRun can accept an existing task id later."),
+            card("UI rule", "Run cards are grouped visually, not hidden.")
+          ]
+        },
+        {
+          id: "phase-04",
+          file: "phase-04-timeline-events.png",
+          label: "Phase 4 Timeline",
+          topic: "# review",
+          subtitle: "The chat stays readable while system rows make audit events explicit.",
+          activeTopic: "review",
+          selectedProject: "agenthub-core",
+          messages: [
+            user("MK", "11:02", "Review the comparison output and call out any blocking risk."),
+            system("AH", "11:03", "TaskRunner emitted context, worktree, adapter, verification, and terminal lifecycle events.", ["persisted events"]),
+            agent("Codex", "11:07", "Implementation run completed. Verification passed. One memory proposal was generated.", ["check passed", "memory proposal"], "completed"),
+            system("Risk", "11:08", "Medium risk: changed-file footprint needs review before accepting.", ["risk", "review required"])
+          ],
+          reviewTitle: "Event Inspector",
+          review: [
+            ["Message kind", "user / system / agent_run / assistant"],
+            ["Linked run", "run_447"],
+            ["Lazy evidence", "diff, tests, risk, memory, logs"]
+          ],
+          cards: [
+            card("No event sourcing", "Event semantics live in bounded message metadata."),
+            card("Current fit", "Raw logs stay on run evidence, not message bodies.")
+          ]
+        },
+        {
+          id: "phase-05",
+          file: "phase-05-structured-inspector.png",
+          label: "Phase 5 Inspector",
+          topic: "# review",
+          subtitle: "The right review drawer maps current Summary/Diff/Tests/Risk/Memory/Logs into workgroup terms.",
+          activeTopic: "review",
+          selectedProject: "agenthub-core",
+          messages: [
+            user("MK", "13:20", "Open the completed Codex run and inspect the injected context plus test results."),
+            agent("Codex", "13:25", "Completed the focused change. The run card stays compact until review is opened.", ["open review", "completed"], "completed"),
+            system("AH", "13:26", "Review data loaded through window.agentHub.review.* and window.agentHub.memory.*.", ["sandboxed renderer"])
+          ],
+          reviewTitle: "Run Inspector",
+          tabs: ["Brief", "Context", "Artifacts", "Checks", "Risks", "Memory", "Audit"],
+          review: [
+            ["Brief", "task, status, review decision"],
+            ["Context", "conversation_brief artifact"],
+            ["Artifacts", "diff and handoff evidence"],
+            ["Checks", "verification rows"]
+          ],
+          cards: [
+            card("Current source", "ReviewService aggregates summary, diff, tests, risk, handoff, compare, memory, logs."),
+            card("UI simplification", "One right panel; no separate review workspace.")
+          ]
+        },
+        {
+          id: "phase-06",
+          file: "phase-06-artifact-model.png",
+          label: "Phase 6 Artifacts",
+          topic: "# knowledge",
+          subtitle: "Artifacts appear as small attachments in the chat and detailed rows in review.",
+          activeTopic: "knowledge",
+          selectedProject: "agenthub-core",
+          messages: [
+            user("MK", "14:00", "Show the reusable outputs from the last desktop run."),
+            agent("Codex", "14:02", "Attached bounded artifacts from existing run_artifacts.", ["conversation_brief", "git_diff", "review_decision"], "completed"),
+            system("AH", "14:03", "Full content remains local and bounded; no external publishing action exists.")
+          ],
+          reviewTitle: "Artifacts",
+          review: [
+            ["conversation_brief", "context snapshot"],
+            ["git_diff", "bounded diff artifact"],
+            ["review_decision", "audit-only accept/reject record"]
+          ],
+          cards: [
+            card("Current table", "run_artifacts is the backing store for v0."),
+            card("Review rule", "Files are previewed locally; no publish button.")
+          ]
+        },
+        {
+          id: "phase-07",
+          file: "phase-07-memory-decisions.png",
+          label: "Phase 7 Memory",
+          topic: "# knowledge",
+          subtitle: "Memory governance uses the same chat and review surfaces instead of a dense dashboard.",
+          activeTopic: "knowledge",
+          selectedProject: "agenthub-core",
+          messages: [
+            user("MK", "15:10", "Review memory proposals from the last run before adding anything to approved memory."),
+            agent("Memory", "15:11", "One proposal is pending. Thread summaries remain thread-local until explicitly promoted.", ["proposal", "not injected"], "pending"),
+            system("AH", "15:12", "Approval writes to Agent Hub owned memory/approved.md through explicit IPC only.", ["local writeback"])
+          ],
+          reviewTitle: "Memory Proposal",
+          tabs: ["Memory", "Decisions", "Context", "Tasks", "Risk", "Audit"],
+          review: [
+            ["Status", "proposed"],
+            ["Source", "run_512 / #knowledge"],
+            ["Action", "approve or ignore"],
+            ["Boundary", "no automatic promotion"]
+          ],
+          cards: [
+            card("Current APIs", "memory.listProposals, generateProposals, approve, ignore."),
+            card("Simplification", "Filters are in review, not a full multi-pane knowledge dashboard.")
+          ]
+        },
+        {
+          id: "phase-08",
+          file: "phase-08-team-role-config.png",
+          label: "Phase 8 Roles",
+          topic: "# planning",
+          subtitle: "Role configuration is previewed as a local settings/review card, while chat stays primary.",
+          activeTopic: "planning",
+          selectedProject: "agenthub-core",
+          messages: [
+            user("MK", "16:00", "Draft a lightweight @reviewer role backed by today's adapters, but do not add new runtimes."),
+            system("AH", "16:01", "Role handles are design metadata here; current runnable mentions remain @fake, @codex, and @claude.", ["current functionality"]),
+            agent("Fake", "16:02", "Suggested role profile: reviewer, read-only evidence, user confirmation for side effects.", ["role preview"], "completed")
+          ],
+          reviewTitle: "Role Preview",
+          review: [
+            ["Current mentions", "@fake, @codex, @claude"],
+            ["Future handle", "@reviewer"],
+            ["Executor", "agent_adapter"],
+            ["Safety", "no secrets, no side effects"]
+          ],
+          cards: [
+            card("No complex team page", "The phase can reuse settings and review patterns."),
+            card("Local only", "Custom roles must not write to the target repository.")
+          ]
+        },
+        {
+          id: "phase-09",
+          file: "phase-09-collaboration-workflows.png",
+          label: "Phase 9 Workflows",
+          topic: "# planning",
+          subtitle: "Workflow modes render as ordinary messages and run cards with explicit round limits.",
+          activeTopic: "planning",
+          selectedProject: "agenthub-core",
+          messages: [
+            user("MK", "17:00", "Start a two-round review loop for the comparison report work."),
+            system("AH", "17:01", "Workflow started: review_loop, max rounds 2, stop condition user decision.", ["bounded rounds"]),
+            agent("Codex", "17:05", "Round 1 implementation run completed in an isolated worktree.", ["round 1", "run card"], "completed"),
+            agent("Reviewer", "17:09", "Findings recorded. No apply, merge, push, or cleanup was performed.", ["review-only"], "completed")
+          ],
+          reviewTitle: "Workflow Review",
+          review: [
+            ["Mode", "review_loop"],
+            ["Max rounds", "2"],
+            ["Stop", "user decision"],
+            ["Side effects", "none outside worktrees"]
+          ],
+          cards: [
+            card("Current fit", "Uses TaskRunner runs and conversation briefs."),
+            card("Simplification", "No autonomous participant chat.")
+          ]
+        },
+        {
+          id: "phase-11",
+          file: "phase-11-pack-boundaries.png",
+          label: "Phase 11 Packs",
+          topic: "# review",
+          subtitle: "Pack labels stay lightweight: core review tabs remain stable, engineering words appear inside evidence.",
+          activeTopic: "review",
+          selectedProject: "agenthub-core",
+          messages: [
+            user("MK", "18:20", "Keep product language general, but still show engineering evidence when reviewing code runs."),
+            system("AH", "18:21", "Core tabs stay Brief, Context, Artifacts, Checks, Risks, Memory, Audit.", ["core workgroup"]),
+            agent("Codex", "18:23", "Engineering pack labels appear inside Artifacts and Checks: diff, tests, worktree, CI.", ["pack metadata"], "completed")
+          ],
+          reviewTitle: "Pack Mapping",
+          tabs: ["Brief", "Artifacts", "Checks", "Risks", "Memory", "Audit"],
+          review: [
+            ["Core term", "Artifacts"],
+            ["Engineering label", "Diff summary"],
+            ["Core term", "Checks"],
+            ["Engineering label", "Tests / CI"]
+          ],
+          cards: [
+            card("Current fit", "Existing Diff and Tests panels are retained as engineering-specific content."),
+            card("No marketplace", "Built-in deterministic metadata only.")
+          ]
+        },
+        {
+          id: "phase-12",
+          file: "phase-12-apply-lifecycle-controls.png",
+          label: "Phase 12 Lifecycle",
+          topic: "# review",
+          subtitle: "Lifecycle controls live in review, gated by preview and explicit local confirmation.",
+          activeTopic: "review",
+          selectedProject: "agenthub-core",
+          messages: [
+            user("MK", "19:00", "Inspect the retained worktree from the failed Codex run."),
+            agent("Codex", "19:02", "Run failed inspectably. Retained worktree handoff is available for manual review.", ["handoff", "failed"], "failed"),
+            system("AH", "19:03", "Open/copy actions are review-only IPC calls. No cleanup, merge, push, or apply happens automatically.", ["manual handoff"])
+          ],
+          reviewTitle: "Handoff / Lifecycle",
+          tabs: ["Summary", "Handoff", "Diff", "Tests", "Risk", "Logs"],
+          review: [
+            ["Worktree", "~/.agent-hub/worktrees/..."],
+            ["Available now", "open worktree, copy review command"],
+            ["Future gated", "cleanup and apply require confirmation"],
+            ["Blocking risk", "prevents apply"]
+          ],
+          cards: [
+            card("Current boundary", "ReviewService returns review-only commands."),
+            card("Design target", "Apply/cleanup controls stay in right review panel.")
+          ]
+        }
+      ];
+
+      function user(author, time, text) {
+        return { kind: "user", author, time, text, avatar: author.slice(0, 2), color: "blue" };
+      }
+
+      function system(author, time, text, chips = []) {
+        return { kind: "system", author, time, text, avatar: "AH", color: "amber", chips };
+      }
+
+      function agent(author, time, text, chips = [], status = "completed") {
+        const colors = {
+          Fake: "cyan",
+          Codex: "green",
+          Memory: "violet",
+          Reviewer: "orange"
+        };
+        return {
+          kind: "agent",
+          author,
+          time,
+          text,
+          avatar: author.slice(0, 2),
+          color: colors[author] || "cyan",
+          chips,
+          status
+        };
+      }
+
+      function card(title, body) {
+        return { title, body };
+      }
+
+      function renderPhase(phase) {
+        const tabs = phase.tabs || currentTabs;
+        return `
+          <article class="mockup" id="${phase.id}" data-file="${phase.file}">
+            <div class="app">
+              <header class="topbar">
+                <div class="traffic"><span></span><span></span><span></span></div>
+                <div class="window-title">Agent Hub</div>
+                <div class="top-actions">
+                  <span class="icon">S</span>
+                  <span class="icon">></span>
+                  <span class="icon">G</span>
+                  <span class="pill green">Local</span>
                 </div>
+              </header>
+
+              <aside class="sidebar">
+                <div class="project-switcher">
+                  <div class="brand-mark">AH</div>
+                  <div>
+                    <div class="project-name">${phase.selectedProject}</div>
+                    <div class="small">local project</div>
+                  </div>
+                  <div class="small">v</div>
+                </div>
+
+                <section class="section">
+                  <div class="section-label"><span>Projects</span><span>+</span></div>
+                  ${projectRow("agenthub-core", phase.selectedProject === "agenthub-core", "active")}
+                  ${projectRow("trader", phase.selectedProject === "trader", "idle")}
+                  ${projectRow("docs-site", phase.selectedProject === "docs-site", "idle")}
+                </section>
+
+                <section class="section">
+                  <div class="section-label"><span>Topics</span><span>+</span></div>
+                  ${topicRow("general", phase.activeTopic)}
+                  ${topicRow("planning", phase.activeTopic)}
+                  ${topicRow("research", phase.activeTopic)}
+                  ${topicRow("review", phase.activeTopic)}
+                  ${topicRow("knowledge", phase.activeTopic)}
+                </section>
+
+                <section class="section">
+                  <div class="section-label"><span>Runs</span><span>current</span></div>
+                  ${statusRow("Open", "5", "blue")}
+                  ${statusRow("Running", "2", "amber")}
+                  ${statusRow("Needs review", "1", "orange")}
+                  ${statusRow("Accepted", "18", "green")}
+                </section>
+
+                <div class="footer-state">
+                  <div class="status-row"><span class="status-dot"></span><span>Local-first</span><span></span></div>
+                  <div class="status-row"><span class="topic-hash">#</span><span>Runtime injection</span><span></span></div>
+                </div>
+              </aside>
+
+              <main class="main">
+                <header class="room-header">
+                  <div class="topic-icon">#</div>
+                  <div>
+                    <div class="phase-label">${phase.label}</div>
+                    <h1 class="room-title">${phase.topic}</h1>
+                    <p class="room-subtitle">${phase.subtitle}</p>
+                  </div>
+                  <div class="room-actions">
+                    <span class="pill blue">Timeline</span>
+                    <span class="pill">Thread</span>
+                    <span class="pill">Review</span>
+                  </div>
+                </header>
+
+                <section class="chat-scroll">
+                  <div class="message-list">
+                    ${phase.messages.map(renderMessage).join("")}
+                  </div>
+                </section>
+
+                <footer class="composer">
+                  <span class="icon">+</span>
+                  <span class="composer-input">@agent message this topic, for example: @fake summarize the latest run</span>
+                  <span class="icon">@</span>
+                  <span class="icon send">></span>
+                </footer>
+              </main>
+
+              <aside class="right">
+                <nav class="review-tabs">
+                  ${tabs.map((tab, index) => `<span class="${index === 0 ? "active" : ""}">${tab}</span>`).join("")}
+                </nav>
+                <div class="review-stack">
+                  <section class="review-card">
+                    <h3>${phase.reviewTitle}</h3>
+                    ${phase.review.map(([key, value]) => `<div class="kv-row"><span>${key}</span><strong>${value}</strong></div>`).join("")}
+                  </section>
+                  ${phase.cards.map((item) => `
+                    <section class="review-card">
+                      <h3>${item.title}</h3>
+                      <p>${item.body}</p>
+                    </section>
+                  `).join("")}
+                  <section class="review-card">
+                    <h3>Current Boundary</h3>
+                    <p>Renderer stays sandboxed. Review details load through main-process IPC; no merge, push, apply, cleanup, or memory approval happens automatically.</p>
+                  </section>
+                </div>
+              </aside>
+            </div>
+          </article>
+        `;
+      }
+
+      function projectRow(name, selected, state) {
+        return `
+          <div class="project-row ${selected ? "selected" : ""}">
+            <span class="project-dot"></span>
+            <span class="row-title">${name}</span>
+            <span class="count">${state}</span>
+          </div>
+        `;
+      }
+
+      function topicRow(topic, activeTopic) {
+        const selected = topic === activeTopic;
+        return `
+          <div class="topic-row ${selected ? "selected" : ""}">
+            <span class="topic-hash">#</span>
+            <span class="row-title">${topic}</span>
+            <span class="count">${selected ? "open" : ""}</span>
+          </div>
+        `;
+      }
+
+      function statusRow(label, count, color) {
+        return `
+          <div class="status-row">
+            <span class="pill ${color}"></span>
+            <span>${label}</span>
+            <span class="count">${count}</span>
+          </div>
+        `;
+      }
+
+      function renderMessage(message) {
+        const chips = message.chips || [];
+        return `
+          <div class="message ${message.kind}">
+            <div class="avatar ${message.color}">${message.avatar}</div>
+            <div class="message-body">
+              <div class="message-head">
+                <strong>${message.author}</strong>
+                ${message.kind === "agent" ? `<span class="review-state ${message.status === "failed" ? "red" : "green"}">${message.status}</span>` : ""}
               </div>
-              <span class="badge">open</span>
+              <p>${message.text}</p>
+              ${chips.length ? `<div class="chips">${chips.map(chip).join("")}</div>` : ""}
+              ${message.kind === "agent" ? runCard(message) : ""}
             </div>
-            <div class="event">
-              <div class="avatar blue">QA</div>
-              <div>
-                <h2>Grouped run cards</h2>
-                <p>Each participant run is inspectable, while the task shell stays singular in the room timeline.</p>
-                <div class="chips"><span class="chip blue">run 311</span><span class="chip blue">run 312</span><span class="chip teal">shared task id</span></div>
-              </div>
-              <span class="badge">running</span>
+            <span class="time">${message.time}</span>
+          </div>
+        `;
+      }
+
+      function chip(value) {
+        const lower = value.toLowerCase();
+        const color = lower.includes("risk") || lower.includes("failed") ? "red"
+          : lower.includes("memory") || lower.includes("proposal") || lower.includes("role") ? "violet"
+          : lower.includes("check") || lower.includes("completed") || lower.includes("local") ? "green"
+          : lower.includes("run") || lower.includes("context") || lower.includes("thread") ? "blue"
+          : "amber";
+        return `<span class="chip ${color}">${value}</span>`;
+      }
+
+      function runCard(message) {
+        return `
+          <div class="run-card">
+            <div>
+              <h3>Inline run card</h3>
+              <p class="small">Latest line, compact evidence pills, and on-demand inspector stay aligned with today's desktop.</p>
             </div>
+            <span class="pill blue">Open review</span>
           </div>
-          <div class="composer"><span>@engineer continue on T-184...</span></div>
-        </main>
-        <aside class="right">
-          <h3>Task Brief</h3>
-          <div class="panel">
-            <h4>Assignments</h4>
-            <div class="dense-list">
-              <div class="list-line"><span>@researcher</span><strong>run linked</strong></div>
-              <div class="list-line"><span>@qa</span><strong>run linked</strong></div>
-              <div class="list-line"><span>@legal</span><strong>assigned only</strong></div>
-            </div>
-          </div>
-          <div class="panel">
-            <h4>State</h4>
-            <p>Task state remains narrow: open, running, completed, or cancelled.</p>
-          </div>
-        </aside>
-      </div>
-    </article>
+        `;
+      }
 
-    <article class="mockup phase-04" id="phase-04" data-file="phase-04-timeline-events.png">
-      <div class="app">
-        <header class="topbar">
-          <div class="brand"><span class="mark"></span> Agent Hub <span class="phase-label">Phase 4 timeline events</span></div>
-          <div class="top-actions"><span class="pill dark">Audit stream</span><span>Lazy evidence</span></div>
-        </header>
-        <aside class="sidebar">
-          <div class="project-card"><strong>agent-hub</strong><span class="small">#review audit stream</span></div>
-          <div class="stack">
-            <h3>Event Filters</h3>
-            <div class="nav-item active"><span>All events</span><span class="count">18</span></div>
-            <div class="nav-item"><span>Runs</span><span class="count">4</span></div>
-            <div class="nav-item"><span>Risks</span><span class="count">2</span></div>
-            <div class="nav-item"><span>Memory</span><span class="count">3</span></div>
-          </div>
-        </aside>
-        <main class="main">
-          <div class="section-header">
-            <div class="title-block">
-              <h1>Room timeline as audit stream</h1>
-              <p>Message metadata gives every visible row an event kind and linked ids.</p>
-            </div>
-            <span class="pill">event metadata bounded</span>
-          </div>
-          <div class="timeline">
-            <div class="event"><div class="avatar">ME</div><div><h2>User message</h2><p>Start a review loop for the comparison report workflow.</p></div><span class="small">11:02</span></div>
-            <div class="event system"><div class="avatar amber">T</div><div><h2>Task created</h2><p>Linked task T-205 and assignments: @engineer, @reviewer.</p><div class="chips"><span class="chip amber">task_created</span><span class="chip teal">assignment_created</span></div></div><span class="badge">system</span></div>
-            <div class="event"><div class="avatar blue">EN</div><div><h2>Run completed</h2><p>Verification finished with two checks and one generated artifact.</p><div class="chips"><span class="chip blue">check: typecheck</span><span class="chip teal">artifact: diff summary</span></div></div><span class="badge">passed</span></div>
-            <div class="event warning"><div class="avatar brick">R</div><div><h2>Risk detected</h2><p>Potential broad deletion flagged by the safety scanner. Full diff remains in review evidence.</p><div class="chips"><span class="chip brick">medium risk</span><span class="chip violet">review decision pending</span></div></div><span class="badge">inspect</span></div>
-            <div class="event"><div class="avatar violet">M</div><div><h2>Memory proposed</h2><p>Proposal is shown as an event but remains unapproved until the user acts.</p></div><span class="badge">local</span></div>
-          </div>
-        </main>
-        <aside class="right">
-          <h3>Selected Event</h3>
-          <div class="panel"><h4>Linked ids</h4><p>message: msg_518<br />task: T-205<br />run: run_444<br />risk: risk_19</p></div>
-          <div class="panel"><h4>Inspector target</h4><p>Clicking any event opens the relevant run, task, artifact, risk, review, or memory context.</p></div>
-        </aside>
-      </div>
-    </article>
-
-    <article class="mockup phase-05" id="phase-05" data-file="phase-05-structured-inspector.png">
-      <div class="app">
-        <header class="topbar">
-          <div class="brand"><span class="mark"></span> Agent Hub <span class="phase-label">Phase 5 inspector</span></div>
-          <div class="top-actions"><span class="pill dark">Right inspector</span><span>Run evidence mapped</span></div>
-        </header>
-        <aside class="sidebar">
-          <div class="project-card"><strong>agent-hub</strong><span class="small">#review</span></div>
-          <div class="nav-list">
-            <div class="nav-item active"><span>T-231 Compare runs</span><span class="count">open</span></div>
-            <div class="nav-item"><span>T-226 Memory flow</span><span class="count">done</span></div>
-            <div class="nav-item"><span>T-220 Context pack</span><span class="count">risk</span></div>
-          </div>
-        </aside>
-        <main class="main">
-          <div class="section-header">
-            <div class="title-block"><h1>Review task T-231</h1><p>The timeline stays conversational; evidence moves into workgroup vocabulary.</p></div>
-            <span class="pill">selected run 447</span>
-          </div>
-          <div class="timeline">
-            <div class="event"><div class="avatar blue">EN</div><div><h2>@engineer completed implementation</h2><p>Generated a diff, verification results, and memory proposals.</p><div class="chips"><span class="chip teal">open inspector</span><span class="chip blue">artifact ready</span></div></div><span class="badge">review</span></div>
-            <div class="event system"><div class="avatar amber">C</div><div><h2>Checks completed</h2><p>typecheck passed. focused tests passed. lint skipped with explanation.</p></div><span class="badge">2/3</span></div>
-          </div>
-        </main>
-        <aside class="right">
-          <h3>Workgroup Inspector</h3>
-          <div class="tabs">
-            <span class="tab active">Brief</span><span class="tab">Context</span><span class="tab">Artifacts</span><span class="tab">Checks</span><span class="tab">Risks</span><span class="tab">Memory</span><span class="tab">Audit</span>
-          </div>
-          <div class="panel"><h4>Brief</h4><p>Goal, source room, assignees, acceptance notes, and run status are shown first.</p></div>
-          <div class="metric-grid">
-            <div class="metric"><strong>2</strong><span>assignees</span></div>
-            <div class="metric"><strong>3</strong><span>artifacts</span></div>
-            <div class="metric"><strong>0</strong><span>blocking risks</span></div>
-          </div>
-          <div class="panel"><h4>Context preview</h4><p>conversation_brief is surfaced without exposing raw logs by default.</p></div>
-          <div class="panel"><h4>Audit</h4><p>Logs remain available under Audit for deeper review.</p></div>
-        </aside>
-      </div>
-    </article>
-
-    <article class="mockup phase-06" id="phase-06" data-file="phase-06-artifact-model.png">
-      <div class="app">
-        <header class="topbar">
-          <div class="brand"><span class="mark"></span> Agent Hub <span class="phase-label">Phase 6 artifacts</span></div>
-          <div class="top-actions"><span class="pill dark">Artifact v0</span><span>Backed by run_artifacts</span></div>
-        </header>
-        <aside class="sidebar">
-          <div class="project-card"><strong>agent-hub</strong><span class="small">#knowledge artifacts</span></div>
-          <div class="stack"><h3>Artifact Types</h3><div class="nav-item active"><span>All</span><span class="count">9</span></div><div class="nav-item"><span>Briefs</span><span class="count">3</span></div><div class="nav-item"><span>Diff summaries</span><span class="count">4</span></div><div class="nav-item"><span>Review decisions</span><span class="count">2</span></div></div>
-        </aside>
-        <main class="main">
-          <div class="section-header"><div class="title-block"><h1>Artifacts in the room timeline</h1><p>Important outputs become named, source-linked local objects.</p></div><span class="pill">content bounded</span></div>
-          <div class="timeline">
-            <div class="event"><div class="avatar blue">EN</div><div><h2>Run output promoted</h2><p>The run generated reviewable artifacts without copying full logs into messages.</p><div class="chips"><span class="chip teal">Artifact: Conversation brief</span><span class="chip blue">Artifact: Git diff summary</span><span class="chip violet">Artifact: Review decision</span></div></div><span class="badge">3 artifacts</span></div>
-            <div class="event system"><div class="avatar amber">A</div><div><h2>Artifact metadata captured</h2><p>Each item links to source run, task, room, creator role, type, and summary.</p></div><span class="badge">local</span></div>
-          </div>
-        </main>
-        <aside class="right">
-          <h3>Artifacts</h3>
-          <div class="tabs"><span class="tab active">Artifacts</span><span class="tab">Checks</span><span class="tab">Risks</span></div>
-          <div class="artifact"><h4>Conversation brief</h4><p>type: context<br />source: run 512<br />created by: @engineer</p><div class="chips"><span class="chip teal">preview</span><span class="chip amber">bounded</span></div></div>
-          <div class="artifact"><h4>Diff summary</h4><p>type: engineering<br />source task: T-255<br />availability: local only</p><div class="chips"><span class="chip blue">source-linked</span></div></div>
-          <div class="artifact"><h4>Review decision</h4><p>type: review<br />status: pending user decision</p></div>
-        </aside>
-      </div>
-    </article>
-
-    <article class="mockup phase-07" id="phase-07" data-file="phase-07-memory-decisions.png">
-      <div class="app">
-        <header class="topbar">
-          <div class="brand"><span class="mark"></span> Agent Hub <span class="phase-label">Phase 7 knowledge</span></div>
-          <div class="top-actions"><span class="pill dark">Explicit approval</span><span class="button">Propose memory</span></div>
-        </header>
-        <aside class="sidebar">
-          <div class="project-card"><strong>agent-hub</strong><span class="small">Knowledge workspace</span></div>
-          <div class="nav-list">
-            <div class="nav-item active"><span>All items</span><span class="count">42</span></div>
-            <div class="nav-item"><span>Decisions</span><span class="count">7</span></div>
-            <div class="nav-item"><span>Summaries</span><span class="count">11</span></div>
-            <div class="nav-item"><span>Proposals</span><span class="count">5</span></div>
-            <div class="nav-item"><span>Approved</span><span class="count">17</span></div>
-            <div class="nav-item"><span>Rejected</span><span class="count">2</span></div>
-          </div>
-        </aside>
-        <main class="main">
-          <div class="section-header"><div class="title-block"><h1>Knowledge / Memory</h1><p>Proposals, approved memory, summaries, decisions, and source links in one local workspace.</p></div><span class="pill">SQLite local</span></div>
-          <div class="two-col">
-            <div class="stack">
-              <div class="event"><div class="avatar violet">P</div><div><h2>Memory proposal</h2><p>Keep desktop renderer sandboxed; route filesystem and Git work through IPC.</p><div class="chips"><span class="chip violet">proposal</span><span class="chip teal">source: #review msg 88</span></div></div><span class="badge">approve</span></div>
-              <div class="event"><div class="avatar amber">D</div><div><h2>Review decision</h2><p>Accepted Phase 5 inspector design after manual screenshot review.</p><div class="chips"><span class="chip amber">decision</span><span class="chip blue">run 441</span></div></div><span class="badge">source</span></div>
-              <div class="event"><div class="avatar blue">S</div><div><h2>Thread summary</h2><p>Summary remains thread-local until explicitly promoted.</p></div><span class="badge">local</span></div>
-            </div>
-            <div class="panel"><h4>Filters</h4><div class="chips"><span class="chip teal">source messages</span><span class="chip blue">related runs</span><span class="chip amber">tasks</span><span class="chip violet">audit</span></div><p style="margin-top: 12px">Approved memory is the only memory injected into future task briefs.</p></div>
-          </div>
-        </main>
-        <aside class="right">
-          <h3>Audit Panel</h3>
-          <div class="panel"><h4>Selected source</h4><p>#review, message 88<br />Task T-231<br />Run 441</p></div>
-          <div class="panel"><h4>Decision controls</h4><div class="chips"><span class="chip teal">Approve</span><span class="chip brick">Reject</span><span class="chip amber">Open source</span></div></div>
-        </aside>
-      </div>
-    </article>
-
-    <article class="mockup phase-08" id="phase-08" data-file="phase-08-team-role-config.png">
-      <div class="app">
-        <header class="topbar">
-          <div class="brand"><span class="mark"></span> Agent Hub <span class="phase-label">Phase 8 team roles</span></div>
-          <div class="top-actions"><span class="pill dark">Role config v0</span><span class="button">Create role</span></div>
-        </header>
-        <aside class="sidebar">
-          <div class="project-card"><strong>agent-hub</strong><span class="small">Team settings</span></div>
-          <div class="nav-list">
-            <div class="nav-item active"><span>Team</span><span class="count">12</span></div>
-            <div class="nav-item"><span>Executors</span><span class="count">4</span></div>
-            <div class="nav-item"><span>Policies</span><span class="count">local</span></div>
-            <div class="nav-item"><span>Recent tasks</span><span class="count">18</span></div>
-          </div>
-        </aside>
-        <main class="main">
-          <div class="section-header"><div class="title-block"><h1>Team / Role Configuration</h1><p>Preset and custom roles share one local role/executor contract.</p></div><span class="pill">no secrets in SQLite</span></div>
-          <div class="table">
-            <div class="table-row header"><span>Handle</span><span>Executor</span><span>Permissions</span><span>Status</span></div>
-            <div class="table-row"><strong>@researcher</strong><span>agent_adapter / fake</span><span>read context</span><span class="chip teal">enabled</span></div>
-            <div class="table-row"><strong>@engineer</strong><span>agent_adapter / codex</span><span>worktree writes</span><span class="chip teal">enabled</span></div>
-            <div class="table-row"><strong>@qa</strong><span>agent_adapter / claude</span><span>review only</span><span class="chip amber">review</span></div>
-            <div class="table-row"><strong>@customer</strong><span>human</span><span>non-runnable</span><span class="chip violet">reserved</span></div>
-          </div>
-          <div class="metric-grid">
-            <div class="metric"><strong>7</strong><span>preset roles</span></div>
-            <div class="metric"><strong>5</strong><span>custom roles</span></div>
-            <div class="metric"><strong>1</strong><span>reserved executor</span></div>
-          </div>
-        </main>
-        <aside class="right">
-          <h3>Role Profile</h3>
-          <div class="panel"><h4>@qa</h4><p>Purpose: local review and verification planning.<br />Persona: strict, evidence-first reviewer.</p></div>
-          <div class="panel"><h4>Policies</h4><p>Context: current room, approved memory, run evidence.<br />Approval: user confirmation for side effects.</p></div>
-          <div class="panel"><h4>Executor binding</h4><div class="chips"><span class="chip blue">agent_adapter</span><span class="chip teal">claude-code</span><span class="chip violet">llm_api reserved</span></div></div>
-          <div class="panel"><h4>Edit safe fields</h4><p>Handle, display name, capability, persona, instructions, policies, tags, and status.</p></div>
-        </aside>
-      </div>
-    </article>
-
-    <article class="mockup phase-09" id="phase-09" data-file="phase-09-collaboration-workflows.png">
-      <div class="app">
-        <header class="topbar">
-          <div class="brand"><span class="mark"></span> Agent Hub <span class="phase-label">Phase 9 collaboration</span></div>
-          <div class="top-actions"><span class="pill dark">Bounded rounds</span><span class="button">Start workflow</span></div>
-        </header>
-        <aside class="sidebar">
-          <div class="project-card"><strong>agent-hub</strong><span class="small">#review workflows</span></div>
-          <div class="stack"><h3>Workflow Modes</h3><div class="nav-item active"><span>Review loop</span><span class="count">max 2</span></div><div class="nav-item"><span>Handoff</span><span class="count">ready</span></div><div class="nav-item"><span>Panel discussion</span><span class="count">max 3</span></div></div>
-        </aside>
-        <main class="main">
-          <div class="section-header"><div class="title-block"><h1>Controlled collaboration workflow</h1><p>Participants coordinate through visible, bounded task state.</p></div><span class="pill">no hidden loops</span></div>
-          <div class="workflow-map">
-            <div class="step"><strong>1. Scope</strong><p>Select room, task, participants, and max rounds.</p></div>
-            <div class="step"><strong>2. Handoff</strong><p>@engineer produces work in an isolated worktree.</p></div>
-            <div class="step"><strong>3. Review</strong><p>@reviewer adds findings without applying changes.</p></div>
-            <div class="step"><strong>4. Summary</strong><p>Workflow closes with linked evidence and decision.</p></div>
-          </div>
-          <div class="timeline">
-            <div class="event system"><div class="avatar amber">W</div><div><h2>Review loop started</h2><p>Mode: review_loop. Participants: @engineer, @reviewer. Max rounds: 2.</p><div class="chips"><span class="chip amber">round 1 of 2</span><span class="chip teal">stop: user decision</span></div></div><span class="badge">active</span></div>
-            <div class="event"><div class="avatar blue">EN</div><div><h2>Handoff completed</h2><p>Run evidence, artifacts, and checks are attached to the workflow timeline.</p></div><span class="badge">done</span></div>
-            <div class="event warning"><div class="avatar brick">RV</div><div><h2>Reviewer findings</h2><p>Two blocking questions and one suggested follow-up. No automatic apply.</p></div><span class="badge">review</span></div>
-          </div>
-        </main>
-        <aside class="right">
-          <h3>Workflow Setup</h3>
-          <div class="panel"><h4>Mode</h4><div class="chips"><span class="chip teal">handoff</span><span class="chip amber">review_loop</span><span class="chip violet">panel_discussion</span></div></div>
-          <div class="panel"><h4>Round limit</h4><p>Current max: 2. Stop condition: user decision or all participants complete.</p></div>
-          <div class="panel"><h4>Expected outputs</h4><p>Findings, final summary, linked artifacts, checks, risks, and audit events.</p></div>
-        </aside>
-      </div>
-    </article>
-
-    <article class="mockup phase-11" id="phase-11" data-file="phase-11-pack-boundaries.png">
-      <div class="app">
-        <header class="topbar">
-          <div class="brand"><span class="mark"></span> Agent Hub <span class="phase-label">Phase 11 packs</span></div>
-          <div class="top-actions"><span class="pill dark">Built-in packs</span><span>No marketplace</span></div>
-        </header>
-        <aside class="sidebar">
-          <div class="project-card"><strong>agent-hub</strong><span class="small">Pack boundaries</span></div>
-          <div class="nav-list">
-            <div class="nav-item active"><span>Core Workgroup</span><span class="count">on</span></div>
-            <div class="nav-item"><span>Engineering</span><span class="count">on</span></div>
-            <div class="nav-item"><span>Research</span><span class="count">off</span></div>
-            <div class="nav-item"><span>Writing</span><span class="count">off</span></div>
-            <div class="nav-item"><span>Operations</span><span class="count">off</span></div>
-          </div>
-        </aside>
-        <main class="main">
-          <div class="section-header"><div class="title-block"><h1>Core vocabulary with pack-specific detail</h1><p>General surfaces use Brief, Context, Artifacts, Checks, Risks, and Memory.</p></div><span class="pill">deterministic metadata</span></div>
-          <div class="kanban">
-            <div class="lane"><h4>Core Workgroup</h4><div class="mini-card">Brief</div><div class="mini-card">Context</div><div class="mini-card">Artifacts</div><div class="mini-card">Checks</div><div class="mini-card">Risks</div><div class="mini-card">Memory</div></div>
-            <div class="lane"><h4>Engineering Pack</h4><div class="mini-card">Diff summary</div><div class="mini-card">Test output</div><div class="mini-card">Worktree state</div><div class="mini-card">PR notes</div><div class="mini-card">CI check</div></div>
-            <div class="lane"><h4>Research Pack</h4><div class="mini-card">Source note</div><div class="mini-card">Claim table</div><div class="mini-card">Citation check</div><div class="mini-card">Open question</div></div>
-          </div>
-        </main>
-        <aside class="right">
-          <h3>Label Mapping</h3>
-          <div class="panel"><h4>Inspector</h4><p>Diff is shown under Artifacts only when the Engineering pack contributes that artifact type.</p></div>
-          <div class="panel"><h4>Checks</h4><p>Tests and CI are engineering-specific check labels inside the pack section.</p></div>
-          <div class="panel"><h4>Role templates</h4><p>Packs seed roles but do not limit user-defined custom roles.</p></div>
-        </aside>
-      </div>
-    </article>
-
-    <article class="mockup phase-12" id="phase-12" data-file="phase-12-apply-lifecycle-controls.png">
-      <div class="app">
-        <header class="topbar">
-          <div class="brand"><span class="mark"></span> Agent Hub <span class="phase-label">Phase 12 lifecycle</span></div>
-          <div class="top-actions"><span class="pill dark">Human gated</span><span>No push or merge</span></div>
-        </header>
-        <aside class="sidebar">
-          <div class="project-card"><strong>agent-hub</strong><span class="small">Apply and cleanup</span></div>
-          <div class="nav-list">
-            <div class="nav-item active"><span>Retained worktrees</span><span class="count">3</span></div>
-            <div class="nav-item"><span>Apply previews</span><span class="count">1</span></div>
-            <div class="nav-item"><span>Cleanup queue</span><span class="count">2</span></div>
-            <div class="nav-item"><span>Audit trail</span><span class="count">24</span></div>
-          </div>
-        </aside>
-        <main class="main">
-          <div class="section-header"><div class="title-block"><h1>Explicit apply and lifecycle controls</h1><p>Every filesystem or Git side effect requires preview, risk gate, and confirmation.</p></div><span class="pill">blocking risks enforced</span></div>
-          <div class="split-main">
-            <div class="stack">
-              <div class="callout"><h4>Retained worktree</h4><p>~/.agent-hub/worktrees/agent-hub/T-301-codex</p><div class="chips"><span class="chip teal">Inspect</span><span class="chip amber">Mark keep</span><span class="chip brick">Cleanup selected</span></div></div>
-              <div class="callout"><h4>Apply preview</h4><p>12 changed files. 4 docs. 8 TypeScript files. Preview diff before local apply.</p><div class="chips"><span class="chip blue">Open preview</span><span class="chip brick">Risk gate required</span></div></div>
-              <div class="event warning"><div class="avatar brick">R</div><div><h2>Blocking risk</h2><p>Sensitive path change detected. Apply controls are disabled until the user resolves the risk.</p></div><span class="badge">blocked</span></div>
-            </div>
-            <div class="panel"><h4>Confirmation</h4><p>Type the worktree name to clean up selected local artifacts.</p><div class="composer" style="position: static; margin-top: 12px"><span>T-301-codex</span></div><div class="chips"><span class="chip brick">Confirm cleanup</span><span class="chip teal">Cancel</span></div></div>
-          </div>
-        </main>
-        <aside class="right">
-          <h3>Audit Trail</h3>
-          <div class="panel"><h4>Decision record</h4><p>Action: cleanup requested<br />Scope: selected worktree<br />Actor: local user</p></div>
-          <div class="panel"><h4>Apply gates</h4><div class="dense-list"><div class="list-line"><span>Preview opened</span><strong>yes</strong></div><div class="list-line"><span>Risk scan</span><strong>blocking</strong></div><div class="list-line"><span>User confirmed</span><strong>no</strong></div></div></div>
-          <div class="panel"><h4>Boundaries</h4><p>No automatic apply, push, PR creation, merge, or branch deletion.</p></div>
-        </aside>
-      </div>
-    </article>
+      document.getElementById("root").innerHTML = phases.map(renderPhase).join("");
+    </script>
   </body>
 </html>
