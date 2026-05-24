@@ -108,10 +108,7 @@ export function Sidebar({
         </div>
       </section>
 
-      <nav className="placeholder-nav" aria-label="Utilities">
-        {["Compare", "Memory", "Skills"].map((item) => (
-          <button key={item}>{item}</button>
-        ))}
+      <nav className="utility-nav" aria-label="Utilities">
         <button onClick={onOpenSettings}>Settings</button>
       </nav>
     </aside>

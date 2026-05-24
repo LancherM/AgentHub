@@ -175,7 +175,8 @@ Implemented:
   SQLite-backed project/thread/message/run/review/memory service facades,
   inline run cards, bounded assistant output messages, conversation brief
   artifacts, TaskRunner-backed fake/Codex/Claude desktop runs in isolated
-  worktrees, live run event replay, desktop cancellation, and an inspector
+  worktrees, live run event replay, desktop cancellation, retained-worktree
+  handoff, local run comparison, explicit memory writeback, and an inspector
   drawer for logs, diffs, verification, risks, and memory proposals.
 - Per-project desktop verification command configuration through validated IPC
   and local SQLite settings, with configured commands passed to TaskRunner for
@@ -288,7 +289,8 @@ package. It provides UI for:
 - Risk reports
 - Memory proposals
 - Per-project verification settings
-- Placeholder navigation for Compare, Memory, and Skills
+- Manual retained-worktree handoff
+- Local multi-agent comparison review
 
 The desktop app must call the local core through Electron main-process IPC. The
 renderer must not directly access Node.js, shell, filesystem, SQLite, or git.
@@ -300,10 +302,11 @@ uses `FakeAgentAdapter` in an isolated worktree, while `@codex` and `@claude`
 use process-backed adapter preflight and fail inspectably when the local CLI is
 unavailable or unauthenticated. Desktop runs must not write Agent Hub context
 files to target repository roots, export context, merge, push, create pull
-requests, approve memory, or apply code automatically. Approved-memory
-writeback confirmation, comparison review, worktree lifecycle controls, and
-explicit merge/apply workflows remain follow-up work behind the same IPC
-boundary.
+requests, approve memory, or apply code automatically. Explicit desktop memory
+approval writes to the Agent Hub-owned context store, comparison review remains
+read-only, and retained-worktree handoff only exposes local review evidence
+behind the same IPC boundary. Worktree lifecycle controls and explicit
+merge/apply workflows remain follow-up work.
 
 ### packages/core
 

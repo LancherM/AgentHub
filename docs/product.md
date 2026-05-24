@@ -332,8 +332,9 @@ when no durable conversation threads exist yet, so old desktop run data remains
 inspectable without making run synthesis the primary thread store. Desktop
 thread lists and details now read from the core conversation repositories, use
 a lightweight run status map for run-card status/counts, and reconcile
-assistant output only for the selected thread. Run records, events, simulated
-verification, placeholder diffs, and risk review rows remain SQLite-backed.
+assistant output only for the selected thread. Run records, events, skipped or
+configured verification rows, collected diffs, and risk review rows remain
+SQLite-backed.
 
 Agent Hub keeps project context, thread context, current-turn context, and
 per-run context snapshots as separate layers. Desktop follow-up turns build a
