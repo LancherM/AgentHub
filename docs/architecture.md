@@ -145,14 +145,16 @@ facade over those repositories. It parses safe debug adapter mentions
 (`@fake`, `@codex`, `@claude`, and `@claude-code`) plus enabled workgroup role
 mentions from the shared preset/custom role contract. `sendMessage` appends one
 durable user message, stores resolved role metadata on that message when
-present, creates one run per selected adapter or role participant through
-`RunService`, and appends one durable run-card message plus one hidden pending
-assistant-output message per run. When the caller does not provide a thread id,
-the service resolves the project's seeded `#general` room instead of creating a
+present, creates one shared task for the turn, stores local task assignment
+metadata, appends task-created and participants-assigned system messages, and
+creates one run per executable adapter or role participant through `RunService`.
+Reserved non-executable role executors remain assignment metadata only until a
+future executor exists. When the caller does not provide a thread id, the
+service resolves the project's seeded `#general` room instead of creating a
 prompt-titled chat thread. Role-targeted run-card messages persist both the
-compact role metadata and the executor mapping so review surfaces can attribute
-local agent output to the requested participant without giving the renderer
-access to role resolution logic. The renderer-facing
+compact role metadata, the shared task id, and the executor mapping so review
+surfaces can attribute local agent output to the requested participant without
+giving the renderer access to role resolution logic. The renderer-facing
 `window.agentHub.threads.*` contract remains unchanged, but service state is
 loaded from SQLite through lightweight thread reads. Thread lists do not
 reconcile every thread or hydrate full run details; they derive run-card
@@ -203,9 +205,12 @@ is represented by live run events while the persisted core run remains
 `running`; core `succeeded` is exposed to the desktop renderer as `completed`.
 
 Desktop real execution now enters the shared `TaskRunner` from the Electron
-main process. `RunService` pre-creates the queued task/run rows for stable
-renderer IDs, then constructs TaskRunner with the same SQLite repositories and
-a desktop ID generator that reuses the queued run id. `@fake` executes through
+main process. `RunService` can either create a new single-run task or attach a
+queued run row to an existing thread-created task for mention fan-out. It then
+constructs TaskRunner with the same SQLite repositories and a desktop ID
+generator that reuses the queued run id. Shared desktop tasks use TaskRunner's
+aggregate task-status mode so one finished run does not complete the task while
+sibling runs are still queued or running. `@fake` executes through
 `FakeAgentAdapter` in an isolated worktree, while `@codex` and `@claude` use the
 process-backed Codex and Claude Code adapters, including local preflight. If a
 CLI is unavailable or unauthenticated, the run fails inspectably through
@@ -503,6 +508,10 @@ Migration version 10 adds nullable `role_json` to `run_metadata` so existing
 run review flows can associate a run with the resolved role handle, display
 name, executor kind, adapter kind, permissions, context policy, and approval
 policy without rebuilding the core `task_runs` table.
+Migration version 11 adds nullable `metadata_json` to `tasks`. Desktop uses
+that JSON field for room/thread provenance, source user message id, assignment
+role, role handle, executor kind, executable state, and linked run ids for
+shared mention fan-out tasks.
 
 Repository implementations enforce the imported state diagrams before writing
 status updates. Tasks may move `open -> running -> completed`, return from
@@ -512,7 +521,10 @@ cancellation from `queued` or `running`; memory items move only from `proposed`
 to `approved` or `rejected`. Repeating the same status remains idempotent, but
 invalid terminal transitions are rejected in both SQLite and in-memory
 repositories, including the in-memory task-run `updateStatus()` path used by
-focused runner tests and injected runtimes.
+focused runner tests and injected runtimes. Shared desktop tasks still use this
+narrow task status enum; the aggregate rule is computed from linked task runs:
+any queued/running run keeps the task `running`, all succeeded runs complete
+the task, and any failed/cancelled final mix returns it to `open`.
 
 Settings use the same domain validation before repository writes. Both
 in-memory and SQLite settings repositories reject secret-like key names such as
@@ -707,6 +719,13 @@ conversation messages and run cards through `window.agentHub.threads.*`.
 Because rooms are conversation-thread metadata, the renderer gets no direct
 SQLite, filesystem, Git, shell, or orchestration access, and CLI chat continues
 to use the existing conversation repositories during the transition.
+
+Phase 3 groups one mentioned workgroup instruction into one local task. The
+task keeps thread provenance and assignment metadata in `tasks.metadata_json`;
+executable assignments create linked task runs, while reserved non-executable
+assignments stay visible as local task metadata without creating runs. The
+renderer groups consecutive run-card messages that share a task id, and all
+privileged task/run creation remains in Electron main-process services.
 
 Repository CI/CD lives in `.github/workflows/ci-cd.yml` and stays outside the
 Agent Hub runtime. The workflow installs the pinned pnpm and Node versions from

@@ -139,6 +139,12 @@ export function AgentRunCard({
     message.agentId === "fake"
       ? "Local TaskRunner fake run in an isolated worktree. The project root is not modified."
       : `Local TaskRunner run for @${message.agentId} in an isolated worktree. Unavailable CLIs fail with persisted evidence.`;
+  const displayHandle = message.assignment?.roleHandle
+    ? `@${message.assignment.roleHandle}`
+    : `@${message.agentId}`;
+  const executorLabel = message.assignment?.roleHandle
+    ? `via @${message.agentId}`
+    : undefined;
 
   async function cancel(): Promise<void> {
     setCancelError(undefined);
@@ -160,10 +166,10 @@ export function AgentRunCard({
         </div>
         <div className="run-card-title">
           <div>
-            <strong>@{message.agentId}</strong>
+            <strong>{displayHandle}</strong>
             <RunStatusBadge status={status} compact />
           </div>
-          <span>{headerMeta}</span>
+          <span>{executorLabel ? `${executorLabel} · ${headerMeta}` : headerMeta}</span>
         </div>
         <div className="run-card-actions">
           {canCancel ? (

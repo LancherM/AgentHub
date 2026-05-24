@@ -19,7 +19,9 @@ export type {
   WorkgroupExecutorKind,
   WorkgroupReservedExecutor,
   WorkgroupRole,
-  WorkgroupRoleRunMetadata
+  WorkgroupRoleRunMetadata,
+  WorkgroupTaskAssignmentMetadata,
+  WorkgroupTaskAssignmentStatus
 } from "./workgroup-roles";
 
 export const findWorkgroupRoleByHandle = importedFindWorkgroupRoleByHandle;
@@ -126,6 +128,7 @@ export interface Task {
   projectId: string;
   title: string;
   description?: string;
+  metadata?: JsonObject;
   status: TaskStatus;
   createdAt: string;
   updatedAt: string;

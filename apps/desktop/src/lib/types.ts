@@ -1,4 +1,8 @@
-import type { WorkgroupRoleRunMetadata } from "@agent-hub/shared";
+import type {
+  JsonObject,
+  WorkgroupRoleRunMetadata,
+  WorkgroupTaskAssignmentMetadata
+} from "@agent-hub/shared";
 
 export type AgentId = "fake" | "codex" | "claude";
 export type AgentKind = AgentId;
@@ -133,6 +137,9 @@ export interface AgentRunMessage extends BaseThreadMessage {
   runId: string;
   agentId: AgentId;
   status: RunStatus;
+  taskId?: string;
+  taskTitle?: string;
+  assignment?: WorkgroupTaskAssignmentMetadata;
 }
 
 export interface AssistantMessage extends BaseThreadMessage {
@@ -146,6 +153,7 @@ export interface AssistantMessage extends BaseThreadMessage {
 export interface SystemMessage extends BaseThreadMessage {
   type: "system";
   text: string;
+  metadata?: JsonObject;
 }
 
 export type ThreadMessage =
@@ -217,6 +225,7 @@ export interface RunDetail extends RunSummary {
 }
 
 export interface CreateRunInput {
+  taskId?: string;
   projectId: string;
   prompt: string;
   title?: string;

@@ -5,8 +5,11 @@ interface SystemMessageProps {
 }
 
 export function SystemMessage({ message }: SystemMessageProps): JSX.Element {
+  const isTaskEvent =
+    typeof message.metadata?.taskEvent === "string" &&
+    message.metadata.taskEvent.length > 0;
   return (
-    <div className="system-message">
+    <div className={`system-message ${isTaskEvent ? "task-event" : ""}`}>
       <span>{formatTime(message.createdAt)}</span>
       <p>{message.text}</p>
     </div>

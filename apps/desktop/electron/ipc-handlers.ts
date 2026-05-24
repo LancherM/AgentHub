@@ -346,6 +346,8 @@ function parseCreateRunInput(input: unknown): CreateRunInput {
     );
   }
   return {
+    taskId:
+      value.taskId === undefined ? undefined : parseId(value.taskId, "taskId"),
     projectId,
     prompt,
     title,

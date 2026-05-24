@@ -52,6 +52,7 @@ import {
   type TaskRunnerDependencies
 } from "@agent-hub/task-runner";
 import { buildContextArtifacts } from "@agent-hub/context-compiler";
+import { presetWorkgroupRoles, type WorkgroupRole } from "@agent-hub/shared";
 
 const execFileAsync = promisify(execFile);
 
@@ -1201,21 +1202,46 @@ describe("desktop services", () => {
       "fake",
       "codex"
     ]);
+    expect(new Set(runMessages.map((message) => message.taskId)).size).toBe(1);
 
     const fakeRun = runMessages.find((message) => message.agentId === "fake");
     const codexRun = runMessages.find((message) => message.agentId === "codex");
     if (!fakeRun || !codexRun) {
       throw new Error("expected fake and codex run messages");
     }
+    expect(fakeRun.taskId).toBe(codexRun.taskId);
+    const groupedTask = await fixture.repositories.taskRepository.get(
+      fakeRun.taskId ?? ""
+    );
+    expect(groupedTask).toMatchObject({
+      id: fakeRun.taskId,
+      metadata: expect.objectContaining({
+        threadId: detail.id,
+        assignments: expect.arrayContaining([
+          expect.objectContaining({
+            assignmentRole: "agent",
+            agentId: "fake",
+            runId: fakeRun.runId
+          }),
+          expect.objectContaining({
+            assignmentRole: "agent",
+            agentId: "codex",
+            runId: codexRun.runId
+          })
+        ])
+      })
+    });
     await waitForRun(runs, fakeRun.runId, "completed");
     await waitForRun(runs, codexRun.runId, "failed");
 
     const refreshed = await threads.getThread(detail.id);
     expect(refreshed.messages.map((message) => message.type)).toEqual([
       "user",
+      "system",
+      "system",
+      "agent_run",
       "agent_run",
       "assistant",
-      "agent_run",
       "assistant"
     ]);
     expect(
@@ -1376,11 +1402,36 @@ describe("desktop services", () => {
       ]
     });
     expect(runMessage.agentId).toBe("fake");
+    expect(runMessage).toMatchObject({
+      taskId: expect.any(String),
+      assignment: expect.objectContaining({
+        assignmentRole: "role",
+        roleHandle: "researcher",
+        executorKind: "agent_adapter",
+        runId: runMessage.runId
+      })
+    });
 
     const rawMessages =
       await fixture.repositories.conversationMessageRepository.listByThreadId(
         detail.id
       );
+    expect(rawMessages.filter((message) => message.role === "system")).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          metadata: expect.objectContaining({
+            taskEvent: "task_created",
+            taskId: runMessage.taskId
+          })
+        }),
+        expect.objectContaining({
+          metadata: expect.objectContaining({
+            taskEvent: "participants_assigned",
+            taskId: runMessage.taskId
+          })
+        })
+      ])
+    );
     expect(rawMessages[0]?.metadata).toMatchObject({
       roleMentions: [
         expect.objectContaining({
@@ -1400,7 +1451,28 @@ describe("desktop services", () => {
       executor: {
         kind: "agent_adapter",
         adapterKind: "fake"
-      }
+      },
+      taskId: runMessage.taskId,
+      assignment: expect.objectContaining({
+        assignmentRole: "role",
+        roleHandle: "researcher",
+        runId: runMessage.runId
+      })
+    });
+    await expect(
+      fixture.repositories.taskRepository.get(runMessage.taskId ?? "")
+    ).resolves.toMatchObject({
+      metadata: expect.objectContaining({
+        threadId: detail.id,
+        assignments: [
+          expect.objectContaining({
+            assignmentRole: "role",
+            roleHandle: "researcher",
+            executorKind: "agent_adapter",
+            runId: runMessage.runId
+          })
+        ]
+      })
     });
 
     await waitForRun(runs, runMessage.runId, "completed");
@@ -1420,6 +1492,141 @@ describe("desktop services", () => {
       );
     expect(brief?.content).toContain("workgroup_role: @researcher");
     expect(brief?.content).toContain("role_instructions:");
+  });
+
+  it("keeps non-executable role assignments on the shared task without starting a run", async () => {
+    const fixture = await createFixture();
+    const context = createDesktopServiceContext(fixture.repositories);
+    const projects = createProjectService(context);
+    const memory = createMemoryService(context);
+    const review = createReviewService(context, { memoryService: memory });
+    const runs = createTestRunService(context, review, memory, fixture);
+    const researcher = presetWorkgroupRoles.find(
+      (role) => role.handle === "researcher"
+    );
+    if (!researcher) {
+      throw new Error("missing researcher preset");
+    }
+    const qaRole: WorkgroupRole = {
+      ...researcher,
+      id: "role_custom_qa",
+      handle: "qa",
+      displayName: "QA",
+      purpose: "Human acceptance review.",
+      executor: {
+        kind: "human",
+        unavailableReason: "Human role execution is reserved."
+      }
+    };
+    const threads = createThreadService({
+      context,
+      projects,
+      runs,
+      roles: [qaRole, ...presetWorkgroupRoles]
+    });
+    const project = await projects.open(fixture.projectRoot);
+
+    const detail = await threads.sendMessage({
+      projectId: project.id,
+      text: "@qa @researcher analyze this",
+      contextMode: "auto"
+    });
+    const runMessages = detail.messages.filter(
+      (message): message is AgentRunMessage => message.type === "agent_run"
+    );
+
+    expect(runMessages).toHaveLength(1);
+    const runMessage = runMessages[0];
+    if (!runMessage) {
+      throw new Error("expected executable researcher run");
+    }
+    expect(runMessage).toMatchObject({
+      agentId: "fake",
+      assignment: expect.objectContaining({
+        roleHandle: "researcher",
+        runId: runMessage.runId
+      })
+    });
+    const task = await fixture.repositories.taskRepository.get(
+      runMessage.taskId ?? ""
+    );
+    expect(task?.metadata).toMatchObject({
+      threadId: detail.id,
+      assignments: expect.arrayContaining([
+        expect.objectContaining({
+          assignmentRole: "role",
+          roleHandle: "qa",
+          executorKind: "human",
+          executable: false,
+          status: "assigned"
+        }),
+        expect.objectContaining({
+          assignmentRole: "role",
+          roleHandle: "researcher",
+          executorKind: "agent_adapter",
+          executable: true,
+          runId: runMessage.runId
+        })
+      ])
+    });
+    await expect(
+      fixture.repositories.taskRunRepository.listByTaskId(runMessage.taskId ?? "")
+    ).resolves.toHaveLength(1);
+  });
+
+  it("uses unique worktree branches for same-adapter role assignments on one task", async () => {
+    const fixture = await createFixture();
+    const context = createDesktopServiceContext(fixture.repositories);
+    const projects = createProjectService(context);
+    const memory = createMemoryService(context);
+    const review = createReviewService(context, { memoryService: memory });
+    const runs = createTestRunService(context, review, memory, fixture);
+    const threads = createThreadService({ context, projects, runs });
+    const project = await projects.open(fixture.projectRoot);
+
+    const detail = await threads.sendMessage({
+      projectId: project.id,
+      text: "@researcher @writer compare the plan",
+      contextMode: "auto"
+    });
+    const runMessages = detail.messages.filter(
+      (message): message is AgentRunMessage => message.type === "agent_run"
+    );
+    expect(runMessages).toHaveLength(2);
+    expect(new Set(runMessages.map((message) => message.taskId)).size).toBe(1);
+
+    for (const message of runMessages) {
+      await waitForRun(runs, message.runId, "completed");
+    }
+    const storedRuns = await fixture.repositories.taskRunRepository.listByTaskId(
+      runMessages[0]?.taskId ?? ""
+    );
+    expect(storedRuns).toHaveLength(2);
+    const branchNames = storedRuns.map((run) => run.branchName);
+    expect(branchNames.every(Boolean)).toBe(true);
+    expect(new Set(branchNames).size).toBe(2);
+    expect(branchNames).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining(`agent-hub/${runMessages[0]?.taskId}/fake/`)
+      ])
+    );
+    await expect(
+      fixture.repositories.taskRepository.get(runMessages[0]?.taskId ?? "")
+    ).resolves.toMatchObject({
+      status: "completed",
+      metadata: expect.objectContaining({
+        assignments: expect.arrayContaining([
+          expect.objectContaining({
+            roleHandle: "researcher",
+            status: "completed"
+          }),
+          expect.objectContaining({
+            roleHandle: "writer",
+            status: "completed"
+          })
+        ])
+      })
+    });
   });
 
   it("creates desktop comparison reports for terminal runs in the same multi-agent turn", async () => {
@@ -1469,7 +1676,7 @@ describe("desktop services", () => {
       expect.objectContaining({
         runId: codexRun.runId,
         agentId: "codex",
-        scope: "conversation_turn"
+        scope: "task"
       })
     ]);
 
@@ -1483,7 +1690,7 @@ describe("desktop services", () => {
     expect(report).toMatchObject({
       baselineRunId: fakeRun.runId,
       candidateRunId: codexRun.runId,
-      scope: "conversation_turn",
+      scope: "task",
       details: expect.objectContaining({
         runs: expect.objectContaining({
           baseline: expect.objectContaining({ agent: "fake", status: "succeeded" }),
@@ -1591,9 +1798,13 @@ describe("desktop services", () => {
     const restored = await restartedThreads.getThread(first.id);
     expect(restored.messages.map((message) => message.type)).toEqual([
       "user",
+      "system",
+      "system",
       "agent_run",
       "assistant",
       "user",
+      "system",
+      "system",
       "agent_run",
       "assistant"
     ]);
@@ -1829,7 +2040,7 @@ describe("desktop services", () => {
       kind: "conversation_brief",
       metadata: expect.objectContaining({
         source: "conversation_context_builder",
-        includedMessageCount: 2
+        includedMessageCount: 4
       })
     });
     expect(artifact?.content).toContain("second thread-aware prompt");

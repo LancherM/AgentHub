@@ -1,4 +1,5 @@
 import type {
+  AgentRunMessage,
   RunContinuationTarget,
   RunDetail,
   RunInspectorTab,
@@ -35,32 +36,79 @@ export function MessageList({
     );
   }
 
-  return (
-    <div className="message-list">
-      {messages.map((message) =>
-        message.type === "user" ? (
-          <UserMessageBubble key={message.id} message={message} />
-        ) : message.type === "agent_run" ? (
-          <AgentRunCard
-            key={message.id}
-            message={message}
-            initialRun={runDetails[message.runId]}
-            onRunUpdated={onRunUpdated}
-            onOpenInspector={onOpenInspector}
-            onCancelRun={onCancelRun}
-            onContinueFromRun={() =>
-              onContinueFromRun({
-                parentRunId: message.runId,
-                parentMessageId: message.id
-              })
-            }
-          />
-        ) : message.type === "assistant" ? (
-          <AssistantMessageBubble key={message.id} message={message} />
-        ) : (
-          <SystemMessage key={message.id} message={message} />
-        )
-      )}
-    </div>
+  const renderedMessages: JSX.Element[] = [];
+  for (let index = 0; index < messages.length; index += 1) {
+    const message = messages[index];
+    if (message?.type === "agent_run" && message.taskId) {
+      const group: AgentRunMessage[] = [message];
+      let nextIndex = index + 1;
+      while (
+        messages[nextIndex]?.type === "agent_run" &&
+        (messages[nextIndex] as AgentRunMessage).taskId === message.taskId
+      ) {
+        group.push(messages[nextIndex] as AgentRunMessage);
+        nextIndex += 1;
+      }
+      renderedMessages.push(
+        <section className="task-run-group" key={`task-${message.taskId}`}>
+          <header className="task-run-group-header">
+            <div>
+              <span>Task</span>
+              <strong>{message.taskTitle ?? message.taskId}</strong>
+            </div>
+            <p>{assignmentLabel(group)}</p>
+          </header>
+          <div className="task-run-group-list">
+            {group.map((runMessage) => renderRunCard(runMessage))}
+          </div>
+        </section>
+      );
+      index = nextIndex - 1;
+      continue;
+    }
+    renderedMessages.push(renderMessage(message));
+  }
+
+  return <div className="message-list">{renderedMessages}</div>;
+
+  function renderMessage(message: ThreadMessage): JSX.Element {
+    if (message.type === "user") {
+      return <UserMessageBubble key={message.id} message={message} />;
+    }
+    if (message.type === "agent_run") {
+      return renderRunCard(message);
+    }
+    if (message.type === "assistant") {
+      return <AssistantMessageBubble key={message.id} message={message} />;
+    }
+    return <SystemMessage key={message.id} message={message} />;
+  }
+
+  function renderRunCard(message: AgentRunMessage): JSX.Element {
+    return (
+      <AgentRunCard
+        key={message.id}
+        message={message}
+        initialRun={runDetails[message.runId]}
+        onRunUpdated={onRunUpdated}
+        onOpenInspector={onOpenInspector}
+        onCancelRun={onCancelRun}
+        onContinueFromRun={() =>
+          onContinueFromRun({
+            parentRunId: message.runId,
+            parentMessageId: message.id
+          })
+        }
+      />
+    );
+  }
+}
+
+function assignmentLabel(messages: AgentRunMessage[]): string {
+  const labels = messages.map((message) =>
+    message.assignment?.roleHandle
+      ? `@${message.assignment.roleHandle}`
+      : `@${message.agentId}`
   );
+  return `${messages.length} run${messages.length === 1 ? "" : "s"} · ${labels.join(", ")}`;
 }

@@ -39,13 +39,15 @@ export function parseWorkgroupMentions(
         return prefix.length > 0 ? prefix : "";
       }
       const role = findWorkgroupRoleByHandle(roles, rawMention);
-      const adapter = role?.enabled ? adapterForRole(role) : undefined;
-      if (role && adapter) {
+      if (role?.enabled) {
         const metadata = toWorkgroupRoleRunMetadata(role);
         if (!roleMentions.some((mention) => mention.roleHandle === metadata.roleHandle)) {
           roleMentions.push(metadata);
         }
-        addRoleMention(participants, participantKeys, adapter, metadata);
+        const adapter = adapterForRole(role);
+        if (adapter) {
+          addRoleMention(participants, participantKeys, adapter, metadata);
+        }
         return prefix.length > 0 ? prefix : "";
       }
       return match;

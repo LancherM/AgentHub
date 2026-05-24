@@ -562,9 +562,9 @@ merge/apply, or external side effects.
 
 If this phase changes any visible desktop UI, including timeline grouping, task
 labels, run-card grouping, sidebar counts, or inspector content, first generate
-UI design artifacts and screenshots for user review and stop. After approval,
-implement the UI to match the reviewed design and complete the desktop
-verification flow.
+UI design artifacts and screenshots before production code changes. After the
+artifacts exist, implement the UI to match the design unless the user explicitly
+asked for a review stop, then complete the desktop verification flow.
 
 Update docs/product.md and docs/architecture.md. Add tests for multi-role
 mention grouping, shared task id linkage, executable role dispatch,

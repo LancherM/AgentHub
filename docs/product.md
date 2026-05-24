@@ -352,14 +352,17 @@ can show which role and executor produced a run. The renderer sends prompt text
 through the safe
 `window.agentHub.threads.sendMessage` preload API; the Electron main-process
 thread service strips known agent or role mentions from the task body, persists
-one ordered user message in the selected SQLite-backed room thread,
-creates one run per selected participant through `RunService`, and persists one
-inline run card message plus one hidden pending assistant-output message per
-run. When a run reaches a terminal state, the pending assistant message is
-updated with the agent-facing final output or a concise failure/cancel summary.
-If no room is selected, the message goes to the project's default `#general`
-room. If no agent or role is mentioned or supplied by the caller, desktop falls
-back to `@fake`.
+one ordered user message in the selected SQLite-backed room thread, creates one
+shared task for the instruction, records task-created and participants-assigned
+system timeline events, then creates one run per executable assignment through
+`RunService`. Non-executable reserved role executors such as `human`,
+`workflow`, or `llm_api` remain assigned on the task without starting a run.
+The timeline groups linked run cards under the shared task and persists one
+hidden pending assistant-output message per run. When a run reaches a terminal
+state, the pending assistant message is updated with the agent-facing final
+output or a concise failure/cancel summary. If no room is selected, the message
+goes to the project's default `#general` room. If no agent or role is mentioned
+or supplied by the caller, desktop falls back to `@fake`.
 
 Active inline run cards subscribe to the existing desktop run event stream and
 replay already-persisted events when a subscription starts after a fast run has
@@ -453,9 +456,10 @@ subscription behavior remain testable in the root Vitest suite without loading
 Electron.
 
 The current desktop execution path is TaskRunner-backed in the Electron main
-process. `RunService` still creates the queued desktop task/run rows needed for
-stable renderer IDs, then calls the shared `TaskRunner` with the desktop SQLite
-repositories. `@fake` runs through `FakeAgentAdapter` in an isolated worktree
+process. `RunService` can now attach a queued desktop run to an existing
+thread-created task, so multi-role desktop turns share one task id while each
+executable assignment keeps its own run id and local worktree. `@fake` runs
+through `FakeAgentAdapter` in an isolated worktree
 and exposes real diff, skipped verification, risk, logs, metadata, and proposed
 memory evidence. Mentioned `@codex` and `@claude` runs invoke the local
 process-backed adapter preflight through TaskRunner; unavailable CLIs fail as
@@ -520,6 +524,12 @@ results, risk reports, conversation threads, conversation messages,
 thread-local conversation summaries, memory items, comparison reports, skills,
 settings, and status transitions.
 
+Tasks include an optional JSON metadata field. The desktop thread service uses
+that field for local room/thread provenance, the source user message, and
+assignment metadata such as role handle, executor kind, executable state, and
+linked run id. The metadata is local audit data; it does not approve memory,
+apply code, or create remote collaboration state.
+
 SQLite now enforces the important imported storage constraints at the database
 boundary. Tasks reference projects with cascade delete, task runs reference
 agent profiles when one is selected, task and run status values are checked,
@@ -547,7 +557,10 @@ than arbitrary enum changes in both SQLite and injected in-memory
 repositories. Same-status updates remain idempotent. Failed task runs remain
 inspectable and return the parent task from `running` back to `open` so task
 lists and later `--task` runs reflect that no run is currently active. A later
-successful run can complete the task, or the user can cancel it.
+successful run can complete the task, or the user can cancel it. For shared
+desktop tasks, task status is aggregated across linked runs: queued or running
+assignments keep the task `running`, all-succeeded runs complete it, and any
+failed or cancelled final state returns it to `open` for review.
 
 The product remains local-only. This rebuild does not add cloud sync, accounts,
 team features, hosted dashboards, automatic pull requests, automatic merges, or

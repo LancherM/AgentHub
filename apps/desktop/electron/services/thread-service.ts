@@ -1,5 +1,6 @@
 import {
   extractAgentFacingOutput,
+  validateTask,
   validateConversationMessage,
   validateConversationThread,
   validateConversationThreadSummary,
@@ -8,14 +9,22 @@ import {
   type ConversationThread,
   type ConversationThreadRepository,
   type ConversationThreadSummary,
-  type ConversationThreadSummaryRepository
+  type ConversationThreadSummaryRepository,
+  type TaskRepository
 } from "@agent-hub/core";
 import {
   ConversationContextBuilder,
   ConversationThreadSummaryBuilder,
   type ConversationContextMessage
 } from "@agent-hub/context-compiler";
-import type { AgentKind, TaskRunStatus, WorkgroupRoleRunMetadata } from "@agent-hub/shared";
+import type {
+  AgentKind,
+  JsonObject,
+  TaskRunStatus,
+  WorkgroupRole,
+  WorkgroupRoleRunMetadata,
+  WorkgroupTaskAssignmentMetadata
+} from "@agent-hub/shared";
 import type {
   AgentId,
   AssistantMessage,
@@ -89,9 +98,14 @@ export interface ThreadService {
     threadId: string,
     runId: string,
     agentId: AgentId,
-    role?: WorkgroupRoleRunMetadata
+    role?: WorkgroupRoleRunMetadata,
+    metadata?: AgentRunTaskMetadata
   ): Promise<AgentRunMessage>;
-  appendSystemMessage(threadId: string, text: string): Promise<SystemMessage>;
+  appendSystemMessage(
+    threadId: string,
+    text: string,
+    metadata?: JsonObject
+  ): Promise<SystemMessage>;
   sendMessage(input: SendThreadMessageInput): Promise<ThreadDetail>;
 }
 
@@ -100,6 +114,13 @@ export interface ThreadServiceDependencies {
   projects: ProjectService;
   runs: RunService;
   conversationContextBuilder?: ConversationContextBuilder;
+  roles?: readonly WorkgroupRole[];
+}
+
+interface AgentRunTaskMetadata {
+  taskId: string;
+  taskTitle: string;
+  assignment: WorkgroupTaskAssignmentMetadata;
 }
 
 export function createThreadService(
@@ -112,6 +133,7 @@ class RepositoryThreadService implements ThreadService {
   private readonly threads: ConversationThreadRepository;
   private readonly messages: ConversationMessageRepository;
   private readonly summaries: ConversationThreadSummaryRepository;
+  private readonly tasks: TaskRepository;
   private readonly conversationContextBuilder: ConversationContextBuilder;
   private readonly conversationThreadSummaryBuilder = new ConversationThreadSummaryBuilder();
   private importedLegacyRuns = false;
@@ -121,6 +143,7 @@ class RepositoryThreadService implements ThreadService {
     this.messages = dependencies.context.repositories.conversationMessageRepository;
     this.summaries =
       dependencies.context.repositories.conversationThreadSummaryRepository;
+    this.tasks = dependencies.context.repositories.taskRepository;
     this.conversationContextBuilder =
       dependencies.conversationContextBuilder ?? new ConversationContextBuilder();
   }
@@ -225,7 +248,8 @@ class RepositoryThreadService implements ThreadService {
     threadId: string,
     runId: string,
     agentId: AgentId,
-    role?: WorkgroupRoleRunMetadata
+    role?: WorkgroupRoleRunMetadata,
+    taskMetadata?: AgentRunTaskMetadata
   ): Promise<AgentRunMessage> {
     const thread = await this.requireThread(threadId);
     const run = await this.dependencies.runs.getRun(runId);
@@ -249,7 +273,10 @@ class RepositoryThreadService implements ThreadService {
                 kind: role.executorKind,
                 adapterKind: role.adapterKind
               }
-            : undefined
+            : undefined,
+          taskId: taskMetadata?.taskId,
+          taskTitle: taskMetadata?.taskTitle,
+          assignment: taskMetadata?.assignment
         },
         createdAt: now
       })
@@ -258,7 +285,11 @@ class RepositoryThreadService implements ThreadService {
     return toAgentRunMessage(message, new Map([[runId, run.status]]));
   }
 
-  async appendSystemMessage(threadId: string, text: string): Promise<SystemMessage> {
+  async appendSystemMessage(
+    threadId: string,
+    text: string,
+    metadata?: JsonObject
+  ): Promise<SystemMessage> {
     const thread = await this.requireThread(threadId);
     const now = this.dependencies.context.now();
     const message = await this.messages.create(
@@ -269,6 +300,7 @@ class RepositoryThreadService implements ThreadService {
         role: "system",
         kind: "text",
         content: text,
+        metadata,
         createdAt: now
       })
     );
@@ -278,7 +310,7 @@ class RepositoryThreadService implements ThreadService {
 
   async sendMessage(input: SendThreadMessageInput): Promise<ThreadDetail> {
     await this.ensureLegacyRunThreads();
-    const parsed = parseWorkgroupMentions(input.text);
+    const parsed = parseWorkgroupMentions(input.text, this.dependencies.roles);
     const cleanedPrompt = parsed.cleanedPrompt.trim();
     if (!cleanedPrompt) {
       throw new Error("message text is required");
@@ -291,7 +323,9 @@ class RepositoryThreadService implements ThreadService {
           }))
         : parsed.participants.length > 0
           ? parsed.participants
-          : [{ agentId: "fake", source: "adapter_mention" }];
+          : parsed.roleMentions.length > 0
+            ? []
+            : [{ agentId: "fake", source: "adapter_mention" }];
     const agents = uniqueAgents(participants.map((participant) => participant.agentId));
     const contextMode = parseContextMode(input.contextMode ?? "auto");
     const thread = input.threadId
@@ -314,7 +348,61 @@ class RepositoryThreadService implements ThreadService {
     const priorMessages = (await this.messages.listByThreadId(currentThread.id))
       .filter((message) => message.id !== userMessage.id);
 
+    const taskId = this.dependencies.context.nextId("task");
+    const title = titleFromPrompt(cleanedPrompt);
+    let assignments = createTaskAssignments({
+      taskId,
+      threadId: currentThread.id,
+      sourceMessageId: userMessage.id,
+      participants,
+      roleMentions: parsed.roleMentions,
+      nextId: (prefix) => this.dependencies.context.nextId(prefix)
+    });
+    const task = await this.tasks.create(
+      validateTask({
+        id: taskId,
+        projectId: currentThread.projectId,
+        title,
+        description: cleanedPrompt,
+        metadata: taskMetadata({
+          thread: currentThread,
+          sourceMessageId: userMessage.id,
+          assignments
+        }),
+        status: "open",
+        createdAt: userMessage.createdAt,
+        updatedAt: userMessage.createdAt
+      })
+    );
+    await this.appendSystemMessage(
+      currentThread.id,
+      `Task created: ${task.title}`,
+      {
+        taskEvent: "task_created",
+        taskId: task.id,
+        taskTitle: task.title
+      }
+    );
+    await this.appendSystemMessage(
+      currentThread.id,
+      assignmentSummary(assignments),
+      {
+        taskEvent: "participants_assigned",
+        taskId: task.id,
+        assignments
+      }
+    );
+
+    const createdRuns: Array<{
+      run: RunSummary;
+      participant: WorkgroupMentionParticipant;
+      assignment: WorkgroupTaskAssignmentMetadata;
+    }> = [];
     for (const participant of participants) {
+      const assignment = assignmentForParticipant(assignments, participant);
+      if (!assignment?.executable) {
+        continue;
+      }
       try {
         const conversationBrief = await this.buildConversationBrief({
           thread: currentThread,
@@ -326,29 +414,90 @@ class RepositoryThreadService implements ThreadService {
           priorMessages
         });
         const run = await this.dependencies.runs.createRun({
+          taskId: task.id,
           projectId: currentThread.projectId,
           prompt: cleanedPrompt,
-          title: titleFromPrompt(cleanedPrompt),
+          title,
           agentId: participant.agentId,
           role: participant.role,
+          assignment,
           contextMode,
           deliveryMode: "runtime_injection",
           conversationBrief,
+          startImmediately: false,
           continueFromRunId: continueFrom?.parentRunId,
           continueFromMessageId: continueFrom?.parentMessageId
         });
-        await this.appendAgentRunMessage(
-          currentThread.id,
-          run.id,
-          participant.agentId,
-          participant.role
+        const linkedAssignment = {
+          ...assignment,
+          runId: run.id,
+          status: "queued" as const
+        };
+        assignments = assignments.map((entry) =>
+          entry.assignmentId === assignment.assignmentId ? linkedAssignment : entry
         );
-        await this.appendAssistantOutputPlaceholder(
-          currentThread.id,
-          run.id,
-          participant.agentId,
-          participant.role
+        createdRuns.push({
+          run,
+          participant,
+          assignment: linkedAssignment
+        });
+      } catch (error) {
+        const skippedAssignment = {
+          ...assignment,
+          status: "skipped" as const
+        };
+        assignments = assignments.map((entry) =>
+          entry.assignmentId === assignment.assignmentId ? skippedAssignment : entry
         );
+        await this.appendSystemMessage(
+          currentThread.id,
+          `@${participant.role?.roleHandle ?? participant.agentId} could not start: ${errorMessage(error)}`,
+          {
+            taskEvent: "assignment_start_failed",
+            taskId: task.id,
+            assignment: skippedAssignment
+          }
+        );
+      }
+    }
+
+    await this.tasks.create(
+      validateTask({
+        ...task,
+        metadata: taskMetadata({
+          thread: currentThread,
+          sourceMessageId: userMessage.id,
+          assignments
+        }),
+        updatedAt: this.dependencies.context.now()
+      })
+    );
+
+    for (const { run, participant, assignment } of createdRuns) {
+      await this.appendAgentRunMessage(
+        currentThread.id,
+        run.id,
+        participant.agentId,
+        participant.role,
+        {
+          taskId: task.id,
+          taskTitle: task.title,
+          assignment
+        }
+      );
+    }
+    for (const { run, participant, assignment } of createdRuns) {
+      await this.appendAssistantOutputPlaceholder(
+        currentThread.id,
+        run.id,
+        participant.agentId,
+        participant.role,
+        assignment
+      );
+    }
+    for (const { run, participant } of createdRuns) {
+      try {
+        await this.dependencies.runs.startRun(run.id);
       } catch (error) {
         await this.appendSystemMessage(
           currentThread.id,
@@ -549,7 +698,8 @@ class RepositoryThreadService implements ThreadService {
     threadId: string,
     runId: string,
     agentId: AgentId,
-    role?: WorkgroupRoleRunMetadata
+    role?: WorkgroupRoleRunMetadata,
+    assignment?: WorkgroupTaskAssignmentMetadata
   ): Promise<void> {
     const thread = await this.requireThread(threadId);
     const now = this.dependencies.context.now();
@@ -567,6 +717,8 @@ class RepositoryThreadService implements ThreadService {
         metadata: {
           agentId,
           role,
+          taskId: assignment?.taskId,
+          assignment,
           assistantOutput: true,
           pending: true
         },
@@ -901,6 +1053,120 @@ function roomMetadata(input: RoomMetadata): ConversationThread["metadata"] {
   };
 }
 
+function taskMetadata(input: {
+  thread: ConversationThread;
+  sourceMessageId: string;
+  assignments: WorkgroupTaskAssignmentMetadata[];
+}): JsonObject {
+  const room = roomMetadataForThread(input.thread);
+  return {
+    source: "desktop_thread",
+    threadId: input.thread.id,
+    roomType: room.roomType,
+    roomHandle: room.roomHandle,
+    sourceMessageId: input.sourceMessageId,
+    assignmentCount: input.assignments.length,
+    executableAssignmentCount: input.assignments.filter(
+      (assignment) => assignment.executable
+    ).length,
+    assignments: input.assignments
+  };
+}
+
+function createTaskAssignments(input: {
+  taskId: string;
+  threadId: string;
+  sourceMessageId: string;
+  participants: WorkgroupMentionParticipant[];
+  roleMentions: WorkgroupRoleRunMetadata[];
+  nextId(prefix: string): string;
+}): WorkgroupTaskAssignmentMetadata[] {
+  const assignments: WorkgroupTaskAssignmentMetadata[] = [];
+  const roleHandles = new Set<string>();
+
+  for (const role of input.roleMentions) {
+    if (roleHandles.has(role.roleHandle)) {
+      continue;
+    }
+    roleHandles.add(role.roleHandle);
+    const agentId = role.adapterKind ? toAgentId(role.adapterKind) : undefined;
+    assignments.push({
+      assignmentId: input.nextId("assignment"),
+      taskId: input.taskId,
+      threadId: input.threadId,
+      sourceMessageId: input.sourceMessageId,
+      assignmentRole: "role",
+      agentId,
+      roleHandle: role.roleHandle,
+      displayName: role.displayName,
+      executorKind: role.executorKind,
+      adapterKind: role.adapterKind,
+      executable: Boolean(agentId),
+      status: agentId ? "queued" : "assigned"
+    });
+  }
+
+  const agentIds = new Set<string>();
+  for (const participant of input.participants) {
+    if (participant.role) {
+      continue;
+    }
+    if (agentIds.has(participant.agentId)) {
+      continue;
+    }
+    agentIds.add(participant.agentId);
+    assignments.push({
+      assignmentId: input.nextId("assignment"),
+      taskId: input.taskId,
+      threadId: input.threadId,
+      sourceMessageId: input.sourceMessageId,
+      assignmentRole: "agent",
+      agentId: participant.agentId,
+      displayName: `@${participant.agentId}`,
+      executorKind: "agent_adapter",
+      adapterKind: toCoreAgentKind(participant.agentId),
+      executable: true,
+      status: "queued"
+    });
+  }
+
+  return assignments;
+}
+
+function assignmentForParticipant(
+  assignments: WorkgroupTaskAssignmentMetadata[],
+  participant: WorkgroupMentionParticipant
+): WorkgroupTaskAssignmentMetadata | undefined {
+  if (participant.role) {
+    return assignments.find(
+      (assignment) =>
+        assignment.assignmentRole === "role" &&
+        assignment.roleHandle === participant.role?.roleHandle
+    );
+  }
+  return assignments.find(
+    (assignment) =>
+      assignment.assignmentRole === "agent" &&
+      assignment.agentId === participant.agentId
+  );
+}
+
+function assignmentSummary(
+  assignments: WorkgroupTaskAssignmentMetadata[]
+): string {
+  if (assignments.length === 0) {
+    return "No participants were assigned.";
+  }
+  const labels = assignments.map((assignment) =>
+    assignment.roleHandle ? `@${assignment.roleHandle}` : assignment.displayName
+  );
+  const executableCount = assignments.filter((assignment) => assignment.executable).length;
+  if (executableCount === 0) {
+    return `Assigned ${labels.join(", ")}; no executable runs are available yet.`;
+  }
+  return `Assigned ${labels.join(", ")} to this task.`;
+}
+
 function roomMetadataForThread(thread: ConversationThread): RoomMetadata {
   const metadata = thread.metadata ?? {};
   const roomType =
@@ -1079,6 +1345,9 @@ function toAgentRunMessage(
     status:
       runStatusById.get(message.runId) ??
       toDesktopRunStatus(message.status ?? "queued"),
+    taskId: metadataString(message.metadata, "taskId"),
+    taskTitle: metadataString(message.metadata, "taskTitle"),
+    assignment: metadataAssignment(message.metadata),
     createdAt: message.createdAt
   };
 }
@@ -1102,8 +1371,36 @@ function toSystemMessage(message: ConversationMessage): SystemMessage {
     threadId: message.threadId,
     type: "system",
     text: message.content,
+    metadata: message.metadata,
     createdAt: message.createdAt
   };
+}
+
+function metadataString(
+  metadata: ConversationMessage["metadata"],
+  key: string
+): string | undefined {
+  const value = metadata?.[key];
+  return typeof value === "string" && value.trim().length > 0 ? value : undefined;
+}
+
+function metadataAssignment(
+  metadata: ConversationMessage["metadata"]
+): WorkgroupTaskAssignmentMetadata | undefined {
+  const value = metadata?.assignment;
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+  const assignment = value as WorkgroupTaskAssignmentMetadata;
+  if (
+    typeof assignment.assignmentId !== "string" ||
+    typeof assignment.taskId !== "string" ||
+    typeof assignment.displayName !== "string" ||
+    typeof assignment.executorKind !== "string"
+  ) {
+    return undefined;
+  }
+  return assignment;
 }
 
 function latestUpdatedAt(

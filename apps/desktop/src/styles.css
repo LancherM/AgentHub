@@ -736,6 +736,58 @@ textarea:disabled {
   cursor: pointer;
 }
 
+.task-run-group {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid rgba(216, 255, 87, 0.2);
+  border-radius: 8px;
+  background:
+    linear-gradient(90deg, rgba(216, 255, 87, 0.08), rgba(103, 216, 196, 0.04)),
+    rgba(14, 17, 14, 0.76);
+}
+
+.task-run-group-header {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.task-run-group-header div {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.task-run-group-header span {
+  color: var(--muted-2);
+  font-size: 11px;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.task-run-group-header strong {
+  overflow: hidden;
+  color: var(--text);
+  font-size: 14px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.task-run-group-header p {
+  margin: 0;
+  flex-shrink: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.task-run-group-list {
+  display: grid;
+  gap: 8px;
+}
+
 .agent-run-card.running,
 .agent-run-card.verifying {
   border-color: rgba(216, 255, 87, 0.46);
@@ -889,6 +941,12 @@ textarea:disabled {
   border-color: rgba(245, 189, 90, 0.42);
   background: rgba(75, 49, 12, 0.48);
   color: #ffe2a8;
+}
+
+.system-message.task-event {
+  border-color: rgba(103, 216, 196, 0.34);
+  background: rgba(13, 57, 51, 0.42);
+  color: #d7fff4;
 }
 
 .system-message span {
@@ -1852,10 +1910,15 @@ textarea:disabled {
   }
 
   .run-card-header,
+  .task-run-group-header,
   .composer-toolbar,
   .composer-footer {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .task-run-group-header p {
+    flex-shrink: 1;
   }
 
   .run-card-actions {
