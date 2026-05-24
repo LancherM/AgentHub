@@ -395,8 +395,9 @@ execution, or human assignment runtime in this phase.
 
 If this phase changes any visible desktop UI, including composer chips,
 autocomplete, role labels, participant labels, run cards, or status text, first
-generate UI design artifacts and screenshots for user review and stop. After
-approval, implement the UI to match the reviewed design.
+generate UI design artifacts and screenshots before production code changes.
+After the artifacts exist, implement the UI to match the design unless the user
+explicitly asked for a review stop.
 
 Update docs/product.md and docs/architecture.md. Add focused tests for mention
 parsing, role resolution, executor dispatch, custom-role shape, and persisted
@@ -632,14 +633,14 @@ Read AGENTS.md, docs/product.md, docs/architecture.md, and
 docs/local-ai-workgroup-roadmap.md. Implement Phase 4 only.
 
 This phase changes desktop UI. First generate UI design artifacts and screenshots
-for user review. Do not implement production UI until the user approves the
-design. The design should show the room timeline as an audit stream with user
-messages, role/participant messages, system events, task-created events, run
-cards, artifact chips, check chips, risk badges, review decisions, and memory
-proposal events. Save design artifacts under docs/ui-design/ and stop for
-review.
+before production code changes. The design should show the room timeline as an
+audit stream with user messages, role/participant messages, system events,
+task-created events, run cards, artifact chips, check chips, risk badges,
+review decisions, and memory proposal events. Save design artifacts under
+docs/ui-design/, then implement the UI unless the user explicitly asked for a
+review stop.
 
-After user approval, add timeline event semantics over existing
+After the artifacts exist, add timeline event semantics over existing
 conversation_messages metadata. Do not add a full event-sourcing system. Keep
 raw logs, diffs, verification output, and risk evidence on the run evidence
 model and load them lazily through review IPC. Render timeline cards according
@@ -710,18 +711,18 @@ Read AGENTS.md, docs/product.md, docs/architecture.md, and
 docs/local-ai-workgroup-roadmap.md. Implement Phase 5 only.
 
 This phase changes desktop UI. First generate UI design artifacts and screenshots
-for user review. Do not implement production UI until the user approves the
-design. The design should show a right-side workgroup inspector with Brief,
-Context, Artifacts, Checks, Risks, Memory, and Audit tabs. It should map the
-current run evidence to the new vocabulary without hiding important review
-details. Save design artifacts under docs/ui-design/ and stop for review.
+before production code changes. The design should show a right-side workgroup
+inspector with Brief, Context, Artifacts, Checks, Risks, Memory, and Audit tabs.
+It should map the current run evidence to the new vocabulary without hiding
+important review details. Save design artifacts under docs/ui-design/.
 
-After user approval, refactor the run inspector UI to match the reviewed
-workgroup inspector. Use existing review, memory, risk, verification, diff, and
-artifact services. Add a Context tab backed by the persisted conversation_brief
-run artifact. Keep engineering-specific labels contained inside the Artifacts
-or Engineering Pack section. Do not add apply, merge, push, worktree cleanup, or
-external publishing controls.
+After the artifacts exist, refactor the run inspector UI to match the workgroup
+inspector unless the user explicitly asked for a review stop. Use existing
+review, memory, risk, verification, diff, and artifact services. Add a Context
+tab backed by the persisted conversation_brief run artifact. Keep
+engineering-specific labels contained inside the Artifacts or Engineering Pack
+section. Do not add apply, merge, push, worktree cleanup, or external publishing
+controls.
 
 Update docs/product.md and docs/architecture.md. Add focused renderer/service
 tests where practical. Rebuild the desktop app, open the running UI, verify the
@@ -794,9 +795,9 @@ external publishing, or search.
 
 If this phase changes any visible desktop UI, including artifact chips,
 artifact lists, timeline cards, inspector tab content, or preview states, first
-generate UI design artifacts and screenshots for user review and stop. After
-approval, implement the UI to match the reviewed design and complete desktop UI
-verification.
+generate UI design artifacts and screenshots before production code changes.
+After the artifacts exist, implement the UI to match the design unless the user
+explicitly asked for a review stop, then complete desktop UI verification.
 
 Update docs/product.md and docs/architecture.md. Add focused tests for artifact
 metadata and existing run_artifact compatibility. Run targeted tests plus pnpm
@@ -857,17 +858,17 @@ Read AGENTS.md, docs/product.md, docs/architecture.md, and
 docs/local-ai-workgroup-roadmap.md. Implement Phase 7 only.
 
 This phase changes desktop UI. First generate UI design artifacts and screenshots
-for user review. Do not implement production UI until the user approves the
-design. The design should show a Knowledge / Memory workspace with filters for
-all items, decisions, summaries, proposals, approved memory, rejected memory,
-source messages, related tasks/runs, and an audit panel. Save design artifacts
-under docs/ui-design/ and stop for review.
+before production code changes. The design should show a Knowledge / Memory
+workspace with filters for all items, decisions, summaries, proposals, approved
+memory, rejected memory, source messages, related tasks/runs, and an audit
+panel. Save design artifacts under docs/ui-design/.
 
-After user approval, implement the Knowledge / Memory workspace using existing
-memory_items, conversation_thread_summaries, and review_decision run artifacts
-where practical. Keep memory approval explicit and local. Proposed and rejected
-memory must never be injected as approved memory. Thread summaries must remain
-thread-local unless explicitly promoted through the memory workflow.
+After the artifacts exist, implement the Knowledge / Memory workspace using
+existing memory_items, conversation_thread_summaries, and review_decision run
+artifacts where practical unless the user explicitly asked for a review stop.
+Keep memory approval explicit and local. Proposed and rejected memory must never
+be injected as approved memory. Thread summaries must remain thread-local unless
+explicitly promoted through the memory workflow.
 
 Update docs/product.md and docs/architecture.md. Add focused tests for memory
 listing, approval/rejection, thread summary separation, and decision display
@@ -965,22 +966,21 @@ Read AGENTS.md, docs/product.md, docs/architecture.md, and
 docs/local-ai-workgroup-roadmap.md. Implement Phase 8 only.
 
 This phase changes desktop UI. First generate UI design artifacts and screenshots
-for user review. Do not implement production UI until the user approves the
-design. The design should show a Team / Role Configuration screen with preset
-and custom roles, role table, create/edit role flow, role profile panel,
-capability summary, persona, permissions summary, context policy summary,
-approval policy summary, executor binding, default instructions, recent tasks,
-and linked memories. The design must make clear that a role can be backed by an
-agent adapter today and may later be backed by LLM API, workflow, or human
-executors. Save design artifacts under docs/ui-design/ and stop for review.
+before production code changes. The design should show a Team / Role
+Configuration screen with preset and custom roles, role table, create/edit role
+flow, role profile panel, capability summary, persona, permissions summary,
+context policy summary, approval policy summary, executor binding, default
+instructions, recent tasks, and linked memories. The design must make clear that
+a role can be backed by an agent adapter today and may later be backed by LLM
+API, workflow, or human executors. Save design artifacts under docs/ui-design/.
 
-After user approval, implement a Team screen backed by the role/executor
-contract and existing local repositories. Support local creation and editing of
-custom roles and safe preset overrides. Validate role config through core
-validators and main-process IPC. Do not add plugin marketplace, untrusted
-runtime code, cloud services, secret storage, or executable LLM API/workflow/
-human backends in this phase. Reserved executor kinds may be displayed or
-stored only if they are clearly non-runnable.
+After the artifacts exist, implement a Team screen backed by the role/executor
+contract and existing local repositories unless the user explicitly asked for a
+review stop. Support local creation and editing of custom roles and safe preset
+overrides. Validate role config through core validators and main-process IPC. Do
+not add plugin marketplace, untrusted runtime code, cloud services, secret
+storage, or executable LLM API/workflow/human backends in this phase. Reserved
+executor kinds may be displayed or stored only if they are clearly non-runnable.
 
 Update docs/product.md and docs/architecture.md. Add focused tests for preset
 role listing, custom role creation/editing, profile mapping, safe settings or
@@ -1043,19 +1043,19 @@ Read AGENTS.md, docs/product.md, docs/architecture.md, and
 docs/local-ai-workgroup-roadmap.md. Implement Phase 9 only.
 
 This phase changes desktop UI. First generate UI design artifacts and screenshots
-for user review. Do not implement production UI until the user approves the
-design. The design should show how a user starts a handoff, review loop, or
-panel discussion from a room; how bounded rounds are displayed; and how the
-timeline reports handoffs, reviewer findings, and final summaries. Save design
-artifacts under docs/ui-design/ and stop for review.
+before production code changes. The design should show how a user starts a
+handoff, review loop, or panel discussion from a room; how bounded rounds are
+displayed; and how the timeline reports handoffs, reviewer findings, and final
+summaries. Save design artifacts under docs/ui-design/.
 
-After user approval, implement bounded collaboration modes using existing
-TaskRunner runs, conversation briefs, run cards, and metadata. Enforce max
-rounds and explicit stop conditions. Persist workflow state locally and render
-timeline events. Treat non-runnable participant/executor types as assigned or
-waiting rather than executing hidden work. Do not allow autonomous endless
-agent chatter, participant chatter, remote queues, automatic apply/merge/push,
-or hidden side effects.
+After the artifacts exist, implement bounded collaboration modes using existing
+TaskRunner runs, conversation briefs, run cards, and metadata unless the user
+explicitly asked for a review stop. Enforce max rounds and explicit stop
+conditions. Persist workflow state locally and render timeline events. Treat
+non-runnable participant/executor types as assigned or waiting rather than
+executing hidden work. Do not allow autonomous endless agent chatter,
+participant chatter, remote queues, automatic apply/merge/push, or hidden side
+effects.
 
 Update docs/product.md and docs/architecture.md. Add focused tests for workflow
 state, max-round enforcement, and timeline metadata. Rebuild the desktop app,
@@ -1193,9 +1193,9 @@ worktree, PR, and CI should appear only in engineering-pack contexts.
 
 If this phase changes any visible desktop UI, including labels, navigation,
 inspector grouping, pack badges, or artifact/check/risk presentation, first
-generate UI design artifacts and screenshots for user review and stop. After
-approval, implement the UI to match the reviewed design and complete desktop UI
-verification.
+generate UI design artifacts and screenshots before production code changes.
+After the artifacts exist, implement the UI to match the design unless the user
+explicitly asked for a review stop, then complete desktop UI verification.
 
 Update docs/product.md and docs/architecture.md. Add tests for pack metadata,
 lookup, and label mapping. Run targeted tests plus pnpm typecheck when
@@ -1251,17 +1251,17 @@ Read AGENTS.md, docs/product.md, docs/architecture.md, and
 docs/local-ai-workgroup-roadmap.md. Implement Phase 12 only.
 
 This phase changes desktop UI and local side-effect workflows. First generate UI
-design artifacts and screenshots for user review. Do not implement production
-UI or side-effect behavior until the user approves the design. The design should
-show retained worktree inspection, explicit cleanup confirmation, apply preview,
-risk gate, and audit trail. Save design artifacts under docs/ui-design/ and stop
-for review.
+design artifacts and screenshots before production code changes. The design
+should show retained worktree inspection, explicit cleanup confirmation, apply
+preview, risk gate, and audit trail. Save design artifacts under
+docs/ui-design/.
 
-After user approval, implement explicit worktree lifecycle controls and a
-human-gated local apply workflow. Every side effect must require explicit user
-confirmation and must record an audit event or review artifact. Do not
-automatically apply accepted runs. Do not automatically push, create PRs, merge,
-delete branches, or bypass blocking risks.
+After the artifacts exist, implement explicit worktree lifecycle controls and a
+human-gated local apply workflow unless the user explicitly asked for a review
+stop. Every side effect must require explicit user confirmation and must record
+an audit event or review artifact. Do not automatically apply accepted runs. Do
+not automatically push, create PRs, merge, delete branches, or bypass blocking
+risks.
 
 Keep the renderer sandboxed. All filesystem, Git, and shell operations must run
 through Electron main-process IPC and shared local services. Update
