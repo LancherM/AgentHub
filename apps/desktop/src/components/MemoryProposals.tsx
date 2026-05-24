@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { agentHubApi } from "../lib/agentHubApi";
-import type { MemoryProposal } from "../lib/types";
+import type { MemoryApprovalResult, MemoryProposal } from "../lib/types";
 
 interface MemoryProposalsProps {
   runId: string;
@@ -15,6 +15,9 @@ export function MemoryProposals({
 }: MemoryProposalsProps): JSX.Element {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
+  const [approvalResults, setApprovalResults] = useState<MemoryApprovalResult[]>(
+    []
+  );
   const grouped = useMemo(() => groupProposals(proposals), [proposals]);
   const selected = [...selectedIds];
   const hasPendingSelection = proposals.some(
@@ -31,9 +34,10 @@ export function MemoryProposals({
         return;
       }
       if (action === "approve") {
-        await agentHubApi.memory.approve(ids);
+        setApprovalResults(await agentHubApi.memory.approve(ids));
       } else {
         await agentHubApi.memory.ignore(ids);
+        setApprovalResults([]);
       }
       const next = await agentHubApi.memory.listProposals(runId);
       setSelectedIds(new Set());
@@ -64,6 +68,20 @@ export function MemoryProposals({
           Ignore selected
         </button>
       </div>
+      {approvalResults.length > 0 ? (
+        <div className="memory-writeback">
+          <div className="panel-label">Approved memory writeback</div>
+          {approvalResults.map((result) => (
+            <div key={result.id}>
+              <strong>{result.writeback.replace("_", " ")}</strong>
+              <span>{result.content ?? result.id}</span>
+              {result.approvedMemoryPath ? (
+                <code>{result.approvedMemoryPath}</code>
+              ) : null}
+            </div>
+          ))}
+        </div>
+      ) : null}
       {(["pending", "approved", "ignored"] as const).map((status) => {
         const items = grouped[status];
         if (items.length === 0) {
@@ -96,6 +114,11 @@ export function MemoryProposals({
                 <p>{item.content}</p>
                 {item.rationale ? (
                   <small>{item.rationale}</small>
+                ) : null}
+                {item.status === "approved" && item.approvedMemoryPath ? (
+                  <small>
+                    Approved memory file: <code>{item.approvedMemoryPath}</code>
+                  </small>
                 ) : null}
               </article>
             ))}

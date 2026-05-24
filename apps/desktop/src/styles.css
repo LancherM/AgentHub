@@ -1506,6 +1506,41 @@ textarea:disabled {
   gap: 10px;
 }
 
+.memory-writeback {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid rgba(103, 216, 196, 0.34);
+  border-radius: 8px;
+  background: rgba(103, 216, 196, 0.075);
+}
+
+.memory-writeback div:not(.panel-label) {
+  display: grid;
+  grid-template-columns: 118px minmax(0, 1fr);
+  gap: 4px 10px;
+  align-items: start;
+}
+
+.memory-writeback strong {
+  color: var(--cyan);
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+.memory-writeback span,
+.memory-writeback code,
+.memory-item code {
+  overflow-wrap: anywhere;
+}
+
+.memory-writeback code {
+  grid-column: 2;
+  color: #dffbf3;
+  font-family: "SFMono-Regular", "Cascadia Code", Consolas, monospace;
+  font-size: 11px;
+}
+
 .memory-item label {
   display: flex;
   align-items: center;

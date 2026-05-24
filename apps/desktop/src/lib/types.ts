@@ -440,6 +440,18 @@ export interface MemoryProposal {
   status: MemoryProposalStatus;
   createdAt: string;
   decidedAt?: string;
+  approvedMemoryPath?: string;
+}
+
+export type MemoryApprovalWriteback = "written" | "already_present" | "skipped";
+
+export interface MemoryApprovalResult {
+  id: string;
+  content?: string;
+  status: "approved" | "skipped";
+  approvedMemoryPath?: string;
+  writeback: MemoryApprovalWriteback;
+  message?: string;
 }
 
 export interface RunLog {
@@ -494,7 +506,7 @@ export interface AgentHubApi {
   memory: {
     listProposals(runId: string): Promise<MemoryProposal[]>;
     generateProposalsForRun(runId: string): Promise<MemoryProposal[]>;
-    approve(ids: string[]): Promise<void>;
+    approve(ids: string[]): Promise<MemoryApprovalResult[]>;
     ignore(ids: string[]): Promise<void>;
   };
   settings: {

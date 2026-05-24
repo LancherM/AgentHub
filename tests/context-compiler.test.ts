@@ -46,6 +46,10 @@ function skillMarkdown(input: {
   ].join("\n");
 }
 
+function countOccurrences(content: string, needle: string): number {
+  return content.split(needle).length - 1;
+}
+
 describe("ContextCompiler", () => {
   it("builds deterministic bounded conversation briefs", () => {
     const builder = new ConversationContextBuilder();
@@ -602,6 +606,51 @@ describe("ContextCompiler", () => {
     expect(built.taskBrief.renderedContent).toContain(
       "Approved memory is available to future task briefs."
     );
+  });
+
+  it("does not duplicate approved memory by id or identical content", async () => {
+    const projectRoot = await createTestDirectory("context-approved-memory-idempotent-project");
+    const agentHubHome = await createTestDirectory("context-approved-memory-idempotent-home");
+    await initContextStore({
+      projectRoot,
+      projectId: "project_memory_idempotent",
+      agentHubHome
+    });
+    const first = await appendApprovedMemory({
+      projectRoot,
+      projectId: "project_memory_idempotent",
+      memoryId: "memory_one",
+      content: "Use deterministic approved memory writeback.",
+      approvedAt: "2026-01-01T00:00:00.000Z",
+      agentHubHome
+    });
+    const repeatById = await appendApprovedMemory({
+      projectRoot,
+      projectId: "project_memory_idempotent",
+      memoryId: "memory_one",
+      content: "Use deterministic approved memory writeback.",
+      approvedAt: "2026-01-01T00:00:01.000Z",
+      agentHubHome
+    });
+    const repeatByContent = await appendApprovedMemory({
+      projectRoot,
+      projectId: "project_memory_idempotent",
+      memoryId: "memory_two",
+      content: "Use deterministic approved memory writeback.",
+      approvedAt: "2026-01-01T00:00:02.000Z",
+      agentHubHome
+    });
+    const approvedMemory = await fs.readFile(first.path, "utf8");
+
+    expect(first.written).toBe(true);
+    expect(repeatById.written).toBe(false);
+    expect(repeatByContent.written).toBe(false);
+    expect(
+      countOccurrences(
+        approvedMemory,
+        "Use deterministic approved memory writeback."
+      )
+    ).toBe(1);
   });
 
   it("does not inject the default approved memory placeholder", async () => {

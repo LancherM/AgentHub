@@ -16,6 +16,7 @@
   },
   "dependencies": {
     "@agent-hub/core": "workspace:*",
+    "@agent-hub/context-compiler": "workspace:*",
     "@agent-hub/db": "workspace:*",
     "@agent-hub/shared": "workspace:*",
     "@agent-hub/task-runner": "workspace:*",

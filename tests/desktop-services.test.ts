@@ -6,6 +6,7 @@ import { promisify } from "node:util";
 import { describe, expect, it, vi } from "vitest";
 import {
   validateConversationMessage,
+  validateMemoryItem,
   validateRunArtifact,
   validateRiskReport,
   validateTask,
@@ -44,13 +45,16 @@ import {
   VerificationRunner,
   type TaskRunnerDependencies
 } from "@agent-hub/task-runner";
+import { buildContextArtifacts } from "@agent-hub/context-compiler";
 
 const execFileAsync = promisify(execFile);
 
 describe("desktop services", () => {
   it("registers a project and completes a fake TaskRunner desktop run without repository root writes", async () => {
     const fixture = await createFixture();
-    const context = createDesktopServiceContext(fixture.repositories);
+    const context = createDesktopServiceContext(fixture.repositories, {
+      agentHubHome: fixture.agentHubHome
+    });
     const projects = createProjectService(context);
     const memory = createMemoryService(context);
     const review = createReviewService(context, { memoryService: memory });
@@ -110,12 +114,69 @@ describe("desktop services", () => {
       runId: run.id,
       status: "pending"
     });
-    await memory.approve([proposals[0].id]);
+    const approval = await memory.approve([proposals[0].id]);
     await expect(memory.listProposals(run.id)).resolves.toContainEqual(
       expect.objectContaining({
         id: proposals[0].id,
-        status: "approved"
+        status: "approved",
+        approvedMemoryPath: approval[0].approvedMemoryPath
       })
+    );
+    expect(approval).toEqual([
+      expect.objectContaining({
+        id: proposals[0].id,
+        status: "approved",
+        writeback: "written",
+        approvedMemoryPath: path.join(
+          fixture.agentHubHome,
+          "context-stores",
+          project.id,
+          "memory",
+          "approved.md"
+        )
+      })
+    ]);
+    const repeatedApproval = await memory.approve([proposals[0].id]);
+    expect(repeatedApproval).toEqual([
+      expect.objectContaining({
+        id: proposals[0].id,
+        status: "approved",
+        writeback: "already_present"
+      })
+    ]);
+    await fixture.repositories.memoryItemRepository.create(
+      validateMemoryItem({
+        id: "memory_duplicate",
+        projectId: project.id,
+        taskId: run.taskId,
+        category: "workflow_rule",
+        status: "proposed",
+        content: proposals[0].content,
+        createdAt: context.now(),
+        updatedAt: context.now()
+      })
+    );
+    const duplicateApproval = await memory.approve(["memory_duplicate"]);
+    expect(duplicateApproval).toEqual([
+      expect.objectContaining({
+        id: "memory_duplicate",
+        status: "approved",
+        writeback: "already_present"
+      })
+    ]);
+    const approvedMemory = await fs.readFile(approval[0].approvedMemoryPath!, "utf8");
+    expect(countOccurrences(approvedMemory, proposals[0].content)).toBe(1);
+    const built = await buildContextArtifacts({
+      projectRoot: fixture.projectRoot,
+      projectId: project.id,
+      taskId: "task_desktop_memory_context",
+      title: "Use approved desktop memory",
+      prompt: "Build future context",
+      selectedAgentId: "fake",
+      agentHubHome: fixture.agentHubHome
+    });
+    expect(built.contextPack.approvedMemorySections.join("\n")).toContain(
+      proposals[0].content
     );
     await expect(review.getLogs(run.id)).resolves.toEqual(
       expect.arrayContaining([
@@ -1828,6 +1889,10 @@ async function waitForIpcSend(sender: {
   throw new Error("timed out waiting for IPC run event");
 }
 
+function countOccurrences(content: string, needle: string): number {
+  return content.split(needle).length - 1;
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -1835,12 +1900,14 @@ function sleep(ms: number): Promise<void> {
 async function createFixture(): Promise<{
   projectRoot: string;
   workspaceBasePath: string;
+  agentHubHome: string;
   databasePath: string;
   repositories: ReturnType<typeof createSqliteRepositories>;
 }> {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "agent-hub-desktop-"));
   const projectRoot = path.join(root, "repo");
   const workspaceBasePath = path.join(root, "worktrees");
+  const agentHubHome = path.join(root, "agent-home");
   const databasePath = path.join(root, "agent-hub.sqlite");
   await fs.mkdir(projectRoot);
   await fs.mkdir(workspaceBasePath);
@@ -1853,7 +1920,7 @@ async function createFixture(): Promise<{
   const repositories = createSqliteRepositories({
     databasePath
   });
-  return { projectRoot, workspaceBasePath, databasePath, repositories };
+  return { projectRoot, workspaceBasePath, agentHubHome, databasePath, repositories };
 }
 
 async function createRetainedRunFixture(input: {

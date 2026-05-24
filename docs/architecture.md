@@ -87,9 +87,12 @@ source-without-tests conditions without calling an LLM when no persisted
 safety report is available. `MemoryService` lists and generates a small number
 of conservative pending proposals, serializes generation per run, deduplicates
 proposal content, and caps generated proposals for a run before mapping
-approve/ignore to the existing local memory item states. All of these services
-sit behind preload IPC methods, so the renderer still has no Node.js,
-filesystem, SQLite, shell, child-process, or Git access.
+ignore to the rejected memory item state. Its explicit approve path moves items
+to `approved`, appends them to the Agent Hub-owned approved-memory context file
+through the shared context-compiler helper, and returns the local writeback path
+for inspector confirmation. All of these services sit behind preload IPC
+methods, so the renderer still has no Node.js, filesystem, SQLite, shell,
+child-process, or Git access.
 
 Run review decisions are stored as local `run_artifacts` entries of kind
 `review_decision`. They are not execution status transitions and they do not
@@ -506,10 +509,12 @@ Memory items remain SQLite domain records until the user explicitly acts.
 content to the Agent Hub-owned context store under `memory/approved.md`.
 Approved-memory writeback uses the same context store path resolution as
 context init/build, so the default destination is app data rather than the
-project repository. The context compiler reads approved memory only from that
-file provider and treats the default `# Approved Memory` heading as an empty
-placeholder; proposed and rejected database rows are not injected, and
-placeholder content does not become a context-pack memory section.
+project repository. The shared append helper is idempotent by memory id and by
+identical approved content, so repeated desktop or CLI approval does not
+duplicate approved-memory entries. The context compiler reads approved memory
+only from that file provider and treats the default `# Approved Memory` heading
+as an empty placeholder; proposed and rejected database rows are not injected,
+and placeholder content does not become a context-pack memory section.
 After a task run is finalized and persisted as `succeeded`, the task runner
 reloads durable run evidence through repositories before generating memory
 proposals. The generator uses conservative signals such as persisted
@@ -650,4 +655,5 @@ adapter layer from the Electron main process. The inspector accept/reject flow
 records review decisions only, while retained-worktree handoff exposes local
 paths, branches, changed files, and review commands through validated IPC;
 merge, push, PR creation, worktree cleanup, repository context export, and code
-application remain explicit future workflows.
+application remain explicit future workflows. Desktop memory approval is an
+explicit context-store writeback, not a run acceptance side effect.

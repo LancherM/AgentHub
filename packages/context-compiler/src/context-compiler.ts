@@ -116,6 +116,11 @@ export interface ApprovedMemoryWriteResult {
   written: boolean;
 }
 
+export interface ApprovedMemoryPathResult {
+  config: ContextStoreConfig;
+  path: string;
+}
+
 interface StoredSkill {
   id: string;
   name: string;
@@ -1096,14 +1101,13 @@ export async function exportContextToRepository(
 export async function appendApprovedMemory(
   input: ApprovedMemoryWriteInput
 ): Promise<ApprovedMemoryWriteResult> {
-  const config = resolveContextStoreConfig(input);
-  const memoryDirectory = path.join(config.storeRoot, "memory");
-  const approvedPath = path.join(memoryDirectory, "approved.md");
+  const { config, path: approvedPath } = resolveApprovedMemoryPath(input);
+  const memoryDirectory = path.dirname(approvedPath);
   await fs.mkdir(memoryDirectory, { recursive: true });
   await ensureFile(approvedPath, defaultContextFileContent("memory/approved.md"));
   const existing = await readFileIfExists(approvedPath) ?? "";
   const marker = `<!-- agent-hub:memory ${input.memoryId} -->`;
-  if (existing.includes(marker)) {
+  if (existing.includes(marker) || hasApprovedMemoryContent(existing, input.content)) {
     return { config, path: approvedPath, written: false };
   }
   const entry = [
@@ -1117,6 +1121,16 @@ export async function appendApprovedMemory(
   const next = `${existing.trimEnd()}\n\n${entry}`.trimStart();
   await safeWriteFile(approvedPath, `${next.trimEnd()}\n`, config.storeRoot);
   return { config, path: approvedPath, written: true };
+}
+
+export function resolveApprovedMemoryPath(
+  input: ContextStoreInitInput
+): ApprovedMemoryPathResult {
+  const config = resolveContextStoreConfig(input);
+  return {
+    config,
+    path: path.join(config.storeRoot, "memory", "approved.md")
+  };
 }
 
 export function createTaskBrief(input: {
@@ -1496,6 +1510,36 @@ function approvedMemoryContent(content: string): string {
     return "";
   }
   return normalized.replace(/^# Approved Memory[ \t]*\n+/, "").trim();
+}
+
+function hasApprovedMemoryContent(existing: string, content: string): boolean {
+  const expected = normalizeApprovedMemoryEntry(content);
+  if (!expected) {
+    return false;
+  }
+  const approved = approvedMemoryContent(existing);
+  if (!approved) {
+    return false;
+  }
+  return approved
+    .split(/<!--\s*agent-hub:memory\s+[^>]+-->/)
+    .map(stripApprovedMemoryEntryMetadata)
+    .some((entry) => normalizeApprovedMemoryEntry(entry) === expected);
+}
+
+function stripApprovedMemoryEntryMetadata(entry: string): string {
+  const lines = entry.trim().split(/\n/);
+  if (lines[0]?.startsWith("## ")) {
+    lines.shift();
+  }
+  if (lines[0]?.startsWith("approved_at:")) {
+    lines.shift();
+  }
+  return lines.join("\n").trim();
+}
+
+function normalizeApprovedMemoryEntry(content: string): string {
+  return content.trim().replace(/\s+/g, " ").toLowerCase();
 }
 
 function parseStoredSkill(
