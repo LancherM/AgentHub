@@ -969,7 +969,7 @@ textarea:disabled {
 
 .review-tabs {
   display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(72px, 1fr));
   gap: 6px;
   padding: 12px;
   border-bottom: 1px solid var(--line);
@@ -1176,6 +1176,124 @@ textarea:disabled {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+}
+
+.comparison-panel .muted-copy {
+  margin: 0;
+}
+
+.comparison-create-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: end;
+}
+
+.comparison-create-row label {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.comparison-create-row label span {
+  color: var(--muted-2);
+  font-size: 11px;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.comparison-create-row select {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #10110e;
+  color: var(--text);
+  outline: 0;
+  padding: 9px 10px;
+}
+
+.comparison-create-row select:focus {
+  border-color: rgba(216, 255, 87, 0.62);
+}
+
+.comparison-signals {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.comparison-signals.compact {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin: 10px 0;
+}
+
+.comparison-signals > div {
+  min-width: 0;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 8px;
+  background: rgba(8, 9, 7, 0.42);
+  padding: 10px;
+}
+
+.comparison-signals span {
+  display: block;
+  color: var(--muted-2);
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+.comparison-signals strong {
+  display: block;
+  overflow-wrap: anywhere;
+  margin-top: 4px;
+}
+
+.comparison-report-list {
+  display: grid;
+  gap: 12px;
+  margin-top: 10px;
+}
+
+.comparison-report {
+  display: grid;
+  gap: 8px;
+}
+
+.comparison-report header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.comparison-report header div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+}
+
+.comparison-report header strong,
+.comparison-report header span {
+  overflow-wrap: anywhere;
+}
+
+.comparison-report pre {
+  max-height: 320px;
+  overflow: auto;
+  margin: 0;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 8px;
+  background: rgba(8, 9, 7, 0.68);
+  color: #d9d1bf;
+  padding: 10px;
+  font-family: "SFMono-Regular", "Cascadia Code", Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .handoff-command-list {
@@ -1574,5 +1692,14 @@ textarea:disabled {
 
   .review-tabs {
     grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .comparison-create-row,
+  .comparison-signals {
+    grid-template-columns: 1fr;
+  }
+
+  .comparison-signals.compact {
+    grid-template-columns: 1fr;
   }
 }

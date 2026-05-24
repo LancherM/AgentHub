@@ -291,6 +291,14 @@ aid only; it does not accept, merge, delete branches, or push changes.
 Missing risk evidence is treated conservatively in tradeoff wording and
 structured risk deltas: it ranks above persisted `low` and `medium` risk but
 below persisted `high` and `blocking` risk.
+Agent Hub Desktop exposes the same review-only comparison flow from the run
+inspector. A desktop comparison can be created for two terminal runs from the
+same task, or for two terminal runs from the same multi-agent desktop turn even
+when each agent run has its own task row. The Electron main process validates
+that grouping, reuses the shared comparison scoring helper, persists the report
+in `comparison_reports`, and returns the human summary plus structured signals
+through sandboxed IPC. Desktop comparison actions do not accept, merge, push,
+apply code, or change retained worktrees.
 
 Agent Hub Desktop is now available as a local conversation console under
 `apps/desktop`. It starts with `pnpm --filter desktop dev` and presents a
@@ -412,9 +420,11 @@ validate that supplied message ids still belong to the requested parent run,
 require a retained worktree before continuing code state, and otherwise fail
 with a clear system message. Desktop verification settings are local and
 per-project; they are edited through validated IPC and then run by TaskRunner in
-the isolated worktree. Multi-agent comparison review, worktree lifecycle
-management, and explicit merge/apply workflows remain follow-up desktop wiring
-tasks.
+the isolated worktree. The run inspector can also compare terminal same-task or
+same-turn runs and show persisted status, risk, verification, diff footprint,
+score, and winner signals. Explicit desktop memory approval writes only to Agent
+Hub's approved-memory context store. Worktree lifecycle management and explicit
+merge/apply workflows remain follow-up desktop wiring tasks.
 
 SQLite is stored in Agent Hub-owned application data by default, not in the
 target project repository. `AGENT_HUB_HOME` can point Agent Hub at an alternate
@@ -508,5 +518,4 @@ assets only; it does not deploy a hosted service, notarize the desktop app, or
 change Agent Hub's local-first product model.
 
 Deferred product capabilities include richer Codex/Claude structured event
-mapping, multi-agent comparison review, and explicit desktop apply/merge
-workflows.
+mapping and explicit desktop apply/merge workflows.

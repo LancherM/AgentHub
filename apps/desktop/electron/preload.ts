@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer } from "electron";
 import type {
   AgentHubApi,
+  ComparisonCreateInput,
   CreateThreadInput,
   CreateRunInput,
   HandoffCopyKind,
@@ -70,6 +71,14 @@ const api: AgentHubApi = {
       ipcRenderer.invoke(IPC_CHANNELS.reviewReject, { runId, reason }),
     refresh: (runId: string) =>
       ipcRenderer.invoke(IPC_CHANNELS.reviewRefresh, runId)
+  },
+  comparison: {
+    listCandidates: (runId: string) =>
+      ipcRenderer.invoke(IPC_CHANNELS.comparisonListCandidates, runId),
+    listForRun: (runId: string) =>
+      ipcRenderer.invoke(IPC_CHANNELS.comparisonListForRun, runId),
+    create: (input: ComparisonCreateInput) =>
+      ipcRenderer.invoke(IPC_CHANNELS.comparisonCreate, input)
   },
   memory: {
     listProposals: (runId: string) =>

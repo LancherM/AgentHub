@@ -162,6 +162,7 @@ export interface MemoryItemRepository {
 export interface ComparisonReportRepository {
   create(report: ComparisonReport): Promise<ComparisonReport>;
   listByTaskId(taskId: string): Promise<ComparisonReport[]>;
+  listByRunId(runId: string): Promise<ComparisonReport[]>;
 }
 
 export interface SkillRepository {
@@ -685,6 +686,16 @@ export class InMemoryComparisonReportRepository
   async listByTaskId(taskId: string): Promise<ComparisonReport[]> {
     return [...this.reports.values()]
       .filter((report) => report.taskId === taskId)
+      .sort((left, right) => left.createdAt.localeCompare(right.createdAt))
+      .map((report) => cloneComparisonReport(report));
+  }
+
+  async listByRunId(runId: string): Promise<ComparisonReport[]> {
+    return [...this.reports.values()]
+      .filter(
+        (report) =>
+          report.baselineRunId === runId || report.candidateRunId === runId
+      )
       .sort((left, right) => left.createdAt.localeCompare(right.createdAt))
       .map((report) => cloneComparisonReport(report));
   }

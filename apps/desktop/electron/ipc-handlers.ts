@@ -1,6 +1,7 @@
 import type {
   AgentId,
   AgentHubApi,
+  ComparisonCreateInput,
   CreateThreadInput,
   CreateRunInput,
   HandoffCopyKind,
@@ -36,6 +37,10 @@ import {
   createSettingsService,
   type SettingsService
 } from "./services/settings-service";
+import {
+  createComparisonService,
+  type ComparisonService
+} from "./services/comparison-service";
 
 export { IPC_CHANNELS, runEventChannel } from "./ipc-channels";
 
@@ -44,6 +49,7 @@ export interface DesktopServices {
   runs: RunService;
   threads: ThreadService;
   review: ReviewService;
+  comparison: ComparisonService;
   memory: MemoryService;
   settings: SettingsService;
 }
@@ -77,11 +83,13 @@ export function createDesktopServices(
     memoryService: memory,
     settingsService: settings
   });
+  const comparison = createComparisonService(context);
   return {
     projects,
     runs,
     threads: createThreadService({ context, projects, runs }),
     review,
+    comparison,
     memory,
     settings
   };
@@ -158,6 +166,12 @@ export function createIpcHandlers(
     },
     [IPC_CHANNELS.reviewRefresh]: async (_event, input) =>
       services.review.refreshReview(parseId(input, "runId")),
+    [IPC_CHANNELS.comparisonListCandidates]: async (_event, input) =>
+      services.comparison.listCandidates(parseId(input, "runId")),
+    [IPC_CHANNELS.comparisonListForRun]: async (_event, input) =>
+      services.comparison.listForRun(parseId(input, "runId")),
+    [IPC_CHANNELS.comparisonCreate]: async (_event, input) =>
+      services.comparison.createComparison(parseComparisonCreateInput(input)),
     [IPC_CHANNELS.memoryListProposals]: async (_event, input) =>
       services.memory.listProposals(parseId(input, "runId")),
     [IPC_CHANNELS.memoryGenerateProposals]: async (_event, input) =>
@@ -285,6 +299,17 @@ function parseHandoffCopyInput(input: unknown): {
   return { runId, kind: value.kind };
 }
 
+function parseComparisonCreateInput(input: unknown): ComparisonCreateInput {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    throw new Error("comparison input is required");
+  }
+  const value = input as Partial<ComparisonCreateInput>;
+  return {
+    baselineRunId: parseId(value.baselineRunId, "baselineRunId"),
+    candidateRunId: parseId(value.candidateRunId, "candidateRunId")
+  };
+}
+
 function parseCreateRunInput(input: unknown): CreateRunInput {
   if (!input || typeof input !== "object" || Array.isArray(input)) {
     throw new Error("run input is required");
@@ -410,7 +435,7 @@ const GENERIC_IPC_ERROR = "Agent Hub could not complete that local desktop reque
 
 function safeErrorMessage(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
-  if (/not found|required|must be|cannot be|already|deliveryMode|agentId|contextMode|reason|projectId|runId|threadId|prompt|text|settings|verification|command|executable|args|timeout|handoff/i.test(message)) {
+  if (/not found|required|must be|cannot be|already|deliveryMode|agentId|contextMode|reason|projectId|runId|threadId|prompt|text|settings|verification|command|executable|args|timeout|handoff|comparison|baseline|candidate|same task|multi-agent/i.test(message)) {
     return message;
   }
   return GENERIC_IPC_ERROR;
