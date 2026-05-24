@@ -10,7 +10,8 @@ import {
   validateRunArtifact,
   validateRiskReport,
   validateTask,
-  validateTaskRun
+  validateTaskRun,
+  validateVerificationResult
 } from "@agent-hub/core";
 import { createSqliteRepositories } from "@agent-hub/db";
 import {
@@ -1086,6 +1087,77 @@ describe("desktop services", () => {
     expect(storedRunItems).toHaveLength(firstList.length);
     expect(new Set(storedRunItems.map((item) => item.content)).size).toBe(
       firstList.length
+    );
+  });
+
+  it("does not propose secret-like desktop verification commands as memory", async () => {
+    const fixture = await createFixture();
+    const context = createDesktopServiceContext(fixture.repositories);
+    const projects = createProjectService(context);
+    const memory = createMemoryService(context);
+    const project = await projects.open(fixture.projectRoot);
+    const now = context.now();
+    const taskId = "task_desktop_secret_memory";
+    const runId = "run_desktop_secret_memory";
+
+    await fixture.repositories.taskRepository.create(
+      validateTask({
+        id: taskId,
+        projectId: project.id,
+        title: "Remember verification command",
+        status: "open",
+        createdAt: now,
+        updatedAt: now
+      })
+    );
+    await fixture.repositories.taskRunRepository.create(
+      validateTaskRun({
+        id: runId,
+        taskId,
+        agentKind: "fake",
+        status: "succeeded",
+        startedAt: now,
+        completedAt: now,
+        createdAt: now,
+        updatedAt: now
+      })
+    );
+    await fixture.repositories.verificationResultRepository.createMany([
+      validateVerificationResult({
+        id: "verification_secret_command",
+        taskRunId: runId,
+        command: "OPENAI_API_KEY=redacted pnpm test",
+        status: "passed",
+        exitCode: 0,
+        stdout: "",
+        stderr: "",
+        startedAt: now,
+        completedAt: now,
+        createdAt: now
+      }),
+      validateVerificationResult({
+        id: "verification_safe_command",
+        taskRunId: runId,
+        command: "pnpm test -- tests/desktop-services.test.ts",
+        status: "passed",
+        exitCode: 0,
+        stdout: "",
+        stderr: "",
+        startedAt: now,
+        completedAt: now,
+        createdAt: now
+      })
+    ]);
+
+    const proposals = await memory.listProposals(runId);
+    const proposalText = proposals.map((proposal) => proposal.content).join("\n");
+
+    expect(proposalText).not.toContain("OPENAI_API_KEY");
+    expect(proposals).toContainEqual(
+      expect.objectContaining({
+        content:
+          "Verification command for this project is pnpm test -- tests/desktop-services.test.ts."
+      })
     );
   });
 

@@ -174,15 +174,19 @@ function firstSafeVerificationCommand(
 ): string | undefined {
   return results
     .map((result) => result.command.trim())
-    .find(
-      (command) =>
-        command.length > 0 &&
-        command !== "not configured" &&
-        command.length <= 160 &&
-        !command.includes("\n") &&
-        !/simulated/i.test(command) &&
-        !containsSensitiveCommandTerm(command)
-    );
+    .find(isSafeMemoryVerificationCommand);
+}
+
+export function isSafeMemoryVerificationCommand(command: string): boolean {
+  const trimmed = command.trim();
+  return (
+    trimmed.length > 0 &&
+    trimmed !== "not configured" &&
+    trimmed.length <= 160 &&
+    !trimmed.includes("\n") &&
+    !/simulated/i.test(trimmed) &&
+    !containsSensitiveCommandTerm(trimmed)
+  );
 }
 
 function containsSensitiveCommandTerm(command: string): boolean {
