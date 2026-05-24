@@ -320,13 +320,13 @@ textarea:disabled {
   text-align: left;
 }
 
-.placeholder-nav {
+.utility-nav {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1fr;
   gap: 8px;
 }
 
-.placeholder-nav button,
+.utility-nav button,
 .ghost-button,
 .memory-actions button,
 .review-tabs button,

@@ -178,11 +178,28 @@ describe("desktop services", () => {
     expect(built.contextPack.approvedMemorySections.join("\n")).toContain(
       proposals[0].content
     );
+    await expectNoRepositoryContextWrites(fixture.projectRoot);
+    await expect(fs.readdir(fixture.projectRoot)).resolves.toEqual(before);
     await expect(review.getLogs(run.id)).resolves.toEqual(
       expect.arrayContaining([
         expect.objectContaining({ runId: run.id, level: "stdout" })
       ])
     );
+  });
+
+  it("keeps renderer source behind preload instead of privileged APIs", async () => {
+    const rendererRoot = path.join(process.cwd(), "apps", "desktop", "src");
+    const files = await collectSourceFiles(rendererRoot);
+    const forbidden = forbiddenRendererApiPattern();
+    const offenders: string[] = [];
+    for (const file of files) {
+      const content = await fs.readFile(file, "utf8");
+      if (forbidden.test(content)) {
+        offenders.push(path.relative(process.cwd(), file));
+      }
+    }
+
+    expect(offenders).toEqual([]);
   });
 
   it("stores per-project verification settings through service and IPC validation", async () => {
@@ -514,6 +531,62 @@ describe("desktop services", () => {
       patch: expect.stringContaining("Patch redacted because sensitive file path changed")
     });
     const diff = await review.getDiff(run.id);
+    expect(diff.patch).toContain(".env.local");
+    expect(diff.patch).not.toContain("API_TOKEN=secret-value");
+  });
+
+  it("redacts sensitive retained worktree diff patches in desktop review", async () => {
+    const fixture = await createFixture();
+    const context = createDesktopServiceContext(fixture.repositories);
+    const projects = createProjectService(context);
+    const review = createReviewService(context);
+    const project = await projects.open(fixture.projectRoot);
+    const now = context.now();
+    const task = await fixture.repositories.taskRepository.create(
+      validateTask({
+        id: "task_sensitive_retained_diff",
+        projectId: project.id,
+        title: "Inspect retained sensitive diff",
+        status: "completed",
+        createdAt: now,
+        updatedAt: now
+      })
+    );
+    const runId = "run_sensitive_retained_diff";
+    const worktreePath = path.join(fixture.workspaceBasePath, "sensitive-retained");
+    await execFileAsync(
+      "git",
+      [
+        "worktree",
+        "add",
+        "-b",
+        `agent-hub/${runId}/fake`,
+        worktreePath,
+        "HEAD"
+      ],
+      { cwd: fixture.projectRoot }
+    );
+    await fs.writeFile(
+      path.join(worktreePath, ".env.local"),
+      "API_TOKEN=secret-value\n",
+      "utf8"
+    );
+    await createRetainedRunFixture({
+      context,
+      fixture,
+      taskId: task.id,
+      runId,
+      worktreePath,
+      metadataPath: worktreePath,
+      retained: true,
+      cleaned: false
+    });
+
+    const diff = await review.getDiff(runId);
+    expect(diff).toMatchObject({
+      files: [expect.objectContaining({ path: ".env.local" })],
+      patch: expect.stringContaining("Patch redacted because sensitive file path changed")
+    });
     expect(diff.patch).toContain(".env.local");
     expect(diff.patch).not.toContain("API_TOKEN=secret-value");
   });
@@ -1921,6 +1994,56 @@ async function createFixture(): Promise<{
     databasePath
   });
   return { projectRoot, workspaceBasePath, agentHubHome, databasePath, repositories };
+}
+
+async function expectNoRepositoryContextWrites(projectRoot: string): Promise<void> {
+  for (const relativePath of [
+    "AGENTS.md",
+    "CLAUDE.md",
+    ".agent-hub",
+    ".agents",
+    ".claude"
+  ]) {
+    await expect(fs.access(path.join(projectRoot, relativePath))).rejects.toMatchObject({
+      code: "ENOENT"
+    });
+  }
+}
+
+async function collectSourceFiles(root: string): Promise<string[]> {
+  const entries = await fs.readdir(root, { withFileTypes: true });
+  const files: string[] = [];
+  for (const entry of entries) {
+    const entryPath = path.join(root, entry.name);
+    if (entry.isDirectory()) {
+      files.push(...await collectSourceFiles(entryPath));
+    } else if (/\.[cm]?[jt]sx?$/.test(entry.name)) {
+      files.push(entryPath);
+    }
+  }
+  return files;
+}
+
+function forbiddenRendererApiPattern(): RegExp {
+  const modules = [
+    "fs",
+    "path",
+    "os",
+    "child_process",
+    "better-sqlite3",
+    "sqlite3",
+    "simple-git",
+    "electron"
+  ].join("|");
+  return new RegExp(
+    [
+      `from\\s+["'](?:node:)?(?:${modules})["']`,
+      `require\\(["'](?:node:)?(?:${modules})["']\\)`,
+      "\\bipcRenderer\\b",
+      "\\bwindow\\.require\\b",
+      "\\bprocess\\.(?:env|cwd)\\b"
+    ].join("|")
+  );
 }
 
 async function createRetainedRunFixture(input: {
