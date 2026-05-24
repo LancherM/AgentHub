@@ -8,3 +8,14 @@ release/
 .corepack/
 .tmp/
 *.tsbuildinfo
+
+# Local planning, automation, and manual verification artifacts.
+todo.md
+approved-nightly-tasks.md
+docs/OPEN_QUESTIONS.md
+docs/OVERNIGHT_REPORT.md
+docs/REBUILD_PLAN.md
+docs/SPEC_LOCK.md
+docs/*-implementation-prompts.md
+docs/ui-verification/
+specs/imported/

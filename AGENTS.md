@@ -222,7 +222,6 @@ agent-hub/
 
   tests/
   docs/
-  specs/imported/
 ```
 
 Do not do a larger package restructure or introduce a browser/server
@@ -560,10 +559,8 @@ CLAUDE.md
 These files are export targets only. Export requires explicit user action and a
 preview.
 
-Future optimization ideas may be recorded in the repo-root `todo.md`.
-
-Entries in `todo.md` are planning notes only. Do not implement them unless the
-user explicitly asks for that specific work.
+Local planning notes, automation queues, and manual verification records should
+stay untracked unless the user explicitly asks to publish them.
 
 ## Skill Rules
 
