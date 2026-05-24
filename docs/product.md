@@ -391,7 +391,10 @@ commands such as `git status` and `git diff`; Agent Hub does not generate
 merge, push, apply, or cleanup commands. Desktop memory proposal generation is
 idempotent for each run: summary cards, run-detail loading, and the memory tab
 can refresh in parallel without duplicating the same proposal content or
-growing beyond the bounded proposal set for that run.
+growing beyond the bounded proposal set for that run. Verification-command
+memory proposals use the same secret-like command filter in desktop and task
+runner paths, so commands containing token, API key, password, credential, or
+similar terms are skipped instead of being persisted as proposed memory.
 
 Inspector accept/reject actions are audit decisions only. Accepting a run
 records `accepted` review state and shows "Accepted for record. No merge was

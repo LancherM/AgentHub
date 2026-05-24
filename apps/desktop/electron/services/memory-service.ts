@@ -16,6 +16,7 @@ import {
   appendApprovedMemory,
   resolveApprovedMemoryPath
 } from "@agent-hub/context-compiler";
+import { isSafeMemoryVerificationCommand } from "@agent-hub/task-runner";
 import type {
   MemoryApprovalResult,
   MemoryProposal,
@@ -234,8 +235,8 @@ class RepositoryMemoryService implements MemoryService {
 
     const verificationRows = await this.verification.listByRunId(run.id);
     const realCommand = verificationRows
-      .map((row) => row.command)
-      .find((command) => !/simulated/i.test(command));
+      .map((row) => row.command.trim())
+      .find(isSafeMemoryVerificationCommand);
     if (realCommand) {
       candidates.push({
         content: `Verification command for this project is ${realCommand}.`,

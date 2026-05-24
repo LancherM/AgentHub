@@ -524,6 +524,10 @@ adapter state, and does not write to the approved-memory context store.
 Generated items are deduplicated by normalized project content, capped per
 task, and created only as `proposed` memory rows. A generation failure is
 reported as a run warning without changing the completed run status.
+Desktop memory proposal generation reuses the same verification-command safety
+predicate before turning persisted verification rows into proposal content, so
+the desktop review surface cannot persist secret-like command text as memory
+through its separate proposal service.
 
 Comparison reports are generated from persisted run data rather than process
 memory or UI state. `packages/task-runner` loads each selected run, diff
