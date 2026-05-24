@@ -5,13 +5,19 @@ import {
   type MemoryItem,
   type MemoryItemRepository,
   type ProjectRepository,
+  type Project,
   type Task,
   type TaskRepository,
   type TaskRun,
   type TaskRunRepository,
   type VerificationResultRepository
 } from "@agent-hub/core";
+import {
+  appendApprovedMemory,
+  resolveApprovedMemoryPath
+} from "@agent-hub/context-compiler";
 import type {
+  MemoryApprovalResult,
   MemoryProposal,
   MemoryProposalSource
 } from "../../src/lib/types";
@@ -22,7 +28,7 @@ const MAX_GENERATED_PROPOSALS = 2;
 export interface MemoryService {
   listProposals(runId: string): Promise<MemoryProposal[]>;
   generateProposalsForRun(runId: string): Promise<MemoryProposal[]>;
-  approve(ids: string[]): Promise<void>;
+  approve(ids: string[]): Promise<MemoryApprovalResult[]>;
   ignore(ids: string[]): Promise<void>;
 }
 
@@ -78,9 +84,15 @@ class RepositoryMemoryService implements MemoryService {
     if (!project) {
       throw new Error(`project ${task.projectId} not found`);
     }
+    const approvedMemoryPath = this.approvedMemoryPath(project);
     let projectItems = await this.memory.listByProjectId(project.id);
     if (run.status === "queued" || run.status === "running") {
-      return toMemoryProposalsForTask(runId, projectItems, task.id);
+      return toMemoryProposalsForTask(
+        runId,
+        projectItems,
+        task.id,
+        approvedMemoryPath
+      );
     }
     const candidates = await this.buildCandidates(run, task, project.rootPath);
     for (const candidate of candidates) {
@@ -124,17 +136,64 @@ class RepositoryMemoryService implements MemoryService {
     return toMemoryProposalsForTask(
       runId,
       await this.memory.listByProjectId(project.id),
-      task.id
+      task.id,
+      approvedMemoryPath
     );
   }
 
-  async approve(ids: string[]): Promise<void> {
+  async approve(ids: string[]): Promise<MemoryApprovalResult[]> {
+    const results: MemoryApprovalResult[] = [];
     for (const id of ids) {
-      const item = await this.memory.get(id);
-      if (item?.status === "proposed") {
-        await this.memory.updateStatus(id, "approved", this.context.now());
+      const existing = await this.memory.get(id);
+      if (!existing) {
+        results.push({
+          id,
+          status: "skipped",
+          writeback: "skipped",
+          message: `memory item ${id} not found`
+        });
+        continue;
       }
+      if (existing.status === "rejected") {
+        results.push({
+          id,
+          content: existing.content,
+          status: "skipped",
+          writeback: "skipped",
+          message: "Rejected memory is not written to the approved context store."
+        });
+        continue;
+      }
+      const approvedAt =
+        existing.status === "approved" ? existing.updatedAt : this.context.now();
+      const item =
+        existing.status === "approved"
+          ? existing
+          : await this.memory.updateStatus(id, "approved", approvedAt);
+      const project = await this.projects.get(item.projectId);
+      if (!project) {
+        throw new Error(`project ${item.projectId} not found`);
+      }
+      const writeback = await appendApprovedMemory({
+        projectRoot: project.rootPath,
+        projectId: project.id,
+        memoryId: item.id,
+        content: item.content,
+        approvedAt,
+        agentHubHome: this.context.agentHubHome
+      });
+      results.push({
+        id: item.id,
+        content: item.content,
+        status: "approved",
+        approvedMemoryPath: writeback.path,
+        writeback: writeback.written ? "written" : "already_present",
+        message: writeback.written
+          ? "Approved memory was written to the Agent Hub context store."
+          : "Approved memory was already present in the Agent Hub context store."
+      });
     }
+    return results;
   }
 
   async ignore(ids: string[]): Promise<void> {
@@ -199,9 +258,21 @@ class RepositoryMemoryService implements MemoryService {
 
     return candidates;
   }
+
+  private approvedMemoryPath(project: Project): string {
+    return resolveApprovedMemoryPath({
+      projectRoot: project.rootPath,
+      projectId: project.id,
+      agentHubHome: this.context.agentHubHome
+    }).path;
+  }
 }
 
-function toMemoryProposal(runId: string, item: MemoryItem): MemoryProposal {
+function toMemoryProposal(
+  runId: string,
+  item: MemoryItem,
+  approvedMemoryPath?: string
+): MemoryProposal {
   const status =
     item.status === "approved"
       ? "approved"
@@ -216,17 +287,20 @@ function toMemoryProposal(runId: string, item: MemoryItem): MemoryProposal {
     source: sourceFor(item.content),
     status,
     createdAt: item.createdAt,
-    decidedAt: status === "pending" ? undefined : item.updatedAt
+    decidedAt: status === "pending" ? undefined : item.updatedAt,
+    approvedMemoryPath:
+      status === "approved" ? approvedMemoryPath : undefined
   };
 }
 
 function toMemoryProposalsForTask(
   runId: string,
   items: MemoryItem[],
-  taskId: string
+  taskId: string,
+  approvedMemoryPath?: string
 ): MemoryProposal[] {
   return uniqueMemoryItemsForTask(items, taskId).map((item) =>
-    toMemoryProposal(runId, item)
+    toMemoryProposal(runId, item, approvedMemoryPath)
   );
 }
 

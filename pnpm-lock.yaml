@@ -44,6 +44,9 @@ importers:
 
   apps/desktop:
     dependencies:
+      '@agent-hub/context-compiler':
+        specifier: workspace:*
+        version: link:../../packages/context-compiler
       '@agent-hub/core':
         specifier: workspace:*
         version: link:../../packages/core

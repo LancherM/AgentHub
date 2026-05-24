@@ -371,8 +371,10 @@ performed." Rejecting records `rejected` review state and shows "Rejected for
 record. No files were deleted or reverted." Neither action merges, pushes,
 resets, cleans, deletes worktrees, reverts files, writes repository context
 files, or creates pull requests. Memory proposals remain pending until the
-user approves or ignores them, and desktop approval updates Agent Hub local
-storage only.
+user approves or ignores them. Desktop approval is explicit and writes the
+approved entry to the same Agent Hub-owned `memory/approved.md` context-store
+file used by the CLI, while ignored proposals remain rejected SQLite records
+and are never injected into future context.
 
 The selected run timeline receives persisted TaskRunner events through the
 existing desktop subscription API. TaskRunner now emits deterministic progress
@@ -402,15 +404,17 @@ memory evidence. Mentioned `@codex` and `@claude` runs invoke the local
 process-backed adapter preflight through TaskRunner; unavailable CLIs fail as
 inspectable persisted run events instead of service crashes. Desktop runs do
 not write Agent Hub context files into the target repository root, merge, push,
-export repository context, apply code, or approve memory automatically. Current
+export repository context, apply code, or approve memory automatically. Explicit
+desktop memory approval writes only to Agent Hub's context store and confirms
+the local approved-memory path in the inspector. Current
 desktop paths accept run-linked or message-linked continuation requests,
 validate that supplied message ids still belong to the requested parent run,
 require a retained worktree before continuing code state, and otherwise fail
 with a clear system message. Desktop verification settings are local and
 per-project; they are edited through validated IPC and then run by TaskRunner in
-the isolated worktree. Approved-memory context-store writeback, multi-agent
-comparison review, worktree lifecycle management, and explicit merge/apply
-workflows remain follow-up desktop wiring tasks.
+the isolated worktree. Multi-agent comparison review, worktree lifecycle
+management, and explicit merge/apply workflows remain follow-up desktop wiring
+tasks.
 
 SQLite is stored in Agent Hub-owned application data by default, not in the
 target project repository. `AGENT_HUB_HOME` can point Agent Hub at an alternate
@@ -504,5 +508,5 @@ assets only; it does not deploy a hosted service, notarize the desktop app, or
 change Agent Hub's local-first product model.
 
 Deferred product capabilities include richer Codex/Claude structured event
-mapping, approved-memory writeback confirmation, multi-agent comparison review,
-and explicit desktop apply/merge workflows.
+mapping, multi-agent comparison review, and explicit desktop apply/merge
+workflows.

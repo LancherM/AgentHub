@@ -13,8 +13,13 @@ import type { ProjectSummary } from "../../src/lib/types";
 
 export interface DesktopServiceContext {
   repositories: SqliteRepositories;
+  agentHubHome?: string;
   now(): string;
   nextId(prefix: string): string;
+}
+
+export interface DesktopServiceContextOptions {
+  agentHubHome?: string;
 }
 
 export interface ProjectService {
@@ -23,10 +28,12 @@ export interface ProjectService {
 }
 
 export function createDesktopServiceContext(
-  repositories: SqliteRepositories = createSqliteRepositories()
+  repositories: SqliteRepositories = createSqliteRepositories(),
+  options: DesktopServiceContextOptions = {}
 ): DesktopServiceContext {
   return {
     repositories,
+    agentHubHome: options.agentHubHome,
     now: nowIso,
     nextId: createId
   };
