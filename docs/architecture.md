@@ -625,7 +625,10 @@ artifact, check, risk, and memory inspector panels. New first-class tables such
 as `rooms`, `roles`, `participants`, `role_executors`, `task_assignments`,
 `timeline_events`, `artifacts`, `decisions`, or `packs` should be added only
 when the metadata-backed model no longer satisfies a specific query, lifecycle,
-or governance need.
+or governance need. The roadmap also defines longer-term extension horizons:
+roles, executors, workflows, artifacts, knowledge, packs, and optional
+sync/collaboration should evolve through stable local contracts rather than
+short-lived MVP-only enums or UI assumptions.
 
 Repository CI/CD lives in `.github/workflows/ci-cd.yml` and stays outside the
 Agent Hub runtime. The workflow installs the pinned pnpm and Node versions from

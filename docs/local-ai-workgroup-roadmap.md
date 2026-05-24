@@ -18,6 +18,12 @@ The target product shape is:
 > review, operations, and custom work, and keep every message, run, artifact,
 > check, risk, decision, and memory proposal on an auditable local timeline.
 
+The phase list below is the first productization wave, not the full product
+ceiling. Each phase should land as a small, verifiable slice, but the underlying
+contracts should leave room for richer roles, executor types, workflows,
+artifacts, knowledge systems, packs, optional sync, and multi-person review
+without forcing a rewrite.
+
 ## Guardrails
 
 - Keep Agent Hub CLI-first and local-first.
@@ -35,6 +41,149 @@ The target product shape is:
   `docs/architecture.md`.
 - Every implementation phase must include focused tests and the most relevant
   validation commands.
+- Prefer extension points over closed enums when the concept is likely to grow:
+  roles, executors, artifacts, checks, risks, packs, approvals, and workflows
+  should have stable contracts and metadata escape hatches.
+- Keep long-term optional capabilities behind explicit local-first boundaries.
+  Future sync, collaboration, publishing, external integrations, or hosted
+  components must not become prerequisites for local single-user operation.
+
+## Strategic Horizons
+
+Agent Hub should evolve in horizons. The early phases make the workgroup loop
+real; later horizons broaden what participants can be, what they can produce,
+and how teams can govern or extend the system.
+
+| Horizon | Product Shape | Architecture Emphasis |
+| --- | --- | --- |
+| H0: Current foundation | CLI-first local agent runs, desktop conversation shell, run evidence, risk, verification, memory proposals | Preserve TaskRunner, context compiler, SQLite repositories, IPC sandbox |
+| H1: Workgroup loop | Rooms, custom role participants, task grouping, structured timeline, inspector, artifacts, memory governance | Layer semantics on conversation/run evidence before broad schema splits |
+| H2: Configurable team platform | User-defined roles, executor bindings, permissions, context policies, approval policies, workflow templates | First-class role/executor/config repositories and clear runtime capability checks |
+| H3: Extensible work system | Workflow executors, LLM API executors, human assignments, artifact stores, pack-defined checks/risks/artifacts | Plugin-like internal extension contracts without untrusted marketplace execution |
+| H4: Optional collaboration and sync | Multi-device or team review, shared audit trails, external publishing gateways | Optional sync/collaboration adapters that preserve local-first offline operation |
+
+The roadmap should not overbuild H3/H4 in the first pass, but each earlier
+phase should avoid decisions that would block those horizons. For example,
+roles should not be hard-coded as a fixed agent enum, packs should not assume
+only engineering work, and timeline events should not depend on raw chat text
+as their only durable representation.
+
+## Extension Architecture Principles
+
+### Roles and Participants
+
+Roles are configurable participant profiles. Preset roles are templates, not a
+closed product boundary. A role should support:
+
+- handle and display identity
+- capability summary
+- persona and default instructions
+- permission policy
+- context policy
+- approval policy
+- executor binding
+- default room/task behavior
+- tags and pack affinities
+- local audit metadata
+
+The long-term participant model should allow:
+
+- AI agents backed by local adapters
+- direct LLM API-backed roles
+- local workflow-backed roles
+- human assignees or reviewers
+- external integration placeholders that require explicit approval before any
+  side effect
+
+### Executors
+
+Executors are the runtime backends behind roles. The initial runnable executor
+is `agent_adapter`, but the contract should leave space for:
+
+- `agent_adapter`: current fake, Codex, and Claude Code adapters
+- `llm_api`: future direct model or API execution
+- `workflow`: future local deterministic workflow or script execution
+- `human`: future manual assignment, review, or approval owner
+- `integration`: future explicit external system action gateway
+
+Every executor should advertise capabilities, required approvals, allowed
+context, side-effect class, cancellation behavior, evidence outputs, and audit
+events. Executor configuration must never store secrets in SQLite; secret
+material should stay in explicit external credential mechanisms if such
+integrations are later designed.
+
+### Workflows
+
+Workflows should be first-class plans over tasks, roles, executors, artifacts,
+checks, approvals, and timeline events. Early workflows can be metadata-backed,
+but long-term workflows should support:
+
+- templates
+- bounded rounds
+- dependency ordering
+- human approval gates
+- retry and handoff rules
+- generated artifacts
+- checks and risk policies
+- local audit replay
+
+Workflow execution must stay bounded and inspectable. Agent-to-agent or
+participant-to-participant loops require max rounds and clear stop conditions.
+
+### Artifacts and Knowledge
+
+Artifacts should eventually become project-level reusable objects, not only
+run blobs. The long-term artifact model should support:
+
+- source links to room messages, tasks, runs, participants, and decisions
+- type-specific metadata
+- local previews
+- versioning
+- lifecycle status
+- pack-defined artifact types
+- export or publish gates
+
+Knowledge should remain governed:
+
+- thread summaries stay local to their source room/thread
+- proposals require approval
+- approved memory has scope
+- decisions are source-linked and auditable
+- future indexes or embeddings are local-first and rebuildable
+
+### Packs and Extensions
+
+Packs should define local metadata and behavior templates before they ever
+become a marketplace concept. A pack can contribute:
+
+- role templates
+- artifact type definitions
+- check definitions
+- risk categories
+- workflow templates
+- context section providers
+- UI labels or grouping metadata
+
+Pack loading should begin with built-in deterministic packs. Third-party or
+marketplace-style extensions are a later product decision, not a near-term
+dependency. If external extensions are added, they must run with explicit local
+permissions, strong audit trails, and no ambient access to secrets or project
+files.
+
+### Optional Sync and Collaboration
+
+The product may eventually support multi-device sync or team review, but those
+features must be optional adapters over the local model:
+
+- local project data remains usable offline
+- no account is required for the core local product
+- sync conflict handling is explicit and auditable
+- remote execution is not introduced as a side effect of sync
+- external publishing remains separately approved
+
+Early schema and service boundaries should therefore avoid assumptions that
+only one local UI will ever read data, while still keeping single-user local
+operation as the default.
 
 ## UI Design Gate
 

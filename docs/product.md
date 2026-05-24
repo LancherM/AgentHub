@@ -304,7 +304,11 @@ backend maps to existing local agent adapters, while the model leaves room for
 future LLM API, workflow, and human executors. The near-term strategy is
 incremental: reuse SQLite-backed conversation threads/messages, TaskRunner
 runs, run artifacts, verification results, risk reports, review decisions, and
-memory proposals before introducing larger domain splits.
+memory proposals before introducing larger domain splits. The phase roadmap is
+not only an MVP plan: it also defines long-term extension horizons for
+configurable roles, executor backends, workflow templates, artifact and
+knowledge models, pack metadata, and optional sync/collaboration surfaces while
+preserving local-first operation as the default.
 
 Agent Hub Desktop is now available as a local conversation console under
 `apps/desktop`. It starts with `pnpm --filter desktop dev` and presents a
