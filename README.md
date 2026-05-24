@@ -55,11 +55,13 @@ tests                     Cross-package test coverage
 - Run artifacts including logs, verification results, git diffs, and risk reports
 - Memory workflow: propose, approve/reject, and approved-memory writeback
 - Initial desktop shell with thread view, run cards, and inspector panels (logs/diff/risks/memory)
+- Per-project desktop verification command settings stored locally and executed
+  through the shared TaskRunner path
 
 ## Areas still in progress
 
 - Full desktop streaming execution UX, including cancellation controls
-- Richer verification configuration and visualization in desktop workflows
+- Richer verification visualization in desktop workflows
 - More advanced multi-agent comparison and scoring depth
 
 ## Quick start

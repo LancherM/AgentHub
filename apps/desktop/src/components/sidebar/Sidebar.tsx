@@ -10,6 +10,7 @@ interface SidebarProps {
   onSelectThread(threadId: string): void;
   onSelectProject(projectId: string): void;
   onRegisterProject(projectPath: string): Promise<void>;
+  onOpenSettings(): void;
   isBusy: boolean;
 }
 
@@ -22,6 +23,7 @@ export function Sidebar({
   onSelectThread,
   onSelectProject,
   onRegisterProject,
+  onOpenSettings,
   isBusy
 }: SidebarProps): JSX.Element {
   return (
@@ -107,9 +109,10 @@ export function Sidebar({
       </section>
 
       <nav className="placeholder-nav" aria-label="Utilities">
-        {["Compare", "Memory", "Skills", "Settings"].map((item) => (
+        {["Compare", "Memory", "Skills"].map((item) => (
           <button key={item}>{item}</button>
         ))}
+        <button onClick={onOpenSettings}>Settings</button>
       </nav>
     </aside>
   );

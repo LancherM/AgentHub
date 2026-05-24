@@ -177,13 +177,15 @@ Implemented:
   artifacts, TaskRunner-backed fake/Codex/Claude desktop runs in isolated
   worktrees, and an inspector drawer for logs, diffs, verification, risks, and
   memory proposals.
+- Per-project desktop verification command configuration through validated IPC
+  and local SQLite settings, with configured commands passed to TaskRunner for
+  isolated-worktree execution.
 
 Not yet implemented:
 
-- Desktop real verification configuration, live TaskRunner streaming and
-  cancellation, approved-memory context-store writeback confirmation,
-  multi-agent comparison review, explicit worktree lifecycle controls, and
-  explicit merge/apply workflows.
+- Live TaskRunner streaming and cancellation, approved-memory context-store
+  writeback confirmation, multi-agent comparison review, explicit worktree
+  lifecycle controls, and explicit merge/apply workflows.
 
 ## Explicit Non-goals for MVP
 

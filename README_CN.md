@@ -73,12 +73,14 @@ agent-hub [--db <path>] compare --task-id <task-id> --baseline <run-id> --candid
   sequence number。
 - 支持显式 memory proposal、approve、reject，以及 approved-memory writeback。
 - 为同一 task 的两个 run 生成持久化 comparison report。
+- 桌面端支持本地按项目配置结构化验证命令，并通过共享 TaskRunner 在隔离
+  worktree 中执行。
 - 不引入 cloud sync、账号、远程执行、自动 merge、自动 push 或自动 PR。
 
 ## 当前缺口
 
-- 桌面端接入真实 TaskRunner、Codex/Claude/fake 执行、流式事件、取消、
-  验证配置、保留 worktree 的 diff review，以及 approved-memory 写回确认。
+- 桌面端仍需更完整的流式事件与取消体验、保留 worktree 的 diff review，
+  以及 approved-memory 写回确认。
 - 从已完成 run 自动生成 memory proposal。
 - 比当前持久化文本 summary 更丰富的 comparison scoring。
 

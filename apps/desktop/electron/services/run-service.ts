@@ -41,6 +41,7 @@ import type {
 import type { MemoryService } from "./memory-service";
 import type { DesktopServiceContext } from "./project-service";
 import type { ReviewService } from "./review-service";
+import type { SettingsService } from "./settings-service";
 
 export interface RunService {
   createRun(input: CreateDesktopRunInput): Promise<RunSummary>;
@@ -56,6 +57,7 @@ export interface RunService {
 export interface RunServiceDependencies {
   reviewService: ReviewService;
   memoryService: MemoryService;
+  settingsService?: SettingsService;
   taskRunnerDependencies?: TaskRunnerDependencies;
   workspaceBasePath?: string;
 }
@@ -398,6 +400,10 @@ class RepositoryRunService implements RunService {
     }
 
     const runner = this.createTaskRunner(run.id);
+    const verificationCommands =
+      await this.dependencies.settingsService?.verificationCommandsForProject(
+        task.projectId
+      );
     const result = await runner.run({
       projectRoot: project.rootPath,
       taskPrompt: input.prompt,
@@ -407,6 +413,7 @@ class RepositoryRunService implements RunService {
       title: task.title,
       deliveryMode: input.deliveryMode,
       conversationBrief: input.conversationBrief,
+      verificationCommands,
       workspaceBasePath: this.desktopWorkspaceBasePath(),
       workspaceCleanupPolicy: "never",
       signal: active.controller.signal,

@@ -879,7 +879,18 @@ textarea:disabled {
   box-shadow: var(--shadow);
 }
 
-.inspector-header {
+.settings-panel {
+  display: grid;
+  width: min(720px, 100%);
+  height: 100%;
+  grid-template-rows: auto minmax(0, 1fr);
+  border-left: 1px solid var(--line-strong);
+  background: rgba(18, 19, 16, 0.98);
+  box-shadow: var(--shadow);
+}
+
+.inspector-header,
+.settings-header {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
@@ -888,10 +899,18 @@ textarea:disabled {
   border-bottom: 1px solid var(--line);
 }
 
-.inspector-header h2 {
+.inspector-header h2,
+.settings-header h2 {
   margin: 0;
   overflow-wrap: anywhere;
   font-size: 20px;
+}
+
+.settings-header p {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+  overflow-wrap: anywhere;
 }
 
 .inspector-status-row,
@@ -914,6 +933,11 @@ textarea:disabled {
 }
 
 .inspector-actions .danger {
+  border-color: rgba(255, 125, 107, 0.36);
+  color: #ffd6cf;
+}
+
+.ghost-button.danger {
   border-color: rgba(255, 125, 107, 0.36);
   color: #ffd6cf;
 }
@@ -967,6 +991,101 @@ textarea:disabled {
   min-height: 0;
   overflow: auto;
   padding: 16px;
+}
+
+.settings-body {
+  display: grid;
+  align-content: start;
+  gap: 14px;
+  min-height: 0;
+  overflow: auto;
+  padding: 16px;
+}
+
+.settings-toolbar,
+.settings-row-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.settings-toolbar .muted-copy {
+  margin: 0;
+}
+
+.settings-empty {
+  padding: 18px;
+  border: 1px dashed var(--line-strong);
+  border-radius: 8px;
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.018);
+}
+
+.verification-settings-list {
+  display: grid;
+  gap: 12px;
+}
+
+.verification-command-editor {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.026);
+}
+
+.settings-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.settings-grid label,
+.settings-args-field {
+  display: grid;
+  gap: 6px;
+}
+
+.settings-grid span,
+.settings-args-field span,
+.settings-check span {
+  color: var(--muted-2);
+  font-size: 11px;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.settings-grid input,
+.settings-args-field textarea {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #10110e;
+  color: var(--text);
+  outline: 0;
+  padding: 9px 10px;
+}
+
+.settings-args-field textarea {
+  resize: vertical;
+  min-height: 84px;
+  font-family: "SFMono-Regular", "Cascadia Code", Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.settings-grid input:focus,
+.settings-args-field textarea:focus {
+  border-color: rgba(216, 255, 87, 0.62);
+}
+
+.settings-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .decision-strip {

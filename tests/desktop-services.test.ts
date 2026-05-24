@@ -20,6 +20,7 @@ import { createReviewService } from "../apps/desktop/electron/services/review-se
 import { createMemoryService } from "../apps/desktop/electron/services/memory-service";
 import { createRunService } from "../apps/desktop/electron/services/run-service";
 import { createThreadService } from "../apps/desktop/electron/services/thread-service";
+import { createSettingsService } from "../apps/desktop/electron/services/settings-service";
 import { runFakeAgent } from "../apps/desktop/electron/services/fake-agent-runner";
 import {
   CodexAdapter,
@@ -37,8 +38,11 @@ import {
   runEventChannel
 } from "../apps/desktop/electron/ipc-handlers";
 import type { RunDetail, RunEvent } from "../apps/desktop/src/lib/types";
-import { MockProcessRunner } from "./helpers";
-import type { TaskRunnerDependencies } from "@agent-hub/task-runner";
+import { MockProcessRunner, MockShellExecutor } from "./helpers";
+import {
+  VerificationRunner,
+  type TaskRunnerDependencies
+} from "@agent-hub/task-runner";
 
 const execFileAsync = promisify(execFile);
 
@@ -87,7 +91,9 @@ describe("desktop services", () => {
       empty: false
     });
     await expect(review.getVerification(run.id)).resolves.toMatchObject({
-      status: "skipped"
+      status: "skipped",
+      commands: [],
+      message: "No verification commands were configured."
     });
     await expect(review.getRisk(run.id)).resolves.toMatchObject({
       level: "medium"
@@ -115,6 +121,193 @@ describe("desktop services", () => {
         expect.objectContaining({ runId: run.id, level: "stdout" })
       ])
     );
+  });
+
+  it("stores per-project verification settings through service and IPC validation", async () => {
+    const fixture = await createFixture();
+    const context = createDesktopServiceContext(fixture.repositories);
+    const projects = createProjectService(context);
+    const memory = createMemoryService(context);
+    const review = createReviewService(context, { memoryService: memory });
+    const settings = createSettingsService(context);
+    const runs = createTestRunService(context, review, memory, fixture);
+    const threads = createThreadService({ context, projects, runs });
+    const handlers = createIpcHandlers({
+      projects,
+      runs,
+      threads,
+      review,
+      memory,
+      settings
+    });
+    const sender = { send: vi.fn() };
+    const project = await projects.open(fixture.projectRoot);
+
+    await expect(
+      handlers[IPC_CHANNELS.settingsSaveVerification]({ sender } as never, {
+        projectId: project.id,
+        commands: [
+          {
+            id: "typecheck",
+            label: "Desktop typecheck",
+            executable: "pnpm",
+            args: ["--filter", "desktop", "typecheck"],
+            timeoutMs: 1234,
+            continueOnFailure: true
+          }
+        ]
+      })
+    ).resolves.toMatchObject({
+      projectId: project.id,
+      commands: [
+        expect.objectContaining({
+          id: "typecheck",
+          executable: "pnpm",
+          args: ["--filter", "desktop", "typecheck"]
+        })
+      ]
+    });
+    await expect(settings.getVerification(project.id)).resolves.toMatchObject({
+      commands: [
+        expect.objectContaining({
+          id: "typecheck",
+          label: "Desktop typecheck",
+          timeoutMs: 1234,
+          continueOnFailure: true
+        })
+      ]
+    });
+    await expect(
+      handlers[IPC_CHANNELS.settingsGetVerification](
+        { sender } as never,
+        project.id
+      )
+    ).resolves.toMatchObject({
+      projectId: project.id,
+      commands: [expect.objectContaining({ id: "typecheck" })]
+    });
+    await expect(
+      handlers[IPC_CHANNELS.settingsSaveVerification]({ sender } as never, {
+        projectId: project.id,
+        commands: [
+          { id: "bad", executable: "pnpm test", args: [] }
+        ]
+      })
+    ).rejects.toThrow(/executable/);
+    await expect(
+      handlers[IPC_CHANNELS.settingsSaveVerification]({ sender } as never, {
+        projectId: project.id,
+        commands: [
+          { id: "dup", executable: "pnpm", args: [] },
+          { id: "dup", executable: "pnpm", args: [] }
+        ]
+      })
+    ).rejects.toThrow(/unique/);
+    await expect(
+      handlers[IPC_CHANNELS.settingsSaveVerification]({ sender } as never, {
+        projectId: project.id,
+        commands: [
+          { id: "cwd", executable: "pnpm", args: [], cwd: fixture.projectRoot }
+        ]
+      })
+    ).rejects.toThrow(/unsupported field cwd/);
+  });
+
+  it("passes configured desktop verification commands to TaskRunner in the isolated worktree", async () => {
+    const fixture = await createFixture();
+    const context = createDesktopServiceContext(fixture.repositories);
+    const projects = createProjectService(context);
+    const memory = createMemoryService(context);
+    const review = createReviewService(context, { memoryService: memory });
+    const settings = createSettingsService(context);
+    const shell = new MockShellExecutor([{ stdout: "ok\n" }]);
+    const runs = createTestRunService(context, review, memory, fixture, {
+      verificationRunner: new VerificationRunner(shell)
+    });
+    const project = await projects.open(fixture.projectRoot);
+    await settings.saveVerification({
+      projectId: project.id,
+      commands: [
+        {
+          id: "test",
+          label: "Project tests",
+          executable: "pnpm",
+          args: ["test"]
+        }
+      ]
+    });
+
+    const run = await runs.createRun({
+      projectId: project.id,
+      prompt: "Run configured verification.",
+      agentId: "fake",
+      contextMode: "auto"
+    });
+    await waitForRun(runs, run.id, "completed");
+
+    expect(shell.calls).toHaveLength(1);
+    expect(shell.calls[0].command).toMatchObject({
+      executable: "pnpm",
+      args: ["test"],
+      displayName: "Project tests"
+    });
+    expect(shell.calls[0].options.cwd).not.toBe(fixture.projectRoot);
+    expect(shell.calls[0].options.cwd).toContain(fixture.workspaceBasePath);
+    await expect(review.getVerification(run.id)).resolves.toMatchObject({
+      status: "passed",
+      commands: [
+        expect.objectContaining({
+          command: "pnpm test",
+          status: "passed",
+          stdout: "ok\n"
+        })
+      ]
+    });
+  });
+
+  it("converts dangerous desktop verification commands into inspectable failed evidence", async () => {
+    const fixture = await createFixture();
+    const context = createDesktopServiceContext(fixture.repositories);
+    const projects = createProjectService(context);
+    const memory = createMemoryService(context);
+    const review = createReviewService(context, { memoryService: memory });
+    const settings = createSettingsService(context);
+    const runs = createTestRunService(context, review, memory, fixture, {
+      verificationRunner: new VerificationRunner(new MockShellExecutor())
+    });
+    const project = await projects.open(fixture.projectRoot);
+    await settings.saveVerification({
+      projectId: project.id,
+      commands: [
+        {
+          id: "danger",
+          executable: "sudo",
+          args: ["true"]
+        }
+      ]
+    });
+
+    const run = await runs.createRun({
+      projectId: project.id,
+      prompt: "Reject dangerous verification.",
+      agentId: "fake",
+      contextMode: "auto"
+    });
+    const failed = await waitForRun(runs, run.id, "failed");
+
+    expect(failed.events.map((event) => event.type)).toEqual(
+      expect.arrayContaining(["verification_started", "verification_finished", "run_failed"])
+    );
+    await expect(review.getVerification(run.id)).resolves.toMatchObject({
+      status: "failed",
+      commands: [
+        expect.objectContaining({
+          command: "sudo true",
+          status: "failed",
+          stderr: expect.stringContaining("refusing to execute dangerous command")
+        })
+      ]
+    });
   });
 
   it("preserves persisted blocking risk reports for real review inspection", async () => {
@@ -1144,9 +1337,17 @@ describe("desktop services", () => {
     const projects = createProjectService(context);
     const memory = createMemoryService(context);
     const review = createReviewService(context, { memoryService: memory });
+    const settings = createSettingsService(context);
     const runs = createTestRunService(context, review, memory, fixture);
     const threads = createThreadService({ context, projects, runs });
-    const handlers = createIpcHandlers({ projects, runs, threads, review, memory });
+    const handlers = createIpcHandlers({
+      projects,
+      runs,
+      threads,
+      review,
+      memory,
+      settings
+    });
     const sender = { send: vi.fn() };
     const project = await projects.open(fixture.projectRoot);
 
@@ -1284,9 +1485,11 @@ function createTestRunService(
   fixture: { workspaceBasePath: string },
   taskRunnerDependencies: TaskRunnerDependencies = {}
 ): ReturnType<typeof createRunService> {
+  const settings = createSettingsService(context);
   return createRunService(context, {
     reviewService: review,
     memoryService: memory,
+    settingsService: settings,
     workspaceBasePath: fixture.workspaceBasePath,
     taskRunnerDependencies: {
       processRunner: new MockProcessRunner(
