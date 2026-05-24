@@ -610,6 +610,18 @@ main-process services instead of duplicating orchestration. Future
 restructuring should preserve that direction and keep desktop orchestration
 logic outside the renderer.
 
+The planned local AI workgroup transformation is documented in
+`docs/local-ai-workgroup-roadmap.md`. Architecturally, the first phases should
+layer room, role-agent, timeline, artifact, decision, and knowledge semantics on
+top of the existing local conversation and run evidence boundaries instead of
+starting with a broad schema rewrite. `ConversationThread` can initially serve
+as the room timeline record, role agents can map to existing adapter kinds, and
+run artifacts/review evidence can back the first artifact, check, risk, and
+memory inspector panels. New first-class tables such as `rooms`,
+`task_assignments`, `timeline_events`, `artifacts`, `decisions`, or `packs`
+should be added only when the metadata-backed model no longer satisfies a
+specific query, lifecycle, or governance need.
+
 Repository CI/CD lives in `.github/workflows/ci-cd.yml` and stays outside the
 Agent Hub runtime. The workflow installs the pinned pnpm and Node versions from
 the root package, runs the same local validation commands documented for

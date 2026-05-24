@@ -1,0 +1,1082 @@
+# Local AI Workgroup Roadmap
+
+Status: planning
+Last updated: 2026-05-24
+
+This document defines the staged plan for evolving Agent Hub from a
+CLI-first coding-agent orchestrator into a local-first AI workgroup. The plan
+uses the current codebase shape as the baseline: durable conversation threads,
+desktop run cards, TaskRunner-backed runs, SQLite persistence, review
+evidence, risk reports, verification results, and memory proposals already
+exist. The roadmap intentionally reuses those surfaces before adding new
+domain tables.
+
+The target product shape is:
+
+> Agent Hub is a local-first AI workgroup. Users work in project rooms, mention
+> role-based agents, assign research, writing, analysis, engineering, review,
+> operations, and memory tasks, and keep every message, run, artifact, check,
+> risk, decision, and memory proposal on an auditable local timeline.
+
+## Guardrails
+
+- Keep Agent Hub CLI-first and local-first.
+- Do not add a hosted backend, login, cloud sync, remote task execution, or a
+  browser-only architecture.
+- Keep the desktop renderer sandboxed. No renderer Node.js, filesystem, Git,
+  SQLite, shell, or child-process access.
+- Keep orchestration in shared packages and Electron main-process services.
+- Do not automatically merge, push, open PRs, publish externally, approve
+  memory, or write repository context files.
+- Reuse existing `ConversationThread`, `ConversationMessage`, `TaskRunner`,
+  run evidence, review artifacts, risk reports, verification results, and
+  memory items before introducing larger domain splits.
+- Every behavior change must update `docs/product.md` and
+  `docs/architecture.md`.
+- Every implementation phase must include focused tests and the most relevant
+  validation commands.
+
+## UI Design Gate
+
+Any phase that changes desktop UI, renderer behavior, visible workflows,
+layout, styling, navigation, or inspector panels must be split into two steps:
+
+1. Generate a UI design artifact for review. Acceptable artifacts are a static
+   HTML/CSS mockup, a rendered screenshot, or a set of screen images saved
+   under `docs/ui-design/`.
+2. Stop and ask the user to review the design. Do not implement the actual UI
+   code until the user approves the design direction.
+
+The implementation prompt for UI phases must explicitly say:
+
+```text
+This phase changes desktop UI. First generate UI design artifacts and screenshots
+for user review. Do not implement production UI until the user approves the
+design. After approval, implement the UI to match the reviewed design, rebuild
+the desktop app, open the running UI, verify the affected workflow manually,
+write a concise UI verification summary under docs/ui-verification/, and include
+that file path in the final summary.
+```
+
+## Phase Sequence
+
+| Phase | Theme | UI Gate | Primary Outcome |
+| --- | --- | --- | --- |
+| 0 | Roadmap and product boundary | No | Shared direction and prompts |
+| 1 | Role-agent vocabulary and routing | Conditional | `@researcher`-style roles map to adapters |
+| 2 | Rooms over conversation threads | Yes | Project rooms replace generic thread UX |
+| 3 | Mention-to-task grouping | Conditional | One instruction creates one task with multiple runs |
+| 4 | Timeline event semantics | Yes | Messages, run cards, and system events render as one audit stream |
+| 5 | Structured inspector | Yes | Brief, Context, Artifacts, Checks, Risks, Memory panels |
+| 6 | Artifact model v0 | Conditional | Run outputs become reusable local artifacts |
+| 7 | Memory and decisions workspace | Yes | Proposals, approved memory, summaries, decisions, and audit are browsable |
+| 8 | Team configuration v0 | Yes | Role profiles, defaults, permissions summary, and adapter mapping |
+| 9 | Controlled collaboration workflows | Yes | Handoff, review loop, and panel discussion with bounded rounds |
+| 10 | CLI parity for rooms and roles | No | CLI can operate room/role workgroup flows |
+| 11 | Pack boundaries | Conditional | Engineering terms move behind pack-specific surfaces |
+| 12 | Explicit apply and lifecycle controls | Yes | Apply/merge/worktree cleanup remain human-gated workflows |
+
+## Phase 0: Roadmap and Product Boundary
+
+### Goal
+
+Create the durable plan for the local AI workgroup transformation and align
+current product and architecture docs with the staged direction.
+
+### Scope
+
+- Add this roadmap document.
+- Link the roadmap from `docs/product.md` and `docs/architecture.md`.
+- State that the near-term transformation layers workgroup semantics over the
+  existing conversation/run evidence model.
+- Preserve all current non-goals.
+
+### Non-goals
+
+- No runtime behavior changes.
+- No UI implementation.
+- No schema migration beyond documentation.
+
+### Acceptance Criteria
+
+- Roadmap exists in `docs/local-ai-workgroup-roadmap.md`.
+- Product and architecture docs mention the roadmap and minimal-adaptation
+  strategy.
+- Validation passes for docs-only change checks that are practical in the
+  current checkout.
+
+### Implementation Prompt
+
+```text
+Read AGENTS.md, docs/product.md, docs/architecture.md, and
+docs/local-ai-workgroup-roadmap.md. This is a docs-only planning phase.
+
+Create or update the roadmap for evolving Agent Hub into a local-first AI
+workgroup while preserving CLI-first/local-first constraints. Do not change
+runtime code. Update docs/product.md and docs/architecture.md with a short
+cross-reference to the roadmap and the principle that rooms/roles/timeline UI
+will reuse existing conversation threads, TaskRunner runs, review evidence,
+and memory proposals before adding larger domain splits.
+
+Verify with git diff --check and any lightweight docs checks available. Commit,
+push, and open a PR.
+```
+
+## Phase 1: Role-Agent Vocabulary and Routing
+
+### Goal
+
+Introduce role-based agent handles without replacing the existing adapter
+model. Users should be able to mention roles such as `@researcher` or
+`@engineer`, while the runtime still dispatches through `fake`, `codex`, or
+`claude-code` adapters.
+
+### Current Baseline
+
+- Desktop `AgentId` is currently `fake | codex | claude`.
+- Mention parsing recognizes only adapter-like mentions.
+- TaskRunner runs adapter kinds, not role agents.
+
+### Scope
+
+- Add shared role-agent vocabulary:
+  - `researcher`
+  - `writer`
+  - `analyst`
+  - `operator`
+  - `reviewer`
+  - `engineer`
+  - `memory`
+- Add a default role registry that maps each role to:
+  - display name
+  - purpose
+  - default adapter kind
+  - default role instructions
+  - conservative permission summary
+- Extend mention parsing to recognize role handles.
+- Persist the role handle in conversation message metadata and run metadata.
+- Inject role instructions into the conversation brief or task-run user
+  constraints.
+- Preserve `@fake`, `@codex`, and `@claude` as adapter/debug mentions.
+
+### UI Impact
+
+This phase can be service-only if role metadata is not exposed yet. If the
+implementation changes any visible desktop UI, including composer chips,
+autocomplete, labels, run cards, or status text, apply the UI Design Gate before
+production UI implementation.
+
+### Non-goals
+
+- Do not add editable agent configuration yet.
+- Do not add complex permissions enforcement.
+- Do not add new agent adapters.
+- Do not change adapter execution semantics.
+
+### Acceptance Criteria
+
+- `@researcher`, `@writer`, `@analyst`, `@operator`, `@reviewer`,
+  `@engineer`, and `@memory` are parsed and deduplicated.
+- A mentioned role creates a run through its configured adapter.
+- The UI and persisted records show the role handle separately from the
+  adapter kind.
+- Existing `@fake`, `@codex`, and `@claude` flows still work.
+- Tests cover parsing and service dispatch.
+- Docs explain role-over-adapter separation.
+
+### Implementation Prompt
+
+```text
+Read AGENTS.md, docs/product.md, docs/architecture.md, and
+docs/local-ai-workgroup-roadmap.md. Implement Phase 1 only.
+
+Introduce role-based agent handles while preserving the existing adapter model.
+Add a default role registry for researcher, writer, analyst, operator, reviewer,
+engineer, and memory. Each role should have display name, purpose, default
+adapter kind, default instructions, and a conservative permission summary.
+
+Extend mention parsing so desktop and shared tests recognize @researcher,
+@writer, @analyst, @operator, @reviewer, @engineer, and @memory. Preserve
+@fake, @codex, @claude, and @claude-code. Persist role handle metadata on user
+messages, run-card messages, and run creation inputs where appropriate. Dispatch
+role mentions through the configured adapter kind, and inject role instructions
+into the generated conversation brief or TaskRunner constraints without
+changing adapter execution semantics.
+
+Keep the renderer sandboxed. Route privileged work through existing IPC and
+main-process services. Do not add editable role configuration, external
+services, cloud sync, or new adapters.
+
+If this phase changes any visible desktop UI, including composer chips,
+autocomplete, labels, run cards, or status text, first generate UI design
+artifacts and screenshots for user review and stop. After approval, implement
+the UI to match the reviewed design.
+
+Update docs/product.md and docs/architecture.md. Add focused tests for mention
+parsing, role dispatch, and metadata. Run targeted tests plus pnpm typecheck
+when practical. Commit, push, and open a PR.
+```
+
+## Phase 2: Rooms over Conversation Threads
+
+### Goal
+
+Turn the current thread-first desktop shell into room-based project navigation
+without adding a separate room table yet.
+
+### Current Baseline
+
+- `conversation_threads` already provide project-scoped durable timelines.
+- Thread metadata can store room type and room display metadata.
+- Desktop sidebar currently lists generic Threads and Projects.
+
+### Scope
+
+- Treat `ConversationThread` as the first room implementation.
+- Store `roomType`, `roomHandle`, `description`, and `pinned` in thread
+  metadata.
+- Create default rooms per project:
+  - `#general`
+  - `#planning`
+  - `#research`
+  - `#review`
+  - `#knowledge`
+- Rename desktop navigation from Threads to Rooms.
+- Keep compatibility with older conversation threads by treating them as
+  custom rooms.
+- Add room creation and selection through existing thread IPC or renamed room
+  facade methods.
+- Keep CLI `chat` working during the transition.
+
+### UI Impact
+
+This is a UI phase. Apply the UI Design Gate before production UI changes.
+
+### Non-goals
+
+- Do not add `rooms` table yet unless metadata proves insufficient.
+- Do not add multi-user membership.
+- Do not add unread counts or notifications beyond local activity indicators.
+- Do not redesign the whole desktop shell beyond room navigation.
+
+### Acceptance Criteria
+
+- New projects receive default rooms.
+- Desktop left sidebar shows Rooms, Team, and project status in a layout
+  consistent with the approved design.
+- Selecting a room loads the corresponding conversation messages and run cards.
+- Legacy threads remain readable.
+- CLI chat remains functional.
+- Tests cover default room creation and metadata compatibility.
+- UI verification summary is saved under `docs/ui-verification/`.
+
+### Implementation Prompt
+
+```text
+Read AGENTS.md, docs/product.md, docs/architecture.md, and
+docs/local-ai-workgroup-roadmap.md. Implement Phase 2 only.
+
+This phase changes desktop UI. First generate UI design artifacts and screenshots
+for user review. Do not implement production UI until the user approves the
+design. The design should show the left sidebar with project selector, room
+list, default rooms, team list placeholder, task status placeholder, and
+local-first status. It should show the center room timeline still backed by
+existing conversation messages and run cards. Save design artifacts under
+docs/ui-design/ and stop for review.
+
+After user approval, treat ConversationThread as the first Room implementation.
+Store roomType, roomHandle, description, and pinned in thread metadata. Seed
+#general, #planning, #research, #review, and #knowledge rooms for a project
+without breaking older threads. Rename desktop navigation from Threads to Rooms
+while keeping existing thread repositories and IPC stable where practical.
+Add minimal room creation/selection through the existing service boundary.
+
+Keep orchestration in Electron main-process services and shared packages. Do
+not add a cloud backend, account system, room membership, notifications, or a
+separate rooms table unless the existing metadata model cannot satisfy the
+phase.
+
+Update docs/product.md and docs/architecture.md. Add focused tests for default
+room creation, legacy thread compatibility, and room metadata mapping. Rebuild
+the desktop app, open the running UI, verify the affected workflow manually,
+write docs/ui-verification/<date>-phase-2-rooms.md, and include that file path
+in the final summary. Commit, push, and open a PR.
+```
+
+## Phase 3: Mention-to-Task Grouping
+
+### Goal
+
+Make one user instruction create one structured task with multiple agent runs,
+instead of creating unrelated task rows per agent run.
+
+### Current Baseline
+
+- `ThreadService.sendMessage()` creates one user message and one run per
+  selected agent.
+- `RunService.createRun()` currently creates a new task for each run.
+- `Task` exists but has a small status model.
+
+### Scope
+
+- Add a task creation step before multi-agent fan-out.
+- Allow `RunService.createRun()` to accept an existing `taskId`.
+- Store assignment metadata linking role handles to the shared task.
+- Keep task state narrow at first: `open`, `running`, `completed`,
+  `cancelled`.
+- Add system timeline messages for task created and agents assigned.
+- Show grouped run cards under the same task in the room timeline.
+
+### UI Impact
+
+This phase can be mostly service-level. If the implementation changes any
+visible timeline grouping, task labels, run-card grouping, sidebar counts, or
+inspector content, apply the UI Design Gate before production UI
+implementation.
+
+### Non-goals
+
+- Do not implement the full expanded task state machine yet.
+- Do not add kanban board or task room auto-creation.
+- Do not implement task acceptance/apply semantics.
+
+### Acceptance Criteria
+
+- A prompt such as `@researcher @analyst analyze this` creates one task and two
+  runs linked to that task.
+- Task metadata includes room/thread id and role assignments.
+- Room timeline shows a task-created system event and grouped run cards.
+- Existing single-agent and adapter-mention flows still work.
+- Tests cover shared task creation and run linkage.
+
+### Implementation Prompt
+
+```text
+Read AGENTS.md, docs/product.md, docs/architecture.md, and
+docs/local-ai-workgroup-roadmap.md. Implement Phase 3 only.
+
+Change mention fan-out so one user instruction creates one task and multiple
+agent runs linked to that task. Add the smallest service changes needed for
+RunService.createRun to accept an existing taskId. Store room/thread id and role
+assignment metadata without introducing a large task-assignment table unless
+the current repositories cannot support the phase safely.
+
+Append system timeline messages for task creation and agent assignment. Keep
+task statuses limited to the current model unless a narrow migration is
+required. Do not implement kanban, auto task rooms, full task state machine,
+merge/apply, or external side effects.
+
+If this phase changes any visible desktop UI, including timeline grouping, task
+labels, run-card grouping, sidebar counts, or inspector content, first generate
+UI design artifacts and screenshots for user review and stop. After approval,
+implement the UI to match the reviewed design and complete the desktop
+verification flow.
+
+Update docs/product.md and docs/architecture.md. Add tests for multi-role
+mention grouping, shared task id linkage, and existing single-agent behavior.
+Run targeted tests plus pnpm typecheck when practical. Commit, push, and open a
+PR.
+```
+
+## Phase 4: Timeline Event Semantics
+
+### Goal
+
+Make the room timeline feel like an auditable work stream rather than a raw
+chat transcript.
+
+### Current Baseline
+
+- `conversation_messages` store user, assistant, system, and run-card rows.
+- Run events, risk reports, verification rows, and memory proposals live on the
+  run evidence model.
+
+### Scope
+
+- Define timeline event semantics over existing message rows:
+  - user message
+  - agent message
+  - system event
+  - task created
+  - assignment created
+  - run started/completed
+  - artifact created
+  - check completed
+  - risk detected
+  - memory proposed
+  - review decision
+- Store event kind and linked ids in message metadata.
+- Render event cards with actor, timestamp, status, linked run/task/artifact,
+  and risk/memory chips.
+- Preserve raw run evidence behind inspector APIs.
+
+### UI Impact
+
+This is a UI phase. Apply the UI Design Gate before production UI changes.
+
+### Non-goals
+
+- Do not introduce full event sourcing.
+- Do not duplicate raw logs, diffs, or verification output into message bodies.
+- Do not build global search yet.
+
+### Acceptance Criteria
+
+- Timeline cards render distinct user, agent, system, task, risk, check,
+  review, and memory proposal events.
+- Clicking a run or event opens the relevant inspector context.
+- Full run evidence remains lazy-loaded.
+- Event metadata is bounded and safe.
+- Tests cover event metadata mapping and rendering decisions.
+- UI verification summary is saved.
+
+### Implementation Prompt
+
+```text
+Read AGENTS.md, docs/product.md, docs/architecture.md, and
+docs/local-ai-workgroup-roadmap.md. Implement Phase 4 only.
+
+This phase changes desktop UI. First generate UI design artifacts and screenshots
+for user review. Do not implement production UI until the user approves the
+design. The design should show the room timeline as an audit stream with user
+messages, role-agent messages, system events, task-created events, run cards,
+artifact chips, check chips, risk badges, review decisions, and memory proposal
+events. Save design artifacts under docs/ui-design/ and stop for review.
+
+After user approval, add timeline event semantics over existing
+conversation_messages metadata. Do not add a full event-sourcing system. Keep
+raw logs, diffs, verification output, and risk evidence on the run evidence
+model and load them lazily through review IPC. Render timeline cards according
+to event kind and linked ids.
+
+Keep the renderer sandboxed and route all data access through preload/main IPC.
+Update docs/product.md and docs/architecture.md. Add focused tests for event
+metadata conversion and UI rendering where practical. Rebuild the desktop app,
+open the running UI, verify the affected workflow manually, write
+docs/ui-verification/<date>-phase-4-timeline.md, and include that file path in
+the final summary. Commit, push, and open a PR.
+```
+
+## Phase 5: Structured Inspector
+
+### Goal
+
+Replace the run-centric inspector labels with a workgroup inspector organized
+around Brief, Context, Artifacts, Checks, Risks, and Memory.
+
+### Current Baseline
+
+- The inspector currently exposes Summary, Diff, Tests, Risk, Memory, and Logs.
+- Review data already aggregates run summary, diff, verification, risk, memory
+  proposals, and logs.
+
+### Scope
+
+- Convert the desktop inspector into a persistent right-side panel or a drawer
+  that follows the approved design.
+- Rename core tabs:
+  - Summary -> Brief
+  - Diff -> Artifacts or Engineering Artifacts
+  - Tests -> Checks
+  - Risk -> Risks
+  - Memory -> Memory
+  - Logs -> Audit
+- Keep engineering-specific terms inside Engineering Pack sections.
+- Add context preview from the persisted `conversation_brief` artifact.
+- Show task goal, assignees, acceptance criteria placeholder, and run status in
+  Brief.
+
+### UI Impact
+
+This is a UI phase. Apply the UI Design Gate before production UI changes.
+
+### Non-goals
+
+- Do not implement rich artifact editing.
+- Do not implement acceptance criteria editing unless it is a small metadata
+  field.
+- Do not add apply/merge controls.
+
+### Acceptance Criteria
+
+- Inspector tabs match the workgroup vocabulary.
+- Existing evidence remains accessible.
+- Context tab shows injected conversation brief or a clear unavailable state.
+- Checks tab shows verification results.
+- Risks tab preserves blocking risk levels.
+- Memory tab preserves proposal approval/ignore behavior.
+- UI verification summary is saved.
+
+### Implementation Prompt
+
+```text
+Read AGENTS.md, docs/product.md, docs/architecture.md, and
+docs/local-ai-workgroup-roadmap.md. Implement Phase 5 only.
+
+This phase changes desktop UI. First generate UI design artifacts and screenshots
+for user review. Do not implement production UI until the user approves the
+design. The design should show a right-side workgroup inspector with Brief,
+Context, Artifacts, Checks, Risks, Memory, and Audit tabs. It should map the
+current run evidence to the new vocabulary without hiding important review
+details. Save design artifacts under docs/ui-design/ and stop for review.
+
+After user approval, refactor the run inspector UI to match the reviewed
+workgroup inspector. Use existing review, memory, risk, verification, diff, and
+artifact services. Add a Context tab backed by the persisted conversation_brief
+run artifact. Keep engineering-specific labels contained inside the Artifacts
+or Engineering Pack section. Do not add apply, merge, push, worktree cleanup, or
+external publishing controls.
+
+Update docs/product.md and docs/architecture.md. Add focused renderer/service
+tests where practical. Rebuild the desktop app, open the running UI, verify the
+affected workflow manually, write docs/ui-verification/<date>-phase-5-inspector.md,
+and include that file path in the final summary. Commit, push, and open a PR.
+```
+
+## Phase 6: Artifact Model v0
+
+### Goal
+
+Promote important outputs from run evidence into reusable local artifacts
+without duplicating every log or diff line.
+
+### Current Baseline
+
+- `run_artifacts` already store `conversation_brief`, `git_diff`,
+  `review_decision`, and other per-run artifacts.
+- There is no project-level artifact list.
+
+### Scope
+
+- Define an artifact v0 contract that can be backed initially by
+  `run_artifacts`.
+- Add artifact metadata:
+  - title
+  - artifact type
+  - source run
+  - source task
+  - room/thread id
+  - created by role
+  - summary
+- List artifacts in the inspector.
+- Support artifact chips on timeline events.
+- Keep file contents local and bounded.
+
+### UI Impact
+
+This phase can be service-only if artifact metadata is not rendered yet. If the
+implementation changes any visible artifact chips, artifact list, timeline
+cards, inspector tab content, or preview state, apply the UI Design Gate before
+production UI implementation.
+
+### Non-goals
+
+- Do not build artifact versioning.
+- Do not implement document editors, spreadsheet editors, or deck editors.
+- Do not publish artifacts externally.
+- Do not add vector search.
+
+### Acceptance Criteria
+
+- Run outputs can appear as named artifact chips.
+- Inspector Artifacts tab lists source, type, summary, and local availability.
+- Existing `run_artifacts` remain readable.
+- Tests cover artifact metadata mapping and bounded content behavior.
+
+### Implementation Prompt
+
+```text
+Read AGENTS.md, docs/product.md, docs/architecture.md, and
+docs/local-ai-workgroup-roadmap.md. Implement Phase 6 only.
+
+Add Artifact v0 using the existing run_artifacts repository where practical.
+Define a narrow artifact metadata shape with title, type, source run, source
+task, room/thread id, created-by role, and summary. Render artifact chips on
+timeline events and list artifacts in the inspector. Keep file content local,
+bounded, and reviewable. Do not build artifact versioning, rich editors,
+external publishing, or search.
+
+If this phase changes any visible desktop UI, including artifact chips,
+artifact lists, timeline cards, inspector tab content, or preview states, first
+generate UI design artifacts and screenshots for user review and stop. After
+approval, implement the UI to match the reviewed design and complete desktop UI
+verification.
+
+Update docs/product.md and docs/architecture.md. Add focused tests for artifact
+metadata and existing run_artifact compatibility. Run targeted tests plus pnpm
+typecheck when practical. Commit, push, and open a PR.
+```
+
+## Phase 7: Memory and Decisions Workspace
+
+### Goal
+
+Provide a Knowledge / Memory workspace that governs proposals, approved memory,
+thread summaries, decisions, source links, and audit history.
+
+### Current Baseline
+
+- `memory_items` already support proposed, approved, and rejected states.
+- Thread summaries are local and not automatically promoted.
+- Review decisions are stored as run artifacts.
+
+### Scope
+
+- Add a Knowledge / Memory screen.
+- Show:
+  - memory proposals
+  - approved memory
+  - rejected memory
+  - thread summaries
+  - review decisions
+  - decision-like records
+- Add source links back to room messages, tasks, and runs where metadata exists.
+- Keep approval explicit and user-gated.
+- Optionally model decisions as memory items with metadata first; defer a
+  dedicated `decisions` table until source links and filtering prove stable.
+
+### UI Impact
+
+This is a UI phase. Apply the UI Design Gate before production UI changes.
+
+### Non-goals
+
+- Do not auto-approve memory.
+- Do not inject proposed or rejected memory into future context packs.
+- Do not add embeddings or semantic search.
+- Do not add multi-reviewer approval workflow yet.
+
+### Acceptance Criteria
+
+- Knowledge screen lists proposals and approved/rejected memory.
+- Memory approval/rejection still updates local SQLite only.
+- Thread summaries are visible as thread-local context, not approved memory.
+- Decision records are auditable and source-linked where possible.
+- UI verification summary is saved.
+
+### Implementation Prompt
+
+```text
+Read AGENTS.md, docs/product.md, docs/architecture.md, and
+docs/local-ai-workgroup-roadmap.md. Implement Phase 7 only.
+
+This phase changes desktop UI. First generate UI design artifacts and screenshots
+for user review. Do not implement production UI until the user approves the
+design. The design should show a Knowledge / Memory workspace with filters for
+all items, decisions, summaries, proposals, approved memory, rejected memory,
+source messages, related tasks/runs, and an audit panel. Save design artifacts
+under docs/ui-design/ and stop for review.
+
+After user approval, implement the Knowledge / Memory workspace using existing
+memory_items, conversation_thread_summaries, and review_decision run artifacts
+where practical. Keep memory approval explicit and local. Proposed and rejected
+memory must never be injected as approved memory. Thread summaries must remain
+thread-local unless explicitly promoted through the memory workflow.
+
+Update docs/product.md and docs/architecture.md. Add focused tests for memory
+listing, approval/rejection, thread summary separation, and decision display
+mapping. Rebuild the desktop app, open the running UI, verify the affected
+workflow manually, write docs/ui-verification/<date>-phase-7-knowledge.md, and
+include that file path in the final summary. Commit, push, and open a PR.
+```
+
+## Phase 8: Team Configuration v0
+
+### Goal
+
+Let users inspect the virtual team and understand each role's purpose,
+permissions, context policy, adapter mapping, recent work, and linked memory.
+
+### Current Baseline
+
+- Agent profiles exist but are adapter-oriented.
+- Role registry from Phase 1 provides defaults.
+- No full UI exists for role configuration.
+
+### Scope
+
+- Add Team screen.
+- Show default role table:
+  - handle
+  - display name
+  - purpose
+  - adapter
+  - permission summary
+  - status
+  - recent activity
+- Add read-only role profile panel first.
+- Persist project-level role overrides only if needed:
+  - adapter kind
+  - enabled/disabled
+  - default room
+  - default instructions
+- Keep permission enforcement conservative and mostly descriptive unless a
+  permission maps to an existing hard boundary.
+
+### UI Impact
+
+This is a UI phase. Apply the UI Design Gate before production UI changes.
+
+### Non-goals
+
+- Do not implement arbitrary custom agents yet.
+- Do not implement a plugin marketplace.
+- Do not allow agents to grant themselves permissions.
+- Do not store secrets in role config.
+
+### Acceptance Criteria
+
+- Team screen lists all default roles.
+- Selecting a role shows profile, allowed actions, approval requirements,
+  default instructions, recent tasks, and linked memory where available.
+- Adapter mapping is clear and local.
+- Renderer remains sandboxed.
+- UI verification summary is saved.
+
+### Implementation Prompt
+
+```text
+Read AGENTS.md, docs/product.md, docs/architecture.md, and
+docs/local-ai-workgroup-roadmap.md. Implement Phase 8 only.
+
+This phase changes desktop UI. First generate UI design artifacts and screenshots
+for user review. Do not implement production UI until the user approves the
+design. The design should show a Team / Agent Configuration screen with role
+table, role profile panel, permissions summary, context policy summary, default
+instructions, recent tasks, and linked memories. Save design artifacts under
+docs/ui-design/ and stop for review.
+
+After user approval, implement a Team screen backed by the default role registry
+and existing local repositories. Start read-only unless a very narrow
+project-level override is needed. Do not add custom agent creation, plugin
+marketplace, arbitrary permissions, cloud services, or secret storage. Validate
+all settings through core validators and main-process IPC.
+
+Update docs/product.md and docs/architecture.md. Add focused tests for role
+listing, profile mapping, and safe settings persistence if overrides are added.
+Rebuild the desktop app, open the running UI, verify the affected workflow
+manually, write docs/ui-verification/<date>-phase-8-team.md, and include that
+file path in the final summary. Commit, push, and open a PR.
+```
+
+## Phase 9: Controlled Collaboration Workflows
+
+### Goal
+
+Support bounded multi-agent collaboration modes without allowing infinite
+agent-to-agent chatter.
+
+### Scope
+
+- Add workflow modes:
+  - `handoff`
+  - `review_loop`
+  - `panel_discussion`
+- Each mode must define:
+  - participants
+  - max rounds
+  - stop condition
+  - expected outputs
+  - user-visible summary
+- Implement using existing TaskRunner runs, conversation briefs, and optional
+  continuation.
+- Persist workflow state as task/run/message metadata first.
+- Add timeline events for handoff, review requested, review completed, and
+  workflow completed.
+
+### UI Impact
+
+This is a UI phase. Apply the UI Design Gate before production UI changes.
+
+### Non-goals
+
+- Do not implement autonomous endless collaboration.
+- Do not let agents run without user-visible task scope.
+- Do not add remote queues.
+- Do not auto-apply outputs.
+
+### Acceptance Criteria
+
+- User can start a bounded collaboration mode from a room command or UI action.
+- Workflow produces visible timeline events and linked runs.
+- Max rounds are enforced.
+- Review loop does not mutate files outside isolated worktrees.
+- UI verification summary is saved.
+
+### Implementation Prompt
+
+```text
+Read AGENTS.md, docs/product.md, docs/architecture.md, and
+docs/local-ai-workgroup-roadmap.md. Implement Phase 9 only.
+
+This phase changes desktop UI. First generate UI design artifacts and screenshots
+for user review. Do not implement production UI until the user approves the
+design. The design should show how a user starts a handoff, review loop, or
+panel discussion from a room; how bounded rounds are displayed; and how the
+timeline reports handoffs, reviewer findings, and final summaries. Save design
+artifacts under docs/ui-design/ and stop for review.
+
+After user approval, implement bounded collaboration modes using existing
+TaskRunner runs, conversation briefs, run cards, and metadata. Enforce max
+rounds and explicit stop conditions. Persist workflow state locally and render
+timeline events. Do not allow autonomous endless agent chatter, remote queues,
+automatic apply/merge/push, or hidden side effects.
+
+Update docs/product.md and docs/architecture.md. Add focused tests for workflow
+state, max-round enforcement, and timeline metadata. Rebuild the desktop app,
+open the running UI, verify the affected workflow manually, write
+docs/ui-verification/<date>-phase-9-collaboration.md, and include that file path
+in the final summary. Commit, push, and open a PR.
+```
+
+## Phase 10: CLI Parity for Rooms and Roles
+
+### Goal
+
+Keep the product CLI-first by exposing room and role workflows in the CLI,
+not only in desktop.
+
+### Scope
+
+- Add CLI commands or chat slash commands for:
+  - list rooms
+  - create room
+  - use room
+  - list team roles
+  - inspect role
+  - send message to a room with role mentions
+  - show room timeline
+- Keep `agent-hub run` stateless unless explicit continuation is supplied.
+- Keep `agent-hub chat` as the persistent conversation/room path.
+
+### UI Impact
+
+No desktop UI required.
+
+### Non-goals
+
+- Do not remove existing thread commands until compatibility path exists.
+- Do not add terminal UI dependencies.
+- Do not implement full board/task management CLI yet.
+
+### Acceptance Criteria
+
+- CLI can operate the same room and role concepts used by desktop.
+- Existing `chat`, `threads`, and `run` behavior remains backward compatible.
+- Docs include direct commands.
+- CLI smoke tests cover new commands.
+
+### Implementation Prompt
+
+```text
+Read AGENTS.md, docs/product.md, docs/architecture.md, and
+docs/local-ai-workgroup-roadmap.md. Implement Phase 10 only.
+
+Add CLI parity for the room and role concepts introduced in earlier phases.
+Expose lightweight commands or chat slash commands to list rooms, create a
+room, use a room, list team roles, inspect a role, send a message to a room with
+role mentions, and show a room timeline. Preserve agent-hub run as stateless
+unless explicit continuation is supplied. Keep agent-hub chat as the persistent
+room/conversation path.
+
+Do not add TUI dependencies, hosted services, remote execution, or full board
+management. Keep output human-facing and concise. Update docs/product.md and
+docs/architecture.md with direct commands. Add CLI smoke tests and targeted
+service tests. Run targeted tests plus pnpm typecheck when practical. Commit,
+push, and open a PR.
+```
+
+## Phase 11: Pack Boundaries
+
+### Goal
+
+Keep the core product general-purpose while allowing engineering, research,
+writing, analysis, and operations vocabulary to appear in pack-specific
+surfaces.
+
+### Scope
+
+- Define pack metadata:
+  - id
+  - display name
+  - artifact types
+  - check types
+  - risk categories
+  - default roles
+  - context section providers
+- Add built-in pack definitions for:
+  - Core Workgroup
+  - Engineering
+  - Research
+  - Writing
+  - Analysis
+  - Operations
+- Move engineering-specific labels such as diff, tests, worktree, PR, and CI
+  behind Engineering Pack sections where possible.
+- Do not make pack registry editable yet.
+
+### UI Impact
+
+This phase can be metadata-only. If the implementation changes any visible
+labels, navigation, inspector grouping, pack badges, or artifact/check/risk
+presentation, apply the UI Design Gate before production UI implementation.
+
+### Non-goals
+
+- Do not add plugin marketplace.
+- Do not load untrusted third-party pack code.
+- Do not add remote integrations.
+
+### Acceptance Criteria
+
+- Core UI uses general terms: Brief, Context, Artifacts, Checks, Risks, Memory.
+- Engineering terms appear only inside engineering-specific panels or labels.
+- Pack definitions are deterministic local data.
+- Tests cover pack lookup and label mapping.
+
+### Implementation Prompt
+
+```text
+Read AGENTS.md, docs/product.md, docs/architecture.md, and
+docs/local-ai-workgroup-roadmap.md. Implement Phase 11 only.
+
+Add local built-in pack definitions for Core Workgroup, Engineering, Research,
+Writing, Analysis, and Operations. Keep packs as deterministic local metadata;
+do not add plugin marketplace or third-party code loading. Use pack metadata to
+separate core UI vocabulary from engineering-specific details. Core surfaces
+should prefer Brief, Context, Artifacts, Checks, Risks, and Memory. Engineering
+terms such as diff, tests, worktree, PR, and CI should appear only in
+engineering-pack contexts.
+
+If this phase changes any visible desktop UI, including labels, navigation,
+inspector grouping, pack badges, or artifact/check/risk presentation, first
+generate UI design artifacts and screenshots for user review and stop. After
+approval, implement the UI to match the reviewed design and complete desktop UI
+verification.
+
+Update docs/product.md and docs/architecture.md. Add tests for pack metadata,
+lookup, and label mapping. Run targeted tests plus pnpm typecheck when
+practical. Commit, push, and open a PR.
+```
+
+## Phase 12: Explicit Apply and Lifecycle Controls
+
+### Goal
+
+Add human-gated workflows for applying accepted work, managing retained
+worktrees, and cleaning up local artifacts without weakening safety boundaries.
+
+### Scope
+
+- Add explicit worktree lifecycle controls:
+  - inspect retained worktree
+  - mark keep
+  - clean up selected worktree
+- Add explicit apply workflow for engineering outputs:
+  - preview
+  - risk check
+  - user confirmation
+  - local apply only
+- Keep push, PR creation, and merge as separate explicit future commands if
+  ever added.
+- Record every decision as audit artifacts and timeline events.
+
+### UI Impact
+
+This is a UI phase. Apply the UI Design Gate before production UI changes.
+
+### Non-goals
+
+- Do not automatically apply accepted runs.
+- Do not automatically push, create PRs, merge, or delete branches.
+- Do not clean worktrees without explicit user confirmation.
+- Do not bypass blocking risk reports.
+
+### Acceptance Criteria
+
+- User can inspect lifecycle state before cleanup.
+- Cleanup requires explicit confirmation and records an audit event.
+- Apply workflow requires preview and confirmation.
+- Blocking risks prevent apply unless a later explicit override policy is
+  designed and approved.
+- UI verification summary is saved.
+
+### Implementation Prompt
+
+```text
+Read AGENTS.md, docs/product.md, docs/architecture.md, and
+docs/local-ai-workgroup-roadmap.md. Implement Phase 12 only.
+
+This phase changes desktop UI and local side-effect workflows. First generate UI
+design artifacts and screenshots for user review. Do not implement production
+UI or side-effect behavior until the user approves the design. The design should
+show retained worktree inspection, explicit cleanup confirmation, apply preview,
+risk gate, and audit trail. Save design artifacts under docs/ui-design/ and stop
+for review.
+
+After user approval, implement explicit worktree lifecycle controls and a
+human-gated local apply workflow. Every side effect must require explicit user
+confirmation and must record an audit event or review artifact. Do not
+automatically apply accepted runs. Do not automatically push, create PRs, merge,
+delete branches, or bypass blocking risks.
+
+Keep the renderer sandboxed. All filesystem, Git, and shell operations must run
+through Electron main-process IPC and shared local services. Update
+docs/product.md and docs/architecture.md. Add focused safety and service tests.
+Rebuild the desktop app, open the running UI, verify the affected workflow
+manually, write docs/ui-verification/<date>-phase-12-lifecycle.md, and include
+that file path in the final summary. Commit, push, and open a PR.
+```
+
+## Recommended First Three PRs
+
+1. Phase 1: role-agent vocabulary and routing.
+2. Phase 2 design artifact only, followed by approved implementation PR.
+3. Phase 3: mention-to-task grouping.
+
+This order creates the smallest coherent product shift:
+
+- Users can mention role agents.
+- The desktop begins to look like rooms instead of generic threads.
+- Multi-agent work shares one task and one audit context.
+
+## Later Schema Split Triggers
+
+Avoid adding many new tables up front. Split to first-class domain tables only
+when these triggers appear:
+
+- Add `rooms` table when thread metadata can no longer support room settings,
+  filtering, archiving, and default-room lifecycle cleanly.
+- Add `task_assignments` table when assignment state needs first-class queries,
+  reviewer routing, or historical lifecycle.
+- Add `timeline_events` table when message metadata is insufficient for search,
+  pagination, replay, or cross-room activity feeds.
+- Add `artifacts` table when artifacts need project-level listing,
+  versioning, source links, preview state, or non-run origins.
+- Add `decisions` table when decision records need status transitions,
+  replacement/superseding, source linking, and review workflow independent from
+  approved memory.
+- Add `packs` tables only after built-in pack metadata proves stable.
+
+## Verification Matrix
+
+Each implementation phase should choose the smallest sufficient validation set:
+
+- Domain/model changes: `pnpm typecheck` and focused domain tests.
+- SQLite schema changes: focused SQLite integration tests with temporary DBs.
+- Context changes: context compiler tests and snapshot/budget tests.
+- CLI changes: CLI smoke tests and direct command verification.
+- Desktop service changes: focused service tests through IPC handler factories
+  where practical.
+- Desktop UI changes: desktop build, running UI verification, screenshot or
+  manual summary under `docs/ui-verification/`.
+- Safety-sensitive changes: safety tests, risk report tests, and diff/check
+  redaction tests.
+
+Full-suite validation remains preferred before merging:
+
+```sh
+./node_modules/.bin/pnpm typecheck
+./node_modules/.bin/pnpm test
+./node_modules/.bin/pnpm lint
+```

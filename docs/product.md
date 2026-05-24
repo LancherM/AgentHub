@@ -292,6 +292,15 @@ Missing risk evidence is treated conservatively in tradeoff wording and
 structured risk deltas: it ranks above persisted `low` and `medium` risk but
 below persisted `high` and `blocking` risk.
 
+Agent Hub's next product direction is the local AI workgroup roadmap in
+`docs/local-ai-workgroup-roadmap.md`. The roadmap evolves the existing
+conversation/run evidence model into room-based collaboration with role-based
+agents, task grouping, timeline events, structured inspectors, artifacts,
+checks, risks, decisions, and memory governance. The near-term strategy is
+incremental: reuse SQLite-backed conversation threads/messages, TaskRunner
+runs, run artifacts, verification results, risk reports, review decisions, and
+memory proposals before introducing larger domain splits.
+
 Agent Hub Desktop is now available as a local conversation console under
 `apps/desktop`. It starts with `pnpm --filter desktop dev` and presents a
 thread-first shell: threads and projects on the left, a conversation timeline
