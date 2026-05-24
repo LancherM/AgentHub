@@ -22,7 +22,9 @@ export const IPC_CHANNELS = {
   memoryListProposals: "agent-hub:memory:list-proposals",
   memoryGenerateProposals: "agent-hub:memory:generate-proposals",
   memoryApprove: "agent-hub:memory:approve",
-  memoryIgnore: "agent-hub:memory:ignore"
+  memoryIgnore: "agent-hub:memory:ignore",
+  settingsGetVerification: "agent-hub:settings:get-verification",
+  settingsSaveVerification: "agent-hub:settings:save-verification"
 } as const;
 
 export function runEventChannel(runId: string): string {

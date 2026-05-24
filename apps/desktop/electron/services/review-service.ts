@@ -162,6 +162,14 @@ class RepositoryReviewService implements ReviewService {
         message: "No verification command was configured or recorded for this run."
       };
     }
+    if (results.every(isMissingVerificationConfigResult)) {
+      return {
+        runId,
+        status: "skipped",
+        commands: [],
+        message: "No verification commands were configured."
+      };
+    }
 
     const failed = results.filter((result) => result.status === "failed");
     const passed = results.filter((result) => result.status === "passed");
@@ -295,6 +303,13 @@ class RepositoryReviewService implements ReviewService {
     }
     return { reviewStatus: "pending" };
   }
+}
+
+function isMissingVerificationConfigResult(result: {
+  command: string;
+  status: string;
+}): boolean {
+  return result.command === "not configured" && result.status === "skipped";
 }
 
 function toDesktopRiskReport(report: CoreRiskReport): RiskReport {

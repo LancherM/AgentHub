@@ -273,6 +273,21 @@ export interface VerificationReport {
   message?: string;
 }
 
+export interface VerificationCommandConfig {
+  id: string;
+  label?: string;
+  executable: string;
+  args: string[];
+  timeoutMs?: number;
+  continueOnFailure?: boolean;
+}
+
+export interface VerificationSettings {
+  projectId: string;
+  commands: VerificationCommandConfig[];
+  updatedAt?: string;
+}
+
 export interface RiskReport {
   runId: string;
   level: ReviewRiskLevel;
@@ -345,5 +360,9 @@ export interface AgentHubApi {
     generateProposalsForRun(runId: string): Promise<MemoryProposal[]>;
     approve(ids: string[]): Promise<void>;
     ignore(ids: string[]): Promise<void>;
+  };
+  settings: {
+    getVerification(projectId: string): Promise<VerificationSettings>;
+    saveVerification(input: VerificationSettings): Promise<VerificationSettings>;
   };
 }

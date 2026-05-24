@@ -477,8 +477,9 @@ in-memory and SQLite settings repositories reject secret-like key names such as
 API keys, tokens, secrets, passwords, private keys, and credentials across
 delimiter-separated and camelCase setting names, and they also reject string
 values that look like embedded secret assignments, bearer tokens, common
-service tokens, or private key blocks. Safe local UI and behavior flags remain
-valid setting values.
+service tokens, or private key blocks. Safe local UI and behavior flags,
+including per-project desktop verification command lists, remain valid setting
+values.
 
 When the CLI executes an ad-hoc SQLite-backed run, it first looks up a project
 by the resolved repository root. The first legacy ad-hoc root can keep the
@@ -536,6 +537,15 @@ persists risk and metadata, and generates proposed memory for successful runs.
 It does not export repository context, merge, push, approve memory, or apply
 code automatically.
 
+Desktop verification configuration is owned by a main-process settings service.
+The renderer can only read or save per-project command lists through the
+sandboxed preload API. Saved commands are structured as executable plus args,
+persisted in the local `settings` table under a project-scoped key, validated
+for shape and secret-like content, and loaded by `RunService` immediately
+before invoking TaskRunner. TaskRunner remains the execution boundary and
+continues to run verification in the isolated worktree with dangerous-command
+validation.
+
 All adapters run against an isolated worktree and refuse to run when that
 directory is the original project root or when the generated task brief is
 outside the isolated directory. Codex is invoked as `codex exec --json -`.
@@ -586,6 +596,9 @@ process termination. If a run has no configured verification commands, the
 verification suite remains skipped and the task runner adds a warning to
 `RunResult.warnings`; normal CLI output stays agent-facing, while debug output
 renders the warning through the existing run-summary path.
+Desktop runs source configured verification commands from the selected
+project's local settings and pass `undefined` to TaskRunner when the saved list
+is empty, so the inspector shows skipped verification rather than a silent pass.
 
 The physical package split is present and now includes both user-facing app
 packages. Cross-package contracts flow through `packages/shared` and

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { ChatView } from "./components/chat/ChatView";
 import { RunInspectorModal } from "./components/inspector/RunInspectorModal";
 import { Sidebar } from "./components/sidebar/Sidebar";
+import { VerificationSettingsPanel } from "./components/settings/VerificationSettingsPanel";
 import { agentHubApi } from "./lib/agentHubApi";
 import type {
   AgentId,
@@ -26,6 +27,7 @@ export function App(): JSX.Element {
   const [selectedInspector, setSelectedInspector] = useState<
     { runId: string; tab?: RunInspectorTab } | undefined
   >();
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [lastUsedAgents, setLastUsedAgents] = useState<AgentId[]>(["fake"]);
   const [pendingContinueFrom, setPendingContinueFrom] =
     useState<RunContinuationTarget | undefined>();
@@ -199,6 +201,7 @@ export function App(): JSX.Element {
         onSelectThread={(threadId) => void loadThread(threadId)}
         onSelectProject={setSelectedProjectId}
         onRegisterProject={registerProject}
+        onOpenSettings={() => setSettingsOpen(true)}
         isBusy={isBusy}
       />
       <main className="center-pane">
@@ -226,6 +229,12 @@ export function App(): JSX.Element {
           initialRun={runDetails[selectedInspector.runId]}
           initialTab={selectedInspector.tab}
           onClose={() => setSelectedInspector(undefined)}
+        />
+      ) : null}
+      {settingsOpen ? (
+        <VerificationSettingsPanel
+          project={selectedProject}
+          onClose={() => setSettingsOpen(false)}
         />
       ) : null}
     </div>

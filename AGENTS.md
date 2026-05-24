@@ -78,6 +78,9 @@ Desktop App
 - Never automatically write long-term memory without user approval.
 - Never store API keys or secrets in SQLite.
 - Never intentionally read or expose `.env`, private keys, tokens, or credential files.
+- Never commit or push local planning notes, automation queues, manual
+  verification records, imported private specs, or one-off implementation
+  prompts to GitHub unless the user explicitly asks to publish them.
 - Keep each implementation task small and verifiable.
 
 ## Agent Collaboration
@@ -174,13 +177,15 @@ Implemented:
   artifacts, TaskRunner-backed fake/Codex/Claude desktop runs in isolated
   worktrees, and an inspector drawer for logs, diffs, verification, risks, and
   memory proposals.
+- Per-project desktop verification command configuration through validated IPC
+  and local SQLite settings, with configured commands passed to TaskRunner for
+  isolated-worktree execution.
 
 Not yet implemented:
 
-- Desktop real verification configuration, live TaskRunner streaming and
-  cancellation, approved-memory context-store writeback confirmation,
-  multi-agent comparison review, explicit worktree lifecycle controls, and
-  explicit merge/apply workflows.
+- Live TaskRunner streaming and cancellation, approved-memory context-store
+  writeback confirmation, multi-agent comparison review, explicit worktree
+  lifecycle controls, and explicit merge/apply workflows.
 
 ## Explicit Non-goals for MVP
 
@@ -559,8 +564,9 @@ CLAUDE.md
 These files are export targets only. Export requires explicit user action and a
 preview.
 
-Local planning notes, automation queues, and manual verification records should
-stay untracked unless the user explicitly asks to publish them.
+Local planning notes, automation queues, manual verification records, imported
+private specs, and one-off implementation prompts should stay untracked unless
+the user explicitly asks to publish them.
 
 ## Skill Rules
 

@@ -5,6 +5,7 @@ import type {
   CreateRunInput,
   RunEvent,
   SendThreadMessageInput,
+  VerificationSettings,
   Unsubscribe
 } from "../src/lib/types";
 import { IPC_CHANNELS, runEventChannel } from "./ipc-channels";
@@ -72,6 +73,12 @@ const api: AgentHubApi = {
       ipcRenderer.invoke(IPC_CHANNELS.memoryApprove, ids),
     ignore: (ids: string[]) =>
       ipcRenderer.invoke(IPC_CHANNELS.memoryIgnore, ids)
+  },
+  settings: {
+    getVerification: (projectId: string) =>
+      ipcRenderer.invoke(IPC_CHANNELS.settingsGetVerification, projectId),
+    saveVerification: (input: VerificationSettings) =>
+      ipcRenderer.invoke(IPC_CHANNELS.settingsSaveVerification, input)
   }
 };
 

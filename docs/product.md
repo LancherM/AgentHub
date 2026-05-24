@@ -171,6 +171,11 @@ preserved in the command result.
 Runs without configured verification commands still record skipped verification
 and include a run warning so the missing validation is visible in run metadata
 and debug output without opening the risk report.
+Desktop users can configure per-project verification commands from the local
+Settings panel. These commands are stored in Agent Hub SQLite settings as
+structured executable-plus-args entries, validated through main-process IPC,
+and passed to TaskRunner for isolated-worktree execution; prompts are never
+parsed into shell commands.
 Task brief artifacts are persisted from Agent Hub's generated brief content,
 not by rereading worktree paths after materialization, so malicious symlinks in
 an untrusted worktree cannot be captured as task brief artifact contents.
@@ -395,10 +400,11 @@ export repository context, apply code, or approve memory automatically. Current
 desktop paths accept run-linked or message-linked continuation requests,
 validate that supplied message ids still belong to the requested parent run,
 require a retained worktree before continuing code state, and otherwise fail
-with a clear system message. Real desktop verification command configuration,
-approved-memory context-store writeback, multi-agent comparison review,
-worktree lifecycle management, and explicit merge/apply workflows remain
-follow-up desktop wiring tasks.
+with a clear system message. Desktop verification settings are local and
+per-project; they are edited through validated IPC and then run by TaskRunner in
+the isolated worktree. Approved-memory context-store writeback, multi-agent
+comparison review, worktree lifecycle management, and explicit merge/apply
+workflows remain follow-up desktop wiring tasks.
 
 SQLite is stored in Agent Hub-owned application data by default, not in the
 target project repository. `AGENT_HUB_HOME` can point Agent Hub at an alternate
@@ -454,7 +460,8 @@ unique per run. Local settings reject secret-like keys,
 including delimiter-separated and camelCase names such as `api_key`,
 `openaiApiKey`, `authToken`, and `clientSecret`, and reject secret-like string
 values before they can be stored in SQLite or in-memory test repositories, so
-settings remain limited to safe local behavior preferences.
+settings remain limited to safe local behavior preferences such as desktop
+verification command configuration.
 SQLite initialization also includes an idempotent conversation-summary table
 backfill so local databases that recorded an intermediate migration marker can
 still gain `conversation_thread_summaries` on upgrade.
@@ -490,6 +497,5 @@ assets only; it does not deploy a hosted service, notarize the desktop app, or
 change Agent Hub's local-first product model.
 
 Deferred product capabilities include richer Codex/Claude structured event
-mapping, real desktop verification configuration, approved-memory writeback
-confirmation, multi-agent comparison review, and explicit desktop apply/merge
-workflows.
+mapping, approved-memory writeback confirmation, multi-agent comparison review,
+and explicit desktop apply/merge workflows.

@@ -4,7 +4,8 @@ import type {
   CreateThreadInput,
   CreateRunInput,
   RunEvent,
-  SendThreadMessageInput
+  SendThreadMessageInput,
+  VerificationSettings
 } from "../src/lib/types";
 import { IPC_CHANNELS, runEventChannel } from "./ipc-channels";
 import {
@@ -29,6 +30,10 @@ import {
   createThreadService,
   type ThreadService
 } from "./services/thread-service";
+import {
+  createSettingsService,
+  type SettingsService
+} from "./services/settings-service";
 
 export { IPC_CHANNELS, runEventChannel } from "./ipc-channels";
 
@@ -38,6 +43,7 @@ export interface DesktopServices {
   threads: ThreadService;
   review: ReviewService;
   memory: MemoryService;
+  settings: SettingsService;
 }
 
 export interface IpcEventSender {
@@ -55,16 +61,19 @@ export function createDesktopServices(
   const memory = createMemoryService(context);
   const review = createReviewService(context, { memoryService: memory });
   const projects = createProjectService(context);
+  const settings = createSettingsService(context);
   const runs = createRunService(context, {
     reviewService: review,
-    memoryService: memory
+    memoryService: memory,
+    settingsService: settings
   });
   return {
     projects,
     runs,
     threads: createThreadService({ context, projects, runs }),
     review,
-    memory
+    memory,
+    settings
   };
 }
 
@@ -138,7 +147,11 @@ export function createIpcHandlers(
     [IPC_CHANNELS.memoryApprove]: async (_event, input) =>
       services.memory.approve(parseIdList(input, "memory ids")),
     [IPC_CHANNELS.memoryIgnore]: async (_event, input) =>
-      services.memory.ignore(parseIdList(input, "memory ids"))
+      services.memory.ignore(parseIdList(input, "memory ids")),
+    [IPC_CHANNELS.settingsGetVerification]: async (_event, input) =>
+      services.settings.getVerification(parseId(input, "projectId")),
+    [IPC_CHANNELS.settingsSaveVerification]: async (_event, input) =>
+      services.settings.saveVerification(input as VerificationSettings)
   });
 }
 
@@ -358,7 +371,7 @@ const GENERIC_IPC_ERROR = "Agent Hub could not complete that local desktop reque
 
 function safeErrorMessage(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
-  if (/not found|required|must be|cannot be|already|deliveryMode|agentId|contextMode|reason|projectId|runId|threadId|prompt|text/i.test(message)) {
+  if (/not found|required|must be|cannot be|already|deliveryMode|agentId|contextMode|reason|projectId|runId|threadId|prompt|text|settings|verification|command|executable|args|timeout/i.test(message)) {
     return message;
   }
   return GENERIC_IPC_ERROR;
