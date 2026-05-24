@@ -46,10 +46,15 @@ export type RunInspectorTab =
   | "diff"
   | "tests"
   | "risk"
+  | "handoff"
   | "memory"
   | "logs";
 
 export type ReviewStatus = "pending" | "accepted" | "rejected";
+export type HandoffCopyKind =
+  | "worktree_path"
+  | "branch_name"
+  | "review_commands";
 export type ChangedFileStatus =
   | "added"
   | "modified"
@@ -228,6 +233,31 @@ export interface ReviewSummary {
   message?: string;
 }
 
+export interface ReviewHandoff {
+  runId: string;
+  available: boolean;
+  worktreePath?: string;
+  branchName?: string;
+  baseRef?: string;
+  headRef?: string;
+  cleanup: {
+    retained?: boolean;
+    cleaned?: boolean;
+    reason?: string;
+  };
+  changedFiles: ChangedFile[];
+  commands: Array<{
+    label: string;
+    command: string;
+  }>;
+  message?: string;
+}
+
+export interface ReviewHandoffActionResult {
+  ok: boolean;
+  message: string;
+}
+
 export interface RunContinuationTarget {
   parentRunId: string;
   parentMessageId?: string;
@@ -354,6 +384,12 @@ export interface AgentHubApi {
     accept(runId: string): Promise<ReviewSummary>;
     reject(runId: string, reason?: string): Promise<ReviewSummary>;
     refresh(runId: string): Promise<ReviewSummary>;
+    getHandoff(runId: string): Promise<ReviewHandoff>;
+    openHandoffWorktree(runId: string): Promise<ReviewHandoffActionResult>;
+    copyHandoffValue(
+      runId: string,
+      kind: HandoffCopyKind
+    ): Promise<ReviewHandoffActionResult>;
   };
   memory: {
     listProposals(runId: string): Promise<MemoryProposal[]>;

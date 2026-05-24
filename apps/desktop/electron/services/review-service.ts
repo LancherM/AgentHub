@@ -1,3 +1,5 @@
+import fs from "node:fs/promises";
+import path from "node:path";
 import {
   validateRunArtifact,
   type MemoryItemRepository,
@@ -6,6 +8,8 @@ import {
   type RiskReport as CoreRiskReport,
   type RiskReportRepository,
   type RunEventRepository,
+  type RunMetadata,
+  type RunMetadataRepository,
   type Task,
   type TaskRepository,
   type TaskRun,
@@ -13,9 +17,13 @@ import {
   type VerificationResultRepository
 } from "@agent-hub/core";
 import type { JsonObject, TaskRunStatus } from "@agent-hub/shared";
+import { isWorkspacePathInside } from "@agent-hub/task-runner";
 import type {
   AgentId,
   DiffSummary,
+  HandoffCopyKind,
+  ReviewHandoff,
+  ReviewHandoffActionResult,
   ReviewStatus,
   ReviewSummary,
   RiskCategory,
@@ -41,9 +49,20 @@ export interface ReviewService {
   getRisk(runId: string): Promise<RiskReport>;
   getVerification(runId: string): Promise<VerificationReport>;
   getLogs(runId: string): Promise<RunLog[]>;
+  getHandoff(runId: string): Promise<ReviewHandoff>;
+  openHandoffWorktree(runId: string): Promise<ReviewHandoffActionResult>;
+  copyHandoffValue(
+    runId: string,
+    kind: HandoffCopyKind
+  ): Promise<ReviewHandoffActionResult>;
   acceptRun(runId: string): Promise<ReviewSummary>;
   rejectRun(runId: string, reason?: string): Promise<ReviewSummary>;
   refreshReview(runId: string): Promise<ReviewSummary>;
+}
+
+export interface ReviewHandoffPlatform {
+  openPath(worktreePath: string): Promise<string>;
+  writeText(text: string): Promise<void> | void;
 }
 
 export function createReviewService(
@@ -52,12 +71,14 @@ export function createReviewService(
     diffService?: DiffService;
     riskService?: RiskService;
     memoryService?: MemoryService;
+    handoffPlatform?: ReviewHandoffPlatform;
   } = {}
 ): ReviewService {
   return new RepositoryReviewService(context, {
     diffService: dependencies.diffService ?? createDiffService(context),
     riskService: dependencies.riskService ?? createRiskService(),
-    memoryService: dependencies.memoryService
+    memoryService: dependencies.memoryService,
+    handoffPlatform: dependencies.handoffPlatform
   });
 }
 
@@ -69,6 +90,7 @@ class RepositoryReviewService implements ReviewService {
   private readonly verification: VerificationResultRepository;
   private readonly memory: MemoryItemRepository;
   private readonly risks: RiskReportRepository;
+  private readonly metadata: RunMetadataRepository;
 
   constructor(
     private readonly context: DesktopServiceContext,
@@ -76,6 +98,7 @@ class RepositoryReviewService implements ReviewService {
       diffService: DiffService;
       riskService: RiskService;
       memoryService?: MemoryService;
+      handoffPlatform?: ReviewHandoffPlatform;
     }
   ) {
     this.runs = context.repositories.taskRunRepository;
@@ -85,6 +108,7 @@ class RepositoryReviewService implements ReviewService {
     this.verification = context.repositories.verificationResultRepository;
     this.memory = context.repositories.memoryItemRepository;
     this.risks = context.repositories.riskReportRepository;
+    this.metadata = context.repositories.runMetadataRepository;
   }
 
   async getSummary(runId: string): Promise<ReviewSummary> {
@@ -208,6 +232,99 @@ class RepositoryReviewService implements ReviewService {
     return logs;
   }
 
+  async getHandoff(runId: string): Promise<ReviewHandoff> {
+    const { run } = await this.requireRunAndTask(runId);
+    const metadata = await this.metadata.get(runId);
+    const unavailable = await validateHandoffAvailability(run, metadata);
+    if (unavailable) {
+      return unavailable;
+    }
+
+    const diff = await this.getDiff(runId);
+    const worktreePath = resolvedWorktreePath(run, metadata);
+    if (!worktreePath) {
+      throw new Error(`run ${runId} has no retained worktree path`);
+    }
+    const branchName = run.branchName ?? metadata?.workspace?.branchName;
+    const baseRef = metadata?.workspace?.startPoint ?? diff.baseRef ?? "HEAD";
+    const headRef = branchName ?? diff.headRef;
+    const commands = reviewCommands(worktreePath);
+    return {
+      runId,
+      available: true,
+      worktreePath,
+      branchName,
+      baseRef,
+      headRef,
+      cleanup: cleanupState(metadata),
+      changedFiles: diff.files,
+      commands,
+      message:
+        "Review this retained worktree manually. Agent Hub will not merge, push, apply, or delete it."
+    };
+  }
+
+  async openHandoffWorktree(
+    runId: string
+  ): Promise<ReviewHandoffActionResult> {
+    const handoff = await this.getHandoff(runId);
+    if (!handoff.available || !handoff.worktreePath) {
+      return {
+        ok: false,
+        message: handoff.message ?? "No retained worktree is available."
+      };
+    }
+    if (!this.dependencies.handoffPlatform) {
+      return {
+        ok: false,
+        message: "Opening retained worktrees is unavailable in this environment."
+      };
+    }
+
+    const error = await this.dependencies.handoffPlatform.openPath(
+      handoff.worktreePath
+    );
+    if (error.trim().length > 0) {
+      return { ok: false, message: error };
+    }
+    return {
+      ok: true,
+      message: "Opened retained worktree. No merge, push, or cleanup was performed."
+    };
+  }
+
+  async copyHandoffValue(
+    runId: string,
+    kind: HandoffCopyKind
+  ): Promise<ReviewHandoffActionResult> {
+    const handoff = await this.getHandoff(runId);
+    if (!handoff.available) {
+      return {
+        ok: false,
+        message: handoff.message ?? "No retained worktree is available."
+      };
+    }
+    if (!this.dependencies.handoffPlatform) {
+      return {
+        ok: false,
+        message: "Copying handoff values is unavailable in this environment."
+      };
+    }
+
+    const value = handoffCopyValue(handoff, kind);
+    if (!value) {
+      return {
+        ok: false,
+        message: `No ${kind.replace(/_/g, " ")} is available for this run.`
+      };
+    }
+    await this.dependencies.handoffPlatform.writeText(value);
+    return {
+      ok: true,
+      message: `Copied ${kind.replace(/_/g, " ")}. No repository action was performed.`
+    };
+  }
+
   async acceptRun(runId: string): Promise<ReviewSummary> {
     await this.requireRunAndTask(runId);
     const acceptedAt = this.context.now();
@@ -310,6 +427,122 @@ function isMissingVerificationConfigResult(result: {
   status: string;
 }): boolean {
   return result.command === "not configured" && result.status === "skipped";
+}
+
+async function validateHandoffAvailability(
+  run: TaskRun,
+  metadata: RunMetadata | undefined
+): Promise<ReviewHandoff | undefined> {
+  const cleanup = cleanupState(metadata);
+  const unavailable = (message: string): ReviewHandoff => ({
+    runId: run.id,
+    available: false,
+    branchName: run.branchName ?? metadata?.workspace?.branchName,
+    cleanup,
+    changedFiles: [],
+    commands: [],
+    message
+  });
+
+  if (cleanup.cleaned === true) {
+    return unavailable("The retained worktree was already cleaned up.");
+  }
+  if (cleanup.retained !== true) {
+    return unavailable("Run metadata does not record a retained worktree.");
+  }
+
+  const worktreePath = resolvedWorktreePath(run, metadata);
+  if (!worktreePath || !path.isAbsolute(worktreePath)) {
+    return unavailable("Run has no absolute retained worktree path.");
+  }
+  if (
+    metadata?.workspace?.path &&
+    path.resolve(worktreePath) !== path.resolve(metadata.workspace.path)
+  ) {
+    return unavailable(
+      "Run worktree metadata does not match the retained worktree path."
+    );
+  }
+  if (
+    metadata?.workspace?.workspaceBasePath &&
+    !isWorkspacePathInside(worktreePath, metadata.workspace.workspaceBasePath)
+  ) {
+    return unavailable(
+      "Run worktree path is outside the recorded Agent Hub workspace base."
+    );
+  }
+  if (!(await directoryExists(worktreePath))) {
+    return unavailable("The retained worktree path no longer exists.");
+  }
+  return undefined;
+}
+
+function cleanupState(metadata: RunMetadata | undefined): ReviewHandoff["cleanup"] {
+  return {
+    retained: metadata?.workspaceCleanup?.retained,
+    cleaned: metadata?.workspaceCleanup?.cleaned,
+    reason: metadata?.workspaceCleanup?.reason
+  };
+}
+
+function resolvedWorktreePath(
+  run: TaskRun,
+  metadata: RunMetadata | undefined
+): string | undefined {
+  return run.worktreePath ?? metadata?.workspace?.path;
+}
+
+function reviewCommands(
+  worktreePath: string
+): ReviewHandoff["commands"] {
+  const cwd = quoteForShell(worktreePath);
+  return [
+    {
+      label: "Show status",
+      command: `git -C ${cwd} status --short`
+    },
+    {
+      label: "Show diff stat",
+      command: `git -C ${cwd} diff --stat HEAD`
+    },
+    {
+      label: "Show full diff",
+      command: `git -C ${cwd} diff HEAD`
+    }
+  ];
+}
+
+function quoteForShell(value: string): string {
+  return `'${value.replace(/'/g, "'\\''")}'`;
+}
+
+function handoffCopyValue(
+  handoff: ReviewHandoff,
+  kind: HandoffCopyKind
+): string | undefined {
+  if (kind === "worktree_path") {
+    return handoff.worktreePath;
+  }
+  if (kind === "branch_name") {
+    return handoff.branchName;
+  }
+  if (kind === "review_commands") {
+    return handoff.commands
+      .map((command) => `${command.label}:\n${command.command}`)
+      .join("\n\n");
+  }
+  return undefined;
+}
+
+async function directoryExists(directoryPath: string): Promise<boolean> {
+  try {
+    return (await fs.stat(directoryPath)).isDirectory();
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return false;
+    }
+    throw error;
+  }
 }
 
 function toDesktopRiskReport(report: CoreRiskReport): RiskReport {

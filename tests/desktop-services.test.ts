@@ -306,8 +306,11 @@ describe("desktop services", () => {
       contextMode: "auto"
     });
     const failed = await waitForRun(runs, run.id, "failed");
+    const failedWithTerminalEvent =
+      await waitForPersistedRunEvent(runs, run.id, "run_failed");
 
-    expect(failed.events.map((event) => event.type)).toEqual(
+    expect(failed.status).toBe("failed");
+    expect(failedWithTerminalEvent.events.map((event) => event.type)).toEqual(
       expect.arrayContaining(["verification_started", "verification_finished", "run_failed"])
     );
     await expect(review.getVerification(run.id)).resolves.toMatchObject({
@@ -482,6 +485,210 @@ describe("desktop services", () => {
     });
     expect(rejected.rejectedAt).toBeDefined();
     await expect(fs.readdir(fixture.projectRoot)).resolves.toEqual(before);
+  });
+
+  it("exposes retained worktree handoff evidence and copy/open actions", async () => {
+    const fixture = await createFixture();
+    const context = createDesktopServiceContext(fixture.repositories);
+    const projects = createProjectService(context);
+    const memory = createMemoryService(context);
+    const openedPaths: string[] = [];
+    const copiedValues: string[] = [];
+    const review = createReviewService(context, {
+      memoryService: memory,
+      handoffPlatform: {
+        openPath: async (worktreePath) => {
+          openedPaths.push(worktreePath);
+          return "";
+        },
+        writeText: (value) => {
+          copiedValues.push(value);
+        }
+      }
+    });
+    const runs = createTestRunService(context, review, memory, fixture);
+    const before = await fs.readdir(fixture.projectRoot);
+    const project = await projects.open(fixture.projectRoot);
+    const run = await runs.createRun({
+      projectId: project.id,
+      prompt: "Expose this retained handoff.",
+      agentId: "fake",
+      contextMode: "auto"
+    });
+    await waitForRun(runs, run.id, "completed");
+
+    const handoff = await review.getHandoff(run.id);
+    expect(handoff).toMatchObject({
+      runId: run.id,
+      available: true,
+      cleanup: {
+        retained: true,
+        cleaned: false
+      },
+      changedFiles: [expect.objectContaining({ path: "fake-agent-output.md" })]
+    });
+    expect(handoff.worktreePath).toContain(fixture.workspaceBasePath);
+    expect(handoff.worktreePath).not.toBe(fixture.projectRoot);
+    expect(handoff.branchName).toMatch(/^agent-hub\//);
+    expect(handoff.baseRef).toBeDefined();
+    expect(handoff.headRef).toBe(handoff.branchName);
+    expect(handoff.commands.map((command) => command.command)).toEqual([
+      `git -C '${handoff.worktreePath}' status --short`,
+      `git -C '${handoff.worktreePath}' diff --stat HEAD`,
+      `git -C '${handoff.worktreePath}' diff HEAD`
+    ]);
+    expect(handoff.commands.map((command) => command.command).join("\n")).not.toMatch(
+      /merge|push|cherry-pick|worktree remove|delete/i
+    );
+
+    await expect(review.openHandoffWorktree(run.id)).resolves.toMatchObject({
+      ok: true
+    });
+    expect(openedPaths).toEqual([handoff.worktreePath]);
+
+    await expect(
+      review.copyHandoffValue(run.id, "worktree_path")
+    ).resolves.toMatchObject({ ok: true });
+    await expect(
+      review.copyHandoffValue(run.id, "branch_name")
+    ).resolves.toMatchObject({ ok: true });
+    await expect(
+      review.copyHandoffValue(run.id, "review_commands")
+    ).resolves.toMatchObject({ ok: true });
+    expect(copiedValues).toEqual([
+      handoff.worktreePath,
+      handoff.branchName,
+      handoff.commands
+        .map((command) => `${command.label}:\n${command.command}`)
+        .join("\n\n")
+    ]);
+    await expect(fs.readdir(fixture.projectRoot)).resolves.toEqual(before);
+  });
+
+  it("keeps unsafe or unavailable handoff worktrees unavailable", async () => {
+    const fixture = await createFixture();
+    const context = createDesktopServiceContext(fixture.repositories);
+    const projects = createProjectService(context);
+    const memory = createMemoryService(context);
+    const openedPaths: string[] = [];
+    const review = createReviewService(context, {
+      memoryService: memory,
+      handoffPlatform: {
+        openPath: async (worktreePath) => {
+          openedPaths.push(worktreePath);
+          return "";
+        },
+        writeText: () => undefined
+      }
+    });
+    const project = await projects.open(fixture.projectRoot);
+    const now = context.now();
+    const task = await fixture.repositories.taskRepository.create(
+      validateTask({
+        id: "task_handoff_unavailable",
+        projectId: project.id,
+        title: "Unavailable handoffs",
+        status: "completed",
+        createdAt: now,
+        updatedAt: now
+      })
+    );
+    const validPath = path.join(fixture.workspaceBasePath, "valid");
+    const missingPath = path.join(fixture.workspaceBasePath, "missing");
+    const mismatchedRunPath = path.join(fixture.workspaceBasePath, "mismatched-run");
+    const mismatchedMetadataPath = path.join(
+      fixture.workspaceBasePath,
+      "mismatched-metadata"
+    );
+    const outsidePath = path.join(path.dirname(fixture.workspaceBasePath), "outside");
+    await fs.mkdir(validPath);
+    await fs.mkdir(mismatchedRunPath);
+    await fs.mkdir(mismatchedMetadataPath);
+    await fs.mkdir(outsidePath);
+
+    await createRetainedRunFixture({
+      context,
+      fixture,
+      taskId: task.id,
+      runId: "run_handoff_missing",
+      worktreePath: undefined,
+      metadataPath: undefined,
+      retained: true,
+      cleaned: false
+    });
+    await createRetainedRunFixture({
+      context,
+      fixture,
+      taskId: task.id,
+      runId: "run_handoff_cleaned",
+      worktreePath: validPath,
+      metadataPath: validPath,
+      retained: false,
+      cleaned: true
+    });
+    await createRetainedRunFixture({
+      context,
+      fixture,
+      taskId: task.id,
+      runId: "run_handoff_nonexistent",
+      worktreePath: missingPath,
+      metadataPath: missingPath,
+      retained: true,
+      cleaned: false
+    });
+    await createRetainedRunFixture({
+      context,
+      fixture,
+      taskId: task.id,
+      runId: "run_handoff_mismatched",
+      worktreePath: mismatchedRunPath,
+      metadataPath: mismatchedMetadataPath,
+      retained: true,
+      cleaned: false
+    });
+    await createRetainedRunFixture({
+      context,
+      fixture,
+      taskId: task.id,
+      runId: "run_handoff_outside",
+      worktreePath: outsidePath,
+      metadataPath: outsidePath,
+      retained: true,
+      cleaned: false
+    });
+
+    await expect(review.getHandoff("run_handoff_missing")).resolves.toMatchObject({
+      available: false,
+      message: expect.stringContaining("absolute retained worktree")
+    });
+    await expect(review.getHandoff("run_handoff_cleaned")).resolves.toMatchObject({
+      available: false,
+      message: expect.stringContaining("cleaned up")
+    });
+    await expect(
+      review.getHandoff("run_handoff_nonexistent")
+    ).resolves.toMatchObject({
+      available: false,
+      message: expect.stringContaining("no longer exists")
+    });
+    await expect(
+      review.getHandoff("run_handoff_mismatched")
+    ).resolves.toMatchObject({
+      available: false,
+      message: expect.stringContaining("does not match")
+    });
+    await expect(review.getHandoff("run_handoff_outside")).resolves.toMatchObject({
+      available: false,
+      message: expect.stringContaining("outside the recorded Agent Hub workspace base")
+    });
+
+    await expect(
+      review.openHandoffWorktree("run_handoff_outside")
+    ).resolves.toMatchObject({ ok: false });
+    await expect(
+      review.copyHandoffValue("run_handoff_outside", "worktree_path")
+    ).resolves.toMatchObject({ ok: false });
+    expect(openedPaths).toEqual([]);
   });
 
   it("cancels a queued desktop run before TaskRunner execution starts", async () => {
@@ -1398,6 +1605,30 @@ describe("desktop services", () => {
       changedFileCount: 1
     });
     await expect(
+      handlers[IPC_CHANNELS.reviewHandoff](
+        { sender } as never,
+        runId
+      )
+    ).resolves.toMatchObject({
+      available: true,
+      changedFiles: [expect.objectContaining({ path: "fake-agent-output.md" })]
+    });
+    await expect(
+      handlers[IPC_CHANNELS.reviewHandoffOpenWorktree](
+        { sender } as never,
+        runId
+      )
+    ).resolves.toMatchObject({
+      ok: false,
+      message: expect.stringContaining("unavailable in this environment")
+    });
+    await expect(
+      handlers[IPC_CHANNELS.reviewHandoffCopyValue]({ sender } as never, {
+        runId,
+        kind: "dangerous_text"
+      })
+    ).rejects.toThrow(/handoff copy kind/);
+    await expect(
       handlers[IPC_CHANNELS.reviewReject]({ sender } as never, {
         runId,
         reason: "x".repeat(1_001)
@@ -1449,6 +1680,22 @@ async function waitForEvent(
   throw new Error(`timed out waiting for ${type}`);
 }
 
+async function waitForPersistedRunEvent(
+  runs: ReturnType<typeof createRunService>,
+  runId: string,
+  type: RunEvent["type"]
+): Promise<RunDetail> {
+  const deadline = Date.now() + 10_000;
+  while (Date.now() < deadline) {
+    const detail = await runs.getRun(runId);
+    if (detail.events.some((event) => event.type === type)) {
+      return detail;
+    }
+    await sleep(10);
+  }
+  throw new Error(`timed out waiting for persisted ${type}`);
+}
+
 async function waitForIpcSend(sender: {
   send: { mock: { calls: unknown[][] } };
 }): Promise<void> {
@@ -1488,6 +1735,58 @@ async function createFixture(): Promise<{
     databasePath
   });
   return { projectRoot, workspaceBasePath, databasePath, repositories };
+}
+
+async function createRetainedRunFixture(input: {
+  context: ReturnType<typeof createDesktopServiceContext>;
+  fixture: {
+    projectRoot: string;
+    workspaceBasePath: string;
+    repositories: ReturnType<typeof createSqliteRepositories>;
+  };
+  taskId: string;
+  runId: string;
+  worktreePath?: string;
+  metadataPath?: string;
+  retained: boolean;
+  cleaned: boolean;
+}): Promise<void> {
+  const branchName = `agent-hub/${input.runId}/fake`;
+  await input.fixture.repositories.taskRunRepository.create(
+    validateTaskRun({
+      id: input.runId,
+      taskId: input.taskId,
+      agentKind: "fake",
+      status: "succeeded",
+      worktreePath: input.worktreePath,
+      branchName,
+      createdAt: input.context.now(),
+      updatedAt: input.context.now()
+    })
+  );
+  await input.fixture.repositories.runMetadataRepository.save({
+    runId: input.runId,
+    workspace: input.metadataPath
+      ? {
+          path: input.metadataPath,
+          branchName,
+          sourceRepositoryPath: input.fixture.projectRoot,
+          workspaceBasePath: input.fixture.workspaceBasePath,
+          taskId: input.taskId,
+          runId: input.runId,
+          agentKind: "fake",
+          dryRun: false,
+          sourceRepositoryDirty: false,
+          cleanupPolicy: "never"
+        }
+      : undefined,
+    workspaceCleanup: {
+      cleaned: input.cleaned,
+      retained: input.retained,
+      reason: input.cleaned ? "test cleanup" : "test retained",
+      commands: []
+    }
+  });
 }
 
 function createTestRunService(

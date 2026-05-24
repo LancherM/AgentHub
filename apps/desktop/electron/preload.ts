@@ -3,6 +3,7 @@ import type {
   AgentHubApi,
   CreateThreadInput,
   CreateRunInput,
+  HandoffCopyKind,
   RunEvent,
   SendThreadMessageInput,
   VerificationSettings,
@@ -57,6 +58,12 @@ const api: AgentHubApi = {
       ipcRenderer.invoke(IPC_CHANNELS.reviewVerification, runId),
     getLogs: (runId: string) =>
       ipcRenderer.invoke(IPC_CHANNELS.reviewLogs, runId),
+    getHandoff: (runId: string) =>
+      ipcRenderer.invoke(IPC_CHANNELS.reviewHandoff, runId),
+    openHandoffWorktree: (runId: string) =>
+      ipcRenderer.invoke(IPC_CHANNELS.reviewHandoffOpenWorktree, runId),
+    copyHandoffValue: (runId: string, kind: HandoffCopyKind) =>
+      ipcRenderer.invoke(IPC_CHANNELS.reviewHandoffCopyValue, { runId, kind }),
     accept: (runId: string) =>
       ipcRenderer.invoke(IPC_CHANNELS.reviewAccept, runId),
     reject: (runId: string, reason?: string) =>

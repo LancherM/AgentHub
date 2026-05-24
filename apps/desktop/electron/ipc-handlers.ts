@@ -3,6 +3,7 @@ import type {
   AgentHubApi,
   CreateThreadInput,
   CreateRunInput,
+  HandoffCopyKind,
   RunEvent,
   SendThreadMessageInput,
   VerificationSettings
@@ -16,6 +17,7 @@ import {
 } from "./services/project-service";
 import {
   createReviewService,
+  type ReviewHandoffPlatform,
   type ReviewService
 } from "./services/review-service";
 import {
@@ -46,6 +48,10 @@ export interface DesktopServices {
   settings: SettingsService;
 }
 
+export interface DesktopServiceOptions {
+  handoffPlatform?: ReviewHandoffPlatform;
+}
+
 export interface IpcEventSender {
   send(channel: string, ...args: unknown[]): void;
 }
@@ -56,10 +62,14 @@ export type IpcHandler = (
 ) => Promise<unknown>;
 
 export function createDesktopServices(
-  context: DesktopServiceContext = createDesktopServiceContext()
+  context: DesktopServiceContext = createDesktopServiceContext(),
+  options: DesktopServiceOptions = {}
 ): DesktopServices {
   const memory = createMemoryService(context);
-  const review = createReviewService(context, { memoryService: memory });
+  const review = createReviewService(context, {
+    memoryService: memory,
+    handoffPlatform: options.handoffPlatform
+  });
   const projects = createProjectService(context);
   const settings = createSettingsService(context);
   const runs = createRunService(context, {
@@ -132,6 +142,14 @@ export function createIpcHandlers(
       services.review.getVerification(parseId(input, "runId")),
     [IPC_CHANNELS.reviewLogs]: async (_event, input) =>
       services.review.getLogs(parseId(input, "runId")),
+    [IPC_CHANNELS.reviewHandoff]: async (_event, input) =>
+      services.review.getHandoff(parseId(input, "runId")),
+    [IPC_CHANNELS.reviewHandoffOpenWorktree]: async (_event, input) =>
+      services.review.openHandoffWorktree(parseId(input, "runId")),
+    [IPC_CHANNELS.reviewHandoffCopyValue]: async (_event, input) => {
+      const parsed = parseHandoffCopyInput(input);
+      return services.review.copyHandoffValue(parsed.runId, parsed.kind);
+    },
     [IPC_CHANNELS.reviewAccept]: async (_event, input) =>
       services.review.acceptRun(parseId(input, "runId")),
     [IPC_CHANNELS.reviewReject]: async (_event, input) => {
@@ -244,6 +262,27 @@ function parseRejectReviewInput(input: unknown): {
     throw new Error("reject reason must be 1000 characters or fewer");
   }
   return { runId, reason };
+}
+
+function parseHandoffCopyInput(input: unknown): {
+  runId: string;
+  kind: HandoffCopyKind;
+} {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    throw new Error("handoff copy input is required");
+  }
+  const value = input as { runId?: unknown; kind?: unknown };
+  const runId = parseId(value.runId, "runId");
+  if (
+    value.kind !== "worktree_path" &&
+    value.kind !== "branch_name" &&
+    value.kind !== "review_commands"
+  ) {
+    throw new Error(
+      "handoff copy kind must be worktree_path, branch_name, or review_commands"
+    );
+  }
+  return { runId, kind: value.kind };
 }
 
 function parseCreateRunInput(input: unknown): CreateRunInput {
@@ -371,7 +410,7 @@ const GENERIC_IPC_ERROR = "Agent Hub could not complete that local desktop reque
 
 function safeErrorMessage(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
-  if (/not found|required|must be|cannot be|already|deliveryMode|agentId|contextMode|reason|projectId|runId|threadId|prompt|text|settings|verification|command|executable|args|timeout/i.test(message)) {
+  if (/not found|required|must be|cannot be|already|deliveryMode|agentId|contextMode|reason|projectId|runId|threadId|prompt|text|settings|verification|command|executable|args|timeout|handoff/i.test(message)) {
     return message;
   }
   return GENERIC_IPC_ERROR;
