@@ -294,9 +294,14 @@ below persisted `high` and `blocking` risk.
 
 Agent Hub's next product direction is the local AI workgroup roadmap in
 `docs/local-ai-workgroup-roadmap.md`. The roadmap evolves the existing
-conversation/run evidence model into room-based collaboration with role-based
-agents, task grouping, timeline events, structured inspectors, artifacts,
-checks, risks, decisions, and memory governance. The near-term strategy is
+conversation/run evidence model into room-based collaboration with configurable
+role-based participants, task grouping, timeline events, structured
+inspectors, artifacts, checks, risks, decisions, and memory governance. Preset
+roles are templates rather than a closed role set: users should be able to
+define custom role handles, capabilities, personas, permissions, context
+policies, approval policies, and executor bindings. The first executable role
+backend maps to existing local agent adapters, while the model leaves room for
+future LLM API, workflow, and human executors. The near-term strategy is
 incremental: reuse SQLite-backed conversation threads/messages, TaskRunner
 runs, run artifacts, verification results, risk reports, review decisions, and
 memory proposals before introducing larger domain splits.

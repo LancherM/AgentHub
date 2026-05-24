@@ -612,15 +612,20 @@ logic outside the renderer.
 
 The planned local AI workgroup transformation is documented in
 `docs/local-ai-workgroup-roadmap.md`. Architecturally, the first phases should
-layer room, role-agent, timeline, artifact, decision, and knowledge semantics on
-top of the existing local conversation and run evidence boundaries instead of
-starting with a broad schema rewrite. `ConversationThread` can initially serve
-as the room timeline record, role agents can map to existing adapter kinds, and
-run artifacts/review evidence can back the first artifact, check, risk, and
-memory inspector panels. New first-class tables such as `rooms`,
-`task_assignments`, `timeline_events`, `artifacts`, `decisions`, or `packs`
-should be added only when the metadata-backed model no longer satisfies a
-specific query, lifecycle, or governance need.
+layer room, configurable role/participant, executor, timeline, artifact,
+decision, and knowledge semantics on top of the existing local conversation and
+run evidence boundaries instead of starting with a broad schema rewrite.
+`ConversationThread` can initially serve as the room timeline record. Role
+records should not be a closed enum: preset roles can seed defaults, while
+user-defined roles carry capability, persona, permission, context, approval,
+and executor metadata. The first runnable executor maps to existing adapter
+kinds, and the role model should leave space for future LLM API, local
+workflow, and human executors. Run artifacts/review evidence can back the first
+artifact, check, risk, and memory inspector panels. New first-class tables such
+as `rooms`, `roles`, `participants`, `role_executors`, `task_assignments`,
+`timeline_events`, `artifacts`, `decisions`, or `packs` should be added only
+when the metadata-backed model no longer satisfies a specific query, lifecycle,
+or governance need.
 
 Repository CI/CD lives in `.github/workflows/ci-cd.yml` and stays outside the
 Agent Hub runtime. The workflow installs the pinned pnpm and Node versions from
