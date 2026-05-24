@@ -331,6 +331,28 @@ export interface ReviewContext {
   message?: string;
 }
 
+export type ReviewArtifactAvailability = "local" | "bounded";
+
+export interface ReviewArtifact {
+  id: string;
+  runId: string;
+  taskId: string;
+  kind: string;
+  artifactType: string;
+  title: string;
+  sourceRunId: string;
+  sourceTaskId: string;
+  threadId?: string;
+  createdBy?: string;
+  summary: string;
+  createdAt: string;
+  availability: ReviewArtifactAvailability;
+  contentPreview?: string;
+  contentCharacters: number;
+  previewCharacters: number;
+  truncated: boolean;
+}
+
 export interface ReviewHandoff {
   runId: string;
   available: boolean;
@@ -582,6 +604,7 @@ export interface AgentHubApi {
   review: {
     getSummary(runId: string): Promise<ReviewSummary>;
     getContext(runId: string): Promise<ReviewContext>;
+    getArtifacts(runId: string): Promise<ReviewArtifact[]>;
     getDiff(runId: string): Promise<DiffSummary>;
     getRisk(runId: string): Promise<RiskReport>;
     getVerification(runId: string): Promise<VerificationReport>;

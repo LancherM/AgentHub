@@ -1443,7 +1443,8 @@ textarea:disabled {
 .risk-report,
 .memory-list,
 .context-panel,
-.artifacts-panel {
+.artifacts-panel,
+.artifact-inventory {
   display: flex;
   flex-direction: column;
   gap: 14px;
@@ -1695,6 +1696,101 @@ textarea:disabled {
   margin: 0;
   padding: 0;
   list-style: none;
+}
+
+.artifact-row-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.artifact-row-button {
+  display: grid;
+  grid-template-columns: 128px minmax(0, 1fr) 74px;
+  gap: 10px;
+  align-items: start;
+  width: 100%;
+  min-height: 68px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.025);
+  color: var(--text);
+  text-align: left;
+}
+
+.artifact-row-button.active {
+  border-color: rgba(197, 155, 255, 0.48);
+  background: rgba(197, 155, 255, 0.08);
+}
+
+.artifact-row-button strong,
+.artifact-row-button em {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.artifact-row-button strong {
+  font-size: 13px;
+}
+
+.artifact-row-button em {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 12px;
+  font-style: normal;
+  line-height: 1.35;
+}
+
+.artifact-type,
+.artifact-availability {
+  display: inline-flex;
+  justify-content: center;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 2px 7px;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 850;
+  overflow-wrap: anywhere;
+  text-transform: uppercase;
+}
+
+.artifact-type.context {
+  border-color: rgba(103, 216, 196, 0.36);
+  color: var(--cyan);
+}
+
+.artifact-type.diff {
+  border-color: rgba(245, 189, 90, 0.38);
+  color: var(--amber);
+}
+
+.artifact-type.review {
+  border-color: rgba(139, 233, 119, 0.34);
+  color: var(--green);
+}
+
+.artifact-type.brief,
+.artifact-type.provenance,
+.artifact-type.artifact {
+  border-color: rgba(197, 155, 255, 0.38);
+  color: var(--plum);
+}
+
+.artifact-availability {
+  justify-self: end;
+}
+
+.artifact-availability.local {
+  border-color: rgba(139, 233, 119, 0.34);
+  color: var(--green);
+}
+
+.artifact-availability.bounded {
+  border-color: rgba(245, 189, 90, 0.38);
+  color: var(--amber);
 }
 
 .file-list li,

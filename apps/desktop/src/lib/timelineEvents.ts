@@ -1,5 +1,6 @@
 import type {
   AgentRunMessage,
+  ReviewArtifact,
   ReviewSummary,
   RunInspectorTab,
   RunStatus,
@@ -27,6 +28,7 @@ export function timelinePresentationForMessage(
   message: ThreadMessage,
   options: {
     reviewSummary?: ReviewSummary;
+    reviewArtifacts?: ReviewArtifact[];
     eventCount?: number;
     status?: RunStatus;
   } = {}
@@ -65,7 +67,8 @@ export function timelinePresentationForMessage(
 export function runEvidenceTimelineChips(
   summary: ReviewSummary | undefined,
   eventCount: number,
-  status: RunStatus
+  status: RunStatus,
+  artifacts: ReviewArtifact[] = []
 ): Array<TimelineEventChip & { tab: RunInspectorTab }> {
   const pending = isTerminalRunStatus(status) ? "unknown" : "pending";
   const verificationStatus = summary?.verificationStatus ?? pending;
@@ -77,6 +80,14 @@ export function runEvidenceTimelineChips(
       ? `Artifacts ${summary.changedFileCount} files +${summary.additions}/-${summary.deletions}`
       : "Artifacts 0 files"
     : "Artifacts pending";
+  const artifactSummaryLabel =
+    artifacts.length > 0 ? `Artifacts ${artifacts.length}` : diffLabel;
+  const artifactChips = artifacts.slice(0, 3).map((artifact) => ({
+    kind: "artifact_created" as const,
+    label: artifact.kind,
+    tone: artifactTone(artifact),
+    tab: "artifacts" as const
+  }));
   return [
     {
       kind: "check_completed",
@@ -92,10 +103,11 @@ export function runEvidenceTimelineChips(
     },
     {
       kind: "artifact_created",
-      label: diffLabel,
-      tone: summary?.changedFileCount ? "accent" : "neutral",
+      label: artifactSummaryLabel,
+      tone: artifacts.length > 0 || summary?.changedFileCount ? "accent" : "neutral",
       tab: "artifacts"
     },
+    ...artifactChips,
     {
       kind: "review_decision",
       label: "Compare",
@@ -133,6 +145,7 @@ function runPresentation(
   event: TimelineEventMetadata | undefined,
   options: {
     reviewSummary?: ReviewSummary;
+    reviewArtifacts?: ReviewArtifact[];
     eventCount?: number;
     status?: RunStatus;
   }
@@ -156,7 +169,8 @@ function runPresentation(
       ...runEvidenceTimelineChips(
         options.reviewSummary,
         options.eventCount ?? 0,
-        status
+        status,
+        options.reviewArtifacts ?? []
       )
     ]
   };
@@ -274,6 +288,19 @@ function riskTone(level: string): TimelineEventTone {
     return "accent";
   }
   return "neutral";
+}
+
+function artifactTone(artifact: ReviewArtifact): TimelineEventTone {
+  if (artifact.artifactType === "diff") {
+    return "warning";
+  }
+  if (artifact.artifactType === "context") {
+    return "info";
+  }
+  if (artifact.artifactType === "review") {
+    return "success";
+  }
+  return "accent";
 }
 
 function participantTitle(agentId: string | undefined): string {

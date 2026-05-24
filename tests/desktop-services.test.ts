@@ -52,7 +52,11 @@ import {
   type TaskRunnerDependencies
 } from "@agent-hub/task-runner";
 import { buildContextArtifacts } from "@agent-hub/context-compiler";
-import { presetWorkgroupRoles, type WorkgroupRole } from "@agent-hub/shared";
+import {
+  presetWorkgroupRoles,
+  toWorkgroupRoleRunMetadata,
+  type WorkgroupRole
+} from "@agent-hub/shared";
 
 const execFileAsync = promisify(execFile);
 
@@ -598,6 +602,99 @@ describe("desktop services", () => {
       content: expect.stringContaining("Last known user goal"),
       message: "Conversation brief captured for runtime injection."
     });
+  });
+
+  it("maps run artifacts into bounded inspector artifact metadata", async () => {
+    const fixture = await createFixture();
+    const context = createDesktopServiceContext(fixture.repositories);
+    const projects = createProjectService(context);
+    const review = createReviewService(context);
+    const project = await projects.open(fixture.projectRoot);
+    const now = context.now();
+    const task = await fixture.repositories.taskRepository.create(
+      validateTask({
+        id: "task_artifact_metadata",
+        projectId: project.id,
+        title: "Inspect artifact metadata",
+        status: "completed",
+        createdAt: now,
+        updatedAt: now
+      })
+    );
+    const run = await fixture.repositories.taskRunRepository.create(
+      validateTaskRun({
+        id: "run_artifact_metadata",
+        taskId: task.id,
+        agentKind: "codex",
+        status: "succeeded",
+        createdAt: now,
+        updatedAt: now,
+        startedAt: now,
+        completedAt: now
+      })
+    );
+    await fixture.repositories.runMetadataRepository.save({
+      runId: run.id,
+      role: toWorkgroupRoleRunMetadata(
+        presetWorkgroupRoles.find((role) => role.handle === "engineer") ??
+          presetWorkgroupRoles[0]
+      )
+    });
+    await fixture.repositories.runArtifactRepository.create(
+      validateRunArtifact({
+        id: "artifact_context_metadata",
+        taskRunId: run.id,
+        kind: "conversation_brief",
+        content: [
+          "# Agent Hub Conversation Brief",
+          "thread_id: thread_artifacts",
+          "User: inspect artifact metadata",
+          "x".repeat(4_200)
+        ].join("\n"),
+        metadata: {
+          summary: "Bounded runtime context snapshot."
+        },
+        createdAt: now
+      })
+    );
+    await fixture.repositories.runArtifactRepository.create(
+      validateRunArtifact({
+        id: "artifact_diff_metadata",
+        taskRunId: run.id,
+        kind: "git_diff",
+        content: "diff --git a/a b/a\n+hello\n",
+        metadata: {
+          changedFiles: [{ path: "a", status: "modified" }],
+          stat: "1 file changed, 1 insertion"
+        },
+        createdAt: now
+      })
+    );
+
+    await expect(review.getArtifacts(run.id)).resolves.toEqual([
+      expect.objectContaining({
+        id: "artifact_context_metadata",
+        kind: "conversation_brief",
+        artifactType: "context",
+        title: "Conversation brief for Inspect artifact metadata",
+        sourceRunId: run.id,
+        sourceTaskId: task.id,
+        threadId: "thread_artifacts",
+        createdBy: "@engineer",
+        summary: "Bounded runtime context snapshot.",
+        availability: "bounded",
+        truncated: true,
+        contentPreview: expect.stringContaining("Artifact preview truncated")
+      }),
+      expect.objectContaining({
+        id: "artifact_diff_metadata",
+        kind: "git_diff",
+        artifactType: "diff",
+        summary: "1 changed file(s). 1 file changed, 1 insertion",
+        availability: "local",
+        truncated: false
+      })
+    ]);
   });
 
   it("redacts sensitive retained worktree diff patches in desktop review", async () => {
@@ -2449,6 +2546,21 @@ describe("desktop services", () => {
       available: false,
       message: expect.stringContaining("No persisted conversation brief")
     });
+    await expect(
+      handlers[IPC_CHANNELS.reviewArtifacts](
+        { sender } as never,
+        runId
+      )
+    ).resolves.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "git_diff",
+          sourceRunId: runId,
+          sourceTaskId: expect.any(String),
+          contentPreview: expect.any(String)
+        })
+      ])
+    );
     await expect(
       handlers[IPC_CHANNELS.reviewHandoff](
         { sender } as never,

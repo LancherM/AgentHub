@@ -8,6 +8,7 @@ import type {
   DiffSummary,
   HandoffCopyKind,
   MemoryProposal,
+  ReviewArtifact,
   ReviewContext,
   ReviewHandoff,
   ReviewSummary,
@@ -68,6 +69,9 @@ export function RunInspectorModal({
   const [context, setContext] = useState<LoadState<ReviewContext>>({
     loading: false
   });
+  const [artifacts, setArtifacts] = useState<LoadState<ReviewArtifact[]>>({
+    loading: false
+  });
   const [diff, setDiff] = useState<LoadState<DiffSummary>>({ loading: false });
   const [verification, setVerification] =
     useState<LoadState<VerificationReportModel>>({ loading: false });
@@ -92,6 +96,7 @@ export function RunInspectorModal({
     setDecisionMessage(undefined);
     setSummary({ loading: true });
     setContext({ loading: false });
+    setArtifacts({ loading: false });
     setDiff({ loading: false });
     setVerification({ loading: false });
     setRisk({ loading: false });
@@ -132,6 +137,7 @@ export function RunInspectorModal({
       await loadState(setContext, () => agentHubApi.review.getContext(runId));
     } else if (tab === "artifacts") {
       await Promise.all([
+        loadState(setArtifacts, () => agentHubApi.review.getArtifacts(runId)),
         loadState(setDiff, () => agentHubApi.review.getDiff(runId)),
         loadState(setHandoff, () => agentHubApi.review.getHandoff(runId)),
         loadComparison()
@@ -308,6 +314,7 @@ export function RunInspectorModal({
             <LoadSlot state={context}>{(data) => <ContextPanel context={data} />}</LoadSlot>
           ) : activeTab === "artifacts" ? (
             <ArtifactsPanel
+              artifacts={artifacts}
               diff={diff}
               handoff={handoff}
               comparison={comparison}
@@ -428,6 +435,7 @@ function ContextPanel({ context }: { context: ReviewContext }): JSX.Element {
 }
 
 function ArtifactsPanel({
+  artifacts,
   diff,
   handoff,
   comparison,
@@ -436,6 +444,7 @@ function ArtifactsPanel({
   onCopyHandoff,
   onCreateComparison
 }: {
+  artifacts: LoadState<ReviewArtifact[]>;
   diff: LoadState<DiffSummary>;
   handoff: LoadState<ReviewHandoff>;
   comparison: LoadState<ComparisonPanelData>;
@@ -449,15 +458,18 @@ function ArtifactsPanel({
       <section>
         <div className="summary-heading">
           <div>
-            <div className="panel-label">Engineering Artifacts</div>
+            <div className="panel-label">Artifacts</div>
             <p>
-              Diff, retained-worktree handoff, and comparison evidence stay here
-              as review-only engineering details.
+              Important run evidence appears as named local artifact rows with
+              bounded previews and source metadata.
             </p>
           </div>
           <span className="handoff-state ready">review only</span>
         </div>
       </section>
+      <LoadSlot state={artifacts}>
+        {(data) => <ArtifactInventory artifacts={data} />}
+      </LoadSlot>
       <LoadSlot state={diff}>{(data) => <DiffViewer diff={data} />}</LoadSlot>
       <LoadSlot state={handoff}>
         {(data) => (
@@ -477,6 +489,105 @@ function ArtifactsPanel({
           />
         )}
       </LoadSlot>
+    </div>
+  );
+}
+
+function ArtifactInventory({
+  artifacts
+}: {
+  artifacts: ReviewArtifact[];
+}): JSX.Element {
+  const [selectedArtifactId, setSelectedArtifactId] = useState(
+    artifacts[0]?.id ?? ""
+  );
+
+  useEffect(() => {
+    if (
+      selectedArtifactId &&
+      artifacts.some((artifact) => artifact.id === selectedArtifactId)
+    ) {
+      return;
+    }
+    setSelectedArtifactId(artifacts[0]?.id ?? "");
+  }, [artifacts, selectedArtifactId]);
+
+  const selectedArtifact =
+    artifacts.find((artifact) => artifact.id === selectedArtifactId) ??
+    artifacts[0];
+
+  if (artifacts.length === 0) {
+    return (
+      <section>
+        <div className="panel-label">Artifact Inventory</div>
+        <p className="muted-copy">No local artifacts were recorded for this run.</p>
+      </section>
+    );
+  }
+
+  return (
+    <div className="summary-stack artifact-inventory">
+      <section>
+        <div className="review-section-head">
+          <div>
+            <div className="panel-label">Artifact Inventory</div>
+            <p className="muted-copy">
+              {artifacts.length} local artifact row(s) backed by run_artifacts.
+            </p>
+          </div>
+        </div>
+        <div className="artifact-row-list">
+          {artifacts.map((artifact) => (
+            <button
+              key={artifact.id}
+              className={`artifact-row-button ${
+                artifact.id === selectedArtifact?.id ? "active" : ""
+              }`}
+              onClick={() => setSelectedArtifactId(artifact.id)}
+            >
+              <span className={`artifact-type ${artifact.artifactType}`}>
+                {artifact.kind}
+              </span>
+              <span>
+                <strong>{artifact.title}</strong>
+                <em>{artifact.summary}</em>
+              </span>
+              <span className={`artifact-availability ${artifact.availability}`}>
+                {artifact.availability}
+              </span>
+            </button>
+          ))}
+        </div>
+      </section>
+
+      {selectedArtifact ? (
+        <>
+          <section className="summary-metrics wide">
+            <Metric label="Type" value={selectedArtifact.kind} />
+            <Metric label="Source Run" value={selectedArtifact.sourceRunId} />
+            <Metric label="Source Task" value={selectedArtifact.sourceTaskId} />
+            <Metric label="Thread" value={selectedArtifact.threadId ?? "unknown"} />
+            <Metric label="Created By" value={selectedArtifact.createdBy ?? "unknown"} />
+            <Metric label="Created" value={formatTime(selectedArtifact.createdAt)} />
+            <Metric
+              label="Content"
+              value={`${selectedArtifact.contentCharacters} chars`}
+            />
+            <Metric
+              label="Preview"
+              value={
+                selectedArtifact.truncated
+                  ? `${selectedArtifact.previewCharacters} chars bounded`
+                  : `${selectedArtifact.previewCharacters} chars`
+              }
+            />
+          </section>
+          <section>
+            <div className="panel-label">Bounded Preview</div>
+            <pre className="context-preview">{selectedArtifact.contentPreview?.trim() || "Artifact content is empty."}</pre>
+          </section>
+        </>
+      ) : null}
     </div>
   );
 }

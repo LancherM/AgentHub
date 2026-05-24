@@ -144,6 +144,8 @@ export function createIpcHandlers(
       services.review.getSummary(parseId(input, "runId")),
     [IPC_CHANNELS.reviewContext]: async (_event, input) =>
       services.review.getContext(parseId(input, "runId")),
+    [IPC_CHANNELS.reviewArtifacts]: async (_event, input) =>
+      services.review.getArtifacts(parseId(input, "runId")),
     [IPC_CHANNELS.reviewDiff]: async (_event, input) =>
       services.review.getDiff(parseId(input, "runId")),
     [IPC_CHANNELS.reviewRisk]: async (_event, input) =>

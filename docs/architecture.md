@@ -65,15 +65,22 @@ thread through the thread service.
 Desktop review inspection is split across narrow Electron main-process
 services. `ReviewService` aggregates run summary, verification, logs, memory
 proposal counts, local accept/reject decision artifacts, the latest persisted
-conversation brief artifact, and the latest persisted TaskRunner safety report
-when one exists. The desktop-facing inspector maps that evidence to workgroup
-tabs named Brief, Context, Artifacts, Checks, Risks, Memory, and Audit. Context
-is a review IPC read of the `conversation_brief` artifact, while handoff,
-comparison, and diff data remain inside the Artifacts tab as engineering
-evidence. Persisted non-placeholder risk reports take precedence over the
-deterministic desktop fallback, including `blocking` levels and mapped
-finding/risk-factor evidence, so desktop review does not downgrade scanner
-output from sensitive path changes or dangerous instructions. `DiffService`
+conversation brief artifact, bounded artifact metadata derived from existing
+`run_artifacts`, and the latest persisted TaskRunner safety report when one
+exists. The desktop-facing inspector maps that evidence to workgroup tabs named
+Brief, Context, Artifacts, Checks, Risks, Memory, and Audit. Context is a
+review IPC read of the `conversation_brief` artifact. Artifacts are exposed by
+`ReviewService.getArtifacts(runId)`, which maps persisted run artifacts into a
+local metadata model with title, type, source run/task ids, optional thread id,
+creator, summary, availability, and a capped content preview. This Phase 6
+model intentionally reuses `run_artifacts` instead of adding an artifact table,
+so existing task briefs, conversation briefs, diffs, review decisions, and
+provenance records remain readable. Handoff, comparison, and diff data remain
+inside the Artifacts tab as engineering evidence. Persisted non-placeholder
+risk reports take precedence over the deterministic desktop fallback, including
+`blocking` levels and mapped finding/risk-factor evidence, so desktop review
+does not downgrade scanner output from sensitive path changes or dangerous
+instructions. `DiffService`
 uses persisted diff artifacts when available and can read retained worktrees
 with read-only Git commands through
 `DiffCollector`, `NodeShellExecutor`, and safe Git configuration. It redacts
@@ -750,6 +757,13 @@ structure. Existing links that still request legacy tabs such as Summary, Diff,
 Tests, Risk, Compare, Handoff, or Logs are normalized in the renderer to Brief,
 Artifacts, Checks, Risks, Artifacts, Artifacts, or Audit so older timeline
 metadata remains openable while new UI chips use the workgroup names.
+
+Phase 6 adds an artifact model v0 without changing storage ownership. The
+Electron main process reads existing `run_artifacts`, derives desktop-facing
+artifact metadata in `ReviewService`, and serves it through preload IPC. The
+renderer displays named artifact chips on run-card timelines and a local
+artifact inventory in the Artifacts inspector tab, while full artifact content
+stays local and bounded before crossing into the sandboxed renderer.
 
 Repository CI/CD lives in `.github/workflows/ci-cd.yml` and stays outside the
 Agent Hub runtime. The workflow installs the pinned pnpm and Node versions from

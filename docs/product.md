@@ -415,7 +415,13 @@ Its top-level tabs use product vocabulary: Brief, Context, Artifacts, Checks,
 Risks, Memory, and Audit. Brief shows the goal, status, assignee, review state,
 acceptance-criteria placeholder, and decision boundary. Context loads the
 persisted `conversation_brief` run artifact through review IPC and otherwise
-shows a clear unavailable state. Artifacts contains engineering-specific
+shows a clear unavailable state. Artifacts now begins with a local artifact
+inventory derived from persisted `run_artifacts`. Each artifact has bounded
+metadata for title, artifact type, source run, source task, thread id when
+known, creator, summary, local availability, and a capped content preview.
+Important run outputs can also appear as named artifact chips on timeline run
+cards, linking back to the Artifacts inspector tab without copying raw evidence
+into the room transcript. The same tab still contains engineering-specific
 evidence such as changed-file stats, bounded unified diffs, retained-worktree
 handoff, and local comparison reports, keeping those labels out of the
 top-level navigation. Checks shows captured verification rows, Risks shows
@@ -528,7 +534,8 @@ Structured run data is now also persisted in first-class SQLite tables:
 
 - adapter event streams in `run_events`
 - manually recorded run events in `run_events`
-- git diff artifacts in `run_artifacts`
+- task briefs, conversation briefs, git diffs, review decisions, provenance,
+  and other local run evidence in `run_artifacts`
 - verification command rows in `verification_results`
 - risk reports in `risk_reports`
 - thread-local conversation summaries in `conversation_thread_summaries`
