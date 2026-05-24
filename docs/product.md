@@ -300,6 +300,24 @@ in `comparison_reports`, and returns the human summary plus structured signals
 through sandboxed IPC. Desktop comparison actions do not accept, merge, push,
 apply code, or change retained worktrees.
 
+Agent Hub's next product direction is the local AI workgroup roadmap in
+`docs/local-ai-workgroup-roadmap.md`. The roadmap evolves the existing
+conversation/run evidence model into room-based collaboration with configurable
+role-based participants, task grouping, timeline events, structured
+inspectors, artifacts, checks, risks, decisions, and memory governance. Preset
+roles are templates rather than a closed role set: users should be able to
+define custom role handles, capabilities, personas, permissions, context
+policies, approval policies, and executor bindings. The first executable role
+backend maps to existing local agent adapters, while the model leaves room for
+future LLM API, workflow, and human executors. The near-term strategy is
+incremental: reuse SQLite-backed conversation threads/messages, TaskRunner
+runs, run artifacts, verification results, risk reports, review decisions, and
+memory proposals before introducing larger domain splits. The phase roadmap is
+not only an MVP plan: it also defines long-term extension horizons for
+configurable roles, executor backends, workflow templates, artifact and
+knowledge models, pack metadata, and optional sync/collaboration surfaces while
+preserving local-first operation as the default.
+
 Agent Hub Desktop is now available as a local conversation console under
 `apps/desktop`. It starts with `pnpm --filter desktop dev` and presents a
 thread-first shell: threads and projects on the left, a conversation timeline
