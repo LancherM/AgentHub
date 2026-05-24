@@ -1,4 +1,4 @@
-import { ipcMain } from "electron";
+import { clipboard, ipcMain, shell } from "electron";
 import {
   createDesktopServices,
   createIpcHandlers,
@@ -18,7 +18,12 @@ export {
 } from "./ipc-handlers";
 
 export function registerAgentHubIpc(
-  services: DesktopServices = createDesktopServices()
+  services: DesktopServices = createDesktopServices(undefined, {
+    handoffPlatform: {
+      openPath: (worktreePath) => shell.openPath(worktreePath),
+      writeText: (text) => clipboard.writeText(text)
+    }
+  })
 ): void {
   const handlers = createIpcHandlers(services);
   for (const [channel, handler] of Object.entries(handlers)) {

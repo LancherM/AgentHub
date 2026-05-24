@@ -3,7 +3,9 @@ import type { Dispatch, SetStateAction } from "react";
 import { agentHubApi } from "../../lib/agentHubApi";
 import type {
   DiffSummary,
+  HandoffCopyKind,
   MemoryProposal,
+  ReviewHandoff,
   ReviewSummary,
   RiskReport as RiskReportModel,
   RunDetail,
@@ -36,6 +38,7 @@ const tabs: Array<{ id: RunInspectorTab; label: string }> = [
   { id: "diff", label: "Diff" },
   { id: "tests", label: "Tests" },
   { id: "risk", label: "Risk" },
+  { id: "handoff", label: "Handoff" },
   { id: "memory", label: "Memory" },
   { id: "logs", label: "Logs" }
 ];
@@ -56,6 +59,9 @@ export function RunInspectorModal({
   const [risk, setRisk] = useState<LoadState<RiskReportModel>>({
     loading: false
   });
+  const [handoff, setHandoff] = useState<LoadState<ReviewHandoff>>({
+    loading: false
+  });
   const [memory, setMemory] = useState<LoadState<MemoryProposal[]>>({
     loading: false
   });
@@ -69,6 +75,7 @@ export function RunInspectorModal({
     setDiff({ loading: false });
     setVerification({ loading: false });
     setRisk({ loading: false });
+    setHandoff({ loading: false });
     setMemory({ loading: false });
     setLogs({ loading: false });
     void loadSummary();
@@ -108,6 +115,8 @@ export function RunInspectorModal({
       );
     } else if (tab === "risk") {
       await loadState(setRisk, () => agentHubApi.review.getRisk(runId));
+    } else if (tab === "handoff") {
+      await loadState(setHandoff, () => agentHubApi.review.getHandoff(runId));
     } else if (tab === "memory") {
       await loadState(setMemory, () => agentHubApi.memory.listProposals(runId));
       await loadSummary();
@@ -144,6 +153,29 @@ export function RunInspectorModal({
     }
   }
 
+  async function openHandoff(): Promise<void> {
+    setDecisionMessage(undefined);
+    try {
+      const result = await agentHubApi.review.openHandoffWorktree(runId);
+      setDecisionMessage(result.message);
+      if (!result.ok) {
+        await loadState(setHandoff, () => agentHubApi.review.getHandoff(runId));
+      }
+    } catch (error) {
+      setDecisionMessage(errorMessage(error));
+    }
+  }
+
+  async function copyHandoff(kind: HandoffCopyKind): Promise<void> {
+    setDecisionMessage(undefined);
+    try {
+      const result = await agentHubApi.review.copyHandoffValue(runId, kind);
+      setDecisionMessage(result.message);
+    } catch (error) {
+      setDecisionMessage(errorMessage(error));
+    }
+  }
+
   const title = summary.data?.task ?? initialRun?.title ?? "Loading run...";
 
   return (
@@ -175,10 +207,10 @@ export function RunInspectorModal({
               Refresh
             </button>
             <button className="ghost-button" onClick={() => void accept()}>
-              Accept
+              Record Accept
             </button>
             <button className="ghost-button danger" onClick={() => void reject()}>
-              Reject
+              Record Reject
             </button>
             <button className="ghost-button" onClick={onClose}>
               Close
@@ -216,6 +248,16 @@ export function RunInspectorModal({
             </LoadSlot>
           ) : activeTab === "risk" ? (
             <LoadSlot state={risk}>{(data) => <RiskReport report={data} />}</LoadSlot>
+          ) : activeTab === "handoff" ? (
+            <LoadSlot state={handoff}>
+              {(data) => (
+                <HandoffPanel
+                  handoff={data}
+                  onOpen={() => void openHandoff()}
+                  onCopy={(kind) => void copyHandoff(kind)}
+                />
+              )}
+            </LoadSlot>
           ) : activeTab === "memory" ? (
             <LoadSlot state={memory}>
               {(data) => (
@@ -254,7 +296,7 @@ function Summary({
           <RunStatusBadge status={summary.status} />
         </div>
       </section>
-      <section className="summary-metrics wide">
+      <section className="summary-metrics wide handoff-metrics">
         <Metric label="Agent" value={`@${summary.agentId}`} />
         <Metric label="Review" value={summary.reviewStatus} />
         <Metric label="Duration" value={formatDuration(summary.durationMs)} />
@@ -274,6 +316,150 @@ function Summary({
         <p>
           Accepting or rejecting records review state only. It does not merge,
           push, delete worktrees, revert files, or write repository context files.
+        </p>
+      </section>
+    </div>
+  );
+}
+
+function HandoffPanel({
+  handoff,
+  onOpen,
+  onCopy
+}: {
+  handoff: ReviewHandoff;
+  onOpen(): void;
+  onCopy(kind: HandoffCopyKind): void;
+}): JSX.Element {
+  return (
+    <div className="summary-stack">
+      <section>
+        <div className="summary-heading">
+          <div>
+            <div className="panel-label">Manual Handoff</div>
+            <p>
+              {handoff.message ??
+                "No retained worktree evidence is available for this run."}
+            </p>
+          </div>
+          <span className={`handoff-state ${handoff.available ? "ready" : "unavailable"}`}>
+            {handoff.available ? "retained" : "unavailable"}
+          </span>
+        </div>
+      </section>
+
+      <section className="summary-metrics wide">
+        <Metric label="Worktree" value={handoff.worktreePath ?? "none"} />
+        <Metric label="Branch" value={handoff.branchName ?? "none"} />
+        <Metric label="Base" value={handoff.baseRef ?? "none"} />
+        <Metric label="Head" value={handoff.headRef ?? "none"} />
+        <Metric
+          label="Cleanup"
+          value={handoff.cleanup.cleaned ? "cleaned" : handoff.cleanup.retained ? "retained" : "unknown"}
+        />
+        <Metric label="Files" value={`${handoff.changedFiles.length}`} />
+      </section>
+
+      {handoff.cleanup.reason ? (
+        <section>
+          <div className="panel-label">Cleanup Reason</div>
+          <p>{handoff.cleanup.reason}</p>
+        </section>
+      ) : null}
+
+      <section>
+        <div className="panel-label">Worktree Evidence</div>
+        <div className="handoff-value-list">
+          <div>
+            <span>Path</span>
+            <code>{handoff.worktreePath ?? "none"}</code>
+          </div>
+          <div>
+            <span>Branch</span>
+            <code>{handoff.branchName ?? "none"}</code>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <div className="review-section-head">
+          <div>
+            <div className="panel-label">Local Actions</div>
+            <p className="muted-copy">
+              These actions open or copy review information only.
+            </p>
+          </div>
+        </div>
+        <div className="handoff-action-row">
+          <button
+            className="ghost-button"
+            onClick={onOpen}
+            disabled={!handoff.available}
+          >
+            Open Worktree
+          </button>
+          <button
+            className="ghost-button"
+            onClick={() => onCopy("worktree_path")}
+            disabled={!handoff.available || !handoff.worktreePath}
+          >
+            Copy Path
+          </button>
+          <button
+            className="ghost-button"
+            onClick={() => onCopy("branch_name")}
+            disabled={!handoff.available || !handoff.branchName}
+          >
+            Copy Branch
+          </button>
+          <button
+            className="ghost-button"
+            onClick={() => onCopy("review_commands")}
+            disabled={!handoff.available || handoff.commands.length === 0}
+          >
+            Copy Commands
+          </button>
+        </div>
+      </section>
+
+      <section>
+        <div className="panel-label">Changed Files</div>
+        {handoff.changedFiles.length === 0 ? (
+          <p className="muted-copy">No changed files are available for handoff.</p>
+        ) : (
+          <ul className="file-list">
+            {handoff.changedFiles.map((file) => (
+              <li key={file.path}>
+                <span className={`file-status ${file.status}`}>{file.status}</span>
+                <strong>{file.path}</strong>
+                <em>+{file.additions}/-{file.deletions}</em>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      <section>
+        <div className="panel-label">Review Commands</div>
+        {handoff.commands.length === 0 ? (
+          <p className="muted-copy">No review commands are available.</p>
+        ) : (
+          <div className="handoff-command-list">
+            {handoff.commands.map((command) => (
+              <div key={command.label}>
+                <span>{command.label}</span>
+                <code>{command.command}</code>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+
+      <section>
+        <div className="panel-label">Boundary</div>
+        <p>
+          Agent Hub does not merge, push, apply patches, delete worktrees, or write
+          repository context files from this handoff.
         </p>
       </section>
     </div>

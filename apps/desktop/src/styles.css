@@ -1142,6 +1142,91 @@ textarea:disabled {
   white-space: nowrap;
 }
 
+.handoff-metrics strong {
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.handoff-state {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 88px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 5px 10px;
+  font-size: 11px;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.handoff-state.ready {
+  border-color: rgba(103, 216, 196, 0.38);
+  color: var(--cyan);
+  background: rgba(103, 216, 196, 0.09);
+}
+
+.handoff-state.unavailable {
+  color: var(--muted);
+}
+
+.handoff-action-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.handoff-command-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.handoff-value-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.handoff-value-list div {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr);
+  gap: 10px;
+  padding: 9px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.handoff-command-list div {
+  display: grid;
+  grid-template-columns: 140px minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+  padding: 9px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.handoff-command-list span,
+.handoff-value-list span {
+  color: var(--muted-2);
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.handoff-command-list code,
+.handoff-value-list code {
+  overflow-wrap: anywhere;
+  color: #e6dfcf;
+  font-family: "SFMono-Regular", "Cascadia Code", Consolas, monospace;
+  font-size: 12px;
+}
+
 .file-list,
 .finding-list,
 .check-list {

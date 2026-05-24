@@ -73,7 +73,14 @@ instructions. `DiffService` uses persisted diff artifacts when available and
 can read retained worktrees with read-only Git commands through
 `DiffCollector`, `NodeShellExecutor`, and safe Git configuration. It redacts
 patch text before returning desktop review data when changed-file metadata or
-diff headers identify sensitive paths. `RiskService`
+diff headers identify sensitive paths. `ReviewService` also owns the retained
+worktree handoff boundary: it validates retained worktree metadata, cleanup
+state, absolute paths, recorded workspace path matches, and Agent Hub workspace
+base containment before returning a path, branch, refs, changed files, and
+review-only local commands. Opening a worktree or copying handoff values uses
+injected Electron shell/clipboard helpers behind IPC so the renderer never
+chooses arbitrary clipboard content or opens filesystem paths directly.
+`RiskService`
 is deterministic and evidence based; it classifies changed paths, verification
 failures, large diffs, dependency/config changes, generated files, and
 source-without-tests conditions without calling an LLM when no persisted
@@ -86,9 +93,10 @@ filesystem, SQLite, shell, child-process, or Git access.
 
 Run review decisions are stored as local `run_artifacts` entries of kind
 `review_decision`. They are not execution status transitions and they do not
-mutate branches, merge output, push code, clean worktrees, delete files, or
-write repository-side context files. This keeps Phase 4 review auditable while
-leaving any explicit apply/merge workflow for a later phase.
+mutate branches, merge output, push code, apply patches, clean worktrees,
+delete files, or write repository-side context files. Retained-worktree handoff
+is manual review assistance only, leaving any explicit apply/merge workflow for
+a later phase.
 
 `packages/core` and `packages/db` now include durable conversation thread and
 message repositories backed by local SQLite tables. They store thread metadata,
@@ -628,6 +636,7 @@ conversation threads, inline run cards, diffs, verification, risk, and memory
 proposal data from local SQLite repositories. It does not add an API server.
 Desktop run creation now reuses TaskRunner and the shared fake/Codex/Claude
 adapter layer from the Electron main process. The inspector accept/reject flow
-records review decisions only; merge, push, PR creation, worktree cleanup,
-repository context export, and code application remain explicit future
-workflows.
+records review decisions only, while retained-worktree handoff exposes local
+paths, branches, changed files, and review commands through validated IPC;
+merge, push, PR creation, worktree cleanup, repository context export, and code
+application remain explicit future workflows.
