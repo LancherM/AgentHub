@@ -1250,6 +1250,87 @@ describe("desktop services", () => {
     ]);
   });
 
+  it("resolves preset role mentions through executor metadata without changing adapter execution", async () => {
+    const fixture = await createFixture();
+    const context = createDesktopServiceContext(fixture.repositories);
+    const projects = createProjectService(context);
+    const memory = createMemoryService(context);
+    const review = createReviewService(context, { memoryService: memory });
+    const runs = createTestRunService(context, review, memory, fixture);
+    const threads = createThreadService({ context, projects, runs });
+    const project = await projects.open(fixture.projectRoot);
+
+    const detail = await threads.sendMessage({
+      projectId: project.id,
+      text: "@researcher summarize the current thread",
+      contextMode: "auto"
+    });
+    const runMessage = detail.messages.find(
+      (message) => message.type === "agent_run"
+    );
+    if (!runMessage || runMessage.type !== "agent_run") {
+      throw new Error("expected a role-backed run card");
+    }
+
+    expect(detail.messages[0]).toMatchObject({
+      type: "user",
+      text: "summarize the current thread",
+      mentions: ["fake"],
+      roleMentions: [
+        expect.objectContaining({
+          roleHandle: "researcher",
+          executorKind: "agent_adapter",
+          adapterKind: "fake"
+        })
+      ]
+    });
+    expect(runMessage.agentId).toBe("fake");
+
+    const rawMessages =
+      await fixture.repositories.conversationMessageRepository.listByThreadId(
+        detail.id
+      );
+    expect(rawMessages[0]?.metadata).toMatchObject({
+      roleMentions: [
+        expect.objectContaining({
+          roleHandle: "researcher",
+          executorKind: "agent_adapter",
+          adapterKind: "fake"
+        })
+      ]
+    });
+    const rawRunCard = rawMessages.find((message) => message.kind === "run_card");
+    expect(rawRunCard?.metadata).toMatchObject({
+      role: expect.objectContaining({
+        roleHandle: "researcher",
+        executorKind: "agent_adapter",
+        adapterKind: "fake"
+      }),
+      executor: {
+        kind: "agent_adapter",
+        adapterKind: "fake"
+      }
+    });
+
+    await waitForRun(runs, runMessage.runId, "completed");
+    await expect(
+      fixture.repositories.runMetadataRepository.get(runMessage.runId)
+    ).resolves.toMatchObject({
+      role: expect.objectContaining({
+        roleHandle: "researcher",
+        executorKind: "agent_adapter",
+        adapterKind: "fake"
+      })
+    });
+    const brief =
+      await fixture.repositories.runArtifactRepository.getLatestByRunIdAndKind(
+        runMessage.runId,
+        "conversation_brief"
+      );
+    expect(brief?.content).toContain("workgroup_role: @researcher");
+    expect(brief?.content).toContain("role_instructions:");
+  });
+
   it("creates desktop comparison reports for terminal runs in the same multi-agent turn", async () => {
     const fixture = await createFixture();
     const context = createDesktopServiceContext(fixture.repositories);

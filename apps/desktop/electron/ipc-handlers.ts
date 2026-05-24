@@ -350,6 +350,7 @@ function parseCreateRunInput(input: unknown): CreateRunInput {
     prompt,
     title,
     agentId,
+    role: value.role,
     contextMode,
     deliveryMode,
     continueFromRunId:

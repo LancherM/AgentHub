@@ -650,6 +650,13 @@ CREATE INDEX IF NOT EXISTS idx_task_runs_parent_run
 CREATE INDEX IF NOT EXISTS idx_task_runs_parent_message
   ON task_runs(parent_message_id);
 `
+  },
+  {
+    version: 10,
+    sql: `
+ALTER TABLE run_metadata
+  ADD COLUMN role_json TEXT CHECK (role_json IS NULL OR json_valid(role_json));
+`
   }
 ];
 
@@ -1259,6 +1266,7 @@ INSERT INTO run_metadata (
   diff_json,
   verification_json,
   risk_report_json,
+  role_json,
   updated_at
 ) VALUES (
   ${sqlString(updated.runId)},
@@ -1267,6 +1275,7 @@ INSERT INTO run_metadata (
   ${sqlJson(updated.diff)},
   ${sqlJson(updated.verification)},
   ${sqlJson(updated.riskReport)},
+  ${sqlJson(updated.role)},
   ${sqlString(new Date().toISOString())}
 )
 ON CONFLICT(run_id) DO UPDATE SET
@@ -1275,6 +1284,7 @@ ON CONFLICT(run_id) DO UPDATE SET
   diff_json = excluded.diff_json,
   verification_json = excluded.verification_json,
   risk_report_json = excluded.risk_report_json,
+  role_json = excluded.role_json,
   updated_at = excluded.updated_at;
 `);
     return cloneRunMetadata(updated);
@@ -1288,7 +1298,8 @@ SELECT
   workspace_cleanup_json AS workspaceCleanupJson,
   diff_json AS diffJson,
   verification_json AS verificationJson,
-  risk_report_json AS riskReportJson
+  risk_report_json AS riskReportJson,
+  role_json AS roleJson
 FROM run_metadata
 WHERE run_id = ${sqlString(runId)}
 LIMIT 1;
@@ -2148,6 +2159,7 @@ interface RunMetadataRow extends Record<string, unknown> {
   diffJson: string | null;
   verificationJson: string | null;
   riskReportJson: string | null;
+  roleJson: string | null;
 }
 
 interface RunEventRow extends Record<string, unknown> {
@@ -2332,7 +2344,8 @@ function metadataFromRow(row: RunMetadataRow): RunMetadata {
     workspaceCleanup: parseJson(row.workspaceCleanupJson),
     diff: parseJson(row.diffJson),
     verification: parseJson(row.verificationJson),
-    riskReport: parseJson(row.riskReportJson)
+    riskReport: parseJson(row.riskReportJson),
+    role: parseJson(row.roleJson)
   };
 }
 

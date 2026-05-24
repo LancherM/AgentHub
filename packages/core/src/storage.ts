@@ -1,5 +1,6 @@
 import type {
   DiffCollectionResult,
+  WorkgroupRoleRunMetadata,
   VerificationSuiteResult,
   Workspace,
   WorkspaceCleanupResult
@@ -92,6 +93,7 @@ export interface RunMetadata {
   diff?: DiffCollectionResult;
   verification?: VerificationSuiteResult;
   riskReport?: RiskReport;
+  role?: WorkgroupRoleRunMetadata;
 }
 
 export interface RunMetadataRepository {
@@ -780,6 +782,20 @@ export function cloneRunMetadata(metadata: RunMetadata): RunMetadata {
           riskFactors: [...metadata.riskReport.riskFactors],
           manualReviewChecklist: [...metadata.riskReport.manualReviewChecklist],
           findings: metadata.riskReport.findings.map((finding) => ({ ...finding }))
+        }
+      : undefined,
+    role: metadata.role
+      ? {
+          ...metadata.role,
+          permissions: [...metadata.role.permissions],
+          contextPolicy: {
+            ...metadata.role.contextPolicy,
+            instructions: [...metadata.role.contextPolicy.instructions]
+          },
+          approvalPolicy: {
+            ...metadata.role.approvalPolicy,
+            requiredFor: [...metadata.role.approvalPolicy.requiredFor]
+          }
         }
       : undefined
   };

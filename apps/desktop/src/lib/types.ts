@@ -1,3 +1,5 @@
+import type { WorkgroupRoleRunMetadata } from "@agent-hub/shared";
+
 export type AgentId = "fake" | "codex" | "claude";
 export type AgentKind = AgentId;
 export type MemoryCategory =
@@ -114,6 +116,7 @@ export interface UserMessage extends BaseThreadMessage {
   type: "user";
   text: string;
   mentions: AgentId[];
+  roleMentions?: WorkgroupRoleRunMetadata[];
 }
 
 export interface AgentRunMessage extends BaseThreadMessage {
@@ -205,6 +208,7 @@ export interface CreateRunInput {
   prompt: string;
   title?: string;
   agentId: AgentId;
+  role?: WorkgroupRoleRunMetadata;
   contextMode: ContextMode;
   deliveryMode?: "runtime_injection" | "worktree_overlay";
   continueFromRunId?: string;

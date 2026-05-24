@@ -3,6 +3,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import type { DiffCollectionResult } from "@agent-hub/task-runner";
 import type { RiskReport } from "@agent-hub/core";
+import { presetWorkgroupRoles, toWorkgroupRoleRunMetadata } from "@agent-hub/core";
 import { SQLITE_MIGRATIONS, createSqliteRepositories } from "@agent-hub/db";
 import type { VerificationSuiteResult } from "@agent-hub/task-runner";
 import type { Workspace, WorkspaceCleanupResult } from "@agent-hub/task-runner";
@@ -34,7 +35,8 @@ describe("SQLite storage", () => {
       { version: 6 },
       { version: 7 },
       { version: 8 },
-      { version: 9 }
+      { version: 9 },
+      { version: 10 }
     ]);
     await expect(
       database.query<{ name: string }>(
@@ -43,6 +45,11 @@ describe("SQLite storage", () => {
     ).resolves.toEqual(
       expect.arrayContaining([{ name: "details_json" }])
     );
+    await expect(
+      database.query<{ name: string }>(
+        "SELECT name FROM pragma_table_info('run_metadata') ORDER BY cid ASC;"
+      )
+    ).resolves.toEqual(expect.arrayContaining([{ name: "role_json" }]));
     await expect(
       database.query<{ name: string }>(
         "SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name ASC;"
@@ -183,7 +190,8 @@ describe("SQLite storage", () => {
       workspaceCleanup: workspaceCleanup(),
       diff: diff(baseDirectory),
       verification: verification(),
-      riskReport: riskReport()
+      riskReport: riskReport(),
+      role: toWorkgroupRoleRunMetadata(presetWorkgroupRoles[0])
     });
     await first.runEventRepository.createMany([
       {
@@ -314,7 +322,12 @@ describe("SQLite storage", () => {
           changedFiles: [{ path: "fake-agent-output.md", status: "untracked" }]
         }),
         verification: expect.objectContaining({ summary: "1 passed, 0 failed, 0 skipped" }),
-        riskReport: expect.objectContaining({ level: "low" })
+        riskReport: expect.objectContaining({ level: "low" }),
+        role: expect.objectContaining({
+          roleHandle: "researcher",
+          executorKind: "agent_adapter",
+          adapterKind: "fake"
+        })
       })
     );
     await expect(second.conversationThreadRepository.list("project_1")).resolves.toEqual([
@@ -862,7 +875,8 @@ VALUES (
       { version: 6 },
       { version: 7 },
       { version: 8 },
-      { version: 9 }
+      { version: 9 },
+      { version: 10 }
     ]);
   });
 
@@ -911,7 +925,8 @@ VALUES (
       { version: 6 },
       { version: 7 },
       { version: 8 },
-      { version: 9 }
+      { version: 9 },
+      { version: 10 }
     ]);
     await expect(repositories.database.execute(`
 INSERT INTO tasks (id, project_id, title, status, created_at, updated_at)
@@ -982,7 +997,8 @@ VALUES ('message_summary_legacy', 'thread_summary_legacy', 0, 'user', 'text', 'P
       { version: 6 },
       { version: 7 },
       { version: 8 },
-      { version: 9 }
+      { version: 9 },
+      { version: 10 }
     ]);
   });
 

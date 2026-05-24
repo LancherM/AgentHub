@@ -10,6 +10,7 @@ import {
   InMemoryTaskRunRepository,
   nowIso,
   parseAgentKind,
+  presetWorkgroupRoles,
   validateAgentProfile,
   validateComparisonReport,
   validateContextPack,
@@ -29,7 +30,8 @@ import {
   validateTaskRun,
   validateTaskRunStatusTransition,
   validateTaskStatusTransition,
-  validateVerificationResult
+  validateVerificationResult,
+  validateWorkgroupRole
 } from "@agent-hub/core";
 
 const createdAt = "2026-01-01T00:00:00.000Z";
@@ -97,6 +99,40 @@ describe("domain model validation", () => {
         status: "review_ready" as never,
         createdAt: now,
         updatedAt: now
+      })
+    ).toThrow(DomainValidationError);
+  });
+
+  it("validates preset and custom workgroup role contracts", () => {
+    const researcher = presetWorkgroupRoles.find(
+      (role) => role.handle === "researcher"
+    );
+    if (!researcher) {
+      throw new Error("missing researcher preset");
+    }
+
+    expect(validateWorkgroupRole(researcher)).toBe(researcher);
+    expect(
+      validateWorkgroupRole({
+        ...researcher,
+        id: "role_custom_customer",
+        handle: "customer",
+        displayName: "Customer",
+        executor: {
+          kind: "human",
+          configRef: "local-human-reviewer",
+          unavailableReason: "Human assignment runtime is reserved."
+        }
+      })
+    ).toMatchObject({
+      handle: "customer",
+      executor: { kind: "human" }
+    });
+
+    expect(() =>
+      validateWorkgroupRole({
+        ...researcher,
+        handle: "@Bad"
       })
     ).toThrow(DomainValidationError);
   });

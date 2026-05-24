@@ -22,11 +22,15 @@ import {
   type IdGenerator,
   type TaskRunnerDependencies
 } from "@agent-hub/task-runner";
-import type {
-  AgentKind as CoreAgentKind,
-  JsonObject,
-  RunEventType as CoreRunEventType,
-  TaskRunStatus as CoreRunStatus
+import {
+  normalizeWorkgroupRoleHandle,
+  workgroupExecutorKinds,
+  type WorkgroupAgentAdapterKind,
+  type AgentKind as CoreAgentKind,
+  type JsonObject,
+  type RunEventType as CoreRunEventType,
+  type TaskRunStatus as CoreRunStatus,
+  type WorkgroupRoleRunMetadata
 } from "@agent-hub/shared";
 import type {
   AgentId,
@@ -83,9 +87,10 @@ interface ActiveRun {
 interface ParsedCreateRunInput
   extends Omit<
     Required<CreateRunInput>,
-    "continueFromRunId" | "continueFromMessageId"
+    "continueFromRunId" | "continueFromMessageId" | "role"
   > {
   conversationBrief?: string | ConversationContextBrief;
+  role?: WorkgroupRoleRunMetadata;
   continueFromRunId?: string;
   continueFromMessageId?: string;
 }
@@ -192,13 +197,16 @@ class RepositoryRunService implements RunService {
     if (!project) {
       throw new Error(`project ${task.projectId} not found`);
     }
+    const status = this.currentDesktopStatus(run);
     const [events, diff, verification, risk, memoryProposals] =
       await Promise.all([
         this.events.listByRunId(runId),
         this.dependencies.reviewService.getDiff(runId),
         this.dependencies.reviewService.getVerification(runId),
         this.dependencies.reviewService.getRisk(runId),
-        this.dependencies.memoryService.listProposals(runId)
+        isTerminalStatus(status)
+          ? this.dependencies.memoryService.listProposals(runId)
+          : Promise.resolve([])
       ]);
     const summary = finalSummary(events) ?? statusSummary(run);
     return {
@@ -261,6 +269,12 @@ class RepositoryRunService implements RunService {
         updatedAt: createdAt
       })
     );
+    if (parsed.role) {
+      await this.metadata.save({
+        runId: run.id,
+        role: parsed.role
+      });
+    }
     this.runInputs.set(run.id, parsed);
 
     queueMicrotask(() => {
@@ -413,6 +427,8 @@ class RepositoryRunService implements RunService {
       title: task.title,
       deliveryMode: input.deliveryMode,
       conversationBrief: input.conversationBrief,
+      userConstraints: roleUserConstraints(input.role),
+      executionHints: roleExecutionHints(input.role),
       verificationCommands,
       workspaceBasePath: this.desktopWorkspaceBasePath(),
       workspaceCleanupPolicy: "never",
@@ -700,9 +716,125 @@ function parseCreateRunInput(input: CreateDesktopRunInput): ParsedCreateRunInput
     contextMode,
     deliveryMode,
     conversationBrief: input.conversationBrief,
+    role: parseRoleMetadata(input.role),
     continueFromRunId: input.continueFromRunId,
     continueFromMessageId: input.continueFromMessageId
   };
+}
+
+function parseRoleMetadata(
+  value: unknown
+): WorkgroupRoleRunMetadata | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!value || typeof value !== "object") {
+    throw new Error("role metadata must be an object when provided");
+  }
+  const role = value as WorkgroupRoleRunMetadata;
+  if (
+    typeof role.roleId !== "string" ||
+    typeof role.roleHandle !== "string" ||
+    typeof role.displayName !== "string" ||
+    typeof role.executorKind !== "string"
+  ) {
+    throw new Error("role metadata must include roleId, roleHandle, displayName, and executorKind");
+  }
+  const normalizedHandle = normalizeWorkgroupRoleHandle(role.roleHandle);
+  if (
+    role.roleId.trim().length === 0 ||
+    !normalizedHandle ||
+    normalizedHandle !== role.roleHandle ||
+    role.displayName.trim().length === 0
+  ) {
+    throw new Error("role metadata contains invalid role identity values");
+  }
+  if (
+    !workgroupExecutorKinds.includes(
+      role.executorKind as WorkgroupRoleRunMetadata["executorKind"]
+    )
+  ) {
+    throw new Error("role metadata executorKind is not supported");
+  }
+  if (role.executorKind !== "agent_adapter") {
+    throw new Error("role metadata executorKind is not executable yet");
+  }
+  if (!isWorkgroupAgentAdapterKind(role.adapterKind)) {
+    throw new Error("role metadata adapterKind is required for agent_adapter executors");
+  }
+  const contextPolicy = recordValue(role.contextPolicy);
+  const approvalPolicy = recordValue(role.approvalPolicy);
+  const contextScope =
+    typeof contextPolicy?.scope === "string" &&
+    contextPolicy.scope.trim().length > 0
+      ? contextPolicy.scope
+      : "current_thread_and_project_context";
+  return {
+    roleId: role.roleId,
+    roleHandle: role.roleHandle,
+    displayName: role.displayName,
+    executorKind: role.executorKind,
+    adapterKind: role.adapterKind,
+    persona: typeof role.persona === "string" ? role.persona : "",
+    defaultInstructions:
+      typeof role.defaultInstructions === "string" ? role.defaultInstructions : "",
+    permissions: stringArray(role.permissions),
+    contextPolicy: {
+      scope: contextScope,
+      includeApprovedMemory: contextPolicy?.includeApprovedMemory === true,
+      includeThreadSummary: contextPolicy?.includeThreadSummary !== false,
+      instructions: stringArray(contextPolicy?.instructions)
+    },
+    approvalPolicy: {
+      requiredFor: stringArray(approvalPolicy?.requiredFor),
+      summary:
+        typeof approvalPolicy?.summary === "string"
+          ? approvalPolicy.summary
+          : ""
+    }
+  };
+}
+
+function roleUserConstraints(role?: WorkgroupRoleRunMetadata): string[] | undefined {
+  if (!role) {
+    return undefined;
+  }
+  return [
+    `Act as workgroup role @${role.roleHandle} (${role.displayName}).`,
+    `Role persona: ${role.persona}`,
+    `Role instructions: ${role.defaultInstructions}`,
+    `Role permissions: ${role.permissions.join(", ") || "none"}`,
+    `Role approval policy: ${role.approvalPolicy.summary}`
+  ];
+}
+
+function roleExecutionHints(role?: WorkgroupRoleRunMetadata): string[] | undefined {
+  if (!role) {
+    return undefined;
+  }
+  return [
+    `executor_kind=${role.executorKind}`,
+    role.adapterKind ? `adapter_kind=${role.adapterKind}` : undefined,
+    `context_policy=${role.contextPolicy.scope}`
+  ].filter((hint): hint is string => hint !== undefined);
+}
+
+function stringArray(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((entry): entry is string => typeof entry === "string")
+    : [];
+}
+
+function recordValue(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined;
+}
+
+function isWorkgroupAgentAdapterKind(
+  value: unknown
+): value is WorkgroupAgentAdapterKind {
+  return value === "fake" || value === "codex" || value === "claude-code";
 }
 
 function parseNonEmptyString(value: unknown, label: string): string {

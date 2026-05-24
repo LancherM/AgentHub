@@ -7,8 +7,8 @@ Current workspace boundaries:
 
 - `packages/shared`: shared enums, DTOs, JSON/value types, ID/time helpers,
   process environment helpers, context bundle contracts, shell/diff/
-  verification/workspace result contracts, agent kinds, context delivery
-  modes, memory states, and risk levels.
+  verification/workspace result contracts, agent kinds, workgroup role and
+  executor contracts, context delivery modes, memory states, and risk levels.
 - `packages/core`: domain validation, state transition helpers, repository
   interfaces, and in-memory repository implementations. Core depends only on
   shared and does not import db, task-runner, adapters, context-compiler,
@@ -133,24 +133,30 @@ populate the next `TaskRunner` input and do not promote thread context or
 accept any parent branch.
 
 `apps/desktop/electron/services/thread-service.ts` is the desktop conversation
-facade over those repositories. It parses safe `@fake`, `@codex`, and
-`@claude` mentions, implements `sendMessage` by appending one durable user
-message, creating one run per selected agent through `RunService`, and
-appending one durable run-card message plus one hidden pending assistant-output
-message per run. The renderer-facing `window.agentHub.threads.*` contract
-remains unchanged, but service state is loaded from SQLite through lightweight
-thread reads. Thread lists do not reconcile every thread or hydrate full run
-details; they derive run-card display status and active counts from
-`RunService.listRunStatuses()`. Selected thread details reconcile only pending
-assistant-output placeholders, and finalized assistant messages are treated as
-stable transcript rows. When a run reaches `completed`, `failed`, or
-`cancelled`, reconciliation uses `RunService.getConversationRunSnapshot()`,
-which reads run rows and events only, to produce bounded agent-facing output or
-a concise terminal summary. Raw logs, diffs, verification output, and risk
-evidence remain on the run model and load through review IPC only when the user
-expands a card or opens the inspector. If an older database has runs but no
-conversation threads, the service performs a one-time compatibility import into
-conversation rows so existing desktop run records stay inspectable.
+facade over those repositories. It parses safe debug adapter mentions
+(`@fake`, `@codex`, `@claude`, and `@claude-code`) plus enabled workgroup role
+mentions from the shared preset/custom role contract. `sendMessage` appends one
+durable user message, stores resolved role metadata on that message when
+present, creates one run per selected adapter or role participant through
+`RunService`, and appends one durable run-card message plus one hidden pending
+assistant-output message per run. Role-targeted run-card messages persist both
+the compact role metadata and the executor mapping so review surfaces can
+attribute local agent output to the requested participant without giving the
+renderer access to role resolution logic. The renderer-facing
+`window.agentHub.threads.*` contract remains unchanged, but service state is
+loaded from SQLite through lightweight thread reads. Thread lists do not
+reconcile every thread or hydrate full run details; they derive run-card
+display status and active counts from `RunService.listRunStatuses()`. Selected
+thread details reconcile only pending assistant-output placeholders, and
+finalized assistant messages are treated as stable transcript rows. When a run
+reaches `completed`, `failed`, or `cancelled`, reconciliation uses
+`RunService.getConversationRunSnapshot()`, which reads run rows and events only,
+to produce bounded agent-facing output or a concise terminal summary. Raw logs,
+diffs, verification output, and risk evidence remain on the run model and load
+through review IPC only when the user expands a card or opens the inspector. If
+an older database has runs but no conversation threads, the service performs a
+one-time compatibility import into conversation rows so existing desktop run
+records stay inspectable.
 
 The multi-turn architecture has persisted thread/message repositories, thread
 summary storage, the desktop thread service separated from task runs, and a
@@ -204,6 +210,17 @@ abort signal flows through adapters into `NodeProcessRunner` and verification
 shell execution; running desktop cancellation sends `SIGTERM` to process-backed
 agents or verification commands and records cancelled state only for runs that
 were actually stopped or had not started.
+
+When a desktop run is created from a workgroup role mention, `RunService`
+validates the compact role metadata received over IPC, saves it in the legacy
+run metadata repository for compatibility with existing review paths, and
+derives TaskRunner `userConstraints` and `executionHints` from the role persona,
+default instructions, permissions, context policy, and approval policy. The
+TaskRunner still receives a normal local adapter kind for execution, so Phase 1
+does not introduce a new runner branch, remote executor, browser server, or
+renderer-owned orchestration path. Reserved `llm_api`, `workflow`, and `human`
+executor kinds remain typed contracts until a later phase adds explicit local
+execution semantics.
 
 Desktop packaging is a local release concern layered over that shell. The
 workspace keeps Electron/Vite bundling in `apps/desktop`, then uses
@@ -472,6 +489,10 @@ Migration version 8 repeats the `conversation_thread_summaries` table creation
 with `IF NOT EXISTS` as a compatibility backfill for databases that recorded an
 intermediate version 6 marker before the thread-summary migration reached
 `main`.
+Migration version 10 adds nullable `role_json` to `run_metadata` so existing
+run review flows can associate a run with the resolved role handle, display
+name, executor kind, adapter kind, permissions, context policy, and approval
+policy without rebuilding the core `task_runs` table.
 
 Repository implementations enforce the imported state diagrams before writing
 status updates. Tasks may move `open -> running -> completed`, return from
@@ -660,6 +681,14 @@ or governance need. The roadmap also defines longer-term extension horizons:
 roles, executors, workflows, artifacts, knowledge, packs, and optional
 sync/collaboration should evolve through stable local contracts rather than
 short-lived MVP-only enums or UI assumptions.
+
+Phase 1 implements the first of those contracts without adding a role
+configuration UI or broad room schema. `packages/shared/src/workgroup-roles.ts`
+defines preset role templates, normalization/resolution helpers, the compact
+run-metadata shape, and the executor-kind union. `packages/core` validates role
+objects for tests and future persistence callers. The desktop service consumes
+those contracts from the main process, so role mentions are a local orchestration
+input layered over existing conversation messages and TaskRunner runs.
 
 Repository CI/CD lives in `.github/workflows/ci-cd.yml` and stays outside the
 Agent Hub runtime. The workflow installs the pinned pnpm and Node versions from

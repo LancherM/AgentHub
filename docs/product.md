@@ -319,6 +319,17 @@ configurable roles, executor backends, workflow templates, artifact and
 knowledge models, pack metadata, and optional sync/collaboration surfaces while
 preserving local-first operation as the default.
 
+The first workgroup role foundation is now available in the local desktop
+conversation service. Shared role contracts describe a stable handle, display
+name, purpose, capability summary, persona, default instructions, permissions,
+context policy, approval policy, enabled state, and executor binding. Preset
+roles include `@researcher`, `@writer`, `@analyst`, `@operator`, `@reviewer`,
+`@engineer`, and `@memory`, and user-defined role shapes such as `@qa`,
+`@pm`, `@legal`, or `@customer` can use the same contract. The currently
+runnable executor kind is `agent_adapter`, which maps role turns to existing
+local fake, Codex, or Claude Code adapters. Reserved executor kinds for
+`llm_api`, `workflow`, and `human` are representable but not executed yet.
+
 Agent Hub Desktop is now available as a local conversation console under
 `apps/desktop`. It starts with `pnpm --filter desktop dev` and presents a
 thread-first shell: threads and projects on the left, a conversation timeline
@@ -329,15 +340,22 @@ submitting either control calls the existing `window.agentHub.projects.open`
 IPC path and seeds a new conversation for the registered project.
 
 The composer accepts mention-based prompts such as `@fake ...` or multi-agent
-mentions. The renderer sends prompt text through the safe
+mentions, and it now also accepts enabled role handles such as `@researcher`
+or `@engineer` through the same text path. Debug adapter mentions
+(`@fake`, `@codex`, `@claude`, and `@claude-code`) remain supported. Role
+mentions are resolved in the Electron main process, persisted on the user
+message and run-card metadata, and copied to run metadata so review surfaces
+can show which role and executor produced a run. The renderer sends prompt text
+through the safe
 `window.agentHub.threads.sendMessage` preload API; the Electron main-process
-thread service strips known agent mentions from the task body, persists one
-ordered user message in the selected SQLite-backed conversation thread, creates
-one run per selected agent through `RunService`, and persists one inline run
-card message plus one hidden pending assistant-output message per run. When a
-run reaches a terminal state, the pending assistant message is updated with
-the agent-facing final output or a concise failure/cancel summary. If no agent
-is mentioned or supplied by the caller, desktop falls back to `@fake`.
+thread service strips known agent or role mentions from the task body, persists
+one ordered user message in the selected SQLite-backed conversation thread,
+creates one run per selected participant through `RunService`, and persists one
+inline run card message plus one hidden pending assistant-output message per
+run. When a run reaches a terminal state, the pending assistant message is
+updated with the agent-facing final output or a concise failure/cancel summary.
+If no agent or role is mentioned or supplied by the caller, desktop falls back
+to `@fake`.
 
 Active inline run cards subscribe to the existing desktop run event stream and
 replay already-persisted events when a subscription starts after a fast run has
@@ -361,9 +379,12 @@ bounded conversation brief before each run. The brief includes the current
 turn, recent thread messages, the latest conservative thread summary, terminal
 assistant answers from prior runs, compact prior run summaries when no
 assistant answer exists yet, project context-store references, and explicit
-character-budget metadata. A zero recent-message budget includes no prior
-messages, and the first message in an empty thread uses the retitled thread
-name in the injected brief. Agent Hub persists that exact brief as a
+character-budget metadata. Role-targeted desktop turns add the resolved role
+handle, display name, executor, persona, default instructions, permissions,
+context policy, and approval policy to that same brief and to TaskRunner
+constraints/hints before execution. A zero recent-message budget includes no
+prior messages, and the first message in an empty thread uses the retitled
+thread name in the injected brief. Agent Hub persists that exact brief as a
 `conversation_brief` run artifact so review can inspect what was injected. The
 brief excludes raw lifecycle/debug events, logs,
 diffs, verification output, risk evidence, and other review artifacts. Full

@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 export * from "./process-environment";
+export * from "./workgroup-roles";
 
 export const agentKinds = ["fake", "codex", "claude-code"] as const;
 export type AgentKind = (typeof agentKinds)[number];
