@@ -6,6 +6,7 @@ import { promisify } from "node:util";
 import { describe, expect, it, vi } from "vitest";
 import {
   validateConversationMessage,
+  validateConversationThread,
   validateMemoryItem,
   validateRunArtifact,
   validateRiskReport,
@@ -40,7 +41,11 @@ import {
   IPC_CHANNELS,
   runEventChannel
 } from "../apps/desktop/electron/ipc-handlers";
-import type { RunDetail, RunEvent } from "../apps/desktop/src/lib/types";
+import type {
+  AgentRunMessage,
+  RunDetail,
+  RunEvent
+} from "../apps/desktop/src/lib/types";
 import { MockProcessRunner, MockShellExecutor } from "./helpers";
 import {
   VerificationRunner,
@@ -1180,7 +1185,12 @@ describe("desktop services", () => {
       (message) => message.type === "agent_run"
     );
 
-    expect(detail.title).toBe("compare implementations");
+    expect(detail).toMatchObject({
+      title: "general",
+      roomType: "default",
+      roomHandle: "general",
+      pinned: true
+    });
     expect(detail.messages[0]).toMatchObject({
       type: "user",
       text: "compare implementations",
@@ -1241,13 +1251,94 @@ describe("desktop services", () => {
         .map((message) => message.text)
         .join("\n")
     ).not.toContain("Found package.json");
-    await expect(threads.listThreads()).resolves.toMatchObject([
-      {
-        id: detail.id,
-        activeRunCount: 0,
-        runCount: 2
-      }
+    const summaries = await threads.listThreads();
+    expect(summaries.find((thread) => thread.id === detail.id)).toMatchObject({
+      activeRunCount: 0,
+      runCount: 2
+    });
+  });
+
+  it("seeds default project rooms in conversation thread metadata", async () => {
+    const fixture = await createFixture();
+    const context = createDesktopServiceContext(fixture.repositories);
+    const projects = createProjectService(context);
+    const memory = createMemoryService(context);
+    const review = createReviewService(context, { memoryService: memory });
+    const runs = createTestRunService(context, review, memory, fixture);
+    const threads = createThreadService({ context, projects, runs });
+    const project = await projects.open(fixture.projectRoot);
+
+    const summaries = await threads.listThreads();
+    const projectRooms = summaries.filter((thread) => thread.projectId === project.id);
+
+    expect(projectRooms.map((thread) => thread.roomHandle)).toEqual([
+      "general",
+      "planning",
+      "research",
+      "review",
+      "knowledge"
     ]);
+    expect(projectRooms).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          title: "general",
+          roomType: "default",
+          roomHandle: "general",
+          pinned: true,
+          description: expect.stringContaining("Project-wide")
+        })
+      ])
+    );
+
+    const rawThreads =
+      await fixture.repositories.conversationThreadRepository.list(project.id);
+    expect(rawThreads.find((thread) => thread.title === "general")?.metadata)
+      .toMatchObject({
+        roomType: "default",
+        roomHandle: "general",
+        pinned: true
+      });
+  });
+
+  it("maps custom and legacy conversation threads as readable rooms", async () => {
+    const fixture = await createFixture();
+    const context = createDesktopServiceContext(fixture.repositories);
+    const projects = createProjectService(context);
+    const memory = createMemoryService(context);
+    const review = createReviewService(context, { memoryService: memory });
+    const runs = createTestRunService(context, review, memory, fixture);
+    const threads = createThreadService({ context, projects, runs });
+    const project = await projects.open(fixture.projectRoot);
+    const now = context.now();
+
+    const custom = await threads.createThread({
+      projectId: project.id,
+      title: "Design Review",
+      roomHandle: "#Design Review",
+      description: "Focused review room."
+    });
+    expect(custom).toMatchObject({
+      title: "Design Review",
+      roomType: "custom",
+      roomHandle: "design-review",
+      description: "Focused review room."
+    });
+
+    await fixture.repositories.conversationThreadRepository.create(
+      validateConversationThread({
+        id: "thread_legacy_room",
+        projectId: project.id,
+        title: "Legacy Topic",
+        createdAt: now,
+        updatedAt: now
+      })
+    );
+    const legacy = await threads.getThread("thread_legacy_room");
+    expect(legacy).toMatchObject({
+      title: "Legacy Topic",
+      roomType: "custom",
+      roomHandle: "legacy-topic"
+    });
   });
 
   it("resolves preset role mentions through executor metadata without changing adapter execution", async () => {
@@ -1430,9 +1521,11 @@ describe("desktop services", () => {
       text: "@fake unrelated comparison candidate",
       contextMode: "auto"
     });
-    const otherRun = other.messages.find(
-      (message) => message.type === "agent_run"
-    );
+    const otherRun = other.messages
+      .filter(
+        (message): message is AgentRunMessage => message.type === "agent_run"
+      )
+      .at(-1);
     if (!otherRun) {
       throw new Error("expected unrelated run card");
     }
@@ -1522,13 +1615,11 @@ describe("desktop services", () => {
       "fake agent completed",
       "fake agent completed"
     ]);
-    await expect(restartedThreads.listThreads()).resolves.toMatchObject([
-      {
-        id: first.id,
-        runCount: 2,
-        activeRunCount: 0
-      }
-    ]);
+    const summaries = await restartedThreads.listThreads();
+    expect(summaries.find((thread) => thread.id === first.id)).toMatchObject({
+      runCount: 2,
+      activeRunCount: 0
+    });
   });
 
   it("lists thread summaries without full run-detail hydration", async () => {
@@ -1557,13 +1648,11 @@ describe("desktop services", () => {
     const snapshotSpy = vi.spyOn(runs, "getConversationRunSnapshot");
     const statusSpy = vi.spyOn(runs, "listRunStatuses");
 
-    await expect(threads.listThreads()).resolves.toMatchObject([
-      {
-        id: detail.id,
-        runCount: 1,
-        activeRunCount: 0
-      }
-    ]);
+    const summaries = await threads.listThreads();
+    expect(summaries.find((thread) => thread.id === detail.id)).toMatchObject({
+      runCount: 1,
+      activeRunCount: 0
+    });
     expect(statusSpy).toHaveBeenCalledTimes(1);
     expect(getRunSpy).not.toHaveBeenCalled();
     expect(snapshotSpy).not.toHaveBeenCalled();
@@ -1665,21 +1754,17 @@ describe("desktop services", () => {
     }
 
     const initialSummaries = await threads.listThreads();
-    expect(initialSummaries).toMatchObject([
-      {
-        id: detail.id,
-        runCount: 1
-      }
-    ]);
-    expect([0, 1]).toContain(initialSummaries[0]?.activeRunCount);
+    const initialSummary = initialSummaries.find((thread) => thread.id === detail.id);
+    expect(initialSummary).toMatchObject({
+      runCount: 1
+    });
+    expect([0, 1]).toContain(initialSummary?.activeRunCount);
     await waitForRun(runs, run.runId, "completed");
-    await expect(threads.listThreads()).resolves.toMatchObject([
-      {
-        id: detail.id,
-        runCount: 1,
-        activeRunCount: 0
-      }
-    ]);
+    const finalSummaries = await threads.listThreads();
+    expect(finalSummaries.find((thread) => thread.id === detail.id)).toMatchObject({
+      runCount: 1,
+      activeRunCount: 0
+    });
   });
 
   it("persists bounded conversation brief artifacts for follow-up desktop turns", async () => {

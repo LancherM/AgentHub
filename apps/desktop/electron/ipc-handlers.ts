@@ -378,8 +378,33 @@ function parseCreateThreadInput(input: unknown): CreateThreadInput {
         ? undefined
         : parseId(value.projectId, "projectId"),
     title:
-      value.title === undefined ? undefined : parseId(value.title, "title")
+      value.title === undefined ? undefined : parseId(value.title, "title"),
+    roomType:
+      value.roomType === undefined ? undefined : parseRoomType(value.roomType),
+    roomHandle:
+      value.roomHandle === undefined
+        ? undefined
+        : parseId(value.roomHandle, "roomHandle"),
+    description:
+      value.description === undefined
+        ? undefined
+        : parseId(value.description, "description"),
+    pinned: value.pinned === undefined ? undefined : parseBoolean(value.pinned, "pinned")
   };
+}
+
+function parseRoomType(value: unknown): CreateThreadInput["roomType"] {
+  if (value === "default" || value === "custom" || value === "legacy") {
+    return value;
+  }
+  throw new Error("roomType must be default, custom, or legacy");
+}
+
+function parseBoolean(value: unknown, label: string): boolean {
+  if (typeof value !== "boolean") {
+    throw new Error(`${label} must be a boolean`);
+  }
+  return value;
 }
 
 function parseSendThreadMessageInput(input: unknown): SendThreadMessageInput {

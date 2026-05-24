@@ -114,6 +114,14 @@ source-message metadata. These summaries are local audit data for one thread
 only; they are not approved project memory and are not injected into other
 threads.
 
+Desktop rooms are currently metadata-backed conversation threads, not a
+separate table. `roomType`, `roomHandle`, `description`, and `pinned` live in
+`conversation_threads.metadata`, and the desktop thread service seeds
+`#general`, `#planning`, `#research`, `#review`, and `#knowledge` for each
+known project. Legacy conversation threads that do not have room metadata are
+mapped as readable custom rooms so the room navigation does not invalidate
+existing transcript data.
+
 `agent-hub chat` is the CLI path over the same durable conversation boundary.
 It resolves the local project, creates or resumes a conversation thread, writes
 one user message per natural-language line, runs the selected agent through the
@@ -139,15 +147,17 @@ mentions from the shared preset/custom role contract. `sendMessage` appends one
 durable user message, stores resolved role metadata on that message when
 present, creates one run per selected adapter or role participant through
 `RunService`, and appends one durable run-card message plus one hidden pending
-assistant-output message per run. Role-targeted run-card messages persist both
-the compact role metadata and the executor mapping so review surfaces can
-attribute local agent output to the requested participant without giving the
-renderer access to role resolution logic. The renderer-facing
+assistant-output message per run. When the caller does not provide a thread id,
+the service resolves the project's seeded `#general` room instead of creating a
+prompt-titled chat thread. Role-targeted run-card messages persist both the
+compact role metadata and the executor mapping so review surfaces can attribute
+local agent output to the requested participant without giving the renderer
+access to role resolution logic. The renderer-facing
 `window.agentHub.threads.*` contract remains unchanged, but service state is
 loaded from SQLite through lightweight thread reads. Thread lists do not
 reconcile every thread or hydrate full run details; they derive run-card
 display status and active counts from `RunService.listRunStatuses()`. Selected
-thread details reconcile only pending assistant-output placeholders, and
+room details reconcile only pending assistant-output placeholders, and
 finalized assistant messages are treated as stable transcript rows. When a run
 reaches `completed`, `failed`, or `cancelled`, reconciliation uses
 `RunService.getConversationRunSnapshot()`, which reads run rows and events only,
@@ -689,6 +699,14 @@ run-metadata shape, and the executor-kind union. `packages/core` validates role
 objects for tests and future persistence callers. The desktop service consumes
 those contracts from the main process, so role mentions are a local orchestration
 input layered over existing conversation messages and TaskRunner runs.
+
+Phase 2 implements the first room layer over that same boundary. The desktop
+sidebar now presents project selection, rooms, preset team roles, and local
+run-status counts, while the center timeline still reads and writes durable
+conversation messages and run cards through `window.agentHub.threads.*`.
+Because rooms are conversation-thread metadata, the renderer gets no direct
+SQLite, filesystem, Git, shell, or orchestration access, and CLI chat continues
+to use the existing conversation repositories during the transition.
 
 Repository CI/CD lives in `.github/workflows/ci-cd.yml` and stays outside the
 Agent Hub runtime. The workflow installs the pinned pnpm and Node versions from

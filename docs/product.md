@@ -332,12 +332,15 @@ local fake, Codex, or Claude Code adapters. Reserved executor kinds for
 
 Agent Hub Desktop is now available as a local conversation console under
 `apps/desktop`. It starts with `pnpm --filter desktop dev` and presents a
-thread-first shell: threads and projects on the left, a conversation timeline
-in the center, and a bottom composer as the primary interaction surface. When
+room-based project shell: project selection and room navigation on the left, a
+conversation timeline in the center, and a bottom composer as the primary
+interaction surface. Each registered project receives default local rooms
+`#general`, `#planning`, `#research`, `#review`, and `#knowledge`, displayed
+alongside the preset workgroup roles and local task/run status counts. When
 there are no registered projects, the desktop renders local project path
 registration controls in the project sidebar and the empty conversation pane;
 submitting either control calls the existing `window.agentHub.projects.open`
-IPC path and seeds a new conversation for the registered project.
+IPC path and selects the project's `#general` room after default room seeding.
 
 The composer accepts mention-based prompts such as `@fake ...` or multi-agent
 mentions, and it now also accepts enabled role handles such as `@researcher`
@@ -349,13 +352,14 @@ can show which role and executor produced a run. The renderer sends prompt text
 through the safe
 `window.agentHub.threads.sendMessage` preload API; the Electron main-process
 thread service strips known agent or role mentions from the task body, persists
-one ordered user message in the selected SQLite-backed conversation thread,
+one ordered user message in the selected SQLite-backed room thread,
 creates one run per selected participant through `RunService`, and persists one
 inline run card message plus one hidden pending assistant-output message per
 run. When a run reaches a terminal state, the pending assistant message is
 updated with the agent-facing final output or a concise failure/cancel summary.
-If no agent or role is mentioned or supplied by the caller, desktop falls back
-to `@fake`.
+If no room is selected, the message goes to the project's default `#general`
+room. If no agent or role is mentioned or supplied by the caller, desktop falls
+back to `@fake`.
 
 Active inline run cards subscribe to the existing desktop run event stream and
 replay already-persisted events when a subscription starts after a fast run has
@@ -369,7 +373,8 @@ when no durable conversation threads exist yet, so old desktop run data remains
 inspectable without making run synthesis the primary thread store. Desktop
 thread lists and details now read from the core conversation repositories, use
 a lightweight run status map for run-card status/counts, and reconcile
-assistant output only for the selected thread. Run records, events, skipped or
+assistant output only for the selected room. Older conversation threads without
+room metadata remain readable as custom rooms. Run records, events, skipped or
 configured verification rows, collected diffs, and risk review rows remain
 SQLite-backed.
 

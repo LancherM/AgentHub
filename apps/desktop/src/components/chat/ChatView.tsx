@@ -65,9 +65,15 @@ export function ChatView({
     <section className="chat-view">
       <header className="chat-header">
         <div>
-          <h1>{thread?.title ?? "New conversation"}</h1>
+          <h1>
+            {thread?.roomHandle ? `#${thread.roomHandle}` : thread?.title ?? "Select a room"}
+          </h1>
+          {thread?.description ? (
+            <p className="room-description">{thread.description}</p>
+          ) : null}
           <div className="chat-context-row">
             <span>Project: {project?.name ?? "No project selected"}</span>
+            <span>Room: {thread?.roomType ?? "none"}</span>
             <span>Mode: local desktop</span>
             <span>Context: runtime injection by default</span>
           </div>

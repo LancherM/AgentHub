@@ -43,6 +43,7 @@ export type EventPhase =
   | "final";
 
 export type ContextMode = "auto" | "minimal" | "full" | "workspace";
+export type RoomType = "default" | "custom" | "legacy";
 export type RunInspectorTab =
   | "summary"
   | "diff"
@@ -90,6 +91,10 @@ export interface ThreadSummary {
   id: string;
   title: string;
   projectId?: string;
+  roomType?: RoomType;
+  roomHandle?: string;
+  description?: string;
+  pinned?: boolean;
   createdAt: string;
   updatedAt: string;
   lastMessagePreview?: string;
@@ -101,6 +106,10 @@ export interface ThreadDetail {
   id: string;
   title: string;
   projectId?: string;
+  roomType?: RoomType;
+  roomHandle?: string;
+  description?: string;
+  pinned?: boolean;
   createdAt: string;
   updatedAt: string;
   messages: ThreadMessage[];
@@ -148,6 +157,10 @@ export type ThreadMessage =
 export interface CreateThreadInput {
   projectId?: string;
   title?: string;
+  roomType?: RoomType;
+  roomHandle?: string;
+  description?: string;
+  pinned?: boolean;
 }
 
 export interface SendThreadMessageInput {

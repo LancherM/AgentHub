@@ -34,7 +34,7 @@ export function App(): JSX.Element {
   const [isBusy, setIsBusy] = useState(true);
   const [error, setError] = useState<string | undefined>();
 
-  const activeProjectId = currentThread?.projectId ?? selectedProjectId;
+  const activeProjectId = selectedProjectId ?? currentThread?.projectId ?? projects[0]?.id;
   const selectedProject = useMemo(
     () => projects.find((project) => project.id === activeProjectId),
     [activeProjectId, projects]
@@ -109,9 +109,12 @@ export function App(): JSX.Element {
       ]);
       setProjects(projectList);
       setThreads(threadList);
-      const latestThread = threadList[0];
+      const projectId =
+        selectedProjectId ?? currentThread?.projectId ?? threadList[0]?.projectId ?? projectList[0]?.id;
+      const latestThread =
+        selectPreferredThreadForProject(threadList, projectId) ?? threadList[0];
       setSelectedProjectId(
-        (current) => current ?? latestThread?.projectId ?? projectList[0]?.id
+        (current) => current ?? latestThread?.projectId ?? projectId
       );
       if (latestThread) {
         const detail = await agentHubApi.threads.get(latestThread.id);
@@ -135,13 +138,43 @@ export function App(): JSX.Element {
       const project = await agentHubApi.projects.open(projectPath);
       setProjects((current) => upsertProjectSummary(current, project));
       setSelectedProjectId(project.id);
-      const thread = await agentHubApi.threads.create({
-        projectId: project.id,
-        title: "New Chat"
+      const threadList = await agentHubApi.threads.list();
+      setThreads(threadList);
+      const room = selectPreferredThreadForProject(threadList, project.id);
+      if (room) {
+        const detail = await agentHubApi.threads.get(room.id);
+        setCurrentThread(detail);
+        setSelectedThreadId(detail.id);
+      } else {
+        setCurrentThread(undefined);
+        setSelectedThreadId(undefined);
+      }
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setIsBusy(false);
+    }
+  }
+
+  async function createNewThread(): Promise<void> {
+    setError(undefined);
+    setIsBusy(true);
+    setPendingContinueFrom(undefined);
+    try {
+      const projectId = activeProjectId ?? projects[0]?.id;
+      if (!projectId) {
+        throw new Error("Register a local project before creating a room.");
+      }
+      const room = await agentHubApi.threads.create({
+        projectId,
+        title: "custom room",
+        roomType: "custom",
+        description: "Custom project room."
       });
-      const detail = await agentHubApi.threads.get(thread.id);
+      const detail = await agentHubApi.threads.get(room.id);
       setCurrentThread(detail);
       setSelectedThreadId(detail.id);
+      setSelectedProjectId(detail.projectId);
       setThreads((current) => upsertThreadSummary(current, threadSummaryFromDetail(detail)));
     } catch (err) {
       setError(errorMessage(err));
@@ -150,12 +183,25 @@ export function App(): JSX.Element {
     }
   }
 
-  function createNewThread(): void {
+  async function selectProject(projectId: string): Promise<void> {
     setError(undefined);
+    setSelectedProjectId(projectId);
     setPendingContinueFrom(undefined);
-    setCurrentThread(undefined);
-    setSelectedThreadId(undefined);
-    setSelectedProjectId((current) => current ?? projects[0]?.id);
+    try {
+      const threadList = await agentHubApi.threads.list();
+      setThreads(threadList);
+      const room = selectPreferredThreadForProject(threadList, projectId);
+      if (room) {
+        const detail = await agentHubApi.threads.get(room.id);
+        setCurrentThread(detail);
+        setSelectedThreadId(detail.id);
+      } else {
+        setCurrentThread(undefined);
+        setSelectedThreadId(undefined);
+      }
+    } catch (err) {
+      setError(errorMessage(err));
+    }
   }
 
   async function submitMessage(
@@ -197,9 +243,9 @@ export function App(): JSX.Element {
         threads={threads}
         selectedThreadId={selectedThreadId}
         selectedProjectId={selectedProject?.id ?? selectedProjectId}
-        onNewThread={createNewThread}
+        onNewThread={() => void createNewThread()}
         onSelectThread={(threadId) => void loadThread(threadId)}
-        onSelectProject={setSelectedProjectId}
+        onSelectProject={(projectId) => void selectProject(projectId)}
         onRegisterProject={registerProject}
         onOpenSettings={() => setSettingsOpen(true)}
         isBusy={isBusy}
@@ -283,7 +329,7 @@ function upsertThreadSummary(
   summary: ThreadSummary
 ): ThreadSummary[] {
   return [summary, ...threads.filter((thread) => thread.id !== summary.id)].sort(
-    (left, right) => right.updatedAt.localeCompare(left.updatedAt)
+    compareThreadSummaries
   );
 }
 
@@ -296,6 +342,10 @@ function threadSummaryFromDetail(thread: ThreadDetail): ThreadSummary {
     id: thread.id,
     title: thread.title,
     projectId: thread.projectId,
+    roomType: thread.roomType,
+    roomHandle: thread.roomHandle,
+    description: thread.description,
+    pinned: thread.pinned,
     createdAt: thread.createdAt,
     updatedAt: thread.updatedAt,
     lastMessagePreview: lastMessage
@@ -306,6 +356,42 @@ function threadSummaryFromDetail(thread: ThreadDetail): ThreadSummary {
       isActiveRunStatus(message.status)
     ).length
   };
+}
+
+function selectPreferredThreadForProject(
+  threads: ThreadSummary[],
+  projectId?: string
+): ThreadSummary | undefined {
+  const projectThreads = threads
+    .filter((thread) => projectId === undefined || thread.projectId === projectId)
+    .sort(compareThreadSummaries);
+  return (
+    projectThreads.find((thread) => thread.roomHandle === "general") ??
+    projectThreads[0]
+  );
+}
+
+function compareThreadSummaries(
+  left: ThreadSummary,
+  right: ThreadSummary
+): number {
+  const leftPinned = left.pinned === true ? 0 : 1;
+  const rightPinned = right.pinned === true ? 0 : 1;
+  if (leftPinned !== rightPinned) {
+    return leftPinned - rightPinned;
+  }
+  const leftOrder = defaultRoomOrder(left.roomHandle);
+  const rightOrder = defaultRoomOrder(right.roomHandle);
+  if (leftOrder !== rightOrder) {
+    return leftOrder - rightOrder;
+  }
+  return right.updatedAt.localeCompare(left.updatedAt);
+}
+
+function defaultRoomOrder(handle?: string): number {
+  const handles = ["general", "planning", "research", "review", "knowledge"];
+  const index = handle ? handles.indexOf(handle) : -1;
+  return index >= 0 ? index : 1000;
 }
 
 function threadMessagePreview(message: ThreadMessage): string {

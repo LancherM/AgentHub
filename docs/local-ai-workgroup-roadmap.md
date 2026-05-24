@@ -1,7 +1,7 @@
 # Local AI Workgroup Roadmap
 
 Status: planning
-Last updated: 2026-05-24
+Last updated: 2026-05-25
 
 This document defines the staged plan for evolving Agent Hub from a
 CLI-first coding-agent orchestrator into a local-first AI workgroup. The plan
@@ -190,21 +190,22 @@ operation as the default.
 Any phase that changes desktop UI, renderer behavior, visible workflows,
 layout, styling, navigation, or inspector panels must be split into two steps:
 
-1. Generate a UI design artifact for review. Acceptable artifacts are a static
-   HTML/CSS mockup, a rendered screenshot, or a set of screen images saved
-   under `docs/ui-design/`.
-2. Stop and ask the user to review the design. Do not implement the actual UI
-   code until the user approves the design direction.
+1. Generate a UI design artifact before changing production code. Acceptable
+   artifacts are a static HTML/CSS mockup, a rendered screenshot, or a set of
+   screen images saved under `docs/ui-design/`.
+2. Proceed with production UI implementation after the design artifact exists.
+   Do not stop for user review by default. Only wait for explicit approval when
+   the user asks for a review gate on that phase.
 
 The implementation prompt for UI phases must explicitly say:
 
 ```text
 This phase changes desktop UI. First generate UI design artifacts and screenshots
-for user review. Do not implement production UI until the user approves the
-design. After approval, implement the UI to match the reviewed design, rebuild
-the desktop app, open the running UI, verify the affected workflow manually,
-write a concise UI verification summary under docs/ui-verification/, and include
-that file path in the final summary.
+before production code changes. After the artifacts exist, implement the UI to
+match the design unless the user explicitly asked for a review stop. Rebuild the
+desktop app, open the running UI, verify the affected workflow manually, write a
+concise UI verification summary under docs/ui-verification/, and include that
+file path in the final summary.
 ```
 
 ## Phase Sequence
@@ -463,19 +464,19 @@ Read AGENTS.md, docs/product.md, docs/architecture.md, and
 docs/local-ai-workgroup-roadmap.md. Implement Phase 2 only.
 
 This phase changes desktop UI. First generate UI design artifacts and screenshots
-for user review. Do not implement production UI until the user approves the
-design. The design should show the left sidebar with project selector, room
-list, default rooms, team list placeholder, task status placeholder, and
-local-first status. It should show the center room timeline still backed by
-existing conversation messages and run cards. Save design artifacts under
-docs/ui-design/ and stop for review.
+before production UI changes. The design should show the left sidebar with
+project selector, room list, default rooms, team list placeholder, task status
+placeholder, and local-first status. It should show the center room timeline
+still backed by existing conversation messages and run cards. Save design
+artifacts under docs/ui-design/. Proceed with implementation after the
+artifacts exist unless the user explicitly asks for a review stop.
 
-After user approval, treat ConversationThread as the first Room implementation.
-Store roomType, roomHandle, description, and pinned in thread metadata. Seed
-#general, #planning, #research, #review, and #knowledge rooms for a project
-without breaking older threads. Rename desktop navigation from Threads to Rooms
-while keeping existing thread repositories and IPC stable where practical.
-Add minimal room creation/selection through the existing service boundary.
+Treat ConversationThread as the first Room implementation. Store roomType,
+roomHandle, description, and pinned in thread metadata. Seed #general,
+#planning, #research, #review, and #knowledge rooms for a project without
+breaking older threads. Rename desktop navigation from Threads to Rooms while
+keeping existing thread repositories and IPC stable where practical. Add
+minimal room creation/selection through the existing service boundary.
 
 Keep orchestration in Electron main-process services and shared packages. Do
 not add a cloud backend, account system, room membership, notifications, or a

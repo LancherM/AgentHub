@@ -26,70 +26,59 @@ export function Sidebar({
   onOpenSettings,
   isBusy
 }: SidebarProps): JSX.Element {
+  const selectedProject = projects.find((project) => project.id === selectedProjectId);
+  const projectRooms = threads
+    .filter((thread) => !selectedProjectId || thread.projectId === selectedProjectId)
+    .sort((left, right) => {
+      if (left.id === selectedThreadId) {
+        return -1;
+      }
+      if (right.id === selectedThreadId) {
+        return 1;
+      }
+      return 0;
+    });
+  const activeRunCount = projectRooms.reduce(
+    (total, thread) => total + (thread.activeRunCount ?? 0),
+    0
+  );
+  const runCount = projectRooms.reduce(
+    (total, thread) => total + (thread.runCount ?? 0),
+    0
+  );
+
   return (
     <aside className="sidebar">
       <div className="brand-block">
         <div className="brand-mark">AH</div>
         <div>
           <div className="brand-title">Agent Hub</div>
-          <div className="brand-subtitle">Local command center</div>
+          <div className="brand-subtitle">Local workgroup</div>
         </div>
       </div>
 
-      <button className="new-run-button" onClick={onNewThread}>
-        <span className="button-plus">+</span>
-        New Chat
-      </button>
-
-      <section className="nav-section grow">
-        <div className="section-label">Threads</div>
-        <div className="thread-list">
-          {threads.length === 0 ? (
-            <div className="muted-row">No conversations yet</div>
-          ) : (
-            threads.map((thread) => (
-              <button
-                className={`thread-row ${
-                  selectedThreadId === thread.id ? "selected" : ""
-                }`}
-                key={thread.id}
-                onClick={() => onSelectThread(thread.id)}
-              >
-                <div className="thread-row-main">
-                  <span
-                    className={`thread-dot ${
-                      (thread.activeRunCount ?? 0) > 0 ? "active" : ""
-                    }`}
-                  />
-                  <span className="row-title">{thread.title}</span>
-                  <span className="thread-time">{relativeTime(thread.updatedAt)}</span>
-                </div>
-                <div className="row-subtitle">
-                  {thread.lastMessagePreview ?? "Ready for a local agent prompt"}
-                </div>
-                <div className="thread-meta">
-                  <span>{thread.runCount ?? 0} runs</span>
-                  {(thread.activeRunCount ?? 0) > 0 ? (
-                    <span>{thread.activeRunCount} active</span>
-                  ) : null}
-                </div>
-              </button>
-            ))
-          )}
+      <section className="nav-section project-nav">
+        <div className="section-label">Project</div>
+        <div className="selected-project-block">
+          <span className="project-dot" />
+          <div className="truncate">
+            <div className="row-title">{selectedProject?.name ?? "No project"}</div>
+            <div className="row-subtitle">
+              {selectedProject?.rootPath ?? "Register a local repository"}
+            </div>
+          </div>
         </div>
-      </section>
-
-      <section className="nav-section">
-        <div className="section-label">Projects</div>
-        <ProjectRegistrationForm
-          isBusy={isBusy}
-          onRegister={onRegisterProject}
-        />
-        <div className="project-list">
-          {projects.length === 0 ? (
+        {projects.length === 0 ? (
+          <>
+            <ProjectRegistrationForm
+              isBusy={isBusy}
+              onRegister={onRegisterProject}
+            />
             <div className="muted-row">No projects registered</div>
-          ) : (
-            projects.map((project) => (
+          </>
+        ) : projects.length > 1 ? (
+          <div className="project-list compact">
+            {projects.map((project) => (
               <button
                 className={`project-row ${
                   selectedProjectId === project.id ? "selected" : ""
@@ -103,17 +92,110 @@ export function Sidebar({
                   <div className="row-subtitle">{project.rootPath}</div>
                 </div>
               </button>
+            ))}
+          </div>
+        ) : null}
+      </section>
+
+      <section className="nav-section grow">
+        <div className="section-header">
+          <div className="section-label">Rooms</div>
+          <button
+            className="icon-button"
+            onClick={onNewThread}
+            disabled={!selectedProjectId}
+            title="Create room"
+            aria-label="Create room"
+          >
+            +
+          </button>
+        </div>
+        <div className="thread-list">
+          {projectRooms.length === 0 ? (
+            <div className="muted-row">No rooms yet</div>
+          ) : (
+            projectRooms.map((thread) => (
+              <button
+                className={`thread-row ${
+                  selectedThreadId === thread.id ? "selected" : ""
+                }`}
+                key={thread.id}
+                onClick={() => onSelectThread(thread.id)}
+              >
+                <div className="thread-row-main">
+                  <span
+                    className={`thread-dot ${
+                      (thread.activeRunCount ?? 0) > 0 ? "active" : ""
+                    }`}
+                  />
+                  <span className="room-handle">
+                    #{thread.roomHandle ?? thread.title}
+                  </span>
+                  <span className="thread-time">{relativeTime(thread.updatedAt)}</span>
+                </div>
+                <div className="row-subtitle">
+                  {thread.description ?? thread.lastMessagePreview ?? "Local room"}
+                </div>
+                <div className="thread-meta">
+                  <span>{thread.runCount ?? 0} runs</span>
+                  {thread.roomType ? <span>{thread.roomType}</span> : null}
+                </div>
+              </button>
             ))
           )}
         </div>
       </section>
 
+      <section className="nav-section team-nav">
+        <div className="section-label">Team</div>
+        <div className="role-list">
+          {roleRows.map((role) => (
+            <div className="role-row" key={role.handle}>
+              <span className={`role-mark ${role.kind}`}>{role.initial}</span>
+              <span>@{role.handle}</span>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <section className="nav-section status-nav">
+        <div className="section-label">Task status</div>
+        <div className="status-list">
+          <div>
+            <span>Open</span>
+            <strong>{projectRooms.length}</strong>
+          </div>
+          <div>
+            <span>Running</span>
+            <strong>{activeRunCount}</strong>
+          </div>
+          <div>
+            <span>Runs</span>
+            <strong>{runCount}</strong>
+          </div>
+        </div>
+      </section>
+
       <nav className="utility-nav" aria-label="Utilities">
+        <div className="local-status">
+          <span className="project-dot" />
+          <span>Local-first</span>
+        </div>
         <button onClick={onOpenSettings}>Settings</button>
       </nav>
     </aside>
   );
 }
+
+const roleRows = [
+  { handle: "researcher", initial: "R", kind: "blue" },
+  { handle: "writer", initial: "W", kind: "orange" },
+  { handle: "analyst", initial: "A", kind: "plum" },
+  { handle: "operator", initial: "O", kind: "green" },
+  { handle: "reviewer", initial: "V", kind: "amber" },
+  { handle: "engineer", initial: "E", kind: "blue" },
+  { handle: "memory", initial: "M", kind: "cyan" }
+];
 
 function relativeTime(value: string): string {
   const date = new Date(value);

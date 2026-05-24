@@ -25,6 +25,7 @@ import type {
   RunEvent,
   RunStatus,
   RunSummary,
+  RoomType,
   SendThreadMessageInput,
   SystemMessage,
   ThreadDetail,
@@ -43,6 +44,36 @@ import type {
 import type { ConversationRunSnapshot, RunService } from "./run-service";
 
 const maxAssistantMessageCharacters = 2_000;
+const defaultRoomDefinitions = [
+  {
+    handle: "general",
+    title: "general",
+    description: "Project-wide coordination and agent prompts."
+  },
+  {
+    handle: "planning",
+    title: "planning",
+    description: "Plans, milestones, priorities, and scoped work."
+  },
+  {
+    handle: "research",
+    title: "research",
+    description: "Investigation notes, source gathering, and synthesis."
+  },
+  {
+    handle: "review",
+    title: "review",
+    description: "Run evidence, checks, risks, and review decisions."
+  },
+  {
+    handle: "knowledge",
+    title: "knowledge",
+    description: "Memory proposals, reusable decisions, and project knowledge."
+  }
+] as const;
+const defaultRoomOrder: Map<string, number> = new Map(
+  defaultRoomDefinitions.map((room, index) => [room.handle, index])
+);
 
 export interface ThreadService {
   listThreads(): Promise<ThreadSummary[]>;
@@ -96,6 +127,7 @@ class RepositoryThreadService implements ThreadService {
 
   async listThreads(): Promise<ThreadSummary[]> {
     await this.ensureLegacyRunThreads();
+    await this.ensureDefaultRoomsForKnownProjects();
     const [threads, runStatusById] = await Promise.all([
       this.threads.list(),
       this.runStatusById()
@@ -106,9 +138,7 @@ class RepositoryThreadService implements ThreadService {
         return toThreadSummary(toThreadDetail(thread, messages, runStatusById));
       })
     );
-    return summaries.sort((left, right) =>
-      right.updatedAt.localeCompare(left.updatedAt)
-    );
+    return summaries.sort(compareThreadSummaries);
   }
 
   async getThread(threadId: string): Promise<ThreadDetail> {
@@ -133,11 +163,23 @@ class RepositoryThreadService implements ThreadService {
       throw new Error("projectId is required before creating a thread");
     }
     const now = this.dependencies.context.now();
+    const title = titleFromPrompt(input.title ?? "") || "New Chat";
+    const roomHandle = await this.uniqueRoomHandle({
+      projectId,
+      requestedHandle: input.roomHandle,
+      title
+    });
     const thread = await this.threads.create(
       validateConversationThread({
         id: this.dependencies.context.nextId("thread"),
-        title: titleFromPrompt(input.title ?? "") || "New Chat",
+        title,
         projectId,
+        metadata: roomMetadata({
+          roomType: input.roomType ?? "custom",
+          roomHandle,
+          description: input.description,
+          pinned: input.pinned
+        }),
         createdAt: now,
         updatedAt: now
       })
@@ -170,7 +212,8 @@ class RepositoryThreadService implements ThreadService {
     );
     await this.touchThread(thread, {
       title:
-        thread.title === "New Chat"
+        thread.title === "New Chat" &&
+        roomMetadataForThread(thread).roomType !== "default"
           ? titleFromPrompt(text) || thread.title
           : thread.title,
       updatedAt: now
@@ -253,10 +296,10 @@ class RepositoryThreadService implements ThreadService {
     const contextMode = parseContextMode(input.contextMode ?? "auto");
     const thread = input.threadId
       ? await this.requireThread(input.threadId)
-      : await this.createThreadRecord({
-          projectId: input.projectId ?? (await this.defaultProjectId()),
-          title: titleFromPrompt(cleanedPrompt)
-        });
+      : await this.defaultRoomThread(
+          input.projectId ?? (await this.defaultProjectId()),
+          "general"
+        );
     await this.reconcileAssistantMessages(thread.id);
     await this.refreshThreadSummary(thread.id);
 
@@ -659,15 +702,93 @@ class RepositoryThreadService implements ThreadService {
       throw new Error("projectId is required before sending a message");
     }
     const now = this.dependencies.context.now();
+    const title = titleFromPrompt(input.title) || "New Chat";
+    const roomHandle = await this.uniqueRoomHandle({ projectId, title });
     return this.threads.create(
       validateConversationThread({
         id: this.dependencies.context.nextId("thread"),
         projectId,
-        title: titleFromPrompt(input.title) || "New Chat",
+        title,
+        metadata: roomMetadata({
+          roomType: "custom",
+          roomHandle,
+          description: "Imported conversation room."
+        }),
         createdAt: now,
         updatedAt: now
       })
     );
+  }
+
+  private async defaultRoomThread(
+    projectId: string | undefined,
+    handle: string
+  ): Promise<ConversationThread> {
+    if (!projectId) {
+      throw new Error("projectId is required before sending a message");
+    }
+    await this.ensureDefaultRooms(projectId);
+    const rooms = await this.threads.list(projectId);
+    const existing = rooms.find((thread) => isDefaultRoom(thread, handle));
+    if (!existing) {
+      throw new Error(`default room #${handle} was not created`);
+    }
+    return existing;
+  }
+
+  private async ensureDefaultRoomsForKnownProjects(): Promise<void> {
+    const projects = await this.dependencies.projects.list();
+    await Promise.all(projects.map((project) => this.ensureDefaultRooms(project.id)));
+  }
+
+  private async ensureDefaultRooms(projectId: string): Promise<void> {
+    const existingThreads = await this.threads.list(projectId);
+    for (const definition of defaultRoomDefinitions) {
+      if (existingThreads.some((thread) => isDefaultRoom(thread, definition.handle))) {
+        continue;
+      }
+      const now = this.dependencies.context.now();
+      const thread = await this.threads.create(
+        validateConversationThread({
+          id: this.dependencies.context.nextId("thread"),
+          projectId,
+          title: definition.title,
+          metadata: roomMetadata({
+            roomType: "default",
+            roomHandle: definition.handle,
+            description: definition.description,
+            pinned: true
+          }),
+          createdAt: now,
+          updatedAt: now
+        })
+      );
+      existingThreads.push(thread);
+    }
+  }
+
+  private async uniqueRoomHandle(input: {
+    projectId: string;
+    requestedHandle?: string;
+    title: string;
+  }): Promise<string> {
+    const base =
+      normalizeRoomHandle(input.requestedHandle ?? input.title) ?? "room";
+    const existing = new Set(
+      (await this.threads.list(input.projectId)).map(
+        (thread) => roomMetadataForThread(thread).roomHandle
+      )
+    );
+    if (!existing.has(base)) {
+      return base;
+    }
+    for (let index = 2; index < 1000; index += 1) {
+      const candidate = `${base}-${index}`;
+      if (!existing.has(candidate)) {
+        return candidate;
+      }
+    }
+    throw new Error(`could not create a unique room handle for ${base}`);
   }
 
   private async defaultProjectId(): Promise<string | undefined> {
@@ -764,6 +885,88 @@ class RepositoryThreadService implements ThreadService {
   }
 }
 
+interface RoomMetadata {
+  roomType: RoomType;
+  roomHandle: string;
+  description?: string;
+  pinned?: boolean;
+}
+
+function roomMetadata(input: RoomMetadata): ConversationThread["metadata"] {
+  return {
+    roomType: input.roomType,
+    roomHandle: input.roomHandle,
+    description: input.description,
+    pinned: input.pinned
+  };
+}
+
+function roomMetadataForThread(thread: ConversationThread): RoomMetadata {
+  const metadata = thread.metadata ?? {};
+  const roomType =
+    parseRoomType(metadata.roomType) ??
+    (metadata.legacyRunImport === true ? "legacy" : "custom");
+  return {
+    roomType,
+    roomHandle:
+      normalizeRoomHandle(
+        typeof metadata.roomHandle === "string" ? metadata.roomHandle : thread.title
+      ) ??
+      normalizeRoomHandle(thread.id) ??
+      "room",
+    description:
+      typeof metadata.description === "string" && metadata.description.trim()
+        ? metadata.description.trim()
+        : undefined,
+    pinned: metadata.pinned === true
+  };
+}
+
+function parseRoomType(value: unknown): RoomType | undefined {
+  if (value === "default" || value === "custom" || value === "legacy") {
+    return value;
+  }
+  return undefined;
+}
+
+function normalizeRoomHandle(value: string): string | undefined {
+  const normalized = value
+    .trim()
+    .replace(/^#+/, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 48);
+  return normalized.length > 0 ? normalized : undefined;
+}
+
+function isDefaultRoom(thread: ConversationThread, handle: string): boolean {
+  const metadata = thread.metadata ?? {};
+  return metadata.roomType === "default" && metadata.roomHandle === handle;
+}
+
+function compareThreadSummaries(
+  left: ThreadSummary,
+  right: ThreadSummary
+): number {
+  const leftProject = left.projectId ?? "";
+  const rightProject = right.projectId ?? "";
+  if (leftProject !== rightProject) {
+    return leftProject.localeCompare(rightProject);
+  }
+  const leftPinned = left.pinned === true ? 0 : 1;
+  const rightPinned = right.pinned === true ? 0 : 1;
+  if (leftPinned !== rightPinned) {
+    return leftPinned - rightPinned;
+  }
+  const leftOrder = defaultRoomOrder.get(left.roomHandle ?? "") ?? 1000;
+  const rightOrder = defaultRoomOrder.get(right.roomHandle ?? "") ?? 1000;
+  if (leftOrder !== rightOrder) {
+    return leftOrder - rightOrder;
+  }
+  return right.updatedAt.localeCompare(left.updatedAt);
+}
+
 function toThreadDetail(
   thread: ConversationThread,
   messages: ConversationMessage[],
@@ -772,10 +975,15 @@ function toThreadDetail(
   const threadMessages = messages
     .map((message) => toThreadMessage(message, runStatusById))
     .filter((message): message is ThreadMessage => message !== undefined);
+  const room = roomMetadataForThread(thread);
   return {
     id: thread.id,
     title: thread.title,
     projectId: thread.projectId,
+    roomType: room.roomType,
+    roomHandle: room.roomHandle,
+    description: room.description,
+    pinned: room.pinned,
     createdAt: thread.createdAt,
     updatedAt: latestUpdatedAt(thread, messages),
     messages: threadMessages
@@ -808,6 +1016,10 @@ function toThreadSummary(thread: ThreadDetail): ThreadSummary {
     id: thread.id,
     title: thread.title,
     projectId: thread.projectId,
+    roomType: thread.roomType,
+    roomHandle: thread.roomHandle,
+    description: thread.description,
+    pinned: thread.pinned,
     createdAt: thread.createdAt,
     updatedAt: thread.updatedAt,
     lastMessagePreview: lastMessage
