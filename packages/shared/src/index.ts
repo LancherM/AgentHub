@@ -1,7 +1,33 @@
 import { randomUUID } from "node:crypto";
+import {
+  findWorkgroupRoleByHandle as importedFindWorkgroupRoleByHandle,
+  normalizeWorkgroupRoleHandle as importedNormalizeWorkgroupRoleHandle,
+  presetWorkgroupRoleHandles as importedPresetWorkgroupRoleHandles,
+  presetWorkgroupRoles as importedPresetWorkgroupRoles,
+  toWorkgroupRoleRunMetadata as importedToWorkgroupRoleRunMetadata,
+  workgroupExecutorKinds as importedWorkgroupExecutorKinds
+} from "./workgroup-roles";
 
 export * from "./process-environment";
-export * from "./workgroup-roles";
+export type {
+  PresetWorkgroupRoleHandle,
+  WorkgroupAgentAdapterExecutor,
+  WorkgroupAgentAdapterKind,
+  WorkgroupApprovalPolicy,
+  WorkgroupContextPolicy,
+  WorkgroupExecutor,
+  WorkgroupExecutorKind,
+  WorkgroupReservedExecutor,
+  WorkgroupRole,
+  WorkgroupRoleRunMetadata
+} from "./workgroup-roles";
+
+export const findWorkgroupRoleByHandle = importedFindWorkgroupRoleByHandle;
+export const normalizeWorkgroupRoleHandle = importedNormalizeWorkgroupRoleHandle;
+export const presetWorkgroupRoleHandles = importedPresetWorkgroupRoleHandles;
+export const presetWorkgroupRoles = importedPresetWorkgroupRoles;
+export const toWorkgroupRoleRunMetadata = importedToWorkgroupRoleRunMetadata;
+export const workgroupExecutorKinds = importedWorkgroupExecutorKinds;
 
 export const agentKinds = ["fake", "codex", "claude-code"] as const;
 export type AgentKind = (typeof agentKinds)[number];

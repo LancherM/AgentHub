@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   parseAgentMentions,
-  parseWorkgroupMentions,
   resolveMentionedAgents
 } from "../apps/desktop/src/lib/mentions";
+import { parseWorkgroupMentions } from "../apps/desktop/electron/services/workgroup-mentions";
 import type { WorkgroupRole } from "@agent-hub/shared";
 
 describe("desktop mention parsing", () => {

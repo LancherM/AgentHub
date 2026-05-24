@@ -35,7 +35,7 @@ import type {
 import {
   parseWorkgroupMentions,
   type WorkgroupMentionParticipant
-} from "../../src/lib/mentions";
+} from "./workgroup-mentions";
 import type {
   DesktopServiceContext,
   ProjectService
