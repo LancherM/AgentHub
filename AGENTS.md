@@ -300,10 +300,9 @@ use process-backed adapter preflight and fail inspectably when the local CLI is
 unavailable or unauthenticated. Desktop runs must not write Agent Hub context
 files to target repository roots, export context, merge, push, create pull
 requests, approve memory, or apply code automatically. Live TaskRunner
-streaming, process-level cancellation, desktop verification configuration,
-approved-memory writeback confirmation, comparison review, worktree lifecycle
-controls, and explicit merge/apply workflows remain follow-up work behind the
-same IPC boundary.
+streaming, process-level cancellation, approved-memory writeback confirmation,
+comparison review, worktree lifecycle controls, and explicit merge/apply
+workflows remain follow-up work behind the same IPC boundary.
 
 ### packages/core
 

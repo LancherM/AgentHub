@@ -211,6 +211,18 @@ describe("desktop services", () => {
         ]
       })
     ).rejects.toThrow(/unsupported field cwd/);
+    await expect(
+      handlers[IPC_CHANNELS.settingsSaveVerification]({ sender } as never, {
+        projectId: project.id,
+        commands: [
+          {
+            id: "secret-arg",
+            executable: "agent-hub",
+            args: ["--api-key", "redacted-value"]
+          }
+        ]
+      })
+    ).rejects.toThrow(/secret-like option name/);
   });
 
   it("passes configured desktop verification commands to TaskRunner in the isolated worktree", async () => {

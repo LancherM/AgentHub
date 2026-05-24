@@ -25,6 +25,15 @@ const maxArgLength = 500;
 const maxTimeoutMs = 60 * 60 * 1000;
 const executablePattern = /^[^\s|&;<>()$`]+$/;
 const commandIdPattern = /^[A-Za-z0-9._-]+$/;
+const secretLikeOptionTerms = new Set([
+  "token",
+  "secret",
+  "password",
+  "credential",
+  "credentials",
+  "apikey",
+  "privatekey"
+]);
 const commandKeys = new Set([
   "id",
   "label",
@@ -225,8 +234,43 @@ function parseArgs(input: unknown, commandIndex: number): string[] {
     if (entry.length > maxArgLength) {
       throw new Error(`verification command ${commandIndex + 1} arg ${index + 1} is too long`);
     }
+    if (isSecretLikeOptionName(entry)) {
+      throw new Error(
+        `verification command ${commandIndex + 1} arg ${index + 1} must not contain a secret-like option name`
+      );
+    }
     return entry;
   });
+}
+
+function isSecretLikeOptionName(arg: string): boolean {
+  const trimmed = arg.trim();
+  if (!trimmed.startsWith("-")) {
+    return false;
+  }
+  const withoutPrefix = trimmed.replace(/^-+/, "");
+  const optionName = withoutPrefix.split("=")[0] ?? "";
+  if (!optionName) {
+    return false;
+  }
+  const terms = splitOptionTerms(optionName);
+  return terms.some((term, index) =>
+    secretLikeOptionTerms.has(term) ||
+    (term === "api" && terms[index + 1] === "key") ||
+    (term === "private" && terms[index + 1] === "key") ||
+    (term === "access" && terms[index + 1] === "token") ||
+    (term === "refresh" && terms[index + 1] === "token") ||
+    (term === "auth" && terms[index + 1] === "token") ||
+    (term === "client" && terms[index + 1] === "secret")
+  );
+}
+
+function splitOptionTerms(value: string): string[] {
+  return value
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .split(/[._:\-\s]+/)
+    .map((term) => term.toLowerCase())
+    .filter((term) => term.length > 0);
 }
 
 function parseTimeoutMs(input: unknown, commandIndex: number): number {
