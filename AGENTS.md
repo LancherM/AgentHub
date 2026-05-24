@@ -289,13 +289,17 @@ The desktop app must call the local core through Electron main-process IPC. The
 renderer must not directly access Node.js, shell, filesystem, SQLite, or git.
 It must not duplicate task orchestration logic.
 
-Current desktop run creation is fake-agent backed for the real streaming path
-and persists SQLite task/run/event, conversation, and review records. Mentioned
-`@codex` and `@claude` desktop runs create safe unavailable-adapter records
-instead of launching real adapters. Desktop runs must not write files to target
-repositories, export context, merge, push, or create pull requests. Real
-TaskRunner/Codex/Claude integration is follow-up work behind the same IPC
-boundary.
+Current desktop runs are TaskRunner-backed through the Electron main process
+and persist SQLite task/run/event, conversation, and review records. `@fake`
+uses `FakeAgentAdapter` in an isolated worktree, while `@codex` and `@claude`
+use process-backed adapter preflight and fail inspectably when the local CLI is
+unavailable or unauthenticated. Desktop runs must not write Agent Hub context
+files to target repository roots, export context, merge, push, create pull
+requests, approve memory, or apply code automatically. Live TaskRunner
+streaming, process-level cancellation, desktop verification configuration,
+approved-memory writeback confirmation, comparison review, worktree lifecycle
+controls, and explicit merge/apply workflows remain follow-up work behind the
+same IPC boundary.
 
 ### packages/core
 
