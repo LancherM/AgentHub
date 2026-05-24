@@ -6,6 +6,7 @@ import { promisify } from "node:util";
 import { describe, expect, it, vi } from "vitest";
 import {
   validateConversationMessage,
+  validateConversationThreadSummary,
   validateConversationThread,
   validateMemoryItem,
   validateRunArtifact,
@@ -21,6 +22,7 @@ import {
 } from "../apps/desktop/electron/services/project-service";
 import { createReviewService } from "../apps/desktop/electron/services/review-service";
 import { createMemoryService } from "../apps/desktop/electron/services/memory-service";
+import { createKnowledgeService } from "../apps/desktop/electron/services/knowledge-service";
 import { createRunService } from "../apps/desktop/electron/services/run-service";
 import { createThreadService } from "../apps/desktop/electron/services/thread-service";
 import { createSettingsService } from "../apps/desktop/electron/services/settings-service";
@@ -37,6 +39,7 @@ import {
   type ProcessRunner
 } from "@agent-hub/agent-adapters";
 import {
+  createDesktopServices,
   createIpcHandlers,
   IPC_CHANNELS,
   runEventChannel
@@ -221,6 +224,7 @@ describe("desktop services", () => {
     const review = createReviewService(context, { memoryService: memory });
     const settings = createSettingsService(context);
     const comparison = createComparisonService(context);
+    const knowledge = createKnowledgeService(context);
     const runs = createTestRunService(context, review, memory, fixture);
     const threads = createThreadService({ context, projects, runs });
     const handlers = createIpcHandlers({
@@ -230,6 +234,7 @@ describe("desktop services", () => {
       review,
       comparison,
       memory,
+      knowledge,
       settings
     });
     const sender = { send: vi.fn() };
@@ -695,6 +700,198 @@ describe("desktop services", () => {
         truncated: false
       })
     ]);
+  });
+
+  it("lists knowledge workspace memory, thread summaries, and review decisions", async () => {
+    const fixture = await createFixture();
+    const context = createDesktopServiceContext(fixture.repositories);
+    const projects = createProjectService(context);
+    const knowledge = createKnowledgeService(context);
+    const project = await projects.open(fixture.projectRoot);
+    const now = context.now();
+    const task = await fixture.repositories.taskRepository.create(
+      validateTask({
+        id: "task_knowledge_review",
+        projectId: project.id,
+        title: "Record review decision",
+        status: "completed",
+        createdAt: now,
+        updatedAt: now
+      })
+    );
+    const run = await fixture.repositories.taskRunRepository.create(
+      validateTaskRun({
+        id: "run_knowledge_review",
+        taskId: task.id,
+        agentKind: "fake",
+        status: "succeeded",
+        startedAt: now,
+        completedAt: now,
+        createdAt: now,
+        updatedAt: now
+      })
+    );
+    await fixture.repositories.memoryItemRepository.create(
+      validateMemoryItem({
+        id: "memory_knowledge_proposed",
+        projectId: project.id,
+        taskId: "task_knowledge_review",
+        category: "workflow_rule",
+        status: "proposed",
+        content: "Keep proposed memory out of future context briefs.",
+        createdAt: now,
+        updatedAt: now
+      })
+    );
+    await fixture.repositories.memoryItemRepository.create(
+      validateMemoryItem({
+        id: "memory_knowledge_approved",
+        projectId: project.id,
+        category: "project_fact",
+        status: "approved",
+        content: "Approved project memory remains explicitly governed.",
+        createdAt: now,
+        updatedAt: now
+      })
+    );
+    await fixture.repositories.memoryItemRepository.create(
+      validateMemoryItem({
+        id: "memory_knowledge_rejected",
+        projectId: project.id,
+        category: "temporary_note",
+        status: "rejected",
+        content: "Rejected memory remains visible but inactive.",
+        createdAt: now,
+        updatedAt: now
+      })
+    );
+    const thread = await fixture.repositories.conversationThreadRepository.create(
+      validateConversationThread({
+        id: "thread_knowledge_review",
+        projectId: project.id,
+        title: "review",
+        metadata: {
+          roomHandle: "review"
+        },
+        createdAt: now,
+        updatedAt: now
+      })
+    );
+    const sourceMessage =
+      await fixture.repositories.conversationMessageRepository.create(
+        validateConversationMessage({
+          id: "message_knowledge_review",
+          threadId: thread.id,
+          sequence: 0,
+          role: "assistant",
+          kind: "text",
+          content: "Review summary source",
+          metadata: {},
+          createdAt: now
+        })
+      );
+    await fixture.repositories.conversationThreadSummaryRepository.upsert(
+      validateConversationThreadSummary({
+        id: "summary_knowledge_review",
+        threadId: thread.id,
+        summary: "Review room summary stays thread-local.",
+        decisions: ["Keep review decisions source linked."],
+        openItems: ["Audit memory approval path."],
+        constraints: ["Do not auto-approve memory."],
+        lastKnownUserGoal: "Govern knowledge records",
+        sourceMessageCount: 1,
+        sourceLatestMessageId: sourceMessage.id,
+        metadata: {},
+        createdAt: now,
+        updatedAt: now
+      })
+    );
+    await fixture.repositories.runArtifactRepository.create(
+      validateRunArtifact({
+        id: "artifact_knowledge_review_decision",
+        taskRunId: run.id,
+        kind: "review_decision",
+        content: "Accepted for record. No merge was performed.",
+        metadata: {
+          reviewStatus: "accepted",
+          acceptedAt: now
+        },
+        createdAt: now
+      })
+    );
+
+    const workspace = await knowledge.getWorkspace(project.id);
+
+    expect(workspace.metrics).toMatchObject({
+      proposed: 1,
+      approved: 1,
+      rejected: 1,
+      summaries: 1,
+      decisions: 2
+    });
+    expect(workspace.items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "memory_knowledge_proposed",
+          kind: "memory",
+          status: "proposed",
+          taskId: task.id
+        }),
+        expect.objectContaining({
+          id: "summary_knowledge_review",
+          kind: "thread_summary",
+          status: "summary",
+          threadId: thread.id,
+          sourceLinks: expect.arrayContaining([
+            expect.objectContaining({ kind: "thread", threadId: thread.id }),
+            expect.objectContaining({
+              kind: "message",
+              messageId: sourceMessage.id
+            })
+          ])
+        }),
+        expect.objectContaining({
+          id: "summary_knowledge_review:decision:0",
+          kind: "thread_decision",
+          status: "decision",
+          content: "Keep review decisions source linked."
+        }),
+        expect.objectContaining({
+          id: "artifact_knowledge_review_decision",
+          kind: "review_decision",
+          status: "accepted",
+          runId: run.id,
+          sourceLinks: expect.arrayContaining([
+            expect.objectContaining({ kind: "run", runId: run.id }),
+            expect.objectContaining({
+              kind: "artifact",
+              artifactId: "artifact_knowledge_review_decision"
+            })
+          ])
+        })
+      ])
+    );
+    expect(
+      workspace.items.filter((item) =>
+        item.content.includes("Review room summary stays thread-local.")
+      )
+    ).toEqual([
+      expect.objectContaining({
+        kind: "thread_summary",
+        status: "summary"
+      })
+    ]);
+
+    const handlers = createIpcHandlers(createDesktopServices(context));
+    await expect(
+      handlers[IPC_CHANNELS.knowledgeWorkspace](
+        { sender: { send: vi.fn() } } as never,
+        project.id
+      )
+    ).resolves.toMatchObject({
+      projectId: project.id,
+      metrics: expect.objectContaining({ decisions: 2 })
+    });
   });
 
   it("redacts sensitive retained worktree diff patches in desktop review", async () => {
@@ -1868,6 +2065,7 @@ describe("desktop services", () => {
     const review = createReviewService(context, { memoryService: memory });
     const settings = createSettingsService(context);
     const comparison = createComparisonService(context);
+    const knowledge = createKnowledgeService(context);
     const runs = createTestRunService(context, review, memory, fixture);
     const threads = createThreadService({ context, projects, runs });
     const handlers = createIpcHandlers({
@@ -1877,6 +2075,7 @@ describe("desktop services", () => {
       review,
       comparison,
       memory,
+      knowledge,
       settings
     });
     const sender = { send: vi.fn() };
@@ -2489,6 +2688,7 @@ describe("desktop services", () => {
     const review = createReviewService(context, { memoryService: memory });
     const settings = createSettingsService(context);
     const comparison = createComparisonService(context);
+    const knowledge = createKnowledgeService(context);
     const runs = createTestRunService(context, review, memory, fixture);
     const threads = createThreadService({ context, projects, runs });
     const handlers = createIpcHandlers({
@@ -2498,6 +2698,7 @@ describe("desktop services", () => {
       review,
       comparison,
       memory,
+      knowledge,
       settings
     });
     const sender = { send: vi.fn() };

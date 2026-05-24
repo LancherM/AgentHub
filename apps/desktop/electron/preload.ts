@@ -94,6 +94,10 @@ const api: AgentHubApi = {
     ignore: (ids: string[]) =>
       ipcRenderer.invoke(IPC_CHANNELS.memoryIgnore, ids)
   },
+  knowledge: {
+    getWorkspace: (projectId: string) =>
+      ipcRenderer.invoke(IPC_CHANNELS.knowledgeWorkspace, projectId)
+  },
   settings: {
     getVerification: (projectId: string) =>
       ipcRenderer.invoke(IPC_CHANNELS.settingsGetVerification, projectId),

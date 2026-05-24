@@ -144,6 +144,24 @@ export type RiskCategory =
 export type MemoryProposalSource = "run" | "diff" | "verification" | "manual";
 export type MemoryProposalStatus = "pending" | "approved" | "ignored";
 export type RunLogLevel = "info" | "stdout" | "stderr" | "error" | "debug";
+export type KnowledgeItemKind =
+  | "memory"
+  | "thread_summary"
+  | "thread_decision"
+  | "review_decision";
+export type KnowledgeItemStatus =
+  | "proposed"
+  | "approved"
+  | "rejected"
+  | "summary"
+  | "accepted"
+  | "decision";
+export type KnowledgeSourceKind =
+  | "thread"
+  | "message"
+  | "task"
+  | "run"
+  | "artifact";
 
 export interface ProjectSummary {
   id: string;
@@ -562,6 +580,62 @@ export interface MemoryProposal {
   approvedMemoryPath?: string;
 }
 
+export interface KnowledgeSourceLink {
+  kind: KnowledgeSourceKind;
+  id: string;
+  label: string;
+  threadId?: string;
+  messageId?: string;
+  taskId?: string;
+  runId?: string;
+  artifactId?: string;
+  inspectorTab?: RunInspectorTab;
+}
+
+export interface KnowledgeAuditEvent {
+  at: string;
+  label: string;
+  detail?: string;
+}
+
+export interface KnowledgeItem {
+  id: string;
+  kind: KnowledgeItemKind;
+  status: KnowledgeItemStatus;
+  title: string;
+  content: string;
+  preview: string;
+  category?: MemoryCategory | "thread_summary" | "decision";
+  source?: MemoryProposalSource | "thread_summary" | "review_decision";
+  projectId: string;
+  taskId?: string;
+  runId?: string;
+  threadId?: string;
+  messageId?: string;
+  artifactId?: string;
+  createdAt: string;
+  updatedAt: string;
+  sourceLinks: KnowledgeSourceLink[];
+  audit: KnowledgeAuditEvent[];
+  bounded: boolean;
+}
+
+export interface KnowledgeWorkspaceMetrics {
+  total: number;
+  proposed: number;
+  approved: number;
+  rejected: number;
+  summaries: number;
+  decisions: number;
+}
+
+export interface KnowledgeWorkspace {
+  projectId: string;
+  generatedAt: string;
+  metrics: KnowledgeWorkspaceMetrics;
+  items: KnowledgeItem[];
+}
+
 export type MemoryApprovalWriteback = "written" | "already_present" | "skipped";
 
 export interface MemoryApprovalResult {
@@ -629,6 +703,9 @@ export interface AgentHubApi {
     generateProposalsForRun(runId: string): Promise<MemoryProposal[]>;
     approve(ids: string[]): Promise<MemoryApprovalResult[]>;
     ignore(ids: string[]): Promise<void>;
+  };
+  knowledge: {
+    getWorkspace(projectId: string): Promise<KnowledgeWorkspace>;
   };
   settings: {
     getVerification(projectId: string): Promise<VerificationSettings>;

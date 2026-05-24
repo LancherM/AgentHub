@@ -448,6 +448,19 @@ secret-like command filter in desktop and task runner paths, so commands
 containing token, API key, password, credential, or similar terms are skipped
 instead of being persisted as proposed memory.
 
+The desktop Knowledge workspace is the project-level memory and decision
+browser. It is opened from the local sidebar and lists approved, proposed, and
+rejected memory items alongside thread-local summaries, decisions captured from
+thread summaries, and audit review decisions stored as `review_decision`
+artifacts. Filters cover all records, decisions, summaries, proposed memory,
+approved memory, and rejected memory. Each record keeps source links to a
+thread/message, task, run, or artifact when that metadata exists. Run links
+open the existing workgroup inspector; thread and message links return to the
+source room. Approval and rejection remain explicit user actions for proposed
+memory only. Thread summaries stay visible as thread-local context and are not
+treated as approved project memory unless a user explicitly promotes equivalent
+content through the memory approval workflow.
+
 Inspector accept/reject actions are audit decisions only. Accepting a run
 records `accepted` review state and shows "Accepted for record. No merge was
 performed." Rejecting records `rejected` review state and shows "Rejected for

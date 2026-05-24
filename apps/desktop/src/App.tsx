@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ChatView } from "./components/chat/ChatView";
 import { RunInspectorModal } from "./components/inspector/RunInspectorModal";
+import { KnowledgeWorkspace } from "./components/knowledge/KnowledgeWorkspace";
 import { Sidebar } from "./components/sidebar/Sidebar";
 import { VerificationSettingsPanel } from "./components/settings/VerificationSettingsPanel";
 import { agentHubApi } from "./lib/agentHubApi";
@@ -17,6 +18,8 @@ import type {
   ThreadSummary
 } from "./lib/types";
 
+type DesktopWorkspace = "chat" | "knowledge";
+
 export function App(): JSX.Element {
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const [threads, setThreads] = useState<ThreadSummary[]>([]);
@@ -28,6 +31,8 @@ export function App(): JSX.Element {
     { runId: string; tab?: RunInspectorTab } | undefined
   >();
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [activeWorkspace, setActiveWorkspace] =
+    useState<DesktopWorkspace>("chat");
   const [lastUsedAgents, setLastUsedAgents] = useState<AgentId[]>(["fake"]);
   const [pendingContinueFrom, setPendingContinueFrom] =
     useState<RunContinuationTarget | undefined>();
@@ -243,31 +248,47 @@ export function App(): JSX.Element {
         threads={threads}
         selectedThreadId={selectedThreadId}
         selectedProjectId={selectedProject?.id ?? selectedProjectId}
+        activeWorkspace={activeWorkspace}
         onNewThread={() => void createNewThread()}
-        onSelectThread={(threadId) => void loadThread(threadId)}
+        onSelectThread={(threadId) => {
+          setActiveWorkspace("chat");
+          void loadThread(threadId);
+        }}
         onSelectProject={(projectId) => void selectProject(projectId)}
         onRegisterProject={registerProject}
+        onOpenKnowledge={() => setActiveWorkspace("knowledge")}
         onOpenSettings={() => setSettingsOpen(true)}
         isBusy={isBusy}
       />
       <main className="center-pane">
-        <ChatView
-          thread={currentThread}
-          project={selectedProject}
-          messages={selectedMessages}
-          runDetails={runDetails}
-          isBusy={isBusy}
-          lastUsedAgents={lastUsedAgents}
-          pendingContinueFrom={pendingContinueFrom}
-          error={error}
-          onSubmit={submitMessage}
-          onContinueFromRun={(target) => setPendingContinueFrom(target)}
-          onClearContinueFrom={() => setPendingContinueFrom(undefined)}
-          onRunUpdated={handleRunUpdated}
-          onOpenInspector={(runId, tab) => setSelectedInspector({ runId, tab })}
-          onCancelRun={cancelRun}
-          onRegisterProject={registerProject}
-        />
+        {activeWorkspace === "knowledge" ? (
+          <KnowledgeWorkspace
+            project={selectedProject}
+            onOpenThread={(threadId) => {
+              setActiveWorkspace("chat");
+              void loadThread(threadId);
+            }}
+            onOpenInspector={(runId, tab) => setSelectedInspector({ runId, tab })}
+          />
+        ) : (
+          <ChatView
+            thread={currentThread}
+            project={selectedProject}
+            messages={selectedMessages}
+            runDetails={runDetails}
+            isBusy={isBusy}
+            lastUsedAgents={lastUsedAgents}
+            pendingContinueFrom={pendingContinueFrom}
+            error={error}
+            onSubmit={submitMessage}
+            onContinueFromRun={(target) => setPendingContinueFrom(target)}
+            onClearContinueFrom={() => setPendingContinueFrom(undefined)}
+            onRunUpdated={handleRunUpdated}
+            onOpenInspector={(runId, tab) => setSelectedInspector({ runId, tab })}
+            onCancelRun={cancelRun}
+            onRegisterProject={registerProject}
+          />
+        )}
       </main>
       {selectedInspector ? (
         <RunInspectorModal

@@ -102,9 +102,18 @@ proposal content, and caps generated proposals for a run before mapping
 ignore to the rejected memory item state. Its explicit approve path moves items
 to `approved`, appends them to the Agent Hub-owned approved-memory context file
 through the shared context-compiler helper, and returns the local writeback path
-for inspector confirmation. All of these services sit behind preload IPC
-methods, so the renderer still has no Node.js, filesystem, SQLite, shell,
-child-process, or Git access.
+for inspector confirmation. `KnowledgeService` is a read model over existing
+repositories: `memory_items`, `conversation_thread_summaries`,
+conversation threads/messages, task runs, tasks, and `review_decision`
+`run_artifacts`. It returns project-scoped knowledge rows with bounded
+previews, source links, audit entries, and counts for proposed, approved,
+rejected, summary, and decision records. It does not add a decisions table,
+promote thread summaries, approve memory, or read files. The renderer opens the
+workspace through `window.agentHub.knowledge.getWorkspace(projectId)` and still
+uses the existing explicit memory approve/reject IPC methods for proposed
+memory actions. All of these services sit behind preload IPC methods, so the
+renderer still has no Node.js, filesystem, SQLite, shell, child-process, or Git
+access.
 
 Run review decisions are stored as local `run_artifacts` entries of kind
 `review_decision`. They are not execution status transitions and they do not
@@ -764,6 +773,15 @@ artifact metadata in `ReviewService`, and serves it through preload IPC. The
 renderer displays named artifact chips on run-card timelines and a local
 artifact inventory in the Artifacts inspector tab, while full artifact content
 stays local and bounded before crossing into the sandboxed renderer.
+
+Phase 7 adds a Knowledge workspace as a desktop read model over the existing
+local evidence tables. `KnowledgeService` composes memory items, thread
+summaries, summary decisions, and review-decision artifacts into one bounded
+project workspace served over Electron IPC. The renderer filters those rows,
+shows source links back to rooms and runs, and delegates proposed-memory
+approval/rejection to the existing explicit `MemoryService` methods. Proposed
+and rejected memory are never injected as approved memory, and thread summaries
+remain thread-local records.
 
 Repository CI/CD lives in `.github/workflows/ci-cd.yml` and stays outside the
 Agent Hub runtime. The workflow installs the pinned pnpm and Node versions from

@@ -6,10 +6,12 @@ interface SidebarProps {
   threads: ThreadSummary[];
   selectedThreadId?: string;
   selectedProjectId?: string;
+  activeWorkspace: "chat" | "knowledge";
   onNewThread(): void;
   onSelectThread(threadId: string): void;
   onSelectProject(projectId: string): void;
   onRegisterProject(projectPath: string): Promise<void>;
+  onOpenKnowledge(): void;
   onOpenSettings(): void;
   isBusy: boolean;
 }
@@ -19,10 +21,12 @@ export function Sidebar({
   threads,
   selectedThreadId,
   selectedProjectId,
+  activeWorkspace,
   onNewThread,
   onSelectThread,
   onSelectProject,
   onRegisterProject,
+  onOpenKnowledge,
   onOpenSettings,
   isBusy
 }: SidebarProps): JSX.Element {
@@ -117,7 +121,9 @@ export function Sidebar({
             projectRooms.map((thread) => (
               <button
                 className={`thread-row ${
-                  selectedThreadId === thread.id ? "selected" : ""
+                  activeWorkspace === "chat" && selectedThreadId === thread.id
+                    ? "selected"
+                    : ""
                 }`}
                 key={thread.id}
                 onClick={() => onSelectThread(thread.id)}
@@ -181,6 +187,13 @@ export function Sidebar({
           <span className="project-dot" />
           <span>Local-first</span>
         </div>
+        <button
+          className={activeWorkspace === "knowledge" ? "selected" : ""}
+          onClick={onOpenKnowledge}
+          disabled={!selectedProjectId}
+        >
+          Knowledge
+        </button>
         <button onClick={onOpenSettings}>Settings</button>
       </nav>
     </aside>

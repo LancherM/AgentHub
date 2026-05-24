@@ -31,6 +31,7 @@ export const IPC_CHANNELS = {
   memoryGenerateProposals: "agent-hub:memory:generate-proposals",
   memoryApprove: "agent-hub:memory:approve",
   memoryIgnore: "agent-hub:memory:ignore",
+  knowledgeWorkspace: "agent-hub:knowledge:workspace",
   settingsGetVerification: "agent-hub:settings:get-verification",
   settingsSaveVerification: "agent-hub:settings:save-verification"
 } as const;

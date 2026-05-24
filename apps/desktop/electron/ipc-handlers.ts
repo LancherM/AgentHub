@@ -41,6 +41,10 @@ import {
   createComparisonService,
   type ComparisonService
 } from "./services/comparison-service";
+import {
+  createKnowledgeService,
+  type KnowledgeService
+} from "./services/knowledge-service";
 
 export { IPC_CHANNELS, runEventChannel } from "./ipc-channels";
 
@@ -51,6 +55,7 @@ export interface DesktopServices {
   review: ReviewService;
   comparison: ComparisonService;
   memory: MemoryService;
+  knowledge: KnowledgeService;
   settings: SettingsService;
 }
 
@@ -84,6 +89,7 @@ export function createDesktopServices(
     settingsService: settings
   });
   const comparison = createComparisonService(context);
+  const knowledge = createKnowledgeService(context);
   return {
     projects,
     runs,
@@ -91,6 +97,7 @@ export function createDesktopServices(
     review,
     comparison,
     memory,
+    knowledge,
     settings
   };
 }
@@ -184,6 +191,8 @@ export function createIpcHandlers(
       services.memory.approve(parseIdList(input, "memory ids")),
     [IPC_CHANNELS.memoryIgnore]: async (_event, input) =>
       services.memory.ignore(parseIdList(input, "memory ids")),
+    [IPC_CHANNELS.knowledgeWorkspace]: async (_event, input) =>
+      services.knowledge.getWorkspace(parseId(input, "projectId")),
     [IPC_CHANNELS.settingsGetVerification]: async (_event, input) =>
       services.settings.getVerification(parseId(input, "projectId")),
     [IPC_CHANNELS.settingsSaveVerification]: async (_event, input) =>
