@@ -279,6 +279,7 @@ function reviewPills(
     { label: `Tests ${summary?.verificationStatus ?? pending}`, tab: "tests" },
     { label: `Risk ${summary?.riskLevel ?? pending}`, tab: "risk" },
     { label: `Diff ${diffLabel}`, tab: "diff" },
+    { label: "Compare", tab: "compare" },
     { label: `Memory ${summary?.memoryProposalCount ?? 0}`, tab: "memory" },
     { label: `${eventCount} logs`, tab: "logs" }
   ];
