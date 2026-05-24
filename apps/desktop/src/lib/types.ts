@@ -47,6 +47,7 @@ export type RunInspectorTab =
   | "tests"
   | "risk"
   | "handoff"
+  | "compare"
   | "memory"
   | "logs";
 
@@ -258,6 +259,100 @@ export interface ReviewHandoffActionResult {
   message: string;
 }
 
+export type ComparisonScopeKind = "task" | "conversation_turn";
+
+export interface ComparisonCreateInput {
+  baselineRunId: string;
+  candidateRunId: string;
+}
+
+export interface ComparisonCandidate {
+  runId: string;
+  taskId: string;
+  agentId: AgentId;
+  status: RunStatus;
+  title: string;
+  scope: ComparisonScopeKind;
+  createdAt: string;
+}
+
+export interface ComparisonReport {
+  id: string;
+  taskId: string;
+  baselineRunId?: string;
+  candidateRunId?: string;
+  summary: string;
+  details?: ComparisonStructuredSignals;
+  scope: ComparisonScopeKind;
+  createdAt: string;
+}
+
+export interface ComparisonStructuredSignals extends Record<string, unknown> {
+  runs?: {
+    baseline?: ComparisonRunSignal;
+    candidate?: ComparisonRunSignal;
+  };
+  changedFiles?: {
+    baselineCount?: number;
+    candidateCount?: number;
+    overlapCount?: number;
+    overlapRatio?: number;
+  };
+  diffSize?: {
+    baseline?: ComparisonDiffSizeSignal;
+    candidate?: ComparisonDiffSizeSignal;
+    fileDelta?: number;
+    insertionDelta?: number;
+    deletionDelta?: number;
+    totalLineDelta?: number;
+  };
+  verification?: {
+    baseline?: ComparisonVerificationSignal;
+    candidate?: ComparisonVerificationSignal;
+    failedCheckDelta?: number;
+  };
+  risk?: {
+    baseline?: ComparisonRiskSignal;
+    candidate?: ComparisonRiskSignal;
+    rankDelta?: number;
+  };
+  score?: {
+    baseline?: number;
+    candidate?: number;
+    winner?: "baseline" | "candidate" | "tie";
+    reasons?: string[];
+  };
+  tradeoffs?: string[];
+}
+
+export interface ComparisonRunSignal {
+  runId: string;
+  agent: string;
+  status: string;
+  changedFiles: number;
+  verification: string;
+  risk: string;
+}
+
+export interface ComparisonDiffSizeSignal {
+  filesChanged: number;
+  insertions: number;
+  deletions: number;
+  totalLineChanges: number;
+}
+
+export interface ComparisonVerificationSignal {
+  passed: number;
+  failed: number;
+  skipped: number;
+}
+
+export interface ComparisonRiskSignal {
+  level: string;
+  rank: number;
+  factors: string[];
+}
+
 export interface RunContinuationTarget {
   parentRunId: string;
   parentMessageId?: string;
@@ -390,6 +485,11 @@ export interface AgentHubApi {
       runId: string,
       kind: HandoffCopyKind
     ): Promise<ReviewHandoffActionResult>;
+  };
+  comparison: {
+    listCandidates(runId: string): Promise<ComparisonCandidate[]>;
+    listForRun(runId: string): Promise<ComparisonReport[]>;
+    create(input: ComparisonCreateInput): Promise<ComparisonReport>;
   };
   memory: {
     listProposals(runId: string): Promise<MemoryProposal[]>;

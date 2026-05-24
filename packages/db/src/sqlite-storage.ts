@@ -1977,6 +1977,24 @@ ORDER BY created_at ASC, id ASC;
 `);
     return rows.map(comparisonReportFromRow);
   }
+
+  async listByRunId(runId: string): Promise<ComparisonReport[]> {
+    const rows = await this.database.query<ComparisonReportRow>(`
+SELECT
+  id,
+  task_id AS taskId,
+  baseline_run_id AS baselineRunId,
+  candidate_run_id AS candidateRunId,
+  summary,
+  details_json AS detailsJson,
+  created_at AS createdAt
+FROM comparison_reports
+WHERE baseline_run_id = ${sqlString(runId)}
+  OR candidate_run_id = ${sqlString(runId)}
+ORDER BY created_at ASC, id ASC;
+`);
+    return rows.map(comparisonReportFromRow);
+  }
 }
 
 export class SQLiteSkillRepository implements SkillRepository {

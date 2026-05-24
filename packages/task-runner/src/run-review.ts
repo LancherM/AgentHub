@@ -54,6 +54,7 @@ export interface ComparisonSummaryInput {
   taskId: string;
   baselineRunId: string;
   candidateRunId: string;
+  allowRunTaskMismatch?: boolean;
 }
 
 export interface ComparisonBuildResult {
@@ -258,6 +259,13 @@ export async function buildComparisonReport(
     );
   }
   if (candidate.taskId !== input.taskId) {
+    if (input.allowRunTaskMismatch === true) {
+      const details = buildComparisonDetails(input.taskId, baseline, candidate);
+      return {
+        summary: renderComparisonSummary(input.taskId, baseline, candidate, details),
+        details
+      };
+    }
     throw new Error(
       `candidate run ${input.candidateRunId} does not belong to task ${input.taskId}`
     );

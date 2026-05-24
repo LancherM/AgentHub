@@ -2,6 +2,9 @@ import { useEffect, useMemo, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import { agentHubApi } from "../../lib/agentHubApi";
 import type {
+  ComparisonCandidate,
+  ComparisonReport,
+  ComparisonVerificationSignal,
   DiffSummary,
   HandoffCopyKind,
   MemoryProposal,
@@ -39,9 +42,15 @@ const tabs: Array<{ id: RunInspectorTab; label: string }> = [
   { id: "tests", label: "Tests" },
   { id: "risk", label: "Risk" },
   { id: "handoff", label: "Handoff" },
+  { id: "compare", label: "Compare" },
   { id: "memory", label: "Memory" },
   { id: "logs", label: "Logs" }
 ];
+
+interface ComparisonPanelData {
+  candidates: ComparisonCandidate[];
+  reports: ComparisonReport[];
+}
 
 export function RunInspectorModal({
   runId,
@@ -62,6 +71,9 @@ export function RunInspectorModal({
   const [handoff, setHandoff] = useState<LoadState<ReviewHandoff>>({
     loading: false
   });
+  const [comparison, setComparison] = useState<LoadState<ComparisonPanelData>>({
+    loading: false
+  });
   const [memory, setMemory] = useState<LoadState<MemoryProposal[]>>({
     loading: false
   });
@@ -76,6 +88,7 @@ export function RunInspectorModal({
     setVerification({ loading: false });
     setRisk({ loading: false });
     setHandoff({ loading: false });
+    setComparison({ loading: false });
     setMemory({ loading: false });
     setLogs({ loading: false });
     void loadSummary();
@@ -117,6 +130,8 @@ export function RunInspectorModal({
       await loadState(setRisk, () => agentHubApi.review.getRisk(runId));
     } else if (tab === "handoff") {
       await loadState(setHandoff, () => agentHubApi.review.getHandoff(runId));
+    } else if (tab === "compare") {
+      await loadComparison();
     } else if (tab === "memory") {
       await loadState(setMemory, () => agentHubApi.memory.listProposals(runId));
       await loadSummary();
@@ -129,6 +144,45 @@ export function RunInspectorModal({
     setDecisionMessage(undefined);
     await loadSummary();
     await loadTab(activeTab);
+  }
+
+  async function loadComparison(): Promise<void> {
+    await loadState(setComparison, async () => {
+      const [candidates, reports] = await Promise.all([
+        agentHubApi.comparison.listCandidates(runId),
+        agentHubApi.comparison.listForRun(runId)
+      ]);
+      return { candidates, reports };
+    });
+  }
+
+  async function createComparison(candidateRunId: string): Promise<void> {
+    setDecisionMessage(undefined);
+    setComparison((current) => ({ ...current, loading: true, error: undefined }));
+    try {
+      const report = await agentHubApi.comparison.create({
+        baselineRunId: runId,
+        candidateRunId
+      });
+      const [candidates, reports] = await Promise.all([
+        agentHubApi.comparison.listCandidates(runId),
+        agentHubApi.comparison.listForRun(runId)
+      ]);
+      setComparison({
+        loading: false,
+        data: {
+          candidates,
+          reports: upsertComparisonReport(reports, report)
+        }
+      });
+      setDecisionMessage("Comparison report recorded. No code was applied.");
+    } catch (error) {
+      setComparison((current) => ({
+        ...current,
+        loading: false,
+        error: errorMessage(error)
+      }));
+    }
   }
 
   async function accept(): Promise<void> {
@@ -255,6 +309,16 @@ export function RunInspectorModal({
                   handoff={data}
                   onOpen={() => void openHandoff()}
                   onCopy={(kind) => void copyHandoff(kind)}
+                />
+              )}
+            </LoadSlot>
+          ) : activeTab === "compare" ? (
+            <LoadSlot state={comparison}>
+              {(data) => (
+                <ComparisonPanel
+                  baselineRunId={runId}
+                  data={data}
+                  onCreate={(candidateRunId) => void createComparison(candidateRunId)}
                 />
               )}
             </LoadSlot>
@@ -466,6 +530,176 @@ function HandoffPanel({
   );
 }
 
+function ComparisonPanel({
+  baselineRunId,
+  data,
+  onCreate
+}: {
+  baselineRunId: string;
+  data: ComparisonPanelData;
+  onCreate(candidateRunId: string): void;
+}): JSX.Element {
+  const [selectedCandidateId, setSelectedCandidateId] = useState(
+    data.candidates[0]?.runId ?? ""
+  );
+
+  useEffect(() => {
+    if (
+      selectedCandidateId &&
+      data.candidates.some((candidate) => candidate.runId === selectedCandidateId)
+    ) {
+      return;
+    }
+    setSelectedCandidateId(data.candidates[0]?.runId ?? "");
+  }, [data.candidates, selectedCandidateId]);
+
+  const reports = [...data.reports].sort((left, right) =>
+    right.createdAt.localeCompare(left.createdAt)
+  );
+  const latestReport = reports[0];
+
+  return (
+    <div className="summary-stack comparison-panel">
+      <section>
+        <div className="summary-heading">
+          <div>
+            <div className="panel-label">Comparison Review</div>
+            <p>
+              Compare this terminal run with another run from the same task or
+              the same multi-agent desktop turn.
+            </p>
+          </div>
+          <span className="handoff-state ready">review only</span>
+        </div>
+      </section>
+
+      <section>
+        <div className="review-section-head">
+          <div>
+            <div className="panel-label">Create Report</div>
+            <p className="muted-copy">
+              Reports are persisted locally and do not accept, merge, push, or
+              apply code.
+            </p>
+          </div>
+        </div>
+        {data.candidates.length === 0 ? (
+          <p className="muted-copy">
+            No terminal comparison candidates are available for this run.
+          </p>
+        ) : (
+          <div className="comparison-create-row">
+            <label>
+              <span>Candidate</span>
+              <select
+                value={selectedCandidateId}
+                onChange={(event) => setSelectedCandidateId(event.target.value)}
+              >
+                {data.candidates.map((candidate) => (
+                  <option key={candidate.runId} value={candidate.runId}>
+                    {candidateLabel(candidate)}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <button
+              className="ghost-button"
+              disabled={!selectedCandidateId}
+              onClick={() => onCreate(selectedCandidateId)}
+            >
+              Create Comparison
+            </button>
+          </div>
+        )}
+      </section>
+
+      {latestReport ? (
+        <section>
+          <div className="review-section-head">
+            <div>
+              <div className="panel-label">Latest Structured Signals</div>
+              <p className="muted-copy">
+                Baseline {shortId(baselineRunId)} compared with{" "}
+                {shortId(latestReport.candidateRunId ?? "unknown")} by{" "}
+                {scopeLabel(latestReport.scope)}.
+              </p>
+            </div>
+          </div>
+          <ComparisonSignals report={latestReport} />
+        </section>
+      ) : null}
+
+      <section>
+        <div className="panel-label">Reports</div>
+        {reports.length === 0 ? (
+          <p className="muted-copy">No comparison reports have been recorded.</p>
+        ) : (
+          <div className="comparison-report-list">
+            {reports.map((report) => (
+              <article key={report.id} className="comparison-report">
+                <header>
+                  <div>
+                    <strong>{report.id}</strong>
+                    <span>{scopeLabel(report.scope)}</span>
+                  </div>
+                  <time>{formatTime(report.createdAt)}</time>
+                </header>
+                <ComparisonSignals report={report} compact />
+                <pre>{report.summary}</pre>
+              </article>
+            ))}
+          </div>
+        )}
+      </section>
+    </div>
+  );
+}
+
+function ComparisonSignals({
+  report,
+  compact = false
+}: {
+  report: ComparisonReport;
+  compact?: boolean;
+}): JSX.Element {
+  const details = report.details;
+  const baseline = details?.runs?.baseline;
+  const candidate = details?.runs?.candidate;
+  const score = details?.score;
+  const diff = details?.diffSize;
+  const verification = details?.verification;
+  const risk = details?.risk;
+  const changedFiles = details?.changedFiles;
+  return (
+    <div className={compact ? "comparison-signals compact" : "comparison-signals"}>
+      <Metric label="Winner" value={score?.winner ?? "unknown"} />
+      <Metric label="Score" value={formatScore(score?.baseline, score?.candidate)} />
+      <Metric label="Baseline Status" value={baseline?.status ?? "unknown"} />
+      <Metric label="Candidate Status" value={candidate?.status ?? "unknown"} />
+      <Metric label="Risk" value={formatPair(risk?.baseline?.level, risk?.candidate?.level)} />
+      <Metric
+        label="Tests"
+        value={formatVerificationPair(verification?.baseline, verification?.candidate)}
+      />
+      <Metric
+        label="Diff"
+        value={formatDiffPair(diff?.baseline, diff?.candidate)}
+      />
+      <Metric
+        label="Overlap"
+        value={
+          changedFiles
+            ? `${changedFiles.overlapCount ?? 0}/${Math.max(
+                changedFiles.baselineCount ?? 0,
+                changedFiles.candidateCount ?? 0
+              )}`
+            : "unknown"
+        }
+      />
+    </div>
+  );
+}
+
 function Metric({ label, value }: { label: string; value: string }): JSX.Element {
   return (
     <div>
@@ -473,6 +707,84 @@ function Metric({ label, value }: { label: string; value: string }): JSX.Element
       <strong>{value}</strong>
     </div>
   );
+}
+
+function upsertComparisonReport(
+  reports: ComparisonReport[],
+  report: ComparisonReport
+): ComparisonReport[] {
+  return [report, ...reports.filter((entry) => entry.id !== report.id)];
+}
+
+function candidateLabel(candidate: ComparisonCandidate): string {
+  return [
+    `@${candidate.agentId}`,
+    candidate.status,
+    scopeLabel(candidate.scope),
+    shortId(candidate.runId)
+  ].join(" - ");
+}
+
+function scopeLabel(scope: ComparisonReport["scope"]): string {
+  return scope === "conversation_turn" ? "same desktop turn" : "same task";
+}
+
+function shortId(value: string): string {
+  return value.length > 14 ? `${value.slice(0, 14)}...` : value;
+}
+
+function formatScore(
+  baseline: number | undefined,
+  candidate: number | undefined
+): string {
+  return `${baseline ?? "?"}/${candidate ?? "?"}`;
+}
+
+function formatPair(
+  baseline: string | undefined,
+  candidate: string | undefined
+): string {
+  return `${baseline ?? "?"}/${candidate ?? "?"}`;
+}
+
+function formatVerificationPair(
+  baseline: ComparisonVerificationSignal | undefined,
+  candidate: ComparisonVerificationSignal | undefined
+): string {
+  return `${formatVerificationCounts(baseline)}/${formatVerificationCounts(candidate)}`;
+}
+
+function formatVerificationCounts(
+  counts: { passed?: number; failed?: number; skipped?: number } | undefined
+): string {
+  if (!counts) {
+    return "?";
+  }
+  return `${counts.passed ?? 0}p ${counts.failed ?? 0}f ${counts.skipped ?? 0}s`;
+}
+
+function formatDiffPair(
+  baseline:
+    | { filesChanged?: number; insertions?: number; deletions?: number }
+    | undefined,
+  candidate:
+    | { filesChanged?: number; insertions?: number; deletions?: number }
+    | undefined
+): string {
+  return `${formatDiffSignal(baseline)}/${formatDiffSignal(candidate)}`;
+}
+
+function formatDiffSignal(
+  signal:
+    | { filesChanged?: number; insertions?: number; deletions?: number }
+    | undefined
+): string {
+  if (!signal) {
+    return "?";
+  }
+  return `${signal.filesChanged ?? 0} files +${signal.insertions ?? 0}/-${
+    signal.deletions ?? 0
+  }`;
 }
 
 function LogView({ logs }: { logs: RunLog[] }): JSX.Element {

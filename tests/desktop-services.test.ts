@@ -21,6 +21,7 @@ import { createMemoryService } from "../apps/desktop/electron/services/memory-se
 import { createRunService } from "../apps/desktop/electron/services/run-service";
 import { createThreadService } from "../apps/desktop/electron/services/thread-service";
 import { createSettingsService } from "../apps/desktop/electron/services/settings-service";
+import { createComparisonService } from "../apps/desktop/electron/services/comparison-service";
 import { runFakeAgent } from "../apps/desktop/electron/services/fake-agent-runner";
 import {
   CodexAdapter,
@@ -130,6 +131,7 @@ describe("desktop services", () => {
     const memory = createMemoryService(context);
     const review = createReviewService(context, { memoryService: memory });
     const settings = createSettingsService(context);
+    const comparison = createComparisonService(context);
     const runs = createTestRunService(context, review, memory, fixture);
     const threads = createThreadService({ context, projects, runs });
     const handlers = createIpcHandlers({
@@ -137,6 +139,7 @@ describe("desktop services", () => {
       runs,
       threads,
       review,
+      comparison,
       memory,
       settings
     });
@@ -1041,6 +1044,120 @@ describe("desktop services", () => {
     ]);
   });
 
+  it("creates desktop comparison reports for terminal runs in the same multi-agent turn", async () => {
+    const fixture = await createFixture();
+    const context = createDesktopServiceContext(fixture.repositories);
+    const projects = createProjectService(context);
+    const memory = createMemoryService(context);
+    const review = createReviewService(context, { memoryService: memory });
+    const settings = createSettingsService(context);
+    const comparison = createComparisonService(context);
+    const runs = createTestRunService(context, review, memory, fixture);
+    const threads = createThreadService({ context, projects, runs });
+    const handlers = createIpcHandlers({
+      projects,
+      runs,
+      threads,
+      review,
+      comparison,
+      memory,
+      settings
+    });
+    const sender = { send: vi.fn() };
+    const project = await projects.open(fixture.projectRoot);
+
+    const detail = await threads.sendMessage({
+      projectId: project.id,
+      text: "@fake @codex compare this turn",
+      contextMode: "auto"
+    });
+    const runMessages = detail.messages.filter(
+      (message) => message.type === "agent_run"
+    );
+    const fakeRun = runMessages.find((message) => message.agentId === "fake");
+    const codexRun = runMessages.find((message) => message.agentId === "codex");
+    if (!fakeRun || !codexRun) {
+      throw new Error("expected fake and codex run cards");
+    }
+    await waitForRun(runs, fakeRun.runId, "completed");
+    await waitForRun(runs, codexRun.runId, "failed");
+
+    await expect(
+      handlers[IPC_CHANNELS.comparisonListCandidates](
+        { sender } as never,
+        fakeRun.runId
+      )
+    ).resolves.toEqual([
+      expect.objectContaining({
+        runId: codexRun.runId,
+        agentId: "codex",
+        scope: "conversation_turn"
+      })
+    ]);
+
+    const report = await handlers[IPC_CHANNELS.comparisonCreate](
+      { sender } as never,
+      {
+        baselineRunId: fakeRun.runId,
+        candidateRunId: codexRun.runId
+      }
+    );
+    expect(report).toMatchObject({
+      baselineRunId: fakeRun.runId,
+      candidateRunId: codexRun.runId,
+      scope: "conversation_turn",
+      details: expect.objectContaining({
+        runs: expect.objectContaining({
+          baseline: expect.objectContaining({ agent: "fake", status: "succeeded" }),
+          candidate: expect.objectContaining({ agent: "codex", status: "failed" })
+        }),
+        score: expect.objectContaining({
+          winner: "baseline"
+        })
+      })
+    });
+    expect((report as { summary: string }).summary).toContain("comparison_score");
+
+    await expect(comparison.listForRun(codexRun.runId)).resolves.toEqual([
+      expect.objectContaining({
+        baselineRunId: fakeRun.runId,
+        candidateRunId: codexRun.runId
+      })
+    ]);
+    await expect(
+      fixture.repositories.comparisonReportRepository.listByRunId(fakeRun.runId)
+    ).resolves.toHaveLength(1);
+    await expect(
+      handlers[IPC_CHANNELS.comparisonListForRun](
+        { sender } as never,
+        fakeRun.runId
+      )
+    ).resolves.toEqual([
+      expect.objectContaining({
+        id: (report as { id: string }).id
+      })
+    ]);
+
+    const other = await threads.sendMessage({
+      projectId: project.id,
+      text: "@fake unrelated comparison candidate",
+      contextMode: "auto"
+    });
+    const otherRun = other.messages.find(
+      (message) => message.type === "agent_run"
+    );
+    if (!otherRun) {
+      throw new Error("expected unrelated run card");
+    }
+    await waitForRun(runs, otherRun.runId, "completed");
+    await expect(
+      comparison.createComparison({
+        baselineRunId: fakeRun.runId,
+        candidateRunId: otherRun.runId
+      })
+    ).rejects.toThrow(/same task or the same multi-agent desktop turn/);
+  });
+
   it("persists desktop thread messages across service recreation", async () => {
     const fixture = await createFixture();
     const context = createDesktopServiceContext(fixture.repositories);
@@ -1557,6 +1674,7 @@ describe("desktop services", () => {
     const memory = createMemoryService(context);
     const review = createReviewService(context, { memoryService: memory });
     const settings = createSettingsService(context);
+    const comparison = createComparisonService(context);
     const runs = createTestRunService(context, review, memory, fixture);
     const threads = createThreadService({ context, projects, runs });
     const handlers = createIpcHandlers({
@@ -1564,6 +1682,7 @@ describe("desktop services", () => {
       runs,
       threads,
       review,
+      comparison,
       memory,
       settings
     });

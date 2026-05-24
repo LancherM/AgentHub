@@ -533,12 +533,23 @@ from 100 and applies explainable penalties for non-succeeded status, higher
 risk, failed checks, skipped verification, and larger diff footprint; it is a
 review signal, not an acceptance decision. Comparison is review-only and
 performs no accept, merge, branch delete, or push action.
+Desktop comparison review is a thin main-process service over that shared
+helper. `ComparisonService` validates that both selected runs are terminal and
+either share a task id or appear in the same multi-agent desktop turn by
+inspecting durable conversation run-card messages. Same-task comparisons use
+the normal task-scoped helper contract. Same-turn desktop comparisons allow the
+candidate run to have a different task id only after the conversation grouping
+is proven, then persist a `desktopScope` marker in `comparison_reports.details`
+for later reads. Renderer components call only `window.agentHub.comparison.*`
+through preload IPC; they do not calculate scores, read SQLite, inspect
+conversation tables, or mutate agent output.
 
 The first desktop runtime integration is deliberately narrow. `apps/desktop`
 uses SQLite-backed services for project registration, run listing/detail,
-inspector review tabs, verification rows, risk reports, and memory proposal
-decisions. `runs.create` records a queued desktop run through repository
-interfaces, then the main process calls TaskRunner with those same repositories.
+inspector review tabs, verification rows, risk reports, comparison reports,
+and memory proposal decisions. `runs.create` records a queued desktop run
+through repository interfaces, then the main process calls TaskRunner with
+those same repositories.
 TaskRunner creates the isolated worktree, materializes runtime-only task
 artifacts, runs `FakeAgentAdapter`, `CodexAdapter`, or `ClaudeCodeAdapter`,
 collects diffs, records skipped verification when no commands are configured,
