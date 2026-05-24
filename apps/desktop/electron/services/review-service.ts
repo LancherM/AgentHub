@@ -22,6 +22,7 @@ import type {
   AgentId,
   DiffSummary,
   HandoffCopyKind,
+  ReviewContext,
   ReviewHandoff,
   ReviewHandoffActionResult,
   ReviewStatus,
@@ -40,11 +41,13 @@ import type { MemoryService } from "./memory-service";
 import type { DesktopServiceContext } from "./project-service";
 
 const REVIEW_DECISION_ARTIFACT_KIND = "review_decision";
+const CONVERSATION_BRIEF_ARTIFACT_KIND = "conversation_brief";
 const MAX_LOG_ROWS = 1_000;
 const MAX_LOG_MESSAGE_CHARS = 12_000;
 
 export interface ReviewService {
   getSummary(runId: string): Promise<ReviewSummary>;
+  getContext(runId: string): Promise<ReviewContext>;
   getDiff(runId: string): Promise<DiffSummary>;
   getRisk(runId: string): Promise<RiskReport>;
   getVerification(runId: string): Promise<VerificationReport>;
@@ -152,6 +155,29 @@ class RepositoryReviewService implements ReviewService {
   async getDiff(runId: string): Promise<DiffSummary> {
     await this.requireRunAndTask(runId);
     return this.dependencies.diffService.getDiff(runId);
+  }
+
+  async getContext(runId: string): Promise<ReviewContext> {
+    await this.requireRunAndTask(runId);
+    const artifact = await this.artifacts.getLatestByRunIdAndKind(
+      runId,
+      CONVERSATION_BRIEF_ARTIFACT_KIND
+    );
+    if (!artifact) {
+      return {
+        runId,
+        available: false,
+        message: "No persisted conversation brief is available for this run."
+      };
+    }
+    return {
+      runId,
+      available: true,
+      content: artifact.content,
+      artifactId: artifact.id,
+      createdAt: artifact.createdAt,
+      message: "Conversation brief captured for runtime injection."
+    };
   }
 
   async getRisk(runId: string): Promise<RiskReport> {

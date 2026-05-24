@@ -366,7 +366,7 @@ or supplied by the caller, desktop falls back to `@fake`.
 
 Timeline rows now carry bounded event semantics in message metadata. User
 messages, participant responses, task-created rows, assignment rows, system
-events, run cards, checks, risks, diff artifacts, review decisions, and memory
+events, run cards, checks, risks, artifacts, review decisions, and memory
 proposal signals render as distinct audit-stream cards or chips while still
 using the existing conversation message and run evidence records. Linked task,
 run, and assignment ids are stored as compact metadata so a visible event can
@@ -377,9 +377,10 @@ Active inline run cards subscribe to the existing desktop run event stream and
 replay already-persisted events when a subscription starts after a fast run has
 advanced. They show agent identity, status, the latest streamed line, compact
 review pills, and an expandable event log. Terminal cards do not load full run
-review evidence when a thread is merely selected; diff, tests, risk, memory
-proposals, summary, and full logs load lazily when the user expands a card or
-opens the on-demand run inspector drawer. Existing persisted run records are
+review evidence when a thread is merely selected; artifacts, checks, risks,
+memory proposals, brief data, context previews, and audit logs load lazily when
+the user expands a card or opens the on-demand workgroup inspector drawer.
+Existing persisted run records are
 synthesized into thread-shaped conversations only as a compatibility import
 when no durable conversation threads exist yet, so old desktop run data remains
 inspectable without making run synthesis the primary thread store. Desktop
@@ -409,11 +410,18 @@ evidence remains on the run model; assistant messages store only bounded
 transcript text for future turns. Thread summaries are generated locally from
 transcript text only and are never written to approved memory automatically.
 
-The run inspector is the desktop drill-down surface for review evidence. It
-loads review summaries, changed-file stats, bounded unified diffs, captured
-verification rows, persisted TaskRunner safety reports when present,
-deterministic fallback risk findings, conservative memory proposals, and
-bounded raw logs through `window.agentHub.review.*` and
+The workgroup inspector is the desktop drill-down surface for review evidence.
+Its top-level tabs use product vocabulary: Brief, Context, Artifacts, Checks,
+Risks, Memory, and Audit. Brief shows the goal, status, assignee, review state,
+acceptance-criteria placeholder, and decision boundary. Context loads the
+persisted `conversation_brief` run artifact through review IPC and otherwise
+shows a clear unavailable state. Artifacts contains engineering-specific
+evidence such as changed-file stats, bounded unified diffs, retained-worktree
+handoff, and local comparison reports, keeping those labels out of the
+top-level navigation. Checks shows captured verification rows, Risks shows
+persisted TaskRunner safety reports or deterministic fallback findings, Memory
+shows conservative proposals, and Audit shows bounded raw logs. All of this
+loads through `window.agentHub.review.*`, `window.agentHub.comparison.*`, and
 `window.agentHub.memory.*` IPC methods. Blocking persisted safety reports keep
 their `blocking` level and mapped evidence in the inspector so sensitive-path
 or dangerous-instruction findings are not downgraded by the desktop fallback
@@ -421,18 +429,18 @@ risk classifier. Fake desktop runs explicitly show that no real repository
 files were modified and do not invent changed files. When a retained worktree
 exists, desktop diff loading uses read-only Git inspection from the Electron
 main process only; renderer code never receives shell, filesystem, SQLite, or
-Git access. The inspector also exposes a manual handoff view for retained
-worktrees: the worktree path, branch, base/head refs, cleanup status, changed
-files, and exact local review commands. Open/copy actions are validated IPC
-calls handled by the main process, and the copied commands are review-only
-commands such as `git status` and `git diff`; Agent Hub does not generate
-merge, push, apply, or cleanup commands. Desktop memory proposal generation is
-idempotent for each run: summary cards, run-detail loading, and the memory tab
-can refresh in parallel without duplicating the same proposal content or
-growing beyond the bounded proposal set for that run. Verification-command
-memory proposals use the same secret-like command filter in desktop and task
-runner paths, so commands containing token, API key, password, credential, or
-similar terms are skipped instead of being persisted as proposed memory.
+Git access. Manual handoff still exposes the worktree path, branch, base/head
+refs, cleanup status, changed files, and exact local review commands inside
+Artifacts. Open/copy actions are validated IPC calls handled by the main
+process, and the copied commands are review-only commands such as `git status`
+and `git diff`; Agent Hub does not generate merge, push, apply, or cleanup
+commands. Desktop memory proposal generation is idempotent for each run:
+summary cards, run-detail loading, and the memory tab can refresh in parallel
+without duplicating the same proposal content or growing beyond the bounded
+proposal set for that run. Verification-command memory proposals use the same
+secret-like command filter in desktop and task runner paths, so commands
+containing token, API key, password, credential, or similar terms are skipped
+instead of being persisted as proposed memory.
 
 Inspector accept/reject actions are audit decisions only. Accepting a run
 records `accepted` review state and shows "Accepted for record. No merge was

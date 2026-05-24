@@ -55,7 +55,7 @@ export function timelinePresentationForMessage(
       actorLabel: message.agentId ? `@${message.agentId}` : "Assistant",
       linkedRunId: message.runId ?? event?.linkedIds?.runId,
       linkedTaskId: event?.linkedIds?.taskId,
-      defaultTab: "summary",
+      defaultTab: "brief",
       chips: event?.chips ?? []
     };
   }
@@ -74,33 +74,33 @@ export function runEvidenceTimelineChips(
   const memoryCount = summary?.memoryProposalCount ?? 0;
   const diffLabel = summary
     ? summary.changedFileCount > 0
-      ? `Diff ${summary.changedFileCount} files +${summary.additions}/-${summary.deletions}`
-      : "Diff 0 files"
-    : "Diff pending";
+      ? `Artifacts ${summary.changedFileCount} files +${summary.additions}/-${summary.deletions}`
+      : "Artifacts 0 files"
+    : "Artifacts pending";
   return [
     {
       kind: "check_completed",
-      label: `Tests ${verificationStatus}`,
+      label: `Checks ${verificationStatus}`,
       tone: verificationTone(verificationStatus),
-      tab: "tests"
+      tab: "checks"
     },
     {
       kind: "risk_detected",
-      label: `Risk ${riskLevel}`,
+      label: `Risks ${riskLevel}`,
       tone: riskTone(riskLevel),
-      tab: "risk"
+      tab: "risks"
     },
     {
       kind: "artifact_created",
       label: diffLabel,
       tone: summary?.changedFileCount ? "accent" : "neutral",
-      tab: "diff"
+      tab: "artifacts"
     },
     {
       kind: "review_decision",
       label: "Compare",
       tone: "neutral",
-      tab: "compare"
+      tab: "artifacts"
     },
     {
       kind: "review_decision",
@@ -111,7 +111,7 @@ export function runEvidenceTimelineChips(
           : reviewStatus === "rejected"
             ? "danger"
             : "neutral",
-      tab: "summary"
+      tab: "brief"
     },
     {
       kind: "memory_proposed",
@@ -121,9 +121,9 @@ export function runEvidenceTimelineChips(
     },
     {
       kind: "system_event",
-      label: `${eventCount} logs`,
+      label: `Audit ${eventCount}`,
       tone: "neutral",
-      tab: "logs"
+      tab: "audit"
     }
   ];
 }
@@ -150,7 +150,7 @@ function runPresentation(
     actorLabel: displayHandle,
     linkedRunId: message.runId,
     linkedTaskId: message.taskId ?? event?.linkedIds?.taskId,
-    defaultTab: "summary",
+    defaultTab: "brief",
     chips: [
       ...(event?.chips ?? []),
       ...runEvidenceTimelineChips(
@@ -175,7 +175,7 @@ function systemPresentation(
     actorLabel: "Agent Hub",
     linkedRunId: event?.linkedIds?.runId,
     linkedTaskId: event?.linkedIds?.taskId,
-    defaultTab: event?.linkedIds?.runId ? "summary" : undefined,
+    defaultTab: event?.linkedIds?.runId ? "brief" : undefined,
     chips: event?.chips ?? []
   };
 }

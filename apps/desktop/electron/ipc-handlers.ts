@@ -142,6 +142,8 @@ export function createIpcHandlers(
       services.threads.sendMessage(parseSendThreadMessageInput(input)),
     [IPC_CHANNELS.reviewSummary]: async (_event, input) =>
       services.review.getSummary(parseId(input, "runId")),
+    [IPC_CHANNELS.reviewContext]: async (_event, input) =>
+      services.review.getContext(parseId(input, "runId")),
     [IPC_CHANNELS.reviewDiff]: async (_event, input) =>
       services.review.getDiff(parseId(input, "runId")),
     [IPC_CHANNELS.reviewRisk]: async (_event, input) =>

@@ -1441,7 +1441,9 @@ textarea:disabled {
 .diff-viewer,
 .verification-panel,
 .risk-report,
-.memory-list {
+.memory-list,
+.context-panel,
+.artifacts-panel {
   display: flex;
   flex-direction: column;
   gap: 14px;
@@ -1756,6 +1758,7 @@ textarea:disabled {
 }
 
 .diff-block,
+.context-preview,
 .verification-row pre {
   overflow: auto;
   max-height: 360px;
@@ -1769,6 +1772,11 @@ textarea:disabled {
   font-size: 12px;
   line-height: 1.5;
   white-space: pre-wrap;
+}
+
+.context-preview {
+  border-color: rgba(103, 216, 196, 0.22);
+  background: rgba(8, 9, 7, 0.76);
 }
 
 .verification-head {

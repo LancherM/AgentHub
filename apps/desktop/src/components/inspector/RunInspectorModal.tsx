@@ -8,6 +8,7 @@ import type {
   DiffSummary,
   HandoffCopyKind,
   MemoryProposal,
+  ReviewContext,
   ReviewHandoff,
   ReviewSummary,
   RiskReport as RiskReportModel,
@@ -15,6 +16,7 @@ import type {
   RunInspectorTab,
   RunLog,
   RunLogLevel,
+  WorkgroupInspectorTab,
   VerificationReport as VerificationReportModel
 } from "../../lib/types";
 import { DiffViewer } from "../DiffViewer";
@@ -36,15 +38,14 @@ type LoadState<T> = {
   error?: string;
 };
 
-const tabs: Array<{ id: RunInspectorTab; label: string }> = [
-  { id: "summary", label: "Summary" },
-  { id: "diff", label: "Diff" },
-  { id: "tests", label: "Tests" },
-  { id: "risk", label: "Risk" },
-  { id: "handoff", label: "Handoff" },
-  { id: "compare", label: "Compare" },
+const tabs: Array<{ id: WorkgroupInspectorTab; label: string }> = [
+  { id: "brief", label: "Brief" },
+  { id: "context", label: "Context" },
+  { id: "artifacts", label: "Artifacts" },
+  { id: "checks", label: "Checks" },
+  { id: "risks", label: "Risks" },
   { id: "memory", label: "Memory" },
-  { id: "logs", label: "Logs" }
+  { id: "audit", label: "Audit" }
 ];
 
 interface ComparisonPanelData {
@@ -55,12 +56,17 @@ interface ComparisonPanelData {
 export function RunInspectorModal({
   runId,
   initialRun,
-  initialTab = "summary",
+  initialTab = "brief",
   onClose
 }: RunInspectorModalProps): JSX.Element {
-  const [activeTab, setActiveTab] = useState<RunInspectorTab>(initialTab);
+  const [activeTab, setActiveTab] = useState<WorkgroupInspectorTab>(
+    normalizeInspectorTab(initialTab)
+  );
   const [summary, setSummary] = useState<LoadState<ReviewSummary>>({
     loading: true
+  });
+  const [context, setContext] = useState<LoadState<ReviewContext>>({
+    loading: false
   });
   const [diff, setDiff] = useState<LoadState<DiffSummary>>({ loading: false });
   const [verification, setVerification] =
@@ -81,9 +87,11 @@ export function RunInspectorModal({
   const [decisionMessage, setDecisionMessage] = useState<string | undefined>();
 
   useEffect(() => {
-    setActiveTab(initialTab);
+    const normalizedInitialTab = normalizeInspectorTab(initialTab);
+    setActiveTab(normalizedInitialTab);
     setDecisionMessage(undefined);
     setSummary({ loading: true });
+    setContext({ loading: false });
     setDiff({ loading: false });
     setVerification({ loading: false });
     setRisk({ loading: false });
@@ -92,8 +100,8 @@ export function RunInspectorModal({
     setMemory({ loading: false });
     setLogs({ loading: false });
     void loadSummary();
-    if (initialTab !== "summary") {
-      void loadTab(initialTab);
+    if (normalizedInitialTab !== "brief") {
+      void loadTab(normalizedInitialTab);
     }
   }, [initialTab, runId]);
 
@@ -113,29 +121,31 @@ export function RunInspectorModal({
     }
   }
 
-  async function loadTab(tab: RunInspectorTab): Promise<void> {
-    if (tab === "summary") {
+  async function loadTab(tab: WorkgroupInspectorTab): Promise<void> {
+    if (tab === "brief") {
       if (!summary.data && !summary.loading) {
         await loadSummary();
       }
       return;
     }
-    if (tab === "diff") {
-      await loadState(setDiff, () => agentHubApi.review.getDiff(runId));
-    } else if (tab === "tests") {
+    if (tab === "context") {
+      await loadState(setContext, () => agentHubApi.review.getContext(runId));
+    } else if (tab === "artifacts") {
+      await Promise.all([
+        loadState(setDiff, () => agentHubApi.review.getDiff(runId)),
+        loadState(setHandoff, () => agentHubApi.review.getHandoff(runId)),
+        loadComparison()
+      ]);
+    } else if (tab === "checks") {
       await loadState(setVerification, () =>
         agentHubApi.review.getVerification(runId)
       );
-    } else if (tab === "risk") {
+    } else if (tab === "risks") {
       await loadState(setRisk, () => agentHubApi.review.getRisk(runId));
-    } else if (tab === "handoff") {
-      await loadState(setHandoff, () => agentHubApi.review.getHandoff(runId));
-    } else if (tab === "compare") {
-      await loadComparison();
     } else if (tab === "memory") {
       await loadState(setMemory, () => agentHubApi.memory.listProposals(runId));
       await loadSummary();
-    } else if (tab === "logs") {
+    } else if (tab === "audit") {
       await loadState(setLogs, () => agentHubApi.review.getLogs(runId));
     }
   }
@@ -238,12 +248,12 @@ export function RunInspectorModal({
         className="run-inspector"
         role="dialog"
         aria-modal="true"
-        aria-label="Run inspector"
+        aria-label="Workgroup inspector"
         onMouseDown={(event) => event.stopPropagation()}
       >
         <header className="inspector-header">
           <div>
-            <div className="eyebrow">Run Inspector</div>
+            <div className="eyebrow">Workgroup Inspector</div>
             <h2>{title}</h2>
             <div className="inspector-status-row">
               {summary.data ? (
@@ -290,38 +300,28 @@ export function RunInspectorModal({
           {decisionMessage ? (
             <div className="decision-strip">{decisionMessage}</div>
           ) : null}
-          {activeTab === "summary" ? (
+          {activeTab === "brief" ? (
             <LoadSlot state={summary}>
-              {(data) => <Summary summary={data} fallbackRun={initialRun} />}
+              {(data) => <Brief summary={data} fallbackRun={initialRun} />}
             </LoadSlot>
-          ) : activeTab === "diff" ? (
-            <LoadSlot state={diff}>{(data) => <DiffViewer diff={data} />}</LoadSlot>
-          ) : activeTab === "tests" ? (
+          ) : activeTab === "context" ? (
+            <LoadSlot state={context}>{(data) => <ContextPanel context={data} />}</LoadSlot>
+          ) : activeTab === "artifacts" ? (
+            <ArtifactsPanel
+              diff={diff}
+              handoff={handoff}
+              comparison={comparison}
+              baselineRunId={runId}
+              onOpenHandoff={() => void openHandoff()}
+              onCopyHandoff={(kind) => void copyHandoff(kind)}
+              onCreateComparison={(candidateRunId) => void createComparison(candidateRunId)}
+            />
+          ) : activeTab === "checks" ? (
             <LoadSlot state={verification}>
               {(data) => <VerificationPanel report={data} />}
             </LoadSlot>
-          ) : activeTab === "risk" ? (
+          ) : activeTab === "risks" ? (
             <LoadSlot state={risk}>{(data) => <RiskReport report={data} />}</LoadSlot>
-          ) : activeTab === "handoff" ? (
-            <LoadSlot state={handoff}>
-              {(data) => (
-                <HandoffPanel
-                  handoff={data}
-                  onOpen={() => void openHandoff()}
-                  onCopy={(kind) => void copyHandoff(kind)}
-                />
-              )}
-            </LoadSlot>
-          ) : activeTab === "compare" ? (
-            <LoadSlot state={comparison}>
-              {(data) => (
-                <ComparisonPanel
-                  baselineRunId={runId}
-                  data={data}
-                  onCreate={(candidateRunId) => void createComparison(candidateRunId)}
-                />
-              )}
-            </LoadSlot>
           ) : activeTab === "memory" ? (
             <LoadSlot state={memory}>
               {(data) => (
@@ -341,7 +341,7 @@ export function RunInspectorModal({
   );
 }
 
-function Summary({
+function Brief({
   summary,
   fallbackRun
 }: {
@@ -353,7 +353,7 @@ function Summary({
       <section>
         <div className="summary-heading">
           <div>
-            <div className="panel-label">Summary</div>
+            <div className="panel-label">Brief</div>
             <p>{summary.summary}</p>
             {summary.message ? <p className="muted-copy">{summary.message}</p> : null}
           </div>
@@ -364,16 +364,24 @@ function Summary({
         <Metric label="Agent" value={`@${summary.agentId}`} />
         <Metric label="Review" value={summary.reviewStatus} />
         <Metric label="Duration" value={formatDuration(summary.durationMs)} />
-        <Metric label="Diff" value={`${summary.changedFileCount} files`} />
+        <Metric label="Artifacts" value={`${summary.changedFileCount} files`} />
         <Metric label="Lines" value={`+${summary.additions}/-${summary.deletions}`} />
-        <Metric label="Tests" value={summary.verificationStatus} />
-        <Metric label="Risk" value={summary.riskLevel} />
+        <Metric label="Checks" value={summary.verificationStatus} />
+        <Metric label="Risks" value={summary.riskLevel} />
         <Metric label="Memory" value={`${summary.memoryProposalCount}`} />
         <Metric label="Parent" value={summary.parentRunId ?? "none"} />
       </section>
       <section>
-        <div className="panel-label">Task</div>
+        <div className="panel-label">Goal</div>
         <p>{summary.task || fallbackRun?.taskPrompt || "No task text recorded."}</p>
+      </section>
+      <section>
+        <div className="panel-label">Assignees</div>
+        <p>@{summary.agentId}</p>
+      </section>
+      <section>
+        <div className="panel-label">Acceptance Criteria</div>
+        <p>No explicit acceptance criteria metadata was captured for this run.</p>
       </section>
       <section>
         <div className="panel-label">Decision Boundary</div>
@@ -382,6 +390,93 @@ function Summary({
           push, delete worktrees, revert files, or write repository context files.
         </p>
       </section>
+    </div>
+  );
+}
+
+function ContextPanel({ context }: { context: ReviewContext }): JSX.Element {
+  return (
+    <div className="summary-stack context-panel">
+      <section>
+        <div className="summary-heading">
+          <div>
+            <div className="panel-label">Context</div>
+            <p>
+              {context.available
+                ? context.message ?? "Conversation brief is available."
+                : context.message ?? "No conversation brief is available."}
+            </p>
+          </div>
+          <span className={`handoff-state ${context.available ? "ready" : "unavailable"}`}>
+            {context.available ? "available" : "unavailable"}
+          </span>
+        </div>
+      </section>
+      {context.available ? (
+        <>
+          <section className="summary-metrics wide">
+            <Metric label="Artifact" value={context.artifactId ?? "unknown"} />
+            <Metric label="Created" value={context.createdAt ? formatTime(context.createdAt) : "unknown"} />
+            <Metric label="Source" value="conversation_brief" />
+            <Metric label="Scope" value="runtime injection" />
+          </section>
+          <pre className="context-preview">{context.content?.trim() || "Conversation brief artifact is empty."}</pre>
+        </>
+      ) : null}
+    </div>
+  );
+}
+
+function ArtifactsPanel({
+  diff,
+  handoff,
+  comparison,
+  baselineRunId,
+  onOpenHandoff,
+  onCopyHandoff,
+  onCreateComparison
+}: {
+  diff: LoadState<DiffSummary>;
+  handoff: LoadState<ReviewHandoff>;
+  comparison: LoadState<ComparisonPanelData>;
+  baselineRunId: string;
+  onOpenHandoff(): void;
+  onCopyHandoff(kind: HandoffCopyKind): void;
+  onCreateComparison(candidateRunId: string): void;
+}): JSX.Element {
+  return (
+    <div className="summary-stack artifacts-panel">
+      <section>
+        <div className="summary-heading">
+          <div>
+            <div className="panel-label">Engineering Artifacts</div>
+            <p>
+              Diff, retained-worktree handoff, and comparison evidence stay here
+              as review-only engineering details.
+            </p>
+          </div>
+          <span className="handoff-state ready">review only</span>
+        </div>
+      </section>
+      <LoadSlot state={diff}>{(data) => <DiffViewer diff={data} />}</LoadSlot>
+      <LoadSlot state={handoff}>
+        {(data) => (
+          <HandoffPanel
+            handoff={data}
+            onOpen={onOpenHandoff}
+            onCopy={onCopyHandoff}
+          />
+        )}
+      </LoadSlot>
+      <LoadSlot state={comparison}>
+        {(data) => (
+          <ComparisonPanel
+            baselineRunId={baselineRunId}
+            data={data}
+            onCreate={onCreateComparison}
+          />
+        )}
+      </LoadSlot>
     </div>
   );
 }
@@ -676,13 +771,13 @@ function ComparisonSignals({
       <Metric label="Score" value={formatScore(score?.baseline, score?.candidate)} />
       <Metric label="Baseline Status" value={baseline?.status ?? "unknown"} />
       <Metric label="Candidate Status" value={candidate?.status ?? "unknown"} />
-      <Metric label="Risk" value={formatPair(risk?.baseline?.level, risk?.candidate?.level)} />
+      <Metric label="Risks" value={formatPair(risk?.baseline?.level, risk?.candidate?.level)} />
       <Metric
-        label="Tests"
+        label="Checks"
         value={formatVerificationPair(verification?.baseline, verification?.candidate)}
       />
       <Metric
-        label="Diff"
+        label="Artifacts"
         value={formatDiffPair(diff?.baseline, diff?.candidate)}
       />
       <Metric
@@ -846,6 +941,25 @@ async function loadState<T>(
     setState({ loading: false, data: await loader() });
   } catch (error) {
     setState({ loading: false, error: errorMessage(error) });
+  }
+}
+
+function normalizeInspectorTab(tab: RunInspectorTab): WorkgroupInspectorTab {
+  switch (tab) {
+    case "summary":
+      return "brief";
+    case "diff":
+    case "handoff":
+    case "compare":
+      return "artifacts";
+    case "tests":
+      return "checks";
+    case "risk":
+      return "risks";
+    case "logs":
+      return "audit";
+    default:
+      return tab;
   }
 }
 

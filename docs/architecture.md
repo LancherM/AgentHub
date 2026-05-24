@@ -64,13 +64,18 @@ thread through the thread service.
 
 Desktop review inspection is split across narrow Electron main-process
 services. `ReviewService` aggregates run summary, verification, logs, memory
-proposal counts, local accept/reject decision artifacts, and the latest
-persisted TaskRunner safety report when one exists. Persisted non-placeholder
-risk reports take precedence over the deterministic desktop fallback, including
-`blocking` levels and mapped finding/risk-factor evidence, so desktop review
-does not downgrade scanner output from sensitive path changes or dangerous
-instructions. `DiffService` uses persisted diff artifacts when available and
-can read retained worktrees with read-only Git commands through
+proposal counts, local accept/reject decision artifacts, the latest persisted
+conversation brief artifact, and the latest persisted TaskRunner safety report
+when one exists. The desktop-facing inspector maps that evidence to workgroup
+tabs named Brief, Context, Artifacts, Checks, Risks, Memory, and Audit. Context
+is a review IPC read of the `conversation_brief` artifact, while handoff,
+comparison, and diff data remain inside the Artifacts tab as engineering
+evidence. Persisted non-placeholder risk reports take precedence over the
+deterministic desktop fallback, including `blocking` levels and mapped
+finding/risk-factor evidence, so desktop review does not downgrade scanner
+output from sensitive path changes or dangerous instructions. `DiffService`
+uses persisted diff artifacts when available and can read retained worktrees
+with read-only Git commands through
 `DiffCollector`, `NodeShellExecutor`, and safe Git configuration. It redacts
 patch text before returning desktop review data when changed-file metadata or
 diff headers identify sensitive paths. `ReviewService` also owns the retained
@@ -733,11 +738,18 @@ store. `conversation_messages.metadata_json` may include a bounded
 and small display chips. The Electron thread service writes these semantics for
 user rows, task-created rows, assignment rows, run cards, run terminal updates,
 and assistant participant output. The renderer maps that metadata plus lazy
-review summaries into audit-stream cards and chips for checks, risks, diff
-artifacts, review decisions, and memory proposals. Raw logs, diffs,
-verification rows, risk reports, memory details, and comparison data remain on
-run evidence repositories and continue to load through review IPC only when the
-user opens the relevant inspector context.
+review summaries into audit-stream cards and chips for checks, risks,
+artifacts, review decisions, memory proposals, and audit logs. Raw logs,
+diffs, verification rows, risk reports, memory details, context previews, and
+comparison data remain on run evidence repositories and continue to load
+through review IPC only when the user opens the relevant inspector context.
+
+Phase 5 keeps the inspector as a renderer-only shell over those IPC services
+but changes its visible vocabulary from run-centric tabs to the workgroup
+structure. Existing links that still request legacy tabs such as Summary, Diff,
+Tests, Risk, Compare, Handoff, or Logs are normalized in the renderer to Brief,
+Artifacts, Checks, Risks, Artifacts, Artifacts, or Audit so older timeline
+metadata remains openable while new UI chips use the workgroup names.
 
 Repository CI/CD lives in `.github/workflows/ci-cd.yml` and stays outside the
 Agent Hub runtime. The workflow installs the pinned pnpm and Node versions from

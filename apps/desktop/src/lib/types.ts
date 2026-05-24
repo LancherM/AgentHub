@@ -48,15 +48,23 @@ export type EventPhase =
 
 export type ContextMode = "auto" | "minimal" | "full" | "workspace";
 export type RoomType = "default" | "custom" | "legacy";
-export type RunInspectorTab =
+export type WorkgroupInspectorTab =
+  | "brief"
+  | "context"
+  | "artifacts"
+  | "checks"
+  | "risks"
+  | "memory"
+  | "audit";
+export type LegacyRunInspectorTab =
   | "summary"
   | "diff"
   | "tests"
   | "risk"
   | "handoff"
   | "compare"
-  | "memory"
   | "logs";
+export type RunInspectorTab = WorkgroupInspectorTab | LegacyRunInspectorTab;
 
 export type TimelineEventKind =
   | "user_message"
@@ -314,6 +322,15 @@ export interface ReviewSummary {
   message?: string;
 }
 
+export interface ReviewContext {
+  runId: string;
+  available: boolean;
+  content?: string;
+  artifactId?: string;
+  createdAt?: string;
+  message?: string;
+}
+
 export interface ReviewHandoff {
   runId: string;
   available: boolean;
@@ -564,6 +581,7 @@ export interface AgentHubApi {
   };
   review: {
     getSummary(runId: string): Promise<ReviewSummary>;
+    getContext(runId: string): Promise<ReviewContext>;
     getDiff(runId: string): Promise<DiffSummary>;
     getRisk(runId: string): Promise<RiskReport>;
     getVerification(runId: string): Promise<VerificationReport>;

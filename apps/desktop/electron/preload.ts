@@ -51,6 +51,8 @@ const api: AgentHubApi = {
   review: {
     getSummary: (runId: string) =>
       ipcRenderer.invoke(IPC_CHANNELS.reviewSummary, runId),
+    getContext: (runId: string) =>
+      ipcRenderer.invoke(IPC_CHANNELS.reviewContext, runId),
     getDiff: (runId: string) =>
       ipcRenderer.invoke(IPC_CHANNELS.reviewDiff, runId),
     getRisk: (runId: string) =>

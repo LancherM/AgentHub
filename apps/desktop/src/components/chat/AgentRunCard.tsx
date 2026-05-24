@@ -218,7 +218,7 @@ export function AgentRunCard({
           <button
             onClick={(event) => {
               event.stopPropagation();
-              onOpenInspector(message.runId, "summary");
+              onOpenInspector(message.runId, "brief");
             }}
           >
             View details

@@ -12,6 +12,7 @@ export const IPC_CHANNELS = {
   threadsCreate: "agent-hub:threads:create",
   threadsSendMessage: "agent-hub:threads:send-message",
   reviewSummary: "agent-hub:review:summary",
+  reviewContext: "agent-hub:review:context",
   reviewDiff: "agent-hub:review:diff",
   reviewRisk: "agent-hub:review:risk",
   reviewVerification: "agent-hub:review:verification",

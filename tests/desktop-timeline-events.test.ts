@@ -81,13 +81,13 @@ describe("desktop timeline event presentation", () => {
     expect(presentation.chips).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          label: "Tests passed",
-          tab: "tests",
+          label: "Checks passed",
+          tab: "checks",
           tone: "success"
         }),
         expect.objectContaining({
-          label: "Risk medium",
-          tab: "risk",
+          label: "Risks medium",
+          tab: "risks",
           tone: "warning"
         }),
         expect.objectContaining({
@@ -101,13 +101,13 @@ describe("desktop timeline event presentation", () => {
 
   it("keeps pending run evidence bounded to compact inspector chips", () => {
     expect(runEvidenceTimelineChips(undefined, 4, "running")).toEqual([
-      expect.objectContaining({ label: "Tests pending", tab: "tests" }),
-      expect.objectContaining({ label: "Risk pending", tab: "risk" }),
-      expect.objectContaining({ label: "Diff pending", tab: "diff" }),
-      expect.objectContaining({ label: "Compare", tab: "compare" }),
-      expect.objectContaining({ label: "Review pending", tab: "summary" }),
+      expect.objectContaining({ label: "Checks pending", tab: "checks" }),
+      expect.objectContaining({ label: "Risks pending", tab: "risks" }),
+      expect.objectContaining({ label: "Artifacts pending", tab: "artifacts" }),
+      expect.objectContaining({ label: "Compare", tab: "artifacts" }),
+      expect.objectContaining({ label: "Review pending", tab: "brief" }),
       expect.objectContaining({ label: "Memory 0", tab: "memory" }),
-      expect.objectContaining({ label: "4 logs", tab: "logs" })
+      expect.objectContaining({ label: "Audit 4", tab: "audit" })
     ]);
   });
 });

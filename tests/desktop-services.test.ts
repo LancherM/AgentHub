@@ -542,6 +542,64 @@ describe("desktop services", () => {
     expect(diff.patch).not.toContain("API_TOKEN=secret-value");
   });
 
+  it("exposes persisted conversation brief context for the inspector", async () => {
+    const fixture = await createFixture();
+    const context = createDesktopServiceContext(fixture.repositories);
+    const projects = createProjectService(context);
+    const review = createReviewService(context);
+    const project = await projects.open(fixture.projectRoot);
+    const now = context.now();
+    const task = await fixture.repositories.taskRepository.create(
+      validateTask({
+        id: "task_context_preview",
+        projectId: project.id,
+        title: "Inspect conversation context",
+        status: "completed",
+        createdAt: now,
+        updatedAt: now
+      })
+    );
+    const run = await fixture.repositories.taskRunRepository.create(
+      validateTaskRun({
+        id: "run_context_preview",
+        taskId: task.id,
+        agentKind: "codex",
+        status: "succeeded",
+        createdAt: now,
+        updatedAt: now,
+        startedAt: now,
+        completedAt: now
+      })
+    );
+
+    await expect(review.getContext(run.id)).resolves.toMatchObject({
+      runId: run.id,
+      available: false,
+      message: expect.stringContaining("No persisted conversation brief")
+    });
+
+    await fixture.repositories.runArtifactRepository.create(
+      validateRunArtifact({
+        id: "artifact_context_preview",
+        taskRunId: run.id,
+        kind: "conversation_brief",
+        content: "## Thread Summary\nLast known user goal: inspect context.",
+        metadata: {
+          threadId: "thread_context_preview"
+        },
+        createdAt: now
+      })
+    );
+
+    await expect(review.getContext(run.id)).resolves.toMatchObject({
+      runId: run.id,
+      available: true,
+      artifactId: "artifact_context_preview",
+      content: expect.stringContaining("Last known user goal"),
+      message: "Conversation brief captured for runtime injection."
+    });
+  });
+
   it("redacts sensitive retained worktree diff patches in desktop review", async () => {
     const fixture = await createFixture();
     const context = createDesktopServiceContext(fixture.repositories);
@@ -2381,6 +2439,15 @@ describe("desktop services", () => {
     ).resolves.toMatchObject({
       reviewStatus: "pending",
       changedFileCount: 1
+    });
+    await expect(
+      handlers[IPC_CHANNELS.reviewContext](
+        { sender } as never,
+        runId
+      )
+    ).resolves.toMatchObject({
+      available: false,
+      message: expect.stringContaining("No persisted conversation brief")
     });
     await expect(
       handlers[IPC_CHANNELS.reviewHandoff](
