@@ -321,18 +321,17 @@ a lightweight run status map for run-card status/counts, and reconcile
 assistant output only for the selected thread. Run records, events, simulated
 verification, placeholder diffs, and risk review rows remain SQLite-backed.
 
-The planned real multi-turn conversation route is captured in
-`docs/multiturn-conversation-prompts.md`. It keeps project context, thread
-context, current-turn context, and per-run context snapshots as separate
-layers. Desktop follow-up turns now build a bounded conversation brief before
-each run. The brief includes the current turn, recent thread messages, the
-latest conservative thread summary, terminal assistant answers from prior runs,
-compact prior run summaries when no assistant answer exists yet, project
-context-store references, and explicit character-budget metadata. A zero
-recent-message budget includes no prior messages, and the first message in an
-empty thread uses the retitled thread name in the injected brief. Agent Hub
-persists that exact brief as a `conversation_brief` run artifact so review can
-inspect what was injected. The brief excludes raw lifecycle/debug events, logs,
+Agent Hub keeps project context, thread context, current-turn context, and
+per-run context snapshots as separate layers. Desktop follow-up turns build a
+bounded conversation brief before each run. The brief includes the current
+turn, recent thread messages, the latest conservative thread summary, terminal
+assistant answers from prior runs, compact prior run summaries when no
+assistant answer exists yet, project context-store references, and explicit
+character-budget metadata. A zero recent-message budget includes no prior
+messages, and the first message in an empty thread uses the retitled thread
+name in the injected brief. Agent Hub persists that exact brief as a
+`conversation_brief` run artifact so review can inspect what was injected. The
+brief excludes raw lifecycle/debug events, logs,
 diffs, verification output, risk evidence, and other review artifacts. Full
 evidence remains on the run model; assistant messages store only bounded
 transcript text for future turns. Thread summaries are generated locally from

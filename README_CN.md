@@ -3,7 +3,7 @@
 [English](README.md)
 
 Agent Hub 是一个本地优先、CLI 优先的开发者工具，用于在隔离的 Git
-worktree 中编排 Codex、Claude Code 等编码代理。当前实现采用导入规格中的
+worktree 中编排 Codex、Claude Code 等编码代理。当前实现采用 pnpm
 workspace 形态：`apps/cli` 是薄 CLI，底层复用 `packages/` 中的本地核心包；
 `apps/desktop` 是第一版 Electron + React 桌面 shell，复用同一套本地存储和
 review 服务。

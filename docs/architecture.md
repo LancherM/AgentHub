@@ -1,8 +1,7 @@
 # Architecture
 
-The rebuild preserves the CLI-first architecture from the imported specs and
-now uses the imported workspace package layout for the local CLI and core
-services.
+Agent Hub uses a CLI-first architecture with shared local packages for the CLI
+and desktop shell.
 
 Current workspace boundaries:
 
@@ -142,19 +141,18 @@ expands a card or opens the inspector. If an older database has runs but no
 conversation threads, the service performs a one-time compatibility import into
 conversation rows so existing desktop run records stay inspectable.
 
-`docs/multiturn-conversation-prompts.md` defines the staged architecture route
-for real multi-turn support. The target now has persisted thread/message
-repositories, thread summary storage, the desktop thread service separated
-from task runs, and a package-level conversation context builder. The builder
-runs outside the renderer, applies deterministic message-count and character
-budgets, and produces a conversation brief that is injected through the runtime
-context bundle and persisted as a `conversation_brief` run artifact. Context
-ordering is current turn, recent messages, thread summary, then project
-context. A zero recent-message budget includes no prior thread messages, and
-recent messages are reduced when needed so thread summaries and project
-references remain inside the total brief budget. Desktop first-turn runs reload
-the retitled thread before building the brief so pre-created empty threads do
-not inject stale `New Chat` titles. Project
+The multi-turn architecture has persisted thread/message repositories, thread
+summary storage, the desktop thread service separated from task runs, and a
+package-level conversation context builder. The builder runs outside the
+renderer, applies deterministic message-count and character budgets, and
+produces a conversation brief that is injected through the runtime context
+bundle and persisted as a `conversation_brief` run artifact. Context ordering
+is current turn, recent messages, thread summary, then project context. A zero
+recent-message budget includes no prior thread messages, and recent messages
+are reduced when needed so thread summaries and project references remain
+inside the total brief budget. Desktop first-turn runs reload the retitled
+thread before building the brief so pre-created empty threads do not inject
+stale `New Chat` titles. Project
 context, thread context, current-turn context, and run context remain distinct
 layers so thread-local decisions do not automatically promote into project
 approved memory. Follow-up turns prefer terminal assistant messages over
@@ -447,7 +445,7 @@ remains for compatibility with existing show paths and is no longer the only
 persisted source for run inspection.
 
 Migration version 3 rebuilds the early `tasks` and `task_runs` tables to add
-the imported database constraints that SQLite cannot add in place. Existing
+database constraints that SQLite cannot add in place. Existing
 valid rows are copied forward, `tasks.project_id` cascades from `projects`,
 `task_runs.agent_profile_id` references `agent_profiles` with delete-to-null
 semantics, task statuses and run statuses use enum-like `CHECK` constraints,
