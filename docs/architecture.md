@@ -610,6 +610,9 @@ Workspace creation performs collision preflights before `git worktree add`.
 An existing target worktree path fails before invoking Git, and an existing
 deterministic task/agent branch fails with a clear workspace error instead of
 attempting automatic cleanup, branch deletion, merge, push, or acceptance.
+Default `HEAD`-based worktree creation also verifies that the source repository
+has a committed `HEAD`, so empty or unborn repositories fail with an actionable
+workspace error before `git worktree add`.
 Verification commands run with the isolated worktree as cwd. Dangerous command
 rejection is represented as a failed verification command, and shell results
 rejection is represented as a failed verification command. `VerificationRunner`

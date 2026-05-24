@@ -120,7 +120,8 @@ context build does not write repository-level agent files. The context build
 
 The run command validates the task input, compiles non-invasive context, routes
 to the selected adapter, rejects unsafe repository-local Git config before any
-worktree checkout, creates an isolated git worktree outside the original
+worktree checkout, confirms the source repository has a committed `HEAD` before
+default `HEAD`-based runs, creates an isolated git worktree outside the original
 project checkout, materializes runtime task brief/context-pack files inside
 that workspace, runs the adapter with the context payload, collects git diff
 metadata, runs explicitly configured verification commands, generates a

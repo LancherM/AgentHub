@@ -1,7 +1,11 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { GitWorktreeWorkspaceManager, WorkspaceError } from "@agent-hub/task-runner";
+import {
+  GitWorktreeWorkspaceManager,
+  type ShellResult,
+  WorkspaceError
+} from "@agent-hub/task-runner";
 import { createTestDirectory, MockShellExecutor } from "./helpers";
 
 describe("GitWorktreeWorkspaceManager", () => {
@@ -24,17 +28,20 @@ describe("GitWorktreeWorkspaceManager", () => {
     expect(shell.calls.map((call) => call.command.args?.join(" "))).toEqual([
       expect.stringContaining("rev-parse --is-inside-work-tree"),
       expect.stringContaining("status --porcelain"),
+      expect.stringContaining("rev-parse --verify HEAD"),
       expect.stringContaining("show-ref --verify --quiet"),
       expect.stringContaining("worktree add")
     ]);
     expect(shell.calls[0].command.args).toContain("core.fsmonitor=false");
-    expect(shell.calls[3].command.args).toContain("core.hooksPath=/dev/null");
+    expect(shell.calls[4].command.args).toContain("core.hooksPath=/dev/null");
   });
 
   it("supports explicit branch names and start points for continuation worktrees", async () => {
     const sourceRepositoryPath = await createTestDirectory("workspace-source");
     const workspaceBasePath = await createTestDirectory("workspace-base");
-    const shell = new MockShellExecutor(worktreeCreateResponses());
+    const shell = new MockShellExecutor(
+      worktreeCreateResponses({ skipDefaultHeadCheck: true })
+    );
     const manager = new GitWorktreeWorkspaceManager(shell);
 
     const session = await manager.createSession({
@@ -55,6 +62,11 @@ describe("GitWorktreeWorkspaceManager", () => {
     expect(shell.calls.at(-1)?.command.args).toContain(
       "agent-hub/task_1/fake/continue-run_1-run_2"
     );
+    expect(
+      shell.calls.some((call) =>
+        call.command.args?.join(" ").includes("rev-parse --verify HEAD")
+      )
+    ).toBe(false);
   });
 
   it("rejects executable local git config before invoking git", async () => {
@@ -187,7 +199,7 @@ describe("GitWorktreeWorkspaceManager", () => {
     await expect(session.cleanup({ successful: true })).rejects.toThrow(
       WorkspaceError
     );
-    expect(shell.calls).toHaveLength(4);
+    expect(shell.calls).toHaveLength(5);
   });
 
   it("retain-on-failure does not clean up the workspace", async () => {
@@ -208,7 +220,7 @@ describe("GitWorktreeWorkspaceManager", () => {
 
     expect(cleanup.retained).toBe(true);
     expect(cleanup.cleaned).toBe(false);
-    expect(shell.calls).toHaveLength(4);
+    expect(shell.calls).toHaveLength(5);
   });
 
   it("defaults to retaining workspaces instead of automatic cleanup", async () => {
@@ -229,7 +241,7 @@ describe("GitWorktreeWorkspaceManager", () => {
     expect(session.workspace.cleanupPolicy).toBe("never");
     expect(cleanup.retained).toBe(true);
     expect(cleanup.cleaned).toBe(false);
-    expect(shell.calls).toHaveLength(4);
+    expect(shell.calls).toHaveLength(5);
   });
 
   it("uses on-success cleanup only when explicitly requested", async () => {
@@ -260,6 +272,7 @@ describe("GitWorktreeWorkspaceManager", () => {
     const shell = new MockShellExecutor([
       { stdout: "true\n" },
       { stdout: "" },
+      { stdout: "HEAD\n" },
       { exitCode: 0 }
     ]);
     const manager = new GitWorktreeWorkspaceManager(shell);
@@ -308,6 +321,7 @@ describe("GitWorktreeWorkspaceManager", () => {
     const shell = new MockShellExecutor([
       { stdout: "true\n" },
       { stdout: " M README.md\n?? scratch.txt\n" },
+      { stdout: "HEAD\n" },
       { exitCode: 1 },
       { stdout: "created worktree\n" }
     ]);
@@ -344,6 +358,37 @@ describe("GitWorktreeWorkspaceManager", () => {
       "validate source repository failed: fatal: not a git repository"
     );
     expect(shell.calls).toHaveLength(1);
+  });
+
+  it("rejects source repositories without a committed HEAD before creating a worktree", async () => {
+    const sourceRepositoryPath = await createTestDirectory("workspace-unborn-source");
+    const workspaceBasePath = await createTestDirectory("workspace-base");
+    const shell = new MockShellExecutor([
+      { stdout: "true\n" },
+      { stdout: "" },
+      { exitCode: 128, stderr: "fatal: Needed a single revision\n" }
+    ]);
+    const manager = new GitWorktreeWorkspaceManager(shell);
+
+    await expect(
+      manager.createSession({
+        sourceRepositoryPath,
+        workspaceBasePath,
+        taskId: "task_1",
+        runId: "run_1",
+        agentKind: "fake"
+      })
+    ).rejects.toThrow(
+      "source repository HEAD is not a commit; create an initial commit before running agents."
+    );
+    expect(shell.calls.map((call) => call.command.args?.join(" "))).toEqual([
+      expect.stringContaining("rev-parse --is-inside-work-tree"),
+      expect.stringContaining("status --porcelain"),
+      expect.stringContaining("rev-parse --verify HEAD")
+    ]);
+    expect(
+      shell.calls.some((call) => call.command.args?.join(" ").includes("worktree add"))
+    ).toBe(false);
   });
 
   it("sanitizes empty or separator-only workspace path and branch segments", async () => {
@@ -385,15 +430,23 @@ describe("GitWorktreeWorkspaceManager", () => {
 
     expect(shell.calls.every((call) => call.options.dryRun)).toBe(true);
     expect(cleanup.retained).toBe(true);
-    expect(shell.calls).toHaveLength(3);
+    expect(shell.calls).toHaveLength(4);
   });
 });
 
-function worktreeCreateResponses() {
-  return [
+function worktreeCreateResponses(
+  options: { skipDefaultHeadCheck?: boolean } = {}
+) {
+  const responses: Partial<ShellResult>[] = [
     { stdout: "true\n" },
-    { stdout: "" },
+    { stdout: "" }
+  ];
+  if (!options.skipDefaultHeadCheck) {
+    responses.push({ stdout: "HEAD\n" });
+  }
+  responses.push(
     { exitCode: 1 },
     { stdout: "created worktree\n" }
-  ];
+  );
+  return responses;
 }

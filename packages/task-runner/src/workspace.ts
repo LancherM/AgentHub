@@ -114,6 +114,18 @@ export class GitWorktreeWorkspaceManager implements WorkspaceManager {
     ensureCommandSucceeded(statusResult, "check source repository status");
     const sourceRepositoryDirty = statusResult.stdout.trim().length > 0;
 
+    if (!normalized.startPoint) {
+      const headCheck = await this.shellExecutor.execute(
+        safeGitCommand(["rev-parse", "--verify", "HEAD"]),
+        safeGitExecutionOptions({
+          cwd: normalized.sourceRepositoryPath,
+          dryRun: normalized.dryRun
+        })
+      );
+      creationCommands.push(headCheck);
+      ensureSourceHeadExists(headCheck);
+    }
+
     if (!normalized.dryRun) {
       const branchCheck = await this.shellExecutor.execute(
         safeGitCommand([
@@ -286,6 +298,14 @@ function ensureCommandSucceeded(result: ShellResult, action: string): void {
     const detail = result.stderr.trim() || result.stdout.trim() || result.error;
     throw new WorkspaceError(
       `${action} failed: ${detail ?? formatShellCommand(result.command)}`
+    );
+  }
+}
+
+function ensureSourceHeadExists(result: ShellResult): void {
+  if (result.exitCode !== 0) {
+    throw new WorkspaceError(
+      "source repository HEAD is not a commit; create an initial commit before running agents."
     );
   }
 }
