@@ -479,7 +479,8 @@ delimiter-separated and camelCase setting names, and they also reject string
 values that look like embedded secret assignments, bearer tokens, common
 service tokens, or private key blocks. Safe local UI and behavior flags,
 including per-project desktop verification command lists, remain valid setting
-values.
+values. Desktop verification command validation rejects secret-like option
+names inside structured args before the list reaches the settings repository.
 
 When the CLI executes an ad-hoc SQLite-backed run, it first looks up a project
 by the resolved repository root. The first legacy ad-hoc root can keep the
@@ -541,10 +542,11 @@ Desktop verification configuration is owned by a main-process settings service.
 The renderer can only read or save per-project command lists through the
 sandboxed preload API. Saved commands are structured as executable plus args,
 persisted in the local `settings` table under a project-scoped key, validated
-for shape and secret-like content, and loaded by `RunService` immediately
-before invoking TaskRunner. TaskRunner remains the execution boundary and
-continues to run verification in the isolated worktree with dangerous-command
-validation.
+for shape and secret-like content, including API key, token, password,
+private-key, and client-secret option names inside args, and loaded by
+`RunService` immediately before invoking TaskRunner. TaskRunner remains the
+execution boundary and continues to run verification in the isolated worktree
+with dangerous-command validation.
 
 All adapters run against an isolated worktree and refuse to run when that
 directory is the original project root or when the generated task brief is

@@ -174,8 +174,9 @@ and debug output without opening the risk report.
 Desktop users can configure per-project verification commands from the local
 Settings panel. These commands are stored in Agent Hub SQLite settings as
 structured executable-plus-args entries, validated through main-process IPC,
-and passed to TaskRunner for isolated-worktree execution; prompts are never
-parsed into shell commands.
+and passed to TaskRunner for isolated-worktree execution. Secret-like option
+names such as API key, token, password, private-key, and client-secret flags
+are rejected before persistence; prompts are never parsed into shell commands.
 Task brief artifacts are persisted from Agent Hub's generated brief content,
 not by rereading worktree paths after materialization, so malicious symlinks in
 an untrusted worktree cannot be captured as task brief artifact contents.
@@ -461,7 +462,8 @@ including delimiter-separated and camelCase names such as `api_key`,
 `openaiApiKey`, `authToken`, and `clientSecret`, and reject secret-like string
 values before they can be stored in SQLite or in-memory test repositories, so
 settings remain limited to safe local behavior preferences such as desktop
-verification command configuration.
+verification command configuration. Desktop verification command args also
+reject secret-like option names before the structured command list is stored.
 SQLite initialization also includes an idempotent conversation-summary table
 backfill so local databases that recorded an intermediate migration marker can
 still gain `conversation_thread_summaries` on upgrade.
