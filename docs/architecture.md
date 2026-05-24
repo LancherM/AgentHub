@@ -727,6 +727,18 @@ assignments stay visible as local task metadata without creating runs. The
 renderer groups consecutive run-card messages that share a task id, and all
 privileged task/run creation remains in Electron main-process services.
 
+Phase 4 adds timeline event semantics without introducing a separate event
+store. `conversation_messages.metadata_json` may include a bounded
+`timelineEvent` object with an event kind, actor, compact linked ids, status,
+and small display chips. The Electron thread service writes these semantics for
+user rows, task-created rows, assignment rows, run cards, run terminal updates,
+and assistant participant output. The renderer maps that metadata plus lazy
+review summaries into audit-stream cards and chips for checks, risks, diff
+artifacts, review decisions, and memory proposals. Raw logs, diffs,
+verification rows, risk reports, memory details, and comparison data remain on
+run evidence repositories and continue to load through review IPC only when the
+user opens the relevant inspector context.
+
 Repository CI/CD lives in `.github/workflows/ci-cd.yml` and stays outside the
 Agent Hub runtime. The workflow installs the pinned pnpm and Node versions from
 the root package, runs the same local validation commands documented for

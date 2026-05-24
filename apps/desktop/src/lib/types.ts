@@ -58,6 +58,59 @@ export type RunInspectorTab =
   | "memory"
   | "logs";
 
+export type TimelineEventKind =
+  | "user_message"
+  | "participant_message"
+  | "system_event"
+  | "task_created"
+  | "assignment_created"
+  | "assignment_start_failed"
+  | "run_started"
+  | "run_completed"
+  | "run_failed"
+  | "run_cancelled"
+  | "artifact_created"
+  | "check_completed"
+  | "risk_detected"
+  | "memory_proposed"
+  | "review_decision";
+export type TimelineEventActor = "user" | "system" | "agent" | "assistant";
+export type TimelineEventTone =
+  | "neutral"
+  | "info"
+  | "success"
+  | "warning"
+  | "danger"
+  | "accent";
+
+export interface TimelineEventLinkedIds extends JsonObject {
+  taskId?: string;
+  runId?: string;
+  assignmentId?: string;
+  assignmentIds?: string[];
+  artifactId?: string;
+  memoryItemId?: string;
+  reviewArtifactId?: string;
+}
+
+export interface TimelineEventChip extends JsonObject {
+  kind: TimelineEventKind;
+  label: string;
+  tone?: TimelineEventTone;
+  tab?: RunInspectorTab;
+}
+
+export interface TimelineEventMetadata extends JsonObject {
+  kind: TimelineEventKind;
+  actor: TimelineEventActor;
+  title?: string;
+  summary?: string;
+  status?: string;
+  tone?: TimelineEventTone;
+  linkedIds?: TimelineEventLinkedIds;
+  chips?: TimelineEventChip[];
+}
+
 export type ReviewStatus = "pending" | "accepted" | "rejected";
 export type HandoffCopyKind =
   | "worktree_path"
@@ -122,6 +175,7 @@ export interface ThreadDetail {
 interface BaseThreadMessage {
   id: string;
   threadId: string;
+  timelineEvent?: TimelineEventMetadata;
   createdAt: string;
 }
 

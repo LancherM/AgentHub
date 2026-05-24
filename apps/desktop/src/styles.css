@@ -656,6 +656,21 @@ textarea:disabled {
   font-size: 12px;
 }
 
+.timeline-event-kind {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  min-height: 20px;
+  padding: 1px 7px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
 .user-message-bubble p,
 .assistant-message-bubble p,
 .summary-stack p,
@@ -672,6 +687,62 @@ textarea:disabled {
   min-width: 0;
   flex-wrap: wrap;
   gap: 6px;
+}
+
+.timeline-chip-row {
+  margin-bottom: 8px;
+}
+
+.timeline-chip,
+.timeline-chip-button {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 850;
+}
+
+.timeline-chip {
+  padding: 3px 8px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--muted);
+}
+
+.timeline-chip.info,
+.timeline-chip-button.info {
+  border-color: rgba(103, 216, 196, 0.36);
+  background: rgba(103, 216, 196, 0.1);
+  color: var(--cyan);
+}
+
+.timeline-chip.success,
+.timeline-chip-button.success {
+  border-color: rgba(139, 233, 119, 0.34);
+  background: rgba(139, 233, 119, 0.1);
+  color: var(--green);
+}
+
+.timeline-chip.warning,
+.timeline-chip-button.warning {
+  border-color: rgba(245, 189, 90, 0.38);
+  background: rgba(245, 189, 90, 0.11);
+  color: var(--amber);
+}
+
+.timeline-chip.danger,
+.timeline-chip-button.danger {
+  border-color: rgba(255, 125, 107, 0.4);
+  background: rgba(255, 125, 107, 0.1);
+  color: var(--red);
+}
+
+.timeline-chip.accent,
+.timeline-chip-button.accent {
+  border-color: rgba(197, 155, 255, 0.4);
+  background: rgba(197, 155, 255, 0.1);
+  color: var(--plum);
 }
 
 .mention-chip {
@@ -913,6 +984,10 @@ textarea:disabled {
   font-size: 11px;
 }
 
+.run-card-pills .timeline-chip-button {
+  background: rgba(255, 255, 255, 0.025);
+}
+
 .run-card-pills button:hover {
   border-color: rgba(216, 255, 87, 0.42);
   color: var(--text);
@@ -937,25 +1012,59 @@ textarea:disabled {
 
 .system-message {
   display: grid;
-  gap: 4px;
+  gap: 8px;
   border-color: rgba(245, 189, 90, 0.42);
   background: rgba(75, 49, 12, 0.48);
   color: #ffe2a8;
 }
 
+.system-message.accent,
 .system-message.task-event {
   border-color: rgba(103, 216, 196, 0.34);
   background: rgba(13, 57, 51, 0.42);
   color: #d7fff4;
 }
 
-.system-message span {
+.system-message.danger {
+  border-color: rgba(255, 125, 107, 0.48);
+  background: rgba(78, 25, 19, 0.62);
+  color: #ffd6cf;
+}
+
+.system-message-main {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.system-message span,
+.system-message-main span {
+  flex-shrink: 0;
   color: var(--muted-2);
   font-size: 11px;
 }
 
 .system-message p {
   margin: 0;
+  line-height: 1.45;
+}
+
+.system-message p strong {
+  margin-right: 8px;
+  color: var(--text);
+}
+
+.timeline-event-action {
+  justify-self: start;
+  min-height: 26px;
+  padding: 3px 10px;
+  border: 1px solid rgba(216, 255, 87, 0.32);
+  border-radius: 999px;
+  background: rgba(216, 255, 87, 0.08);
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 850;
 }
 
 .error-strip.inline {

@@ -364,6 +364,15 @@ output or a concise failure/cancel summary. If no room is selected, the message
 goes to the project's default `#general` room. If no agent or role is mentioned
 or supplied by the caller, desktop falls back to `@fake`.
 
+Timeline rows now carry bounded event semantics in message metadata. User
+messages, participant responses, task-created rows, assignment rows, system
+events, run cards, checks, risks, diff artifacts, review decisions, and memory
+proposal signals render as distinct audit-stream cards or chips while still
+using the existing conversation message and run evidence records. Linked task,
+run, and assignment ids are stored as compact metadata so a visible event can
+open the relevant inspector context without copying raw logs, diffs,
+verification output, risk reports, or memory details into the room transcript.
+
 Active inline run cards subscribe to the existing desktop run event stream and
 replay already-persisted events when a subscription starts after a fast run has
 advanced. They show agent identity, status, the latest streamed line, compact

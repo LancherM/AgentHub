@@ -40,6 +40,8 @@ import type {
   ThreadDetail,
   ThreadMessage,
   ThreadSummary,
+  TimelineEventKind,
+  TimelineEventMetadata,
   UserMessage
 } from "../../src/lib/types";
 import {
@@ -228,7 +230,25 @@ class RepositoryThreadService implements ThreadService {
         content: text,
         metadata: {
           mentions: uniqueAgents(mentions),
-          roleMentions: roleMentions.length > 0 ? roleMentions : undefined
+          roleMentions: roleMentions.length > 0 ? roleMentions : undefined,
+          timelineEvent: timelineEvent({
+            kind: "user_message",
+            actor: "user",
+            title: "User message",
+            summary: text,
+            chips: [
+              ...uniqueAgents(mentions).map((agentId) => ({
+                kind: "assignment_created" as const,
+                label: `@${agentId}`,
+                tone: "info" as const
+              })),
+              ...roleMentions.map((roleMention) => ({
+                kind: "assignment_created" as const,
+                label: `@${roleMention.roleHandle}`,
+                tone: "accent" as const
+              }))
+            ]
+          })
         },
         createdAt: now
       })
@@ -276,7 +296,26 @@ class RepositoryThreadService implements ThreadService {
             : undefined,
           taskId: taskMetadata?.taskId,
           taskTitle: taskMetadata?.taskTitle,
-          assignment: taskMetadata?.assignment
+          assignment: taskMetadata?.assignment,
+          timelineEvent: timelineEvent({
+            kind: "run_started",
+            actor: "agent",
+            title: taskMetadata?.assignment.roleHandle
+              ? `@${taskMetadata.assignment.roleHandle} run started`
+              : `@${agentId} run started`,
+            summary: `Local ${agentId} run is linked to this timeline event.`,
+            status: run.status,
+            taskId: taskMetadata?.taskId,
+            runId,
+            assignmentId: taskMetadata?.assignment.assignmentId,
+            chips: [
+              {
+                kind: "run_started",
+                label: run.status,
+                tone: run.status === "queued" ? "neutral" : "warning"
+              }
+            ]
+          })
         },
         createdAt: now
       })
@@ -374,13 +413,31 @@ class RepositoryThreadService implements ThreadService {
         updatedAt: userMessage.createdAt
       })
     );
+    await this.linkUserMessageToTask(userMessage.id, {
+      taskId: task.id,
+      taskTitle: task.title
+    });
     await this.appendSystemMessage(
       currentThread.id,
       `Task created: ${task.title}`,
       {
         taskEvent: "task_created",
         taskId: task.id,
-        taskTitle: task.title
+        taskTitle: task.title,
+        timelineEvent: timelineEvent({
+          kind: "task_created",
+          actor: "system",
+          title: "Task created",
+          summary: task.title,
+          taskId: task.id,
+          chips: [
+            {
+              kind: "task_created",
+              label: "task created",
+              tone: "accent"
+            }
+          ]
+        })
       }
     );
     await this.appendSystemMessage(
@@ -389,7 +446,16 @@ class RepositoryThreadService implements ThreadService {
       {
         taskEvent: "participants_assigned",
         taskId: task.id,
-        assignments
+        assignments,
+        timelineEvent: timelineEvent({
+          kind: "assignment_created",
+          actor: "system",
+          title: "Assignments created",
+          summary: assignmentSummary(assignments),
+          taskId: task.id,
+          assignmentIds: assignments.map((assignment) => assignment.assignmentId),
+          chips: assignmentChips(assignments)
+        })
       }
     );
 
@@ -455,7 +521,23 @@ class RepositoryThreadService implements ThreadService {
           {
             taskEvent: "assignment_start_failed",
             taskId: task.id,
-            assignment: skippedAssignment
+            assignment: skippedAssignment,
+            timelineEvent: timelineEvent({
+              kind: "assignment_start_failed",
+              actor: "system",
+              title: "Assignment start failed",
+              summary: errorMessage(error),
+              status: "skipped",
+              taskId: task.id,
+              assignmentId: skippedAssignment.assignmentId,
+              chips: [
+                {
+                  kind: "assignment_start_failed",
+                  label: "start failed",
+                  tone: "warning"
+                }
+              ]
+            })
           }
         );
       }
@@ -501,12 +583,60 @@ class RepositoryThreadService implements ThreadService {
       } catch (error) {
         await this.appendSystemMessage(
           currentThread.id,
-          `@${participant.role?.roleHandle ?? participant.agentId} could not start: ${errorMessage(error)}`
+          `@${participant.role?.roleHandle ?? participant.agentId} could not start: ${errorMessage(error)}`,
+          {
+            taskEvent: "assignment_start_failed",
+            taskId: task.id,
+            runId: run.id,
+            timelineEvent: timelineEvent({
+              kind: "assignment_start_failed",
+              actor: "system",
+              title: "Run start failed",
+              summary: errorMessage(error),
+              status: "failed",
+              taskId: task.id,
+              runId: run.id,
+              chips: [
+                {
+                  kind: "assignment_start_failed",
+                  label: "start failed",
+                  tone: "warning"
+                }
+              ]
+            })
+          }
         );
       }
     }
 
     return this.getThread(currentThread.id);
+  }
+
+  private async linkUserMessageToTask(
+    messageId: string,
+    task: { taskId: string; taskTitle: string }
+  ): Promise<void> {
+    const message = await this.messages.get(messageId);
+    if (!message) {
+      return;
+    }
+    const existingEvent = metadataTimelineEvent(message.metadata);
+    await this.messages.update(
+      validateConversationMessage({
+        ...message,
+        metadata: {
+          ...(message.metadata ?? {}),
+          timelineEvent: timelineEvent({
+            kind: existingEvent?.kind ?? "user_message",
+            actor: existingEvent?.actor ?? "user",
+            title: existingEvent?.title ?? "User message",
+            summary: existingEvent?.summary ?? message.content,
+            taskId: task.taskId,
+            chips: existingEvent?.chips
+          })
+        }
+      })
+    );
   }
 
   private async resolveContinuationInput(
@@ -754,13 +884,22 @@ class RepositoryThreadService implements ThreadService {
       if (
         message.kind !== "run_card" ||
         !message.runId ||
-        !message.agentKind ||
-        refreshedAssistantRunIds.has(message.runId)
+        !message.agentKind
+      ) {
+        continue;
+      }
+      if (
+        refreshedAssistantRunIds.has(message.runId) &&
+        isTerminalRunTimelineKind(metadataTimelineEvent(message.metadata)?.kind)
       ) {
         continue;
       }
       const snapshot = await this.conversationRunSnapshot(message.runId);
       if (!snapshot || !isTerminalRunStatus(snapshot.status)) {
+        continue;
+      }
+      await this.markRunCardTerminalEvent(message, snapshot.status);
+      if (refreshedAssistantRunIds.has(message.runId)) {
         continue;
       }
       const now = this.dependencies.context.now();
@@ -779,7 +918,23 @@ class RepositoryThreadService implements ThreadService {
             agentId: toAgentId(message.agentKind),
             assistantOutput: true,
             pending: false,
-            terminalStatus: snapshot.status
+            terminalStatus: snapshot.status,
+            timelineEvent: timelineEvent({
+              kind: "participant_message",
+              actor: "assistant",
+              title: `${toAgentId(message.agentKind)} response`,
+              summary: terminalAssistantContent(snapshot),
+              status: snapshot.status,
+              runId: message.runId,
+              taskId: metadataString(message.metadata, "taskId"),
+              chips: [
+                {
+                  kind: "participant_message",
+                  label: snapshot.status,
+                  tone: terminalStatusTone(snapshot.status)
+                }
+              ]
+            })
           },
           createdAt: now
         })
@@ -819,11 +974,75 @@ class RepositoryThreadService implements ThreadService {
           agentId,
           assistantOutput: true,
           pending: false,
-          terminalStatus: snapshot.status
+          terminalStatus: snapshot.status,
+          timelineEvent: timelineEvent({
+            kind: "participant_message",
+            actor: "assistant",
+            title: `${agentId} response`,
+            summary: terminalAssistantContent(snapshot),
+            status: snapshot.status,
+            runId: message.runId,
+            taskId: metadataString(message.metadata, "taskId"),
+            chips: [
+              {
+                kind: "participant_message",
+                label: snapshot.status,
+                tone: terminalStatusTone(snapshot.status)
+              }
+            ]
+          })
         }
       })
     );
     await this.touchThread(thread, { updatedAt: this.dependencies.context.now() });
+  }
+
+  private async markRunCardTerminalEvent(
+    message: ConversationMessage,
+    status: RunStatus
+  ): Promise<void> {
+    if (!message.runId) {
+      return;
+    }
+    const nextKind = terminalRunTimelineKind(status);
+    const existingEvent = metadataTimelineEvent(message.metadata);
+    if (
+      existingEvent?.kind === nextKind &&
+      existingEvent.status === status &&
+      message.status === toCoreRunStatus(status)
+    ) {
+      return;
+    }
+    await this.messages.update(
+      validateConversationMessage({
+        ...message,
+        status: toCoreRunStatus(status),
+        metadata: {
+          ...(message.metadata ?? {}),
+          timelineEvent: timelineEvent({
+            kind: nextKind,
+            actor: existingEvent?.actor ?? "agent",
+            title: terminalRunTitle(message, status),
+            summary: existingEvent?.summary,
+            status,
+            taskId:
+              existingEvent?.linkedIds?.taskId ??
+              metadataString(message.metadata, "taskId"),
+            runId: message.runId,
+            assignmentId:
+              existingEvent?.linkedIds?.assignmentId ??
+              metadataAssignment(message.metadata)?.assignmentId,
+            chips: [
+              {
+                kind: nextKind,
+                label: status,
+                tone: terminalStatusTone(status)
+              }
+            ]
+          })
+        }
+      })
+    );
   }
 
   private async conversationRunSnapshot(
@@ -1167,6 +1386,132 @@ function assignmentSummary(
   return `Assigned ${labels.join(", ")} to this task.`;
 }
 
+function assignmentChips(
+  assignments: WorkgroupTaskAssignmentMetadata[]
+): TimelineEventMetadata["chips"] {
+  return assignments.slice(0, 8).map((assignment) => ({
+    kind: "assignment_created",
+    label: assignment.roleHandle ? `@${assignment.roleHandle}` : assignment.displayName,
+    tone: assignment.executable ? "accent" : "neutral"
+  }));
+}
+
+function timelineEvent(input: {
+  kind: TimelineEventKind;
+  actor: TimelineEventMetadata["actor"];
+  title?: string;
+  summary?: string;
+  status?: string;
+  tone?: TimelineEventMetadata["tone"];
+  taskId?: string;
+  runId?: string;
+  assignmentId?: string;
+  assignmentIds?: string[];
+  chips?: TimelineEventMetadata["chips"];
+}): TimelineEventMetadata {
+  return {
+    kind: input.kind,
+    actor: input.actor,
+    title: boundedTimelineText(input.title, 120),
+    summary: boundedTimelineText(input.summary, 240),
+    status: boundedTimelineText(input.status, 48),
+    tone: input.tone,
+    linkedIds: {
+      taskId: boundedTimelineText(input.taskId, 120),
+      runId: boundedTimelineText(input.runId, 120),
+      assignmentId: boundedTimelineText(input.assignmentId, 120),
+      assignmentIds: input.assignmentIds?.slice(0, 12).map((id) => id.slice(0, 120))
+    },
+    chips: input.chips?.slice(0, 10).map((chip) => ({
+      kind: chip.kind,
+      label: boundedTimelineText(chip.label, 80) ?? "",
+      tone: chip.tone,
+      tab: chip.tab
+    }))
+  };
+}
+
+function metadataTimelineEvent(
+  metadata: ConversationMessage["metadata"]
+): TimelineEventMetadata | undefined {
+  const value = metadata?.timelineEvent;
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+  const event = value as TimelineEventMetadata;
+  if (
+    typeof event.kind !== "string" ||
+    typeof event.actor !== "string"
+  ) {
+    return undefined;
+  }
+  return event;
+}
+
+function terminalRunTimelineKind(status: RunStatus): TimelineEventKind {
+  if (status === "failed") {
+    return "run_failed";
+  }
+  if (status === "cancelled") {
+    return "run_cancelled";
+  }
+  return "run_completed";
+}
+
+function terminalRunTitle(
+  message: ConversationMessage,
+  status: RunStatus
+): string {
+  const assignment = metadataAssignment(message.metadata);
+  const actor = assignment?.roleHandle
+    ? `@${assignment.roleHandle}`
+    : message.agentKind
+      ? `@${toAgentId(message.agentKind)}`
+      : "Run";
+  if (status === "failed") {
+    return `${actor} run failed`;
+  }
+  if (status === "cancelled") {
+    return `${actor} run cancelled`;
+  }
+  return `${actor} run completed`;
+}
+
+function isTerminalRunTimelineKind(
+  kind: TimelineEventKind | undefined
+): boolean {
+  return (
+    kind === "run_completed" ||
+    kind === "run_failed" ||
+    kind === "run_cancelled"
+  );
+}
+
+function terminalStatusTone(
+  status: RunStatus
+): NonNullable<TimelineEventMetadata["tone"]> {
+  if (status === "completed") {
+    return "success";
+  }
+  if (status === "failed" || status === "cancelled") {
+    return "danger";
+  }
+  return "warning";
+}
+
+function boundedTimelineText(
+  value: string | undefined,
+  maxLength: number
+): string | undefined {
+  const trimmed = value?.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+  return trimmed.length > maxLength
+    ? `${trimmed.slice(0, Math.max(0, maxLength - 1))}...`
+    : trimmed;
+}
+
 function roomMetadataForThread(thread: ConversationThread): RoomMetadata {
   const metadata = thread.metadata ?? {};
   const roomType =
@@ -1325,6 +1670,7 @@ function toUserMessage(message: ConversationMessage): UserMessage {
     text: message.content,
     mentions: metadataAgents(message.metadata),
     roleMentions: metadataRoleMentions(message.metadata),
+    timelineEvent: metadataTimelineEvent(message.metadata),
     createdAt: message.createdAt
   };
 }
@@ -1348,6 +1694,7 @@ function toAgentRunMessage(
     taskId: metadataString(message.metadata, "taskId"),
     taskTitle: metadataString(message.metadata, "taskTitle"),
     assignment: metadataAssignment(message.metadata),
+    timelineEvent: metadataTimelineEvent(message.metadata),
     createdAt: message.createdAt
   };
 }
@@ -1361,6 +1708,7 @@ function toAssistantMessage(message: ConversationMessage): AssistantMessage {
     agentId: message.agentKind ? toAgentId(message.agentKind) : undefined,
     runId: message.runId,
     status: message.status ? toDesktopRunStatus(message.status) : undefined,
+    timelineEvent: metadataTimelineEvent(message.metadata),
     createdAt: message.createdAt
   };
 }
@@ -1372,6 +1720,7 @@ function toSystemMessage(message: ConversationMessage): SystemMessage {
     type: "system",
     text: message.content,
     metadata: message.metadata,
+    timelineEvent: metadataTimelineEvent(message.metadata),
     createdAt: message.createdAt
   };
 }

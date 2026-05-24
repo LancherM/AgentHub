@@ -1,5 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { agentHubApi } from "../../lib/agentHubApi";
+import {
+  runEvidenceTimelineChips,
+  timelinePresentationForMessage
+} from "../../lib/timelineEvents";
 import type {
   AgentRunMessage,
   ReviewSummary,
@@ -145,6 +149,11 @@ export function AgentRunCard({
   const executorLabel = message.assignment?.roleHandle
     ? `via @${message.agentId}`
     : undefined;
+  const timelineEvent = timelinePresentationForMessage(message, {
+    reviewSummary,
+    eventCount: events.length,
+    status
+  });
 
   async function cancel(): Promise<void> {
     setCancelError(undefined);
@@ -157,7 +166,7 @@ export function AgentRunCard({
 
   return (
     <article
-      className={`agent-run-card ${status} ${expanded ? "expanded" : ""}`}
+      className={`agent-run-card timeline-event ${timelineEvent.tone} ${status} ${expanded ? "expanded" : ""}`}
       onClick={() => setExpanded((current) => !current)}
     >
       <header className="run-card-header">
@@ -167,6 +176,7 @@ export function AgentRunCard({
         <div className="run-card-title">
           <div>
             <strong>{displayHandle}</strong>
+            <span className="timeline-event-kind">{timelineEvent.title}</span>
             <RunStatusBadge status={status} compact />
           </div>
           <span>{executorLabel ? `${executorLabel} · ${headerMeta}` : headerMeta}</span>
@@ -246,6 +256,7 @@ export function AgentRunCard({
         {reviewPills(reviewSummary, events.length, status).map((pill) => (
           <button
             key={pill.label}
+            className={`timeline-chip-button ${pill.tone ?? "neutral"}`}
             onClick={(event) => {
               event.stopPropagation();
               onOpenInspector(message.runId, pill.tab);
@@ -274,21 +285,8 @@ function reviewPills(
   summary: ReviewSummary | undefined,
   eventCount: number,
   status: RunStatus
-): Array<{ label: string; tab: RunInspectorTab }> {
-  const pending = isTerminalRunStatus(status) ? "unknown" : "pending";
-  const diffLabel = summary
-    ? summary.changedFileCount > 0
-      ? `${summary.changedFileCount} files +${summary.additions}/-${summary.deletions}`
-      : "0 files"
-    : "diff pending";
-  return [
-    { label: `Tests ${summary?.verificationStatus ?? pending}`, tab: "tests" },
-    { label: `Risk ${summary?.riskLevel ?? pending}`, tab: "risk" },
-    { label: `Diff ${diffLabel}`, tab: "diff" },
-    { label: "Compare", tab: "compare" },
-    { label: `Memory ${summary?.memoryProposalCount ?? 0}`, tab: "memory" },
-    { label: `${eventCount} logs`, tab: "logs" }
-  ];
+): ReturnType<typeof runEvidenceTimelineChips> {
+  return runEvidenceTimelineChips(summary, eventCount, status);
 }
 
 function isTerminalRunStatus(status: RunStatus): boolean {

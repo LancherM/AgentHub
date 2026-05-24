@@ -1231,6 +1231,46 @@ describe("desktop services", () => {
         ])
       })
     });
+    const rawTimelineMessages =
+      await fixture.repositories.conversationMessageRepository.listByThreadId(
+        detail.id
+      );
+    expect(rawTimelineMessages[0]?.metadata?.timelineEvent).toMatchObject({
+      kind: "user_message",
+      actor: "user",
+      linkedIds: {
+        taskId: fakeRun.taskId
+      }
+    });
+    expect(
+      rawTimelineMessages.find((message) => message.metadata?.taskEvent === "task_created")
+        ?.metadata?.timelineEvent
+    ).toMatchObject({
+      kind: "task_created",
+      linkedIds: {
+        taskId: fakeRun.taskId
+      }
+    });
+    expect(
+      rawTimelineMessages.find(
+        (message) => message.metadata?.taskEvent === "participants_assigned"
+      )?.metadata?.timelineEvent
+    ).toMatchObject({
+      kind: "assignment_created",
+      linkedIds: {
+        taskId: fakeRun.taskId
+      }
+    });
+    expect(
+      rawTimelineMessages.find((message) => message.runId === fakeRun.runId)
+        ?.metadata?.timelineEvent
+    ).toMatchObject({
+      kind: "run_started",
+      linkedIds: {
+        taskId: fakeRun.taskId,
+        runId: fakeRun.runId
+      }
+    });
     await waitForRun(runs, fakeRun.runId, "completed");
     await waitForRun(runs, codexRun.runId, "failed");
 
@@ -1277,6 +1317,42 @@ describe("desktop services", () => {
         .map((message) => message.text)
         .join("\n")
     ).not.toContain("Found package.json");
+    const terminalTimelineMessages =
+      await fixture.repositories.conversationMessageRepository.listByThreadId(
+        detail.id
+      );
+    expect(
+      terminalTimelineMessages.find((message) => message.runId === fakeRun.runId)
+        ?.metadata?.timelineEvent
+    ).toMatchObject({
+      kind: "run_completed",
+      status: "completed",
+      linkedIds: {
+        runId: fakeRun.runId
+      }
+    });
+    expect(
+      terminalTimelineMessages.find((message) => message.runId === codexRun.runId)
+        ?.metadata?.timelineEvent
+    ).toMatchObject({
+      kind: "run_failed",
+      status: "failed",
+      linkedIds: {
+        runId: codexRun.runId
+      }
+    });
+    expect(
+      terminalTimelineMessages.find(
+        (message) =>
+          message.role === "assistant" &&
+          message.runId === fakeRun.runId
+      )?.metadata?.timelineEvent
+    ).toMatchObject({
+      kind: "participant_message",
+      linkedIds: {
+        runId: fakeRun.runId
+      }
+    });
     const summaries = await threads.listThreads();
     expect(summaries.find((thread) => thread.id === detail.id)).toMatchObject({
       activeRunCount: 0,
