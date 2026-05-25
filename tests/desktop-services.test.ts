@@ -1930,7 +1930,8 @@ describe("desktop services", () => {
       title: "general",
       roomType: "default",
       roomHandle: "general",
-      pinned: true
+      pinned: true,
+      sharedContextEnabled: true
     });
     expect(detail.messages[0]).toMatchObject({
       type: "user",
@@ -2127,6 +2128,7 @@ describe("desktop services", () => {
           roomType: "default",
           roomHandle: "general",
           pinned: true,
+          sharedContextEnabled: true,
           description: expect.stringContaining("Project-wide")
         })
       ])
@@ -2138,7 +2140,8 @@ describe("desktop services", () => {
       .toMatchObject({
         roomType: "default",
         roomHandle: "general",
-        pinned: true
+        pinned: true,
+        sharedContextEnabled: true
       });
   });
 
@@ -2163,7 +2166,8 @@ describe("desktop services", () => {
       title: "Design Review",
       roomType: "custom",
       roomHandle: "design-review",
-      description: "Focused review room."
+      description: "Focused review room.",
+      sharedContextEnabled: true
     });
 
     await fixture.repositories.conversationThreadRepository.create(
@@ -2179,7 +2183,8 @@ describe("desktop services", () => {
     expect(legacy).toMatchObject({
       title: "Legacy Topic",
       roomType: "custom",
-      roomHandle: "legacy-topic"
+      roomHandle: "legacy-topic",
+      sharedContextEnabled: true
     });
   });
 
@@ -3229,6 +3234,79 @@ describe("desktop services", () => {
       lastKnownUserGoal: "second thread-aware prompt"
     });
     expect(summary?.sourceMessageCount).toBeGreaterThanOrEqual(2);
+  });
+
+  it("omits prior room messages and summaries when room shared context is disabled", async () => {
+    const fixture = await createFixture();
+    const context = createDesktopServiceContext(fixture.repositories);
+    const projects = createProjectService(context);
+    const memory = createMemoryService(context);
+    const review = createReviewService(context, { memoryService: memory });
+    const runs = createTestRunService(context, review, memory, fixture);
+    const threads = createThreadService({ context, projects, runs });
+    const project = await projects.open(fixture.projectRoot);
+
+    const first = await threads.sendMessage({
+      projectId: project.id,
+      text: "@fake prior shared-context prompt",
+      contextMode: "auto"
+    });
+    const firstRun = first.messages.find(
+      (message) => message.type === "agent_run"
+    );
+    if (!firstRun) {
+      throw new Error("expected first run card");
+    }
+    await waitForRun(runs, firstRun.runId, "completed");
+    await threads.getThread(first.id);
+
+    const enabledSummary =
+      await fixture.repositories.conversationThreadSummaryRepository.getByThreadId(first.id);
+    expect(enabledSummary?.lastKnownUserGoal).toBe("prior shared-context prompt");
+
+    const disabled = await threads.updateThread({
+      threadId: first.id,
+      sharedContextEnabled: false
+    });
+    expect(disabled.sharedContextEnabled).toBe(false);
+
+    const second = await threads.sendMessage({
+      threadId: first.id,
+      text: "@fake isolated prompt",
+      contextMode: "workspace"
+    });
+    const secondRun = second.messages
+      .filter((message) => message.type === "agent_run")
+      .at(-1);
+    if (!secondRun) {
+      throw new Error("expected second run card");
+    }
+    await waitForRun(runs, secondRun.runId, "completed");
+
+    const artifact =
+      await fixture.repositories.runArtifactRepository.getLatestByRunIdAndKind(
+        secondRun.runId,
+        "conversation_brief"
+      );
+    expect(artifact).toMatchObject({
+      kind: "conversation_brief",
+      metadata: expect.objectContaining({
+        source: "conversation_context_builder",
+        includedMessageCount: 0
+      })
+    });
+    expect(artifact?.content).toContain("isolated prompt");
+    expect(artifact?.content).toContain("room_shared_context:disabled");
+    expect(artifact?.content).not.toContain("prior shared-context prompt");
+    expect(artifact?.content).not.toContain("## Thread Summary");
+    expect(artifact?.content).not.toContain("Last known user goal");
+    expect(artifact?.content).not.toContain("Assistant @fake");
+    expect(artifact?.content).not.toContain("fake agent completed");
+
+    const summaries = await threads.listThreads();
+    expect(summaries.find((thread) => thread.id === first.id)).toMatchObject({
+      sharedContextEnabled: false
+    });
   });
 
   it("limits follow-up conversation briefs to same-agent assistant output", async () => {

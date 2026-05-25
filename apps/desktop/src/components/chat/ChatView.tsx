@@ -34,6 +34,7 @@ interface ChatViewProps {
   onRunUpdated(run: RunDetail): void;
   onOpenInspector(runId: string, tab?: RunInspectorTab): void;
   onCancelRun(runId: string): Promise<void>;
+  onSetSharedContext(enabled: boolean): void;
   onRegisterProject(projectPath: string): Promise<void>;
 }
 
@@ -52,6 +53,7 @@ export function ChatView({
   onRunUpdated,
   onOpenInspector,
   onCancelRun,
+  onSetSharedContext,
   onRegisterProject
 }: ChatViewProps): JSX.Element {
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -84,6 +86,18 @@ export function ChatView({
             <span>Context: runtime injection by default</span>
           </div>
         </div>
+        {thread ? (
+          <label className="room-context-toggle">
+            <input
+              type="checkbox"
+              role="switch"
+              checked={thread.sharedContextEnabled}
+              disabled={isBusy}
+              onChange={(event) => onSetSharedContext(event.target.checked)}
+            />
+            <span>Use this room's prior conversation in future agent runs</span>
+          </label>
+        ) : null}
       </header>
 
       {error ? <div className="error-strip inline">{error}</div> : null}

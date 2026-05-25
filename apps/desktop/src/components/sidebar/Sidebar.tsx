@@ -1,5 +1,11 @@
+import { useState } from "react";
+import type { FormEvent } from "react";
 import { ProjectRegistrationForm } from "../projects/ProjectRegistrationForm";
-import type { ProjectSummary, ThreadSummary } from "../../lib/types";
+import type {
+  CreateThreadInput,
+  ProjectSummary,
+  ThreadSummary
+} from "../../lib/types";
 
 interface SidebarProps {
   projects: ProjectSummary[];
@@ -7,7 +13,7 @@ interface SidebarProps {
   selectedThreadId?: string;
   selectedProjectId?: string;
   activeWorkspace: "chat" | "knowledge" | "team";
-  onNewThread(): void;
+  onNewThread(input: CreateThreadInput): Promise<void> | void;
   onSelectThread(threadId: string): void;
   onSelectProject(projectId: string): void;
   onRegisterProject(projectPath: string): Promise<void>;
@@ -32,6 +38,11 @@ export function Sidebar({
   onOpenSettings,
   isBusy
 }: SidebarProps): JSX.Element {
+  const [roomFormOpen, setRoomFormOpen] = useState(false);
+  const [roomTitle, setRoomTitle] = useState("");
+  const [roomHandle, setRoomHandle] = useState("");
+  const [roomDescription, setRoomDescription] = useState("");
+  const [isCreatingRoom, setIsCreatingRoom] = useState(false);
   const selectedProject = projects.find((project) => project.id === selectedProjectId);
   const projectRooms = threads
     .filter((thread) => !selectedProjectId || thread.projectId === selectedProjectId)
@@ -52,6 +63,31 @@ export function Sidebar({
     (total, thread) => total + (thread.runCount ?? 0),
     0
   );
+
+  async function submitRoom(event: FormEvent<HTMLFormElement>): Promise<void> {
+    event.preventDefault();
+    const title = roomTitle.trim();
+    if (!selectedProjectId || !title || isBusy || isCreatingRoom) {
+      return;
+    }
+    setIsCreatingRoom(true);
+    try {
+      await onNewThread({
+        projectId: selectedProjectId,
+        title,
+        roomType: "custom",
+        roomHandle: roomHandle.trim() || undefined,
+        description: roomDescription.trim() || undefined,
+        sharedContextEnabled: true
+      });
+      setRoomTitle("");
+      setRoomHandle("");
+      setRoomDescription("");
+      setRoomFormOpen(false);
+    } finally {
+      setIsCreatingRoom(false);
+    }
+  }
 
   return (
     <aside className="sidebar">
@@ -74,15 +110,7 @@ export function Sidebar({
             </div>
           </div>
         </div>
-        {projects.length === 0 ? (
-          <>
-            <ProjectRegistrationForm
-              isBusy={isBusy}
-              onRegister={onRegisterProject}
-            />
-            <div className="muted-row">No projects registered</div>
-          </>
-        ) : projects.length > 1 ? (
+        {projects.length > 1 ? (
           <div className="project-list compact">
             {projects.map((project) => (
               <button
@@ -101,6 +129,19 @@ export function Sidebar({
             ))}
           </div>
         ) : null}
+        <details
+          className="sidebar-add-project"
+          open={projects.length === 0}
+        >
+          <summary>Add project</summary>
+          <ProjectRegistrationForm
+            isBusy={isBusy}
+            onRegister={onRegisterProject}
+          />
+        </details>
+        {projects.length === 0 ? (
+          <div className="muted-row">No projects registered</div>
+        ) : null}
       </section>
 
       <section className="nav-section grow">
@@ -108,7 +149,7 @@ export function Sidebar({
           <div className="section-label">Rooms</div>
           <button
             className="icon-button"
-            onClick={onNewThread}
+            onClick={() => setRoomFormOpen((open) => !open)}
             disabled={!selectedProjectId}
             title="Create room"
             aria-label="Create room"
@@ -116,6 +157,58 @@ export function Sidebar({
             +
           </button>
         </div>
+        {roomFormOpen ? (
+          <form className="room-create-form" onSubmit={submitRoom}>
+            <label>
+              <span>Room title</span>
+              <input
+                value={roomTitle}
+                placeholder="Design review"
+                disabled={!selectedProjectId || isBusy || isCreatingRoom}
+                onChange={(event) => setRoomTitle(event.target.value)}
+              />
+            </label>
+            <label>
+              <span>Handle</span>
+              <input
+                value={roomHandle}
+                placeholder="design-review"
+                disabled={!selectedProjectId || isBusy || isCreatingRoom}
+                onChange={(event) => setRoomHandle(event.target.value)}
+              />
+            </label>
+            <label className="wide">
+              <span>Description</span>
+              <textarea
+                value={roomDescription}
+                placeholder="Focused work for design review."
+                disabled={!selectedProjectId || isBusy || isCreatingRoom}
+                onChange={(event) => setRoomDescription(event.target.value)}
+              />
+            </label>
+            <div className="room-create-actions">
+              <button
+                className="ghost-button compact"
+                type="button"
+                onClick={() => setRoomFormOpen(false)}
+              >
+                Cancel
+              </button>
+              <button
+                className="primary-button compact"
+                type="submit"
+                disabled={
+                  !selectedProjectId ||
+                  !roomTitle.trim() ||
+                  isBusy ||
+                  isCreatingRoom
+                }
+              >
+                {isCreatingRoom ? "Creating..." : "Create room"}
+              </button>
+            </div>
+          </form>
+        ) : null}
         <div className="thread-list">
           {projectRooms.length === 0 ? (
             <div className="muted-row">No rooms yet</div>

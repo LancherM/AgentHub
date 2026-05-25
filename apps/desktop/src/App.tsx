@@ -11,6 +11,7 @@ import type {
   AgentRunMessage,
   CollaborationWorkflowInput,
   ContextMode,
+  CreateThreadInput,
   ProjectSummary,
   RunDetail,
   RunInspectorTab,
@@ -163,7 +164,7 @@ export function App(): JSX.Element {
     }
   }
 
-  async function createNewThread(): Promise<void> {
+  async function createNewThread(input: CreateThreadInput = {}): Promise<void> {
     setError(undefined);
     setIsBusy(true);
     setPendingContinueFrom(undefined);
@@ -174,9 +175,11 @@ export function App(): JSX.Element {
       }
       const room = await agentHubApi.threads.create({
         projectId,
-        title: "custom room",
+        title: input.title ?? "custom room",
         roomType: "custom",
-        description: "Custom project room."
+        roomHandle: input.roomHandle,
+        description: input.description ?? "Custom project room.",
+        sharedContextEnabled: input.sharedContextEnabled ?? true
       });
       const detail = await agentHubApi.threads.get(room.id);
       setCurrentThread(detail);
@@ -187,6 +190,25 @@ export function App(): JSX.Element {
       setError(errorMessage(err));
     } finally {
       setIsBusy(false);
+    }
+  }
+
+  async function updateThreadSharedContext(
+    threadId: string,
+    sharedContextEnabled: boolean
+  ): Promise<void> {
+    setError(undefined);
+    try {
+      const detail = await agentHubApi.threads.update({
+        threadId,
+        sharedContextEnabled
+      });
+      setCurrentThread(detail);
+      setSelectedThreadId(detail.id);
+      setSelectedProjectId((current) => detail.projectId ?? current);
+      setThreads((current) => upsertThreadSummary(current, threadSummaryFromDetail(detail)));
+    } catch (err) {
+      setError(errorMessage(err));
     }
   }
 
@@ -253,7 +275,7 @@ export function App(): JSX.Element {
         selectedThreadId={selectedThreadId}
         selectedProjectId={selectedProject?.id ?? selectedProjectId}
         activeWorkspace={activeWorkspace}
-        onNewThread={() => void createNewThread()}
+        onNewThread={(input) => createNewThread(input)}
         onSelectThread={(threadId) => {
           setActiveWorkspace("chat");
           void loadThread(threadId);
@@ -293,6 +315,11 @@ export function App(): JSX.Element {
             onRunUpdated={handleRunUpdated}
             onOpenInspector={(runId, tab) => setSelectedInspector({ runId, tab })}
             onCancelRun={cancelRun}
+            onSetSharedContext={(enabled) => {
+              if (currentThread) {
+                void updateThreadSharedContext(currentThread.id, enabled);
+              }
+            }}
             onRegisterProject={registerProject}
           />
         )}
@@ -374,6 +401,7 @@ function threadSummaryFromDetail(thread: ThreadDetail): ThreadSummary {
     roomHandle: thread.roomHandle,
     description: thread.description,
     pinned: thread.pinned,
+    sharedContextEnabled: thread.sharedContextEnabled,
     createdAt: thread.createdAt,
     updatedAt: thread.updatedAt,
     lastMessagePreview: lastMessage

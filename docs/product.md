@@ -415,6 +415,11 @@ there are no registered projects, the desktop renders local project path
 registration controls in the project sidebar and the empty conversation pane;
 submitting either control calls the existing `window.agentHub.projects.open`
 IPC path and selects the project's `#general` room after default room seeding.
+The sidebar keeps an Add project disclosure visible after setup so additional
+local repositories can be registered without returning to onboarding. The
+selected project also has an inline custom-room creation flow for title,
+optional handle, and optional description; newly created rooms are selected
+immediately and start with room shared context enabled.
 
 The composer accepts mention-based prompts such as `@fake ...` or multi-agent
 mentions, and it now also accepts enabled role handles such as `@researcher`
@@ -477,8 +482,13 @@ runs, same-agent compact run summaries when no assistant answer exists yet, the
 latest conservative thread summary, project context-store references, and
 explicit character-budget metadata. Other agents' prior outputs stay out of the
 raw recent-message list and can affect future runs only through the bounded
-thread summary. Role-targeted desktop turns add the resolved role
-handle, display name, executor, persona, default instructions, permissions,
+thread summary. Each room has a local shared-context switch, defaulting on. If
+the switch is off, new desktop runs in that room still receive the current
+prompt, approved project context, role instructions, selected skills, and any
+explicit continuation, but prior room messages and the room summary are left
+out of the generated conversation brief. Role-targeted desktop turns add the
+resolved role handle, display name, executor, persona, default instructions,
+permissions,
 context policy, and approval policy to that same brief and to TaskRunner
 constraints/hints before execution. A zero recent-message budget includes no
 prior messages, and the first message in an empty thread uses the retitled

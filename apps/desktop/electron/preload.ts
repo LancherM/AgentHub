@@ -9,6 +9,7 @@ import type {
   RunEvent,
   SaveTeamRoleInput,
   SendThreadMessageInput,
+  UpdateThreadInput,
   VerificationSettings,
   Unsubscribe
 } from "../src/lib/types";
@@ -45,6 +46,8 @@ const api: AgentHubApi = {
     list: () => ipcRenderer.invoke(IPC_CHANNELS.threadsList),
     create: (input?: CreateThreadInput) =>
       ipcRenderer.invoke(IPC_CHANNELS.threadsCreate, input),
+    update: (input: UpdateThreadInput) =>
+      ipcRenderer.invoke(IPC_CHANNELS.threadsUpdate, input),
     get: (threadId: string) =>
       ipcRenderer.invoke(IPC_CHANNELS.threadsGet, threadId),
     sendMessage: (input: SendThreadMessageInput) =>

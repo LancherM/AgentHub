@@ -154,12 +154,13 @@ only; they are not approved project memory and are not injected into other
 threads.
 
 Desktop rooms are currently metadata-backed conversation threads, not a
-separate table. `roomType`, `roomHandle`, `description`, and `pinned` live in
-`conversation_threads.metadata`, and the desktop thread service seeds
-`#general`, `#planning`, `#research`, `#review`, and `#knowledge` for each
-known project. Legacy conversation threads that do not have room metadata are
-mapped as readable custom rooms so the room navigation does not invalidate
-existing transcript data.
+separate table. `roomType`, `roomHandle`, `description`, `pinned`, and
+`sharedContextEnabled` live in `conversation_threads.metadata`, and the
+desktop thread service seeds `#general`, `#planning`, `#research`, `#review`,
+and `#knowledge` for each known project with shared context enabled by
+default. Legacy conversation threads that do not have room metadata are mapped
+as readable custom rooms with shared context enabled so the room navigation
+does not invalidate existing transcript data.
 
 `agent-hub chat` is the CLI path over the same durable conversation boundary.
 It resolves the local project, creates or resumes a conversation thread or
@@ -230,11 +231,12 @@ prompt-titled chat thread. Role-targeted run-card messages persist both the
 compact role metadata, the shared task id, and the executor mapping so review
 surfaces can attribute local agent output to the requested participant without
 giving the renderer access to role resolution logic. The renderer-facing
-`window.agentHub.threads.*` contract remains unchanged, but service state is
-loaded from SQLite through lightweight thread reads. Thread lists do not
-reconcile every thread or hydrate full run details; they derive run-card
-display status and active counts from `RunService.listRunStatuses()`. Selected
-room details reconcile only pending assistant-output placeholders, and
+`window.agentHub.threads.*` contract stays a narrow preload boundary for
+create, update, get, list, and send-message operations; service state is loaded
+from SQLite through lightweight thread reads. Thread lists do not reconcile
+every thread or hydrate full run details; they derive run-card display status
+and active counts from `RunService.listRunStatuses()`. Selected room details
+reconcile only pending assistant-output placeholders, and
 finalized assistant messages are treated as stable transcript rows. When a run
 reaches `completed`, `failed`, or `cancelled`, reconciliation uses
 `RunService.getConversationRunSnapshot()`, which reads run rows and events only,
@@ -258,7 +260,11 @@ recent-message budget includes no prior thread messages, and recent messages
 are reduced when needed so thread summaries and project references remain
 inside the total brief budget. Desktop first-turn runs reload the retitled
 thread before building the brief so pre-created empty threads do not inject
-stale `New Chat` titles. Project
+stale `New Chat` titles. If a room has `sharedContextEnabled: false`, the
+desktop thread service passes no prior room messages and no thread summary to
+the builder for that run while preserving the current turn, role context,
+project context references, approved memory handled by the context compiler,
+and explicit continuation provenance. Project
 context, thread context, current-turn context, and run context remain distinct
 layers so thread-local decisions do not automatically promote into project
 approved memory. Follow-up turns prefer terminal assistant messages from the
