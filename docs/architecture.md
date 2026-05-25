@@ -551,6 +551,9 @@ backward-compatible project context builds, while global skills require an
 explicit task or role reference unless a caller opts into global default
 inclusion. A same-id project skill overrides the global skill by default; an
 explicit `global:<id>` reference can intentionally select the global version.
+The shared type model reserves `task` and `role` skill scopes for future scoped
+stores, but the current resolver rejects those scopes explicitly instead of
+silently resolving a same-id project or global skill.
 Resolved skill evidence is copied into the context pack as `injectedSkills`
 and persisted by the task runner as a `skill_inventory` run artifact with the
 skill id, source scope, display metadata, source path when local, and
@@ -896,7 +899,10 @@ Inline run cards compute a renderer-only Prepare/Run/Verify/Review stage model
 from persisted run status and event types. The model controls compact progress,
 last-activity, wait-state, disabled-action, and compare-entry display only; it
 does not create new persistence, duplicate raw event streams into the
-transcript, or bypass inspector IPC for review data.
+transcript, or bypass inspector IPC for review data. Terminal cards use review
+IPC only for the compact summary/artifact metadata needed by their chips; deeper
+checks, risks, logs, context, memory, and comparison payloads remain
+inspector-loaded.
 
 Phase 5 keeps the inspector as a renderer-only shell over those IPC services
 but changes its visible vocabulary from run-centric tabs to the workgroup
@@ -908,8 +914,10 @@ The Brief tab is the default conclusion surface. It derives a renderer-only
 review conclusion from the loaded review summary and the existing risk IPC
 payload, pins blocking findings above the summary when present, and exposes
 manual next-action buttons that only switch inspector tabs. It does not create
-new review scores or write decisions; accept/reject continue to call the
-existing review IPC and record audit-only review state.
+new review scores or write decisions; refreshing the Brief tab reloads both
+summary and risk payloads so the conclusion cannot remain pinned to stale risk
+state while a run is still settling. Accept/reject continue to call the existing
+review IPC and record audit-only review state.
 
 Phase 6 adds an artifact model v0 without changing storage ownership. The
 Electron main process reads existing `run_artifacts`, derives desktop-facing

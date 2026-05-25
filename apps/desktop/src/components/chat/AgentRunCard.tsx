@@ -130,11 +130,15 @@ export function AgentRunCard({
   }, [loadRun, message.runId, message.status]);
 
   useEffect(() => {
-    if (!isTerminalRunStatus(message.status) || run) {
+    if (!isTerminalRunStatus(status)) {
+      return;
+    }
+    if (run) {
+      void loadReviewData();
       return;
     }
     void loadRun({ includeReview: true });
-  }, [loadRun, message.status, run]);
+  }, [loadReviewData, loadRun, run, status]);
 
   const progress = useMemo(
     () =>

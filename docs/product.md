@@ -135,7 +135,10 @@ skill references. Project context-store skills still load from the project
 context store and override same-id global skills unless a task or role
 explicitly selects a scoped global skill. Injected skill ids, scopes, display
 names, and content hashes are recorded in run evidence as a `skill_inventory`
-artifact. Skills remain separate from approved memory.
+artifact. `project:<id>` and `global:<id>` are the currently resolvable skill
+scopes; reserved `task:<id>` and `role:<id>` references are rejected with a
+clear error instead of falling back to another same-id skill. Skills remain
+separate from approved memory.
 
 `context export --target repo --dry-run` previews repository writes.
 `context export --target repo --write` uses Agent Hub managed blocks in
@@ -453,14 +456,16 @@ review, memory, comparison, continuation, and workflow prompt patterns without
 adding a new command backend. Unknown mentions stay in the prompt text and do
 not block submission. Target chips show the expected selected agents/roles,
 can pin fallback targets as explicit mentions, and can remove explicit
-mentions before the turn is submitted. Context mode uses segmented controls,
-and the submit button reports the expected local run fan-out. Role mentions
-are resolved in the Electron main process, persisted on the user message and
-run-card metadata, and copied to run metadata so review surfaces can show which
-role and executor produced a run. The renderer sends prompt text through the safe
-`window.agentHub.threads.sendMessage` preload API; the Electron main-process
-thread service resolves project-level Team workspace roles, strips known agent
-or role mentions from the task body, persists
+mentions before the turn is submitted. Applying autocomplete and removing
+target chips preserve prompt formatting outside the affected mention token so
+indented code, YAML, and aligned text are not rewritten. Context mode uses
+segmented controls, and the submit button reports the expected local run
+fan-out. Role mentions are resolved in the Electron main process, persisted on
+the user message and run-card metadata, and copied to run metadata so review
+surfaces can show which role and executor produced a run. The renderer sends
+prompt text through the safe `window.agentHub.threads.sendMessage` preload API;
+the Electron main-process thread service resolves project-level Team workspace
+roles, strips known agent or role mentions from the task body, persists
 one ordered user message in the selected SQLite-backed room thread, creates one
 shared task for the instruction, records task-created and participants-assigned
 system timeline events, then creates one run per executable assignment through
@@ -493,10 +498,10 @@ to a small review affordance. Terminal cards lead with View review, Compare,
 Continue, Handoff, and Audit actions; disabled actions explain why they are not
 available. Compare becomes available only when another terminal run from the
 same task or the same multi-agent turn is present. Terminal cards do not load
-full run review evidence when a thread is merely selected; artifacts, checks,
-risks, memory proposals, brief data, context previews, comparison reports, and
-audit logs load lazily when the user opens the on-demand workgroup inspector
-drawer.
+full run review evidence when a thread is merely selected, but they refresh the
+summary and artifact metadata needed for compact review chips. Checks, risks,
+memory proposals, brief data, context previews, comparison reports, and audit
+logs load lazily when the user opens the on-demand workgroup inspector drawer.
 Existing persisted run records are
 synthesized into thread-shaped conversations only as a compatibility import
 when no durable conversation threads exist yet, so old desktop run data remains

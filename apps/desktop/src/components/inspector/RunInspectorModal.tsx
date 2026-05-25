@@ -138,12 +138,15 @@ export function RunInspectorModal({
     }
   }
 
-  async function loadTab(tab: WorkgroupInspectorTab): Promise<void> {
+  async function loadTab(
+    tab: WorkgroupInspectorTab,
+    options: { refresh?: boolean } = {}
+  ): Promise<void> {
     if (tab === "brief") {
-      if (!summary.data && !summary.loading) {
+      if (options.refresh || (!summary.data && !summary.loading)) {
         await loadSummary();
       }
-      if (!risk.data && !risk.loading) {
+      if (options.refresh || (!risk.data && !risk.loading)) {
         await loadState(setRisk, () => agentHubApi.review.getRisk(runId));
       }
       return;
@@ -175,8 +178,12 @@ export function RunInspectorModal({
 
   async function refresh(): Promise<void> {
     setDecisionMessage(undefined);
+    if (activeTab === "brief") {
+      await loadTab(activeTab, { refresh: true });
+      return;
+    }
     await loadSummary();
-    await loadTab(activeTab);
+    await loadTab(activeTab, { refresh: true });
   }
 
   async function loadComparison(): Promise<void> {

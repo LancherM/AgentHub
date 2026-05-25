@@ -212,17 +212,12 @@ export function applyComposerSuggestion(
 ): ComposerSuggestionApplication {
   const before = input.slice(0, trigger.start);
   const after = input.slice(trigger.end);
-  const spacer =
-    after.length === 0 || /^\s/.test(after)
-      ? " "
-      : " ";
-  const value = `${before}${suggestion.insertText}${spacer}${after}`.replace(
-    /[ \t]{2,}/g,
-    " "
-  );
+  const spacer = after.length === 0 || !/^\s/.test(after) ? " " : "";
+  const cursorGap = spacer.length > 0 || /^[ \t]/.test(after) ? 1 : 0;
+  const value = `${before}${suggestion.insertText}${spacer}${after}`;
   return {
     value,
-    cursor: before.length + suggestion.insertText.length + spacer.length
+    cursor: before.length + suggestion.insertText.length + cursorGap
   };
 }
 
@@ -232,8 +227,7 @@ export function removeComposerTarget(
 ): string {
   const handle = escapeRegExp(target.handle);
   return input
-    .replace(new RegExp(`(^|[\\s([{])@${handle}\\b`, "i"), "$1")
-    .replace(/[ \t]{2,}/g, " ")
+    .replace(new RegExp(`(^|[\\s([{])@${handle}\\b[ \\t]?`, "gi"), "$1")
     .trimStart();
 }
 

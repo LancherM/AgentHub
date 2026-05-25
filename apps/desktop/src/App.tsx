@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   CommandPalette,
   type CommandPaletteAction
@@ -66,6 +66,7 @@ export function App(): JSX.Element {
     useState<RunContinuationTarget | undefined>();
   const [isBusy, setIsBusy] = useState(true);
   const [error, setError] = useState<string | undefined>();
+  const sharedContextUpdateSequence = useRef(0);
 
   const activeProjectId = selectedProjectId ?? currentThread?.projectId ?? projects[0]?.id;
   const selectedProject = useMemo(
@@ -251,12 +252,17 @@ export function App(): JSX.Element {
     threadId: string,
     sharedContextEnabled: boolean
   ): Promise<void> {
+    const sequence = sharedContextUpdateSequence.current + 1;
+    sharedContextUpdateSequence.current = sequence;
     setError(undefined);
     try {
       const detail = await agentHubApi.threads.update({
         threadId,
         sharedContextEnabled
       });
+      if (sequence !== sharedContextUpdateSequence.current) {
+        return;
+      }
       setCurrentThread(detail);
       setSelectedThreadId(detail.id);
       setSelectedProjectId((current) => detail.projectId ?? current);
@@ -266,6 +272,9 @@ export function App(): JSX.Element {
       });
       setThreads((current) => upsertThreadSummary(current, threadSummaryFromDetail(detail)));
     } catch (err) {
+      if (sequence !== sharedContextUpdateSequence.current) {
+        return;
+      }
       setError(errorMessage(err));
     }
   }
