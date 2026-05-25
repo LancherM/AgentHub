@@ -20,7 +20,10 @@ import {
   agentKinds,
   memoryCategories,
   runEventTypes,
+  findWorkgroupRoleByHandle,
+  normalizeWorkgroupRoleHandle,
   parseAgentKind,
+  presetWorkgroupRoles,
   extractAgentFacingOutput,
   validateComparisonReport,
   validateConversationMessage,
@@ -30,17 +33,25 @@ import {
   validateProject,
   validateRunEvent,
   validateTask,
+  validateWorkgroupRole,
+  toWorkgroupRoleRunMetadata,
   type ContextDeliveryMode,
   type ContextStoreMode,
   type AgentKind,
   type ConversationMessage,
   type ConversationThread,
   type ConversationThreadSummary,
+  type JsonObject,
   type MemoryCategory,
   type Project,
   type RunContextDeliveryMode,
   type RunEventType,
-  type VerificationResult
+  type TaskRunStatus,
+  type VerificationResult,
+  type WorkgroupExecutor,
+  type WorkgroupRole,
+  type WorkgroupRoleRunMetadata,
+  type WorkgroupTaskAssignmentMetadata
 } from "@agent-hub/core";
 import {
   buildComparisonReport,
@@ -350,6 +361,26 @@ export async function main(
     return showThread(rest.slice(1), io, activeRuntime);
   }
 
+  if (command === "rooms" && rest[0] === "list") {
+    return listRooms(rest.slice(1), io, activeRuntime);
+  }
+
+  if (command === "rooms" && rest[0] === "create") {
+    return createRoom(rest.slice(1), io, activeRuntime);
+  }
+
+  if (command === "rooms" && rest[0] === "use") {
+    return useRoom(rest.slice(1), io, activeRuntime);
+  }
+
+  if (command === "rooms" && rest[0] === "send") {
+    return sendRoomMessage(rest.slice(1), io, cwd, activeRuntime, debug);
+  }
+
+  if (command === "rooms" && rest[0] === "timeline") {
+    return showRoomTimeline(rest.slice(1), io, activeRuntime);
+  }
+
   if (command === "chat") {
     return runChat({
       io,
@@ -360,6 +391,38 @@ export async function main(
       debug,
       args: rest
     });
+  }
+
+  if (
+    (command === "team" && rest[0] === "roles" && rest[1] === "list") ||
+    (command === "roles" && rest[0] === "list")
+  ) {
+    return listTeamRoles(command === "roles" ? rest.slice(1) : rest.slice(2), io, activeRuntime);
+  }
+
+  if (
+    (command === "team" && rest[0] === "roles" && rest[1] === "show") ||
+    (command === "roles" && rest[0] === "show")
+  ) {
+    return showTeamRole(command === "roles" ? rest.slice(1) : rest.slice(2), io, activeRuntime);
+  }
+
+  if (
+    (command === "team" && rest[0] === "roles" && rest[1] === "save") ||
+    (command === "roles" && rest[0] === "save")
+  ) {
+    return saveTeamRole(command === "roles" ? rest.slice(1) : rest.slice(2), io, activeRuntime);
+  }
+
+  if (
+    (command === "team" && rest[0] === "roles" && rest[1] === "executor") ||
+    (command === "roles" && rest[0] === "executor")
+  ) {
+    return showTeamRoleExecutor(
+      command === "roles" ? rest.slice(1) : rest.slice(2),
+      io,
+      activeRuntime
+    );
   }
 
   if (command === "tasks" && rest[0] === "list") {
@@ -431,7 +494,16 @@ export function helpText(): string {
     "  agent-hub [--db <path>] run event add --run-id <run-id> --type <type> --message <message>",
     "  agent-hub [--db <path>] threads list",
     "  agent-hub [--db <path>] threads show <thread-id>",
-    "  agent-hub [--db <path>] chat [--thread <thread-id>]",
+    "  agent-hub [--db <path>] rooms list --project-id <project-id>",
+    "  agent-hub [--db <path>] rooms create --project-id <project-id> --handle <handle> --title <title> [--description <text>]",
+    "  agent-hub [--db <path>] rooms use --project-id <project-id> --room <handle-or-thread-id>",
+    "  agent-hub [--db <path>] rooms send --project-id <project-id> --room <handle-or-thread-id> --message <text>",
+    "  agent-hub [--db <path>] rooms timeline --project-id <project-id> --room <handle-or-thread-id>",
+    "  agent-hub [--db <path>] chat [--thread <thread-id>|--room <handle-or-thread-id>]",
+    "  agent-hub [--db <path>] team roles list --project-id <project-id>",
+    "  agent-hub [--db <path>] team roles show --project-id <project-id> --role <handle>",
+    "  agent-hub [--db <path>] team roles save --project-id <project-id> --handle <handle> [--display-name <name>] [--executor fake|codex|claude-code|human|llm_api|workflow]",
+    "  agent-hub [--db <path>] team roles executor --project-id <project-id> --role <handle>",
     "  agent-hub runs list",
     "  agent-hub runs events <run-id>",
     "  agent-hub runs diff <run-id> [--stat|--patch] [--full]",
@@ -661,6 +733,70 @@ async function resolveInteractiveProjectId(
   return project?.id ?? "adhoc_project";
 }
 
+const roleSettingsPrefix = "desktop.project.";
+const roleSettingsSuffix = ".workgroupRoles";
+const maxStoredRoles = 32;
+const reservedExecutorReason = "Reserved executor is not runnable in this phase.";
+
+const defaultRoomDefinitions = [
+  {
+    handle: "general",
+    title: "#general",
+    description: "Project-wide coordination and agent prompts."
+  },
+  {
+    handle: "planning",
+    title: "#planning",
+    description: "Plans, milestones, priorities, and scoped work."
+  },
+  {
+    handle: "research",
+    title: "#research",
+    description: "Investigation notes, source gathering, and context questions."
+  },
+  {
+    handle: "review",
+    title: "#review",
+    description: "Review requests, checks, risks, and acceptance decisions."
+  },
+  {
+    handle: "knowledge",
+    title: "#knowledge",
+    description: "Memory proposals, decisions, summaries, and reusable context."
+  }
+] as const;
+
+type RoomType = "default" | "custom";
+
+interface CliRoomMetadata extends JsonObject {
+  source: string;
+  roomType: RoomType;
+  roomHandle: string;
+  description: string;
+}
+
+interface ResolvedRole {
+  role: WorkgroupRole;
+  source: "preset" | "preset_override" | "custom";
+}
+
+interface CliMentionParticipant {
+  agentKind: AgentKind;
+  role?: WorkgroupRoleRunMetadata;
+  source: "adapter_mention" | "role_mention";
+}
+
+interface CliMentionParseResult {
+  agentMentions: AgentKind[];
+  roleMentions: WorkgroupRoleRunMetadata[];
+  participants: CliMentionParticipant[];
+  cleanedPrompt: string;
+}
+
+interface ParsedCliChatTurn extends CliMentionParseResult {
+  prompt: string;
+}
+
 export interface ChatOptions {
   io?: CliIO;
   cwd?: string;
@@ -674,6 +810,7 @@ export interface ChatOptions {
 
 interface ParsedChatArgs {
   threadId?: string;
+  roomRef?: string;
   workspaceBasePath?: string;
   retainOnFailure: boolean;
   dryRun: boolean;
@@ -685,6 +822,7 @@ interface ChatState {
   project: Project;
   selectedAgent: AgentKind;
   threadId?: string;
+  roomHandle?: string;
   workspaceBasePath?: string;
   retainOnFailure: boolean;
   dryRun: boolean;
@@ -709,11 +847,15 @@ export async function runChat(options: ChatOptions = {}): Promise<number> {
     const project = parsed.threadId
       ? await projectForThread(runtime, parsed.threadId)
       : await ensureProjectForRoot(runtime, projectRoot);
+    const roomThread = parsed.roomRef
+      ? await resolveRoomThread(runtime, project.id, parsed.roomRef)
+      : undefined;
     state = {
       projectRoot: project.rootPath,
       project,
       selectedAgent: options.selectedAgent ?? "fake",
-      threadId: parsed.threadId,
+      threadId: parsed.threadId ?? roomThread?.id,
+      roomHandle: roomThread ? roomHandleForThread(roomThread) : undefined,
       workspaceBasePath: parsed.workspaceBasePath,
       retainOnFailure: parsed.retainOnFailure,
       dryRun: parsed.dryRun,
@@ -771,6 +913,7 @@ async function projectForThread(
 
 function parseChatArgs(args: string[], cwd: string): ParsedChatArgs {
   let threadId: string | undefined;
+  let roomRef: string | undefined;
   let workspaceBasePath: string | undefined;
   let retainOnFailure = false;
   let dryRun = false;
@@ -784,6 +927,15 @@ function parseChatArgs(args: string[], cwd: string): ParsedChatArgs {
         throw new Error("--thread requires an id");
       }
       threadId = value;
+      index += 1;
+      continue;
+    }
+    if (arg === "--room") {
+      const value = args[index + 1];
+      if (!value) {
+        throw new Error("--room requires a handle or thread id");
+      }
+      roomRef = value;
       index += 1;
       continue;
     }
@@ -811,7 +963,11 @@ function parseChatArgs(args: string[], cwd: string): ParsedChatArgs {
     throw new Error(`unknown chat argument ${arg}`);
   }
 
-  return { threadId, workspaceBasePath, retainOnFailure, dryRun, debug };
+  if (threadId && roomRef) {
+    throw new Error("chat accepts only one of --thread or --room");
+  }
+
+  return { threadId, roomRef, workspaceBasePath, retainOnFailure, dryRun, debug };
 }
 
 function renderChatBanner(state: ChatState): string {
@@ -819,7 +975,9 @@ function renderChatBanner(state: ChatState): string {
     "Agent Hub chat",
     `project: ${state.projectRoot}`,
     `thread: ${state.threadId ?? "new"}`,
+    `room: ${state.roomHandle ? `#${state.roomHandle}` : "none"}`,
     `agent: ${state.selectedAgent}`,
+    "use /rooms, /room use <handle>, /roles, or mention @role handles in prompts",
     "use /continue run <id> or /continue message <id> for one-shot code-state continuation",
     "type /exit to quit",
     ""
@@ -827,7 +985,8 @@ function renderChatBanner(state: ChatState): string {
 }
 
 function chatPrompt(state: ChatState): string {
-  return `agent-hub-chat[${state.selectedAgent}][${state.threadId ?? "new"}]> `;
+  const room = state.roomHandle ? `#${state.roomHandle}` : state.threadId ?? "new";
+  return `agent-hub-chat[${state.selectedAgent}][${room}]> `;
 }
 
 async function handleChatSlash(
@@ -841,6 +1000,7 @@ async function handleChatSlash(
     const title = rest.slice(1).join(" ").trim();
     const thread = await createChatThread(runtime, state.project, title || "New Chat");
     state.threadId = thread.id;
+    state.roomHandle = undefined;
     io.stdout.write(`created thread: ${thread.id}\n`);
     return "continue";
   }
@@ -860,6 +1020,75 @@ async function handleChatSlash(
   }
   if (command === "/threads") {
     await renderChatThreads(io, runtime);
+    return "continue";
+  }
+  if (command === "/rooms") {
+    await renderRooms(io, runtime, state.project.id);
+    return "continue";
+  }
+  if (command === "/room" && rest[0] === "use") {
+    const roomRef = rest[1];
+    if (!roomRef) {
+      io.stderr.write("error: /room use requires a handle or thread id\n");
+      return "continue";
+    }
+    try {
+      const thread = await resolveRoomThread(runtime, state.project.id, roomRef);
+      await selectChatThread(runtime, state, thread.id);
+      state.roomHandle = roomHandleForThread(thread);
+      io.stdout.write(
+        `using room: ${state.roomHandle ? `#${state.roomHandle}` : thread.id}\n`
+      );
+    } catch (error) {
+      io.stderr.write(`error: ${error instanceof Error ? error.message : String(error)}\n`);
+    }
+    return "continue";
+  }
+  if (command === "/room" && rest[0] === "create") {
+    const handle = rest[1];
+    const title = rest.slice(2).join(" ").trim();
+    if (!handle) {
+      io.stderr.write("error: /room create requires a handle\n");
+      return "continue";
+    }
+    try {
+      const thread = await createRoomThread(runtime, {
+        projectId: state.project.id,
+        handle,
+        title: title || handle,
+        description: "Created from CLI chat."
+      });
+      state.threadId = thread.id;
+      state.roomHandle = roomHandleForThread(thread);
+      io.stdout.write(`created room: #${state.roomHandle} (${thread.id})\n`);
+    } catch (error) {
+      io.stderr.write(`error: ${error instanceof Error ? error.message : String(error)}\n`);
+    }
+    return "continue";
+  }
+  if (command === "/room" && rest[0] === "timeline") {
+    if (!state.threadId) {
+      io.stdout.write("No active room.\n");
+      return "continue";
+    }
+    await renderRoomTimeline(io, runtime, state.threadId);
+    return "continue";
+  }
+  if (command === "/roles") {
+    await renderTeamRoles(io, runtime, state.project.id);
+    return "continue";
+  }
+  if (command === "/role") {
+    const roleHandle = rest[0];
+    if (!roleHandle) {
+      io.stderr.write("error: /role requires a handle\n");
+      return "continue";
+    }
+    try {
+      await renderTeamRole(io, runtime, state.project.id, roleHandle);
+    } catch (error) {
+      io.stderr.write(`error: ${error instanceof Error ? error.message : String(error)}\n`);
+    }
     return "continue";
   }
   if (command === "/history") {
@@ -915,7 +1144,7 @@ async function runChatTurn(
   runtime: CliRuntime,
   state: ChatState
 ): Promise<number> {
-  const parsed = parseAgentPrompt(rawLine, state.selectedAgent);
+  const parsed = await parseCliChatTurn(runtime, state, rawLine);
   const prompt = parsed.prompt.trim();
   if (!prompt) {
     throw new Error("chat prompt is required");
@@ -925,6 +1154,7 @@ async function runChatTurn(
     ? await requireChatThread(runtime, state.threadId)
     : await createChatThread(runtime, state.project, titleFromPrompt(prompt));
   state.threadId = thread.id;
+  state.roomHandle = roomHandleForThread(thread) ?? state.roomHandle;
   const priorMessages = await runtime.conversationMessageRepository.listByThreadId(thread.id);
   const userMessage = await appendChatMessage(runtime, thread.id, {
     role: "user",
@@ -932,79 +1162,155 @@ async function runChatTurn(
     content: prompt,
     metadata: {
       source: "cli_chat",
-      mentions: [parsed.agentKind]
+      mentions: parsed.agentMentions,
+      roleMentions: parsed.roleMentions.map((role) => role.roleHandle)
     }
   });
   const currentThread = await retitleThreadFromPrompt(runtime, thread, prompt);
-  const conversationBrief = await buildChatConversationBrief({
-    runtime,
-    thread: currentThread,
-    currentTurn: prompt,
-    currentMessageCreatedAt: userMessage.createdAt,
-    agentKind: parsed.agentKind,
-    priorMessages
+  const taskId = createId("task");
+  let assignments = createCliTaskAssignments({
+    taskId,
+    threadId: currentThread.id,
+    sourceMessageId: userMessage.id,
+    participants: parsed.participants,
+    roleMentions: parsed.roleMentions
   });
-  const runInput: RunTaskInput = {
-    projectRoot: state.projectRoot,
-    projectId: state.project.id,
-    title: titleFromPrompt(prompt),
-    taskPrompt: prompt,
-    agentKind: parsed.agentKind,
-    deliveryMode: "runtime_injection",
-    conversationBrief,
-    workspaceBasePath: state.workspaceBasePath,
-    workspaceCleanupPolicy: state.retainOnFailure ? "retain_on_failure" : undefined,
-    dryRun: state.dryRun,
-    continueFrom: state.pendingContinueFrom
-  };
+  await runtime.taskRepository.create(
+    validateTask({
+      id: taskId,
+      projectId: state.project.id,
+      title: titleFromPrompt(prompt),
+      description: prompt,
+      metadata: cliTaskMetadata({
+        thread: currentThread,
+        sourceMessageId: userMessage.id,
+        assignments
+      }),
+      status: "open",
+      createdAt: userMessage.createdAt,
+      updatedAt: userMessage.createdAt
+    })
+  );
 
-  let result: CliRunResult;
-  try {
-    result = await runtime.taskRunner.run(runInput);
-  } catch (error) {
+  const executableParticipants = parsed.participants.filter((participant) =>
+    Boolean(assignmentForCliParticipant(assignments, participant)?.executable)
+  );
+  if (executableParticipants.length === 0) {
     await appendChatMessage(runtime, currentThread.id, {
       role: "system",
       kind: "text",
-      content: `@${parsed.agentKind} could not start: ${errorMessage(error)}`,
-      metadata: { source: "cli_chat" }
+      content: "No executable participants are available for this room message.",
+      metadata: {
+        source: "cli_chat",
+        taskId,
+        assignments
+      }
     });
-    throw error;
-  } finally {
-    state.pendingContinueFrom = undefined;
+    await refreshChatThreadSummary(runtime, currentThread.id);
+    io.stdout.write("No executable participants are available for this room message.\n");
+    return 0;
   }
 
-  await appendChatMessage(runtime, currentThread.id, {
-    role: "tool",
-    kind: "run_card",
-    content: `@${parsed.agentKind} ${result.run.status}`,
-    agentKind: result.run.agentKind,
-    runId: result.run.id,
-    status: result.run.status,
-    metadata: {
-      source: "cli_chat",
-      agentKind: parsed.agentKind
+  let ok = true;
+  let pendingContinueFrom = state.pendingContinueFrom;
+  state.pendingContinueFrom = undefined;
+  for (const participant of executableParticipants) {
+    const assignment = assignmentForCliParticipant(assignments, participant);
+    if (!assignment) {
+      continue;
     }
-  });
-  await appendChatMessage(runtime, currentThread.id, {
-    role: "assistant",
-    kind: "text",
-    content: chatAssistantContent(result),
-    agentKind: result.run.agentKind,
-    runId: result.run.id,
-    status: result.run.status,
-    metadata: {
-      source: "cli_chat",
-      assistantOutput: true,
-      terminalStatus: result.run.status
+    const conversationBrief = await buildChatConversationBrief({
+      runtime,
+      thread: currentThread,
+      currentTurn: prompt,
+      currentMessageCreatedAt: userMessage.createdAt,
+      agentKind: participant.agentKind,
+      role: participant.role,
+      priorMessages
+    });
+    const runInput: RunTaskInput = {
+      projectRoot: state.projectRoot,
+      projectId: state.project.id,
+      taskId,
+      taskStatusMode: "shared_task",
+      title: titleFromPrompt(prompt),
+      taskPrompt: prompt,
+      agentKind: participant.agentKind,
+      deliveryMode: "runtime_injection",
+      conversationBrief,
+      workspaceBasePath: state.workspaceBasePath,
+      workspaceCleanupPolicy: state.retainOnFailure ? "retain_on_failure" : undefined,
+      dryRun: state.dryRun,
+      continueFrom: pendingContinueFrom
+    };
+    pendingContinueFrom = undefined;
+
+    let result: CliRunResult | undefined;
+    try {
+      result = await runtime.taskRunner.run(runInput);
+    } catch (error) {
+      assignments = updateCliAssignment(assignments, assignment.assignmentId, {
+        status: "failed"
+      });
+      await saveCliTaskAssignments(runtime, taskId, assignments);
+      await appendChatMessage(runtime, currentThread.id, {
+        role: "system",
+        kind: "text",
+        content: `${cliParticipantLabel(participant)} could not start: ${errorMessage(error)}`,
+        metadata: { source: "cli_chat", taskId, assignment }
+      });
+      ok = false;
+      continue;
     }
-  });
+
+    assignments = updateCliAssignment(assignments, assignment.assignmentId, {
+      runId: result.run.id,
+      status: assignmentStatusFromRunStatus(result.run.status)
+    });
+    await saveCliTaskAssignments(runtime, taskId, assignments);
+    const linkedAssignment =
+      assignments.find((entry) => entry.assignmentId === assignment.assignmentId) ??
+      assignment;
+    await appendChatMessage(runtime, currentThread.id, {
+      role: "tool",
+      kind: "run_card",
+      content: `${cliParticipantLabel(participant)} ${result.run.status}`,
+      agentKind: result.run.agentKind,
+      runId: result.run.id,
+      status: result.run.status,
+      metadata: {
+        source: "cli_chat",
+        agentKind: participant.agentKind,
+        role: participant.role,
+        taskId,
+        assignment: linkedAssignment
+      }
+    });
+    await appendChatMessage(runtime, currentThread.id, {
+      role: "assistant",
+      kind: "text",
+      content: chatAssistantContent(result),
+      agentKind: result.run.agentKind,
+      runId: result.run.id,
+      status: result.run.status,
+      metadata: {
+        source: "cli_chat",
+        assistantOutput: true,
+        terminalStatus: result.run.status,
+        role: participant.role,
+        taskId,
+        assignment: linkedAssignment
+      }
+    });
+    io.stdout.write(renderAgentOutput(result));
+    if (state.debug) {
+      io.stdout.write(renderRunDebug(result, runInput, "runtime_injection"));
+    }
+    ok &&= result.ok;
+  }
+
   await refreshChatThreadSummary(runtime, currentThread.id);
-
-  io.stdout.write(renderAgentOutput(result));
-  if (state.debug) {
-    io.stdout.write(renderRunDebug(result, runInput, "runtime_injection"));
-  }
-  return result.ok ? 0 : 1;
+  return ok ? 0 : 1;
 }
 
 async function buildChatConversationBrief(input: {
@@ -1013,6 +1319,7 @@ async function buildChatConversationBrief(input: {
   currentTurn: string;
   currentMessageCreatedAt: string;
   agentKind: AgentKind;
+  role?: WorkgroupRoleRunMetadata;
   priorMessages: ConversationMessage[];
 }) {
   const assistantRunIds = new Set(
@@ -1048,7 +1355,8 @@ async function buildChatConversationBrief(input: {
     projectContextReferences: [
       `project:${input.thread.projectId}`,
       "Agent Hub-owned project context store",
-      "Approved memory only; thread context is not promoted automatically"
+      "Approved memory only; thread context is not promoted automatically",
+      ...roleContextReferences(input.role)
     ]
   });
 }
@@ -1210,6 +1518,7 @@ async function selectChatThread(
   state.threadId = thread.id;
   state.project = project;
   state.projectRoot = project.rootPath;
+  state.roomHandle = roomHandleForThread(thread);
   return thread;
 }
 
@@ -1244,6 +1553,221 @@ async function showThread(
   }
   try {
     await renderChatThreadDetail(io, runtime, threadId);
+    return 0;
+  } catch (error) {
+    io.stderr.write(`error: ${error instanceof Error ? error.message : String(error)}\n`);
+    return 1;
+  }
+}
+
+async function listRooms(
+  args: string[],
+  io: CliIO,
+  runtime: CliRuntime
+): Promise<number> {
+  try {
+    const projectId = requiredFlag(args, "--project-id");
+    await requireProject(runtime, projectId);
+    await renderRooms(io, runtime, projectId);
+    return 0;
+  } catch (error) {
+    io.stderr.write(`error: ${error instanceof Error ? error.message : String(error)}\n`);
+    return 1;
+  }
+}
+
+async function createRoom(
+  args: string[],
+  io: CliIO,
+  runtime: CliRuntime
+): Promise<number> {
+  try {
+    const projectId = requiredFlag(args, "--project-id");
+    await requireProject(runtime, projectId);
+    const thread = await createRoomThread(runtime, {
+      projectId,
+      handle: requiredFlag(args, "--handle"),
+      title: requiredFlag(args, "--title"),
+      description: optionalFlag(args, "--description") ?? "Custom CLI room."
+    });
+    const roomHandle = roomHandleForThread(thread);
+    io.stdout.write(
+      [
+        "Created room",
+        `thread_id: ${thread.id}`,
+        `room: ${roomHandle ? `#${roomHandle}` : thread.id}`,
+        `title: ${thread.title}`,
+        ""
+      ].join("\n")
+    );
+    return 0;
+  } catch (error) {
+    io.stderr.write(`error: ${error instanceof Error ? error.message : String(error)}\n`);
+    return 1;
+  }
+}
+
+async function useRoom(
+  args: string[],
+  io: CliIO,
+  runtime: CliRuntime
+): Promise<number> {
+  try {
+    const projectId = requiredFlag(args, "--project-id");
+    await requireProject(runtime, projectId);
+    const thread = await resolveRoomThread(runtime, projectId, requiredFlag(args, "--room"));
+    const roomHandle = roomHandleForThread(thread);
+    io.stdout.write(
+      [
+        "Using room",
+        `thread_id: ${thread.id}`,
+        `room: ${roomHandle ? `#${roomHandle}` : thread.id}`,
+        `command: agent-hub chat --thread ${thread.id}`,
+        ""
+      ].join("\n")
+    );
+    return 0;
+  } catch (error) {
+    io.stderr.write(`error: ${error instanceof Error ? error.message : String(error)}\n`);
+    return 1;
+  }
+}
+
+async function sendRoomMessage(
+  args: string[],
+  io: CliIO,
+  cwd: string,
+  runtime: CliRuntime,
+  inheritedDebug: boolean
+): Promise<number> {
+  try {
+    const projectId = requiredFlag(args, "--project-id");
+    const project = await requireProject(runtime, projectId);
+    const thread = await resolveRoomThread(runtime, projectId, requiredFlag(args, "--room"));
+    const message = requiredFlag(args, "--message");
+    const state: ChatState = {
+      projectRoot: project.rootPath,
+      project,
+      selectedAgent: parseInteractiveAgent(optionalFlag(args, "--agent") ?? "fake"),
+      threadId: thread.id,
+      roomHandle: roomHandleForThread(thread),
+      workspaceBasePath: optionalFlag(args, "--workspace-base")
+        ? path.resolve(cwd, requiredFlag(args, "--workspace-base"))
+        : undefined,
+      retainOnFailure: args.includes("--retain-on-failure"),
+      dryRun: args.includes("--dry-run"),
+      debug: inheritedDebug || args.includes("--debug")
+    };
+    return runChatTurn(message, io, runtime, state);
+  } catch (error) {
+    io.stderr.write(`error: ${error instanceof Error ? error.message : String(error)}\n`);
+    return 1;
+  }
+}
+
+async function showRoomTimeline(
+  args: string[],
+  io: CliIO,
+  runtime: CliRuntime
+): Promise<number> {
+  try {
+    const projectId = optionalFlag(args, "--project-id");
+    const roomRef = optionalFlag(args, "--room") ?? args[0];
+    if (!roomRef) {
+      throw new Error("--room or thread id is required");
+    }
+    const thread = projectId
+      ? await resolveRoomThread(runtime, projectId, roomRef)
+      : await requireChatThread(runtime, roomRef);
+    await renderRoomTimeline(io, runtime, thread.id);
+    return 0;
+  } catch (error) {
+    io.stderr.write(`error: ${error instanceof Error ? error.message : String(error)}\n`);
+    return 1;
+  }
+}
+
+async function listTeamRoles(
+  args: string[],
+  io: CliIO,
+  runtime: CliRuntime
+): Promise<number> {
+  try {
+    const projectId = requiredFlag(args, "--project-id");
+    await requireProject(runtime, projectId);
+    await renderTeamRoles(io, runtime, projectId);
+    return 0;
+  } catch (error) {
+    io.stderr.write(`error: ${error instanceof Error ? error.message : String(error)}\n`);
+    return 1;
+  }
+}
+
+async function showTeamRole(
+  args: string[],
+  io: CliIO,
+  runtime: CliRuntime
+): Promise<number> {
+  try {
+    const projectId = requiredFlag(args, "--project-id");
+    await renderTeamRole(io, runtime, projectId, requiredFlag(args, "--role"));
+    return 0;
+  } catch (error) {
+    io.stderr.write(`error: ${error instanceof Error ? error.message : String(error)}\n`);
+    return 1;
+  }
+}
+
+async function showTeamRoleExecutor(
+  args: string[],
+  io: CliIO,
+  runtime: CliRuntime
+): Promise<number> {
+  try {
+    const projectId = requiredFlag(args, "--project-id");
+    const role = await requireResolvedRole(runtime, projectId, requiredFlag(args, "--role"));
+    io.stdout.write(
+      [
+        `role: @${role.role.handle}`,
+        `executor: ${executorLabel(role.role.executor)}`,
+        `runnable: ${role.role.executor.kind === "agent_adapter"}`,
+        role.role.executor.kind === "agent_adapter"
+          ? `adapter: ${role.role.executor.adapterKind}`
+          : `reserved_reason: ${role.role.executor.unavailableReason ?? reservedExecutorReason}`,
+        ""
+      ].join("\n")
+    );
+    return 0;
+  } catch (error) {
+    io.stderr.write(`error: ${error instanceof Error ? error.message : String(error)}\n`);
+    return 1;
+  }
+}
+
+async function saveTeamRole(
+  args: string[],
+  io: CliIO,
+  runtime: CliRuntime
+): Promise<number> {
+  try {
+    const projectId = requiredFlag(args, "--project-id");
+    await requireProject(runtime, projectId);
+    const role = await roleFromSaveArgs(runtime, projectId, args);
+    const existing = await storedWorkgroupRoles(runtime, projectId);
+    const next = upsertStoredRole(existing, role);
+    await saveStoredWorkgroupRoles(runtime, projectId, next);
+    const saved = await requireResolvedRole(runtime, projectId, role.handle);
+    io.stdout.write(
+      [
+        "Saved role",
+        `project_id: ${projectId}`,
+        `role: @${saved.role.handle}`,
+        `source: ${saved.source}`,
+        `executor: ${executorLabel(saved.role.executor)}`,
+        `enabled: ${saved.role.enabled}`,
+        ""
+      ].join("\n")
+    );
     return 0;
   } catch (error) {
     io.stderr.write(`error: ${error instanceof Error ? error.message : String(error)}\n`);
@@ -1294,6 +1818,108 @@ async function renderChatThreadDetail(
   );
 }
 
+async function renderRooms(
+  io: CliIO,
+  runtime: CliRuntime,
+  projectId: string
+): Promise<void> {
+  await ensureDefaultRooms(runtime, projectId);
+  const rooms = (await runtime.conversationThreadRepository.list(projectId))
+    .filter((thread) => roomMetadataForThread(thread))
+    .sort(compareRooms);
+  if (rooms.length === 0) {
+    io.stdout.write("No rooms found.\n");
+    return;
+  }
+  for (const room of rooms) {
+    const metadata = roomMetadataForThread(room);
+    io.stdout.write(
+      [
+        `#${metadata?.roomHandle ?? room.id}`,
+        room.id,
+        metadata?.roomType ?? "custom",
+        room.updatedAt,
+        room.title,
+        metadata?.description ?? ""
+      ].join("\t") + "\n"
+    );
+  }
+}
+
+async function renderRoomTimeline(
+  io: CliIO,
+  runtime: CliRuntime,
+  threadId: string
+): Promise<void> {
+  const thread = await requireChatThread(runtime, threadId);
+  const metadata = roomMetadataForThread(thread);
+  const messages = await runtime.conversationMessageRepository.listByThreadId(threadId);
+  io.stdout.write(
+    [
+      `Room ${metadata ? `#${metadata.roomHandle}` : thread.title}`,
+      `thread_id: ${thread.id}`,
+      `project_id: ${thread.projectId}`,
+      `description: ${metadata?.description ?? "none"}`,
+      `messages: ${messages.length}`,
+      ...messages.map(formatRoomTimelineMessage),
+      ""
+    ].join("\n")
+  );
+}
+
+async function renderTeamRoles(
+  io: CliIO,
+  runtime: CliRuntime,
+  projectId: string
+): Promise<void> {
+  const roles = await resolvedWorkgroupRoles(runtime, projectId);
+  if (roles.length === 0) {
+    io.stdout.write("No roles found.\n");
+    return;
+  }
+  for (const entry of roles) {
+    io.stdout.write(
+      [
+        `@${entry.role.handle}`,
+        entry.source,
+        entry.role.enabled ? "enabled" : "disabled",
+        executorLabel(entry.role.executor),
+        entry.role.defaultRoom ? `#${entry.role.defaultRoom}` : "-",
+        entry.role.capabilitySummary
+      ].join("\t") + "\n"
+    );
+  }
+}
+
+async function renderTeamRole(
+  io: CliIO,
+  runtime: CliRuntime,
+  projectId: string,
+  roleHandle: string
+): Promise<void> {
+  const entry = await requireResolvedRole(runtime, projectId, roleHandle);
+  const role = entry.role;
+  io.stdout.write(
+    [
+      `Role @${role.handle}`,
+      `source: ${entry.source}`,
+      `display_name: ${role.displayName}`,
+      `enabled: ${role.enabled}`,
+      `purpose: ${role.purpose}`,
+      `capability: ${role.capabilitySummary}`,
+      `executor: ${executorLabel(role.executor)}`,
+      `default_room: ${role.defaultRoom ? `#${role.defaultRoom}` : "none"}`,
+      `permissions: ${role.permissions.length === 0 ? "none" : role.permissions.join(", ")}`,
+      `context: ${role.contextPolicy.scope}`,
+      `approved_memory: ${role.contextPolicy.includeApprovedMemory}`,
+      `thread_summary: ${role.contextPolicy.includeThreadSummary}`,
+      `approval: ${role.approvalPolicy.summary}`,
+      `instructions: ${inlineText(role.defaultInstructions)}`,
+      ""
+    ].join("\n")
+  );
+}
+
 function formatThreadSummaryLines(
   summary: ConversationThreadSummary | undefined
 ): string[] {
@@ -1329,6 +1955,693 @@ function formatThreadMessageLine(message: ConversationMessage): string {
     message.status ?? "-"
   ].join("\t");
   return `${base}\t${inlineText(firstLine(message.content))}`;
+}
+
+function formatRoomTimelineMessage(message: ConversationMessage): string {
+  const assignment = metadataAssignment(message.metadata);
+  const role = assignment?.roleHandle ? `@${assignment.roleHandle}` : "-";
+  const taskId = metadataString(message.metadata, "taskId") ?? "-";
+  return [
+    message.sequence,
+    message.createdAt,
+    message.role,
+    message.kind,
+    role,
+    message.agentKind ?? "-",
+    message.runId ?? "-",
+    message.status ?? "-",
+    taskId,
+    inlineText(firstLine(message.content))
+  ].join("\t");
+}
+
+async function parseCliChatTurn(
+  runtime: CliRuntime,
+  state: ChatState,
+  rawLine: string
+): Promise<ParsedCliChatTurn> {
+  const roles = await resolvedRoleValues(runtime, state.project.id);
+  const parsedMentions = parseCliWorkgroupMentions(rawLine, roles);
+  if (parsedMentions.participants.length > 0 || parsedMentions.roleMentions.length > 0) {
+    return {
+      ...parsedMentions,
+      prompt: parsedMentions.cleanedPrompt
+    };
+  }
+  const parsedAgent = parseAgentPrompt(rawLine, state.selectedAgent);
+  return {
+    agentMentions: [parsedAgent.agentKind],
+    roleMentions: [],
+    participants: [
+      {
+        agentKind: parsedAgent.agentKind,
+        source: "adapter_mention"
+      }
+    ],
+    cleanedPrompt: parsedAgent.prompt,
+    prompt: parsedAgent.prompt
+  };
+}
+
+function parseCliWorkgroupMentions(
+  input: string,
+  roles: readonly WorkgroupRole[]
+): CliMentionParseResult {
+  const agentMentions: AgentKind[] = [];
+  const roleMentions: WorkgroupRoleRunMetadata[] = [];
+  const participants: CliMentionParticipant[] = [];
+  const participantKeys = new Set<string>();
+  const cleanedPrompt = input
+    .replace(/(^|[\s([{])@([a-z][a-z0-9_-]*)\b/gi, (match, prefix: string, rawMention: string) => {
+      const agentKind = normalizeMentionAgentKind(rawMention);
+      if (agentKind) {
+        addCliAgentMention(agentMentions, participants, participantKeys, agentKind);
+        return prefix.length > 0 ? prefix : "";
+      }
+      const role = findWorkgroupRoleByHandle(roles, rawMention);
+      if (role?.enabled) {
+        const metadata = toWorkgroupRoleRunMetadata(role);
+        if (!roleMentions.some((mention) => mention.roleHandle === metadata.roleHandle)) {
+          roleMentions.push(metadata);
+        }
+        const adapter = adapterKindForRole(role);
+        if (adapter) {
+          addCliRoleMention(participants, participantKeys, adapter, metadata);
+        }
+        return prefix.length > 0 ? prefix : "";
+      }
+      return match;
+    })
+    .replace(/[ \t]+/g, " ")
+    .replace(/\s+\n/g, "\n")
+    .replace(/\n\s+/g, "\n")
+    .trim();
+
+  return {
+    agentMentions,
+    roleMentions,
+    participants,
+    cleanedPrompt
+  };
+}
+
+function addCliAgentMention(
+  agentMentions: AgentKind[],
+  participants: CliMentionParticipant[],
+  participantKeys: Set<string>,
+  agentKind: AgentKind
+): void {
+  if (!agentMentions.includes(agentKind)) {
+    agentMentions.push(agentKind);
+  }
+  const key = `adapter:${agentKind}`;
+  if (participantKeys.has(key)) {
+    return;
+  }
+  participantKeys.add(key);
+  participants.push({ agentKind, source: "adapter_mention" });
+}
+
+function addCliRoleMention(
+  participants: CliMentionParticipant[],
+  participantKeys: Set<string>,
+  agentKind: AgentKind,
+  role: WorkgroupRoleRunMetadata
+): void {
+  const key = `role:${role.roleHandle}`;
+  if (participantKeys.has(key)) {
+    return;
+  }
+  participantKeys.add(key);
+  participants.push({ agentKind, role, source: "role_mention" });
+}
+
+function normalizeMentionAgentKind(value: string): AgentKind | undefined {
+  const normalized = value.toLowerCase();
+  if (normalized === "fake" || normalized === "codex") {
+    return normalized;
+  }
+  if (normalized === "claude" || normalized === "claude-code") {
+    return "claude-code";
+  }
+  return undefined;
+}
+
+function adapterKindForRole(role: WorkgroupRole): AgentKind | undefined {
+  if (role.executor.kind !== "agent_adapter") {
+    return undefined;
+  }
+  return role.executor.adapterKind;
+}
+
+function createCliTaskAssignments(input: {
+  taskId: string;
+  threadId: string;
+  sourceMessageId: string;
+  participants: CliMentionParticipant[];
+  roleMentions: WorkgroupRoleRunMetadata[];
+}): WorkgroupTaskAssignmentMetadata[] {
+  const assignments: WorkgroupTaskAssignmentMetadata[] = [];
+  const roleHandles = new Set<string>();
+  for (const role of input.roleMentions) {
+    if (roleHandles.has(role.roleHandle)) {
+      continue;
+    }
+    roleHandles.add(role.roleHandle);
+    assignments.push({
+      assignmentId: createId("assignment"),
+      taskId: input.taskId,
+      threadId: input.threadId,
+      sourceMessageId: input.sourceMessageId,
+      assignmentRole: "role",
+      agentId: role.adapterKind === "claude-code" ? "claude" : role.adapterKind,
+      roleHandle: role.roleHandle,
+      displayName: role.displayName,
+      executorKind: role.executorKind,
+      adapterKind: role.adapterKind,
+      executable: role.executorKind === "agent_adapter" && role.adapterKind !== undefined,
+      status: role.adapterKind ? "queued" : "assigned"
+    });
+  }
+
+  const agentKindsSeen = new Set<string>();
+  for (const participant of input.participants) {
+    if (participant.role) {
+      continue;
+    }
+    if (agentKindsSeen.has(participant.agentKind)) {
+      continue;
+    }
+    agentKindsSeen.add(participant.agentKind);
+    assignments.push({
+      assignmentId: createId("assignment"),
+      taskId: input.taskId,
+      threadId: input.threadId,
+      sourceMessageId: input.sourceMessageId,
+      assignmentRole: "agent",
+      agentId: participant.agentKind === "claude-code" ? "claude" : participant.agentKind,
+      displayName: `@${participant.agentKind}`,
+      executorKind: "agent_adapter",
+      adapterKind: participant.agentKind,
+      executable: true,
+      status: "queued"
+    });
+  }
+  return assignments;
+}
+
+function assignmentForCliParticipant(
+  assignments: WorkgroupTaskAssignmentMetadata[],
+  participant: CliMentionParticipant
+): WorkgroupTaskAssignmentMetadata | undefined {
+  if (participant.role) {
+    return assignments.find(
+      (assignment) =>
+        assignment.assignmentRole === "role" &&
+        assignment.roleHandle === participant.role?.roleHandle
+    );
+  }
+  const agentId = participant.agentKind === "claude-code" ? "claude" : participant.agentKind;
+  return assignments.find(
+    (assignment) => assignment.assignmentRole === "agent" && assignment.agentId === agentId
+  );
+}
+
+function updateCliAssignment(
+  assignments: WorkgroupTaskAssignmentMetadata[],
+  assignmentId: string,
+  patch: Partial<Pick<WorkgroupTaskAssignmentMetadata, "runId" | "status">>
+): WorkgroupTaskAssignmentMetadata[] {
+  return assignments.map((assignment) =>
+    assignment.assignmentId === assignmentId ? { ...assignment, ...patch } : assignment
+  );
+}
+
+async function saveCliTaskAssignments(
+  runtime: CliRuntime,
+  taskId: string,
+  assignments: WorkgroupTaskAssignmentMetadata[]
+): Promise<void> {
+  const task = await runtime.taskRepository.get(taskId);
+  if (!task) {
+    return;
+  }
+  await runtime.taskRepository.create(
+    validateTask({
+      ...task,
+      metadata: {
+        ...(task.metadata ?? {}),
+        assignmentCount: assignments.length,
+        executableAssignmentCount: assignments.filter((assignment) => assignment.executable).length,
+        assignments
+      },
+      updatedAt: nowIso()
+    })
+  );
+}
+
+function cliTaskMetadata(input: {
+  thread: ConversationThread;
+  sourceMessageId: string;
+  assignments: WorkgroupTaskAssignmentMetadata[];
+}): JsonObject {
+  return {
+    source: "cli_chat",
+    threadId: input.thread.id,
+    room: roomHandleForThread(input.thread),
+    sourceMessageId: input.sourceMessageId,
+    assignmentCount: input.assignments.length,
+    executableAssignmentCount: input.assignments.filter((assignment) => assignment.executable).length,
+    assignments: input.assignments
+  };
+}
+
+function assignmentStatusFromRunStatus(
+  status: TaskRunStatus
+): WorkgroupTaskAssignmentMetadata["status"] {
+  if (status === "succeeded") {
+    return "completed";
+  }
+  if (status === "failed") {
+    return "failed";
+  }
+  if (status === "cancelled") {
+    return "cancelled";
+  }
+  return status;
+}
+
+function cliParticipantLabel(participant: CliMentionParticipant): string {
+  return participant.role ? `@${participant.role.roleHandle}` : `@${participant.agentKind}`;
+}
+
+function roleContextReferences(role: WorkgroupRoleRunMetadata | undefined): string[] {
+  if (!role) {
+    return [];
+  }
+  return [
+    `role:${role.roleHandle}`,
+    `role_executor:${role.executorKind}${role.adapterKind ? `/${role.adapterKind}` : ""}`,
+    `role_persona:${role.persona}`,
+    `role_instructions:${role.defaultInstructions}`
+  ];
+}
+
+async function requireProject(
+  runtime: CliRuntime,
+  projectId: string
+): Promise<Project> {
+  const project = await runtime.projectRepository.get(projectId);
+  if (!project) {
+    throw new Error(`project ${projectId} not found`);
+  }
+  return project;
+}
+
+async function ensureDefaultRooms(
+  runtime: CliRuntime,
+  projectId: string
+): Promise<void> {
+  await requireProject(runtime, projectId);
+  const threads = await runtime.conversationThreadRepository.list(projectId);
+  const existingHandles = new Set(
+    threads.flatMap((thread) => {
+      const metadata = roomMetadataForThread(thread);
+      return metadata ? [metadata.roomHandle] : [];
+    })
+  );
+  for (const definition of defaultRoomDefinitions) {
+    if (existingHandles.has(definition.handle)) {
+      continue;
+    }
+    await createRoomThread(runtime, {
+      projectId,
+      handle: definition.handle,
+      title: definition.title,
+      description: definition.description,
+      type: "default"
+    });
+  }
+}
+
+async function createRoomThread(
+  runtime: CliRuntime,
+  input: {
+    projectId: string;
+    handle: string;
+    title: string;
+    description: string;
+    type?: RoomType;
+  }
+): Promise<ConversationThread> {
+  const handle = normalizeRoomHandle(input.handle);
+  if (!handle) {
+    throw new Error("room handle must start with a letter and contain only letters, numbers, underscores, or hyphens");
+  }
+  await requireProject(runtime, input.projectId);
+  const existing = (await runtime.conversationThreadRepository.list(input.projectId)).find(
+    (thread) => roomMetadataForThread(thread)?.roomHandle === handle
+  );
+  if (existing) {
+    throw new Error(`room #${handle} already exists`);
+  }
+  const now = nowIso();
+  return runtime.conversationThreadRepository.create(
+    validateConversationThread({
+      id: createId("thread"),
+      projectId: input.projectId,
+      title: titleFromPrompt(input.title) || `#${handle}`,
+      metadata: roomMetadata({
+        handle,
+        description: input.description,
+        type: input.type ?? "custom"
+      }),
+      createdAt: now,
+      updatedAt: now
+    })
+  );
+}
+
+async function resolveRoomThread(
+  runtime: CliRuntime,
+  projectId: string,
+  roomRef: string
+): Promise<ConversationThread> {
+  await ensureDefaultRooms(runtime, projectId);
+  const normalized = normalizeRoomHandle(roomRef);
+  const threads = await runtime.conversationThreadRepository.list(projectId);
+  const byHandle = normalized
+    ? threads.find((thread) => roomMetadataForThread(thread)?.roomHandle === normalized)
+    : undefined;
+  if (byHandle) {
+    return byHandle;
+  }
+  const byId = threads.find((thread) => thread.id === roomRef);
+  if (byId) {
+    return byId;
+  }
+  throw new Error(`room ${roomRef} not found`);
+}
+
+function roomMetadata(input: {
+  handle: string;
+  description: string;
+  type: RoomType;
+}): CliRoomMetadata {
+  return {
+    source: "cli_room",
+    roomType: input.type,
+    roomHandle: input.handle,
+    description: input.description
+  };
+}
+
+function roomMetadataForThread(
+  thread: ConversationThread
+): CliRoomMetadata | undefined {
+  const value = thread.metadata;
+  if (!value || typeof value.roomHandle !== "string") {
+    return undefined;
+  }
+  const handle = normalizeRoomHandle(value.roomHandle);
+  if (!handle) {
+    return undefined;
+  }
+  return {
+    source: typeof value.source === "string" ? value.source : "cli_room",
+    roomType: value.roomType === "default" ? "default" : "custom",
+    roomHandle: handle,
+    description:
+      typeof value.description === "string" && value.description.trim().length > 0
+        ? value.description
+        : "No description."
+  };
+}
+
+function roomHandleForThread(thread: ConversationThread): string | undefined {
+  return roomMetadataForThread(thread)?.roomHandle;
+}
+
+function normalizeRoomHandle(value: string): string | undefined {
+  return normalizeWorkgroupRoleHandle(value.replace(/^#/, ""));
+}
+
+function compareRooms(left: ConversationThread, right: ConversationThread): number {
+  const leftMetadata = roomMetadataForThread(left);
+  const rightMetadata = roomMetadataForThread(right);
+  const leftDefaultIndex = defaultRoomDefinitions.findIndex(
+    (room) => room.handle === leftMetadata?.roomHandle
+  );
+  const rightDefaultIndex = defaultRoomDefinitions.findIndex(
+    (room) => room.handle === rightMetadata?.roomHandle
+  );
+  const leftRank = leftDefaultIndex === -1 ? 10_000 : leftDefaultIndex;
+  const rightRank = rightDefaultIndex === -1 ? 10_000 : rightDefaultIndex;
+  if (leftRank !== rightRank) {
+    return leftRank - rightRank;
+  }
+  return (leftMetadata?.roomHandle ?? left.title).localeCompare(
+    rightMetadata?.roomHandle ?? right.title
+  );
+}
+
+async function resolvedRoleValues(
+  runtime: CliRuntime,
+  projectId: string
+): Promise<readonly WorkgroupRole[]> {
+  return (await resolvedWorkgroupRoles(runtime, projectId)).map((entry) => entry.role);
+}
+
+async function resolvedWorkgroupRoles(
+  runtime: CliRuntime,
+  projectId: string
+): Promise<ResolvedRole[]> {
+  await requireProject(runtime, projectId);
+  const stored = await storedWorkgroupRoles(runtime, projectId);
+  const storedByHandle = new Map(stored.map((role) => [role.handle, role]));
+  const presetHandles = new Set(presetWorkgroupRoles.map((role) => role.handle));
+  const resolved: ResolvedRole[] = presetWorkgroupRoles.map((preset) => {
+    const override = storedByHandle.get(preset.handle);
+    return override
+      ? { role: override, source: "preset_override" }
+      : { role: preset, source: "preset" };
+  });
+  for (const role of stored) {
+    if (presetHandles.has(role.handle)) {
+      continue;
+    }
+    resolved.push({ role, source: "custom" });
+  }
+  return resolved.sort((left, right) => {
+    const leftPreset = presetHandles.has(left.role.handle) ? 0 : 1;
+    const rightPreset = presetHandles.has(right.role.handle) ? 0 : 1;
+    if (leftPreset !== rightPreset) {
+      return leftPreset - rightPreset;
+    }
+    return left.role.handle.localeCompare(right.role.handle);
+  });
+}
+
+async function requireResolvedRole(
+  runtime: CliRuntime,
+  projectId: string,
+  handle: string
+): Promise<ResolvedRole> {
+  const normalized = normalizeWorkgroupRoleHandle(handle);
+  if (!normalized) {
+    throw new Error("role handle must start with a letter and contain only letters, numbers, underscores, or hyphens");
+  }
+  const role = (await resolvedWorkgroupRoles(runtime, projectId)).find(
+    (entry) => entry.role.handle === normalized
+  );
+  if (!role) {
+    throw new Error(`role @${normalized} not found`);
+  }
+  return role;
+}
+
+async function storedWorkgroupRoles(
+  runtime: CliRuntime,
+  projectId: string
+): Promise<WorkgroupRole[]> {
+  const setting = await runtime.settingsRepository.get(roleSettingsKey(projectId));
+  if (!setting) {
+    return [];
+  }
+  const roles = settingValueRoles(setting.value);
+  return roles.map((role) => validateWorkgroupRole(role as WorkgroupRole));
+}
+
+async function saveStoredWorkgroupRoles(
+  runtime: CliRuntime,
+  projectId: string,
+  roles: WorkgroupRole[]
+): Promise<void> {
+  await runtime.settingsRepository.set({
+    key: roleSettingsKey(projectId),
+    value: { roles },
+    updatedAt: nowIso()
+  });
+}
+
+function roleSettingsKey(projectId: string): string {
+  return `${roleSettingsPrefix}${projectId}${roleSettingsSuffix}`;
+}
+
+function settingValueRoles(value: unknown): unknown[] {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("stored team roles must be an object");
+  }
+  const roles = (value as { roles?: unknown }).roles;
+  if (!Array.isArray(roles)) {
+    throw new Error("stored team roles must contain a roles array");
+  }
+  if (roles.length > maxStoredRoles) {
+    throw new Error(`team roles must contain ${maxStoredRoles} or fewer entries`);
+  }
+  return roles;
+}
+
+async function roleFromSaveArgs(
+  runtime: CliRuntime,
+  projectId: string,
+  args: string[]
+): Promise<WorkgroupRole> {
+  const handle = normalizeWorkgroupRoleHandle(requiredFlag(args, "--handle"));
+  if (!handle) {
+    throw new Error("role handle must start with a letter and contain only letters, numbers, underscores, or hyphens");
+  }
+  const existing = (await resolvedWorkgroupRoles(runtime, projectId)).find(
+    (entry) => entry.role.handle === handle
+  )?.role;
+  const preset = presetWorkgroupRoles.find((role) => role.handle === handle);
+  const base = existing ?? preset;
+  const executor = optionalFlag(args, "--executor")
+    ? parseRoleExecutor(requiredFlag(args, "--executor"))
+    : base?.executor ?? parseRoleExecutor("fake");
+  return validateWorkgroupRole({
+    id: preset ? `preset:${handle}` : `custom:${handle}`,
+    handle,
+    displayName:
+      optionalFlag(args, "--display-name") ?? base?.displayName ?? titleCaseHandle(handle),
+    purpose:
+      optionalFlag(args, "--purpose") ??
+      base?.purpose ??
+      `Custom local workgroup role @${handle}.`,
+    capabilitySummary:
+      optionalFlag(args, "--capability") ??
+      base?.capabilitySummary ??
+      "Local project assistance.",
+    persona:
+      optionalFlag(args, "--persona") ??
+      base?.persona ??
+      "Local Agent Hub participant with bounded project context.",
+    defaultInstructions:
+      optionalFlag(args, "--instructions") ??
+      base?.defaultInstructions ??
+      "Use Agent Hub runtime-injected context only and avoid unapproved side effects.",
+    permissions:
+      repeatedFlag(args, "--permission").length > 0
+        ? repeatedFlag(args, "--permission")
+        : base?.permissions ?? ["read_project_context", "read_thread_context"],
+    contextPolicy: {
+      scope: optionalFlag(args, "--context-scope") ?? base?.contextPolicy.scope ?? "current_thread_and_project_context",
+      includeApprovedMemory: !args.includes("--no-approved-memory") && (base?.contextPolicy.includeApprovedMemory ?? true),
+      includeThreadSummary: !args.includes("--no-thread-summary") && (base?.contextPolicy.includeThreadSummary ?? true),
+      instructions:
+        repeatedFlag(args, "--context-instruction").length > 0
+          ? repeatedFlag(args, "--context-instruction")
+          : base?.contextPolicy.instructions ?? [
+              "Use Agent Hub runtime-injected context only.",
+              "Do not read secrets or credential files."
+            ]
+    },
+    approvalPolicy: {
+      requiredFor:
+        repeatedFlag(args, "--approval-required-for").length > 0
+          ? repeatedFlag(args, "--approval-required-for")
+          : base?.approvalPolicy.requiredFor ?? [
+              "memory_approval",
+              "external_side_effects"
+            ],
+      summary:
+        optionalFlag(args, "--approval") ??
+        base?.approvalPolicy.summary ??
+        "User approval is required for memory approval and external effects."
+    },
+    executor,
+    enabled: args.includes("--disabled") ? false : base?.enabled ?? true,
+    defaultRoom: optionalFlag(args, "--default-room") ?? base?.defaultRoom,
+    tags: repeatedFlag(args, "--tag").length > 0 ? repeatedFlag(args, "--tag") : base?.tags,
+    metadata: {
+      ...(base?.metadata ?? {}),
+      source: preset ? "preset_override" : "custom",
+      persistedBy: "cli_team_roles"
+    }
+  });
+}
+
+function parseRoleExecutor(value: string): WorkgroupExecutor {
+  const normalized = value.replace(/^@/, "").toLowerCase();
+  if (normalized === "fake" || normalized === "codex" || normalized === "claude-code") {
+    return { kind: "agent_adapter", adapterKind: normalized };
+  }
+  if (normalized === "claude") {
+    return { kind: "agent_adapter", adapterKind: "claude-code" };
+  }
+  if (normalized === "human" || normalized === "llm_api" || normalized === "workflow") {
+    return {
+      kind: normalized,
+      unavailableReason: reservedExecutorReason
+    };
+  }
+  throw new Error("--executor must be fake, codex, claude-code, human, llm_api, or workflow");
+}
+
+function upsertStoredRole(
+  existing: WorkgroupRole[],
+  role: WorkgroupRole
+): WorkgroupRole[] {
+  const next = existing.filter((entry) => entry.handle !== role.handle);
+  next.push(role);
+  if (next.length > maxStoredRoles) {
+    throw new Error(`team roles must contain ${maxStoredRoles} or fewer entries`);
+  }
+  return next.sort((left, right) => left.handle.localeCompare(right.handle));
+}
+
+function executorLabel(executor: WorkgroupExecutor): string {
+  if (executor.kind === "agent_adapter") {
+    return `agent_adapter / ${executor.adapterKind}`;
+  }
+  return `${executor.kind} reserved`;
+}
+
+function titleCaseHandle(handle: string): string {
+  return handle
+    .split(/[-_]/g)
+    .filter(Boolean)
+    .map((part) => `${part.slice(0, 1).toUpperCase()}${part.slice(1)}`)
+    .join(" ");
+}
+
+function metadataAssignment(
+  metadata: JsonObject | undefined
+): WorkgroupTaskAssignmentMetadata | undefined {
+  const value = metadata?.assignment;
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+  const assignment = value as WorkgroupTaskAssignmentMetadata;
+  if (typeof assignment.assignmentId !== "string") {
+    return undefined;
+  }
+  return assignment;
+}
+
+function metadataString(metadata: JsonObject | undefined, key: string): string | undefined {
+  const value = metadata?.[key];
+  return typeof value === "string" ? value : undefined;
 }
 
 function chatAssistantContent(result: CliRunResult): string {
@@ -2676,6 +3989,22 @@ function optionalFlag(args: string[], flag: string): string | undefined {
     throw new Error(`${flag} requires a value`);
   }
   return value;
+}
+
+function repeatedFlag(args: string[], flag: string): string[] {
+  const values: string[] = [];
+  for (let index = 0; index < args.length; index += 1) {
+    if (args[index] !== flag) {
+      continue;
+    }
+    const value = args[index + 1];
+    if (!value || value.startsWith("--")) {
+      throw new Error(`${flag} requires a value`);
+    }
+    values.push(value);
+    index += 1;
+  }
+  return values;
 }
 
 function parseVerificationCommand(

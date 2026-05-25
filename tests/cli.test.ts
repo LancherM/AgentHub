@@ -1135,6 +1135,174 @@ describe("CLI", () => {
     expect(rendered).toContain("0\tuser\ttext\t-\t-\t-\tFirst CLI message");
   });
 
+  it("exposes rooms and team roles through CLI commands", async () => {
+    const projectRoot = await createTestDirectory("cli-rooms-roles-project");
+    const runtime = createCliRuntime({ storageMode: "memory" });
+    await runtime.projectRepository.create({
+      id: "project_workgroup",
+      name: "Workgroup Project",
+      rootPath: projectRoot,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z"
+    });
+    const output: string[] = [];
+    const errors: string[] = [];
+    const io = {
+      stdout: { write: (chunk: string) => { output.push(chunk); return true; } },
+      stderr: { write: (chunk: string) => { errors.push(chunk); return true; } }
+    };
+
+    await expect(
+      main(["rooms", "list", "--project-id", "project_workgroup"], io, projectRoot, runtime)
+    ).resolves.toBe(0);
+    await expect(
+      main([
+        "rooms",
+        "create",
+        "--project-id",
+        "project_workgroup",
+        "--handle",
+        "release",
+        "--title",
+        "Release",
+        "--description",
+        "Release coordination"
+      ], io, projectRoot, runtime)
+    ).resolves.toBe(0);
+    await expect(
+      main([
+        "rooms",
+        "use",
+        "--project-id",
+        "project_workgroup",
+        "--room",
+        "release"
+      ], io, projectRoot, runtime)
+    ).resolves.toBe(0);
+    await expect(
+      main(["team", "roles", "list", "--project-id", "project_workgroup"], io, projectRoot, runtime)
+    ).resolves.toBe(0);
+    await expect(
+      main([
+        "team",
+        "roles",
+        "save",
+        "--project-id",
+        "project_workgroup",
+        "--handle",
+        "qa",
+        "--display-name",
+        "QA",
+        "--executor",
+        "fake",
+        "--default-room",
+        "release"
+      ], io, projectRoot, runtime)
+    ).resolves.toBe(0);
+    await expect(
+      main([
+        "team",
+        "roles",
+        "show",
+        "--project-id",
+        "project_workgroup",
+        "--role",
+        "qa"
+      ], io, projectRoot, runtime)
+    ).resolves.toBe(0);
+    await expect(
+      main([
+        "team",
+        "roles",
+        "executor",
+        "--project-id",
+        "project_workgroup",
+        "--role",
+        "qa"
+      ], io, projectRoot, runtime)
+    ).resolves.toBe(0);
+
+    const rendered = output.join("");
+    expect(errors.join("")).toBe("");
+    expect(rendered).toContain("#general");
+    expect(rendered).toContain("Created room");
+    expect(rendered).toContain("room: #release");
+    expect(rendered).toContain("command: agent-hub chat --thread");
+    expect(rendered).toContain("@researcher\tpreset");
+    expect(rendered).toContain("Saved role");
+    expect(rendered).toContain("Role @qa");
+    expect(rendered).toContain("executor: agent_adapter / fake");
+  });
+
+  it("sends room messages with role mentions as shared task assignments", async () => {
+    const projectRoot = await createTestDirectory("cli-room-send-project");
+    const runRoot = path.join(await createTestDirectory("cli-room-send-runs"), "runs");
+    const runtime = createCliRuntime({
+      storageMode: "memory",
+      defaultRunRoot: runRoot,
+      workspaceManager: new TestWorkspaceManager(runRoot),
+      diffCollector: new StaticDiffCollector(),
+      verificationRunner: new VerificationRunner(new MockShellExecutor()),
+      idGenerator: new SequenceIdGenerator(),
+      clock: new FixedClock("2026-01-01T00:00:00.000Z")
+    });
+    await runtime.projectRepository.create({
+      id: "project_room_send",
+      name: "Room Send",
+      rootPath: projectRoot,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z"
+    });
+    const output: string[] = [];
+    const errors: string[] = [];
+    const io = {
+      stdout: { write: (chunk: string) => { output.push(chunk); return true; } },
+      stderr: { write: (chunk: string) => { errors.push(chunk); return true; } }
+    };
+
+    await expect(
+      main([
+        "rooms",
+        "send",
+        "--project-id",
+        "project_room_send",
+        "--room",
+        "general",
+        "--message",
+        "@researcher @writer summarize acceptance risks"
+      ], io, projectRoot, runtime)
+    ).resolves.toBe(0);
+
+    const tasks = await runtime.taskRepository.listByProjectId("project_room_send");
+    const runs = await runtime.taskRunRepository.listByTaskId(tasks[0]?.id ?? "");
+    const assignments = tasks[0]?.metadata?.assignments as Array<{ roleHandle?: string; status?: string; runId?: string }> | undefined;
+    expect(errors.join("")).toBe("");
+    expect(output.join("")).toContain("# Fake Agent Output");
+    expect(tasks).toHaveLength(1);
+    expect(tasks[0]).toMatchObject({ status: "completed" });
+    expect(runs).toHaveLength(2);
+    expect(assignments?.map((assignment) => assignment.roleHandle)).toEqual([
+      "researcher",
+      "writer"
+    ]);
+    expect(assignments?.every((assignment) => assignment.status === "completed"))
+      .toBe(true);
+    expect(assignments?.every((assignment) => Boolean(assignment.runId))).toBe(true);
+
+    await expect(
+      main([
+        "rooms",
+        "timeline",
+        "--project-id",
+        "project_room_send",
+        "--room",
+        "general"
+      ], io, projectRoot, runtime)
+    ).resolves.toBe(0);
+    expect(output.join("")).toContain("Room #general");
+    expect(output.join("")).toContain("@researcher");
+  });
+
   it("persists CLI chat turns and injects prior thread context", async () => {
     const projectRoot = await createTestDirectory("cli-chat-project");
     const runRoot = path.join(await createTestDirectory("cli-chat-runs"), "runs");

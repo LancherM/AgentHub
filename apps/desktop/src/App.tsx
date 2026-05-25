@@ -9,6 +9,7 @@ import { agentHubApi } from "./lib/agentHubApi";
 import type {
   AgentId,
   AgentRunMessage,
+  CollaborationWorkflowInput,
   ContextMode,
   ProjectSummary,
   RunDetail,
@@ -212,7 +213,8 @@ export function App(): JSX.Element {
 
   async function submitMessage(
     input: string,
-    contextMode: ContextMode
+    contextMode: ContextMode,
+    workflow?: CollaborationWorkflowInput
   ): Promise<void> {
     setError(undefined);
     setIsBusy(true);
@@ -222,6 +224,7 @@ export function App(): JSX.Element {
         projectId: activeProjectId ?? projects[0]?.id,
         text: input,
         contextMode,
+        workflow,
         continueFromRunId: pendingContinueFrom?.parentRunId,
         continueFromMessageId: pendingContinueFrom?.parentMessageId
       });

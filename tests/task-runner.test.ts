@@ -33,6 +33,7 @@ import {
   InMemoryTaskRunRepository,
   InMemoryVerificationResultRepository,
   InMemoryMemoryItemRepository,
+  validateTask,
   validateRunEvent
 } from "@agent-hub/core";
 import {
@@ -635,6 +636,62 @@ describe("task runner", () => {
       "running",
       "failed"
     ]);
+  });
+
+  it("finalizes a shared task when a missing run assignment is already terminal", async () => {
+    const projectRoot = await createTestDirectory("agent-hub-project");
+    const runRoot = await createTestDirectory("agent-hub-runs");
+    const taskRepository = new InMemoryTaskRepository();
+    const fixedNow = "2026-01-01T00:00:00.000Z";
+    const task = await taskRepository.create(
+      validateTask({
+        id: "task_shared_missing_run",
+        projectId: "project_shared_missing_run",
+        title: "Shared task with failed assignment",
+        description: "Run remaining participant.",
+        status: "open",
+        metadata: {
+          executableAssignmentCount: 2,
+          assignments: [
+            {
+              assignmentId: "assignment_failed",
+              executable: true,
+              status: "failed"
+            },
+            {
+              assignmentId: "assignment_completed",
+              executable: true,
+              status: "completed"
+            }
+          ]
+        },
+        createdAt: fixedNow,
+        updatedAt: fixedNow
+      })
+    );
+    const runner = new TaskRunner({
+      taskRepository,
+      defaultRunRoot: runRoot,
+      workspaceManager: new TestWorkspaceManager(runRoot),
+      diffCollector: new StaticDiffCollector(),
+      verificationRunner: new VerificationRunner(new MockShellExecutor()),
+      idGenerator: new SequenceIdGenerator(),
+      clock: new FixedClock(fixedNow)
+    });
+
+    const result = await runner.run({
+      projectRoot,
+      projectId: task.projectId,
+      taskId: task.id,
+      rawPrompt: "@fake run remaining participant",
+      taskStatusMode: "shared_task"
+    });
+
+    expect(result.status).toBe("succeeded");
+    expect(result.task.status).toBe("open");
+    await expect(taskRepository.get(task.id)).resolves.toMatchObject({
+      status: "open"
+    });
   });
 
   it("persists failed Codex process exits as inspectable failed runs", async () => {
