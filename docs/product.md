@@ -378,6 +378,8 @@ automatic apply, merge, or push behavior. Timeline events show handoff or
 review start, review completion when linked runs finish, and workflow
 completion once all executable participants reach terminal state or the
 workflow contains only non-runnable participants.
+If a runnable assignment fails before its run row can be created, the shared
+task can still leave `running` once all executable assignments are terminal.
 
 Agent Hub Desktop is now available as a local conversation console under
 `apps/desktop`. It starts with `pnpm --filter desktop dev` and presents a

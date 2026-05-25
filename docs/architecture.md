@@ -155,6 +155,9 @@ resolve through the CLI role store, create one shared task with assignment
 metadata, and execute each runnable `agent_adapter` participant through
 TaskRunner with `taskStatusMode: "shared_task"`. Non-runnable `human`,
 `llm_api`, and `workflow` role executors stay as assignment metadata only.
+Shared-task aggregation consults executable assignment metadata as well as run
+rows, so an assignment that fails before creating a run can still let the task
+leave `running` once no executable assignment is pending.
 The chat slash commands include room and role controls: `/thread new`,
 `/thread use <id>`, `/threads`, `/rooms`, `/room use <handle>`,
 `/room create <handle> [title]`, `/room timeline`, `/roles`, `/role <handle>`,
