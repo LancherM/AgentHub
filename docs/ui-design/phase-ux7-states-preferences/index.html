@@ -1,0 +1,458 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>UX-7 States, Preferences, and Keyboard Polish</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #101514;
+        --panel: #17201f;
+        --panel-2: #1d2927;
+        --line: #31413d;
+        --text: #ecf4ef;
+        --muted: #9fb1aa;
+        --cyan: #67d8c4;
+        --amber: #f5bd5a;
+        --red: #ff7d6b;
+        --green: #8ed889;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--text);
+        font-family:
+          ui-sans-serif,
+          system-ui,
+          -apple-system,
+          BlinkMacSystemFont,
+          "Segoe UI",
+          sans-serif;
+      }
+
+      .frame {
+        width: 1440px;
+        min-height: 980px;
+        display: grid;
+        grid-template-columns: 280px 1fr 360px;
+        gap: 0;
+        background:
+          linear-gradient(180deg, rgba(103, 216, 196, 0.05), transparent 36%),
+          var(--bg);
+      }
+
+      aside,
+      main {
+        border-right: 1px solid var(--line);
+      }
+
+      .sidebar {
+        padding: 20px;
+        display: grid;
+        grid-template-rows: auto auto 1fr auto;
+        gap: 18px;
+      }
+
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+
+      .mark {
+        display: grid;
+        width: 34px;
+        height: 34px;
+        place-items: center;
+        border: 1px solid rgba(103, 216, 196, 0.4);
+        border-radius: 8px;
+        color: var(--cyan);
+        font-weight: 800;
+      }
+
+      h1,
+      h2,
+      h3,
+      p {
+        margin: 0;
+      }
+
+      h1 {
+        font-size: 28px;
+        line-height: 1.1;
+      }
+
+      h2 {
+        font-size: 20px;
+      }
+
+      h3 {
+        font-size: 15px;
+      }
+
+      p {
+        color: var(--muted);
+        line-height: 1.5;
+      }
+
+      .label {
+        color: var(--muted);
+        font-size: 11px;
+        font-weight: 800;
+        letter-spacing: 0;
+        text-transform: uppercase;
+      }
+
+      .selected-project,
+      .empty-action,
+      .diagnostic,
+      .preference-row,
+      .command-row,
+      .inspector-empty {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: rgba(255, 255, 255, 0.025);
+      }
+
+      .selected-project {
+        padding: 12px;
+      }
+
+      .room-empty {
+        padding: 14px;
+        display: grid;
+        gap: 10px;
+      }
+
+      .button-row,
+      .utility {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+
+      button,
+      .button {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 8px 10px;
+        background: #20302d;
+        color: var(--text);
+        font-weight: 750;
+      }
+
+      .primary {
+        border-color: rgba(103, 216, 196, 0.5);
+        background: rgba(103, 216, 196, 0.14);
+        color: var(--cyan);
+      }
+
+      .sidebar .utility {
+        flex-direction: column;
+      }
+
+      main {
+        padding: 22px;
+        display: grid;
+        grid-template-rows: auto 1fr auto;
+        gap: 16px;
+      }
+
+      .header {
+        display: flex;
+        justify-content: space-between;
+        gap: 20px;
+        align-items: flex-start;
+      }
+
+      .keyboard-hint {
+        border: 1px solid rgba(245, 189, 90, 0.35);
+        border-radius: 999px;
+        padding: 6px 10px;
+        color: var(--amber);
+        font-size: 12px;
+        font-weight: 800;
+      }
+
+      .empty-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 14px;
+        align-content: start;
+      }
+
+      .empty-action {
+        min-height: 180px;
+        padding: 18px;
+        display: grid;
+        gap: 14px;
+      }
+
+      .empty-action strong {
+        display: block;
+        margin-bottom: 5px;
+      }
+
+      .diagnostic {
+        grid-column: 1 / -1;
+        padding: 18px;
+        display: grid;
+        gap: 12px;
+        border-color: rgba(255, 125, 107, 0.35);
+        background: rgba(255, 125, 107, 0.055);
+      }
+
+      code {
+        display: block;
+        overflow-wrap: anywhere;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 10px;
+        background: rgba(0, 0, 0, 0.22);
+        color: var(--cyan);
+      }
+
+      .composer {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 12px;
+        background: var(--panel);
+      }
+
+      .composer-top {
+        display: flex;
+        justify-content: space-between;
+        margin-bottom: 10px;
+      }
+
+      .seg {
+        display: inline-flex;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        overflow: hidden;
+      }
+
+      .seg span {
+        padding: 6px 9px;
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .seg .active {
+        background: rgba(103, 216, 196, 0.12);
+        color: var(--cyan);
+      }
+
+      .textarea {
+        height: 72px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 12px;
+        color: var(--muted);
+      }
+
+      .right {
+        padding: 22px;
+        display: grid;
+        gap: 16px;
+        align-content: start;
+      }
+
+      .palette {
+        border: 1px solid rgba(103, 216, 196, 0.38);
+        border-radius: 8px;
+        background: var(--panel);
+        box-shadow: 0 22px 55px rgba(0, 0, 0, 0.28);
+        overflow: hidden;
+      }
+
+      .palette input {
+        width: 100%;
+        border: 0;
+        border-bottom: 1px solid var(--line);
+        padding: 14px;
+        background: transparent;
+        color: var(--text);
+        font: inherit;
+      }
+
+      .command-row {
+        display: grid;
+        grid-template-columns: 30px 1fr auto;
+        align-items: center;
+        gap: 10px;
+        margin: 8px;
+        padding: 10px;
+      }
+
+      .kbd {
+        color: var(--muted);
+        font-size: 11px;
+      }
+
+      .preferences {
+        display: grid;
+        gap: 8px;
+      }
+
+      .preference-row {
+        display: flex;
+        justify-content: space-between;
+        padding: 10px;
+        gap: 12px;
+      }
+
+      .inspector-empty {
+        padding: 16px;
+        display: grid;
+        gap: 10px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="frame">
+      <aside class="sidebar">
+        <div class="brand">
+          <div class="mark">AH</div>
+          <div>
+            <h3>Agent Hub</h3>
+            <p>Local workgroup</p>
+          </div>
+        </div>
+        <section class="selected-project">
+          <div class="label">Project</div>
+          <h3>agent-hub</h3>
+          <p>/Users/lan/agent-hub</p>
+        </section>
+        <section class="room-empty">
+          <div class="label">Rooms</div>
+          <h2>No rooms in this project</h2>
+          <p>Create a local room or open Knowledge to inspect existing evidence.</p>
+          <div class="button-row">
+            <button class="primary">New Room</button>
+            <button>Open Knowledge</button>
+          </div>
+        </section>
+        <nav class="utility">
+          <button>Knowledge</button>
+          <button>Team</button>
+          <button>Settings</button>
+        </nav>
+      </aside>
+
+      <main>
+        <header class="header">
+          <div>
+            <div class="label">States and Shortcuts</div>
+            <h1>Repeated local work starts from the next action</h1>
+            <p>Empty surfaces explain the next local step without marketing copy.</p>
+          </div>
+          <div class="keyboard-hint">Cmd+K Command Palette</div>
+        </header>
+
+        <section class="empty-grid">
+          <article class="empty-action">
+            <div>
+              <div class="label">Project Empty</div>
+              <strong>Register a local repository</strong>
+              <p>Uses the existing project IPC flow. No files are written to the repo.</p>
+            </div>
+            <button class="primary">Add Project</button>
+          </article>
+          <article class="empty-action">
+            <div>
+              <div class="label">Team Empty</div>
+              <strong>No matching roles</strong>
+              <p>Clear the filter or create a custom local role for this project.</p>
+            </div>
+            <div class="button-row">
+              <button class="primary">Clear Filter</button>
+              <button>New Role</button>
+            </div>
+          </article>
+          <article class="empty-action">
+            <div>
+              <div class="label">Knowledge Empty</div>
+              <strong>No proposed memory yet</strong>
+              <p>Run an agent, then review proposed memory from local evidence.</p>
+            </div>
+            <button>Open General Room</button>
+          </article>
+          <article class="inspector-empty">
+            <div class="label">Inspector Empty</div>
+            <h2>No artifact evidence</h2>
+            <p>Open Audit for raw events or run a task that produces local artifacts.</p>
+            <div class="button-row">
+              <button class="primary">Open Audit</button>
+              <button>Open Checks</button>
+            </div>
+          </article>
+          <article class="diagnostic">
+            <div class="label">Codex CLI unavailable</div>
+            <h2>Codex preflight failed: executable not found</h2>
+            <p>Detection ran inside the isolated worktree. Verify the same command locally.</p>
+            <code>codex --version</code>
+            <p>PATH checked: /opt/homebrew/bin, /usr/local/bin, ~/.local/bin</p>
+          </article>
+        </section>
+
+        <section class="composer">
+          <div class="composer-top">
+            <span class="label">Composer</span>
+            <div class="seg">
+              <span>auto</span>
+              <span class="active">workspace</span>
+              <span>minimal</span>
+            </div>
+          </div>
+          <div class="textarea">@engineer implement focused fix</div>
+        </section>
+      </main>
+
+      <aside class="right">
+        <section class="palette">
+          <input value="run" aria-label="Command search" />
+          <div class="command-row">
+            <span class="mark">R</span>
+            <div>
+              <strong>Run with recent target</strong>
+              <p>@engineer, workspace context</p>
+            </div>
+            <span class="kbd">Enter</span>
+          </div>
+          <div class="command-row">
+            <span class="mark">S</span>
+            <div>
+              <strong>Open verification settings</strong>
+              <p>Project-scoped local commands</p>
+            </div>
+            <span class="kbd">⌘,</span>
+          </div>
+          <div class="command-row">
+            <span class="mark">K</span>
+            <div>
+              <strong>Open Knowledge</strong>
+              <p>Memory and review evidence</p>
+            </div>
+            <span class="kbd">K</span>
+          </div>
+        </section>
+
+        <section class="preferences">
+          <div class="label">Persisted Locally</div>
+          <div class="preference-row"><span>Selected project</span><strong>agent-hub</strong></div>
+          <div class="preference-row"><span>Selected room</span><strong>#planning</strong></div>
+          <div class="preference-row"><span>Context mode</span><strong>workspace</strong></div>
+          <div class="preference-row"><span>Inspector tab</span><strong>Brief</strong></div>
+          <div class="preference-row"><span>Sidebar</span><strong>comfortable</strong></div>
+        </section>
+      </aside>
+    </div>
+  </body>
+</html>
