@@ -1,0 +1,544 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Agent Hub Phase 12 Lifecycle</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #0b0d0a;
+        --panel: #10140f;
+        --panel-2: #151a14;
+        --line: rgba(215, 246, 117, 0.18);
+        --line-2: rgba(255, 255, 255, 0.1);
+        --text: #f4f3ea;
+        --muted: #a5ad9e;
+        --acid: #d9ff45;
+        --green: #4eda78;
+        --orange: #ffad32;
+        --red: #ff6b57;
+        --cyan: #67d9df;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background:
+          linear-gradient(rgba(255, 255, 255, 0.025) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(255, 255, 255, 0.018) 1px, transparent 1px),
+          var(--bg);
+        background-size: 42px 42px;
+        color: var(--text);
+        font: 14px/1.45 ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+
+      .app {
+        width: 1680px;
+        height: 940px;
+        display: grid;
+        grid-template-columns: 288px minmax(0, 1fr) 444px;
+        border: 1px solid var(--line-2);
+        background: rgba(8, 10, 8, 0.96);
+        overflow: hidden;
+      }
+
+      aside,
+      main,
+      .inspector {
+        min-width: 0;
+      }
+
+      aside {
+        border-right: 1px solid var(--line-2);
+        padding: 20px 16px;
+        display: grid;
+        grid-template-rows: auto auto 1fr auto;
+        gap: 20px;
+        background: rgba(10, 12, 10, 0.92);
+      }
+
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+
+      .mark {
+        width: 36px;
+        height: 36px;
+        border-radius: 8px;
+        display: grid;
+        place-items: center;
+        color: #11180c;
+        background: var(--acid);
+        font-weight: 900;
+      }
+
+      .brand strong,
+      .room strong,
+      .panel-title strong,
+      .message strong {
+        display: block;
+      }
+
+      .muted,
+      small {
+        color: var(--muted);
+      }
+
+      .section-label {
+        margin: 0 0 8px;
+        color: var(--muted);
+        font-size: 11px;
+        font-weight: 800;
+        letter-spacing: 0;
+        text-transform: uppercase;
+      }
+
+      .project,
+      .room,
+      .status-card,
+      .message,
+      .drawer-card,
+      .audit-row {
+        border: 1px solid var(--line-2);
+        border-radius: 8px;
+        background: rgba(255, 255, 255, 0.025);
+      }
+
+      .project {
+        padding: 12px;
+        border-color: var(--line);
+      }
+
+      .room-list {
+        display: grid;
+        gap: 8px;
+      }
+
+      .room {
+        padding: 11px 12px;
+      }
+
+      .room.active {
+        border-color: rgba(217, 255, 69, 0.58);
+        background: rgba(217, 255, 69, 0.08);
+      }
+
+      .team {
+        align-self: end;
+        display: grid;
+        gap: 8px;
+      }
+
+      .agent {
+        display: grid;
+        grid-template-columns: 26px 1fr;
+        align-items: center;
+        gap: 8px;
+      }
+
+      .avatar {
+        width: 26px;
+        height: 26px;
+        border-radius: 8px;
+        display: grid;
+        place-items: center;
+        color: #0a0e0a;
+        font-size: 12px;
+        font-weight: 900;
+        background: var(--acid);
+      }
+
+      main {
+        display: grid;
+        grid-template-rows: auto 1fr auto;
+        border-right: 1px solid var(--line-2);
+      }
+
+      .topbar {
+        padding: 28px 28px 18px;
+        border-bottom: 1px solid var(--line-2);
+      }
+
+      h1 {
+        margin: 0;
+        font-size: 30px;
+        line-height: 1.1;
+      }
+
+      .timeline {
+        padding: 22px 28px;
+        overflow: hidden;
+        display: grid;
+        align-content: start;
+        gap: 14px;
+      }
+
+      .message {
+        padding: 14px 16px;
+        display: grid;
+        grid-template-columns: 34px 1fr auto;
+        gap: 12px;
+        align-items: start;
+      }
+
+      .message.selected {
+        border-color: rgba(103, 217, 223, 0.52);
+        background: rgba(103, 217, 223, 0.055);
+      }
+
+      .run-meta {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 7px;
+        margin-top: 9px;
+      }
+
+      .chip {
+        min-height: 24px;
+        padding: 3px 8px;
+        border-radius: 7px;
+        border: 1px solid var(--line-2);
+        color: var(--muted);
+        font-size: 12px;
+        font-weight: 750;
+        white-space: nowrap;
+      }
+
+      .chip.green {
+        border-color: rgba(78, 218, 120, 0.35);
+        color: var(--green);
+      }
+
+      .chip.orange {
+        border-color: rgba(255, 173, 50, 0.38);
+        color: var(--orange);
+      }
+
+      .chip.red {
+        border-color: rgba(255, 107, 87, 0.42);
+        color: var(--red);
+      }
+
+      .composer {
+        margin: 0 28px 24px;
+        min-height: 116px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 14px;
+        display: grid;
+        align-content: space-between;
+        color: var(--muted);
+        background: rgba(10, 12, 10, 0.88);
+      }
+
+      .inspector {
+        padding: 18px 16px;
+        background: rgba(12, 15, 12, 0.96);
+        display: grid;
+        grid-template-rows: auto auto 1fr;
+        gap: 12px;
+      }
+
+      .tabs {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 6px;
+      }
+
+      .tab {
+        height: 32px;
+        border: 1px solid transparent;
+        border-radius: 8px;
+        display: grid;
+        place-items: center;
+        color: var(--muted);
+        font-weight: 750;
+      }
+
+      .tab.active {
+        border-color: rgba(217, 255, 69, 0.45);
+        color: var(--text);
+        background: rgba(217, 255, 69, 0.08);
+      }
+
+      .drawer {
+        display: grid;
+        gap: 12px;
+        align-content: start;
+        overflow: hidden;
+      }
+
+      .drawer-card {
+        padding: 14px;
+      }
+
+      .panel-title {
+        display: flex;
+        align-items: start;
+        justify-content: space-between;
+        gap: 10px;
+        margin-bottom: 12px;
+      }
+
+      .grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 8px;
+      }
+
+      .status-card {
+        padding: 10px;
+        min-height: 72px;
+      }
+
+      .status-card strong {
+        display: block;
+        margin-top: 3px;
+        font-size: 18px;
+      }
+
+      .buttons {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 8px;
+        margin-top: 12px;
+      }
+
+      button {
+        min-height: 38px;
+        border: 1px solid var(--line-2);
+        border-radius: 8px;
+        color: var(--text);
+        background: rgba(255, 255, 255, 0.035);
+        font: inherit;
+        font-weight: 800;
+      }
+
+      .primary {
+        border-color: rgba(217, 255, 69, 0.55);
+        color: #10140f;
+        background: var(--acid);
+      }
+
+      .danger {
+        border-color: rgba(255, 107, 87, 0.55);
+        color: var(--red);
+      }
+
+      .preview {
+        border: 1px solid var(--line-2);
+        border-radius: 8px;
+        padding: 10px;
+        background: #090b09;
+        font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+        color: #d7decf;
+      }
+
+      .risk-block {
+        border-color: rgba(255, 107, 87, 0.55);
+        background: rgba(255, 107, 87, 0.06);
+      }
+
+      .audit {
+        display: grid;
+        gap: 8px;
+      }
+
+      .audit-row {
+        padding: 9px 10px;
+        display: grid;
+        grid-template-columns: 64px 1fr;
+        gap: 8px;
+        color: var(--muted);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="app">
+      <aside>
+        <div class="brand">
+          <div class="mark">AH</div>
+          <div>
+            <strong>Agent Hub</strong>
+            <small>Local workgroup</small>
+          </div>
+        </div>
+
+        <div>
+          <p class="section-label">Project</p>
+          <div class="project">
+            <strong>agent-hub</strong>
+            <small>/Users/lan/agent-hub</small>
+          </div>
+        </div>
+
+        <div>
+          <p class="section-label">Rooms</p>
+          <div class="room-list">
+            <div class="room active">
+              <strong>#review</strong>
+              <small>2 runs need lifecycle decisions</small>
+            </div>
+            <div class="room">
+              <strong>#planning</strong>
+              <small>Q3 execution plan</small>
+            </div>
+            <div class="room">
+              <strong>#knowledge</strong>
+              <small>Memory proposals</small>
+            </div>
+          </div>
+        </div>
+
+        <div class="team">
+          <p class="section-label">Team</p>
+          <div class="agent"><span class="avatar">E</span><span>@engineer</span></div>
+          <div class="agent"><span class="avatar">V</span><span>@reviewer</span></div>
+          <div class="agent"><span class="avatar">O</span><span>@operator</span></div>
+        </div>
+      </aside>
+
+      <main>
+        <div class="topbar">
+          <h1>#review</h1>
+          <small>Explicit local apply and retained-worktree lifecycle controls</small>
+        </div>
+
+        <section class="timeline">
+          <article class="message">
+            <div class="avatar">E</div>
+            <div>
+              <strong>@engineer completed implementation</strong>
+              <small>Run used an isolated worktree and passed local checks.</small>
+              <div class="run-meta">
+                <span class="chip green">completed</span>
+                <span class="chip">3 artifacts</span>
+                <span class="chip orange">retained worktree</span>
+              </div>
+            </div>
+            <small>09:42</small>
+          </article>
+
+          <article class="message selected">
+            <div class="avatar">V</div>
+            <div>
+              <strong>Review accepted with lifecycle action pending</strong>
+              <small>Apply is not automatic. Preview, risk gate, and confirmation are required.</small>
+              <div class="run-meta">
+                <span class="chip green">accepted</span>
+                <span class="chip orange">apply preview ready</span>
+                <span class="chip">audit required</span>
+              </div>
+            </div>
+            <small>10:06</small>
+          </article>
+
+          <article class="message">
+            <div class="avatar">O</div>
+            <div>
+              <strong>Cleanup request drafted</strong>
+              <small>Worktree cleanup is held until explicit confirmation.</small>
+              <div class="run-meta">
+                <span class="chip">inspect first</span>
+                <span class="chip red">no auto-delete</span>
+              </div>
+            </div>
+            <small>10:12</small>
+          </article>
+        </section>
+
+        <div class="composer">
+          <span>@operator record lifecycle decision after I confirm the apply preview</span>
+          <small>Local runtime, no push, no PR, no merge.</small>
+        </div>
+      </main>
+
+      <aside class="inspector">
+        <div class="tabs">
+          <div class="tab">Artifacts</div>
+          <div class="tab">Risks</div>
+          <div class="tab active">Lifecycle</div>
+          <div class="tab">Audit</div>
+        </div>
+
+        <section class="drawer">
+          <div class="drawer-card">
+            <div class="panel-title">
+              <div>
+                <strong>Retained Worktree</strong>
+                <small>Inspectable before cleanup</small>
+              </div>
+              <span class="chip orange">kept</span>
+            </div>
+            <div class="grid">
+              <div class="status-card"><small>Path</small><strong>phase-12-codex</strong></div>
+              <div class="status-card"><small>Branch</small><strong>agent-hub/task/codex</strong></div>
+              <div class="status-card"><small>Changed</small><strong>4 files</strong></div>
+              <div class="status-card"><small>Cleanup</small><strong>pending</strong></div>
+            </div>
+            <div class="buttons">
+              <button>Inspect</button>
+              <button>Mark Keep</button>
+              <button class="danger">Clean Up</button>
+              <button>Copy Path</button>
+            </div>
+          </div>
+
+          <div class="drawer-card">
+            <div class="panel-title">
+              <div>
+                <strong>Apply Preview</strong>
+                <small>Local apply only after confirmation</small>
+              </div>
+              <span class="chip green">previewed</span>
+            </div>
+            <div class="preview">
+              apply target: /Users/lan/agent-hub<br />
+              source: retained worktree<br />
+              files: apps/desktop/src/App.tsx, docs/product.md<br />
+              mode: local patch apply, no push, no merge
+            </div>
+            <div class="buttons">
+              <button>Refresh Preview</button>
+              <button class="primary">Confirm Apply</button>
+            </div>
+          </div>
+
+          <div class="drawer-card risk-block">
+            <div class="panel-title">
+              <div>
+                <strong>Risk Gate</strong>
+                <small>Blocking risks prevent apply</small>
+              </div>
+              <span class="chip red">blocked</span>
+            </div>
+            <small>1 blocking finding: sensitive path changed. Apply action is disabled until the run evidence changes or a future approved override policy exists.</small>
+          </div>
+
+          <div class="drawer-card">
+            <div class="panel-title">
+              <div>
+                <strong>Audit Trail</strong>
+                <small>Every decision is recorded locally</small>
+              </div>
+              <span class="chip">4 events</span>
+            </div>
+            <div class="audit">
+              <div class="audit-row"><span>10:02</span><span>Preview generated by @operator</span></div>
+              <div class="audit-row"><span>10:04</span><span>Risk gate blocked apply</span></div>
+              <div class="audit-row"><span>10:07</span><span>Worktree marked keep</span></div>
+              <div class="audit-row"><span>10:12</span><span>Cleanup confirmation requested</span></div>
+            </div>
+          </div>
+        </section>
+      </aside>
+    </div>
+  </body>
+</html>

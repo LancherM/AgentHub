@@ -7,10 +7,13 @@ import type {
   ComparisonVerificationSignal,
   DiffSummary,
   HandoffCopyKind,
+  LifecycleActionResult,
   MemoryProposal,
+  ReviewArtifact,
   ReviewContext,
   ReviewHandoff,
   ReviewSummary,
+  RunLifecycle,
   RiskReport as RiskReportModel,
   RunDetail,
   RunInspectorTab,
@@ -44,6 +47,7 @@ const tabs: Array<{ id: WorkgroupInspectorTab; label: string }> = [
   { id: "artifacts", label: "Artifacts" },
   { id: "checks", label: "Checks" },
   { id: "risks", label: "Risks" },
+  { id: "lifecycle", label: "Lifecycle" },
   { id: "memory", label: "Memory" },
   { id: "audit", label: "Audit" }
 ];
@@ -68,10 +72,16 @@ export function RunInspectorModal({
   const [context, setContext] = useState<LoadState<ReviewContext>>({
     loading: false
   });
+  const [artifacts, setArtifacts] = useState<LoadState<ReviewArtifact[]>>({
+    loading: false
+  });
   const [diff, setDiff] = useState<LoadState<DiffSummary>>({ loading: false });
   const [verification, setVerification] =
     useState<LoadState<VerificationReportModel>>({ loading: false });
   const [risk, setRisk] = useState<LoadState<RiskReportModel>>({
+    loading: false
+  });
+  const [lifecycle, setLifecycle] = useState<LoadState<RunLifecycle>>({
     loading: false
   });
   const [handoff, setHandoff] = useState<LoadState<ReviewHandoff>>({
@@ -92,9 +102,11 @@ export function RunInspectorModal({
     setDecisionMessage(undefined);
     setSummary({ loading: true });
     setContext({ loading: false });
+    setArtifacts({ loading: false });
     setDiff({ loading: false });
     setVerification({ loading: false });
     setRisk({ loading: false });
+    setLifecycle({ loading: false });
     setHandoff({ loading: false });
     setComparison({ loading: false });
     setMemory({ loading: false });
@@ -132,6 +144,7 @@ export function RunInspectorModal({
       await loadState(setContext, () => agentHubApi.review.getContext(runId));
     } else if (tab === "artifacts") {
       await Promise.all([
+        loadState(setArtifacts, () => agentHubApi.review.getArtifacts(runId)),
         loadState(setDiff, () => agentHubApi.review.getDiff(runId)),
         loadState(setHandoff, () => agentHubApi.review.getHandoff(runId)),
         loadComparison()
@@ -142,6 +155,8 @@ export function RunInspectorModal({
       );
     } else if (tab === "risks") {
       await loadState(setRisk, () => agentHubApi.review.getRisk(runId));
+    } else if (tab === "lifecycle") {
+      await loadState(setLifecycle, () => agentHubApi.lifecycle.get(runId));
     } else if (tab === "memory") {
       await loadState(setMemory, () => agentHubApi.memory.listProposals(runId));
       await loadSummary();
@@ -240,6 +255,43 @@ export function RunInspectorModal({
     }
   }
 
+  async function runLifecycleAction(
+    action: () => Promise<LifecycleActionResult>
+  ): Promise<void> {
+    setDecisionMessage(undefined);
+    setLifecycle((current) => ({ ...current, loading: true, error: undefined }));
+    try {
+      const result = await action();
+      setLifecycle({ loading: false, data: result.lifecycle });
+      setDecisionMessage(result.message);
+    } catch (error) {
+      setLifecycle((current) => ({
+        ...current,
+        loading: false,
+        error: errorMessage(error)
+      }));
+      setDecisionMessage(errorMessage(error));
+    }
+  }
+
+  async function previewApply(): Promise<void> {
+    setDecisionMessage(undefined);
+    setLifecycle((current) => ({ ...current, loading: true, error: undefined }));
+    try {
+      await agentHubApi.lifecycle.previewApply(runId);
+      const next = await agentHubApi.lifecycle.get(runId);
+      setLifecycle({ loading: false, data: next });
+      setDecisionMessage(next.applyPreview.message);
+    } catch (error) {
+      setLifecycle((current) => ({
+        ...current,
+        loading: false,
+        error: errorMessage(error)
+      }));
+      setDecisionMessage(errorMessage(error));
+    }
+  }
+
   const title = summary.data?.task ?? initialRun?.title ?? "Loading run...";
 
   return (
@@ -308,6 +360,7 @@ export function RunInspectorModal({
             <LoadSlot state={context}>{(data) => <ContextPanel context={data} />}</LoadSlot>
           ) : activeTab === "artifacts" ? (
             <ArtifactsPanel
+              artifacts={artifacts}
               diff={diff}
               handoff={handoff}
               comparison={comparison}
@@ -322,6 +375,38 @@ export function RunInspectorModal({
             </LoadSlot>
           ) : activeTab === "risks" ? (
             <LoadSlot state={risk}>{(data) => <RiskReport report={data} />}</LoadSlot>
+          ) : activeTab === "lifecycle" ? (
+            <LoadSlot state={lifecycle}>
+              {(data) => (
+                <LifecyclePanel
+                  lifecycle={data}
+                  onMarkKeep={(reason) =>
+                    void runLifecycleAction(() =>
+                      agentHubApi.lifecycle.markKeep({ runId, reason })
+                    )
+                  }
+                  onCleanup={(confirmation, reason) =>
+                    void runLifecycleAction(() =>
+                      agentHubApi.lifecycle.cleanupWorktree({
+                        runId,
+                        confirmation,
+                        reason
+                      })
+                    )
+                  }
+                  onPreviewApply={() => void previewApply()}
+                  onConfirmApply={(confirmation, reason) =>
+                    void runLifecycleAction(() =>
+                      agentHubApi.lifecycle.confirmApply({
+                        runId,
+                        confirmation,
+                        reason
+                      })
+                    )
+                  }
+                />
+              )}
+            </LoadSlot>
           ) : activeTab === "memory" ? (
             <LoadSlot state={memory}>
               {(data) => (
@@ -428,6 +513,7 @@ function ContextPanel({ context }: { context: ReviewContext }): JSX.Element {
 }
 
 function ArtifactsPanel({
+  artifacts,
   diff,
   handoff,
   comparison,
@@ -436,6 +522,7 @@ function ArtifactsPanel({
   onCopyHandoff,
   onCreateComparison
 }: {
+  artifacts: LoadState<ReviewArtifact[]>;
   diff: LoadState<DiffSummary>;
   handoff: LoadState<ReviewHandoff>;
   comparison: LoadState<ComparisonPanelData>;
@@ -449,15 +536,18 @@ function ArtifactsPanel({
       <section>
         <div className="summary-heading">
           <div>
-            <div className="panel-label">Engineering Artifacts</div>
+            <div className="panel-label">Artifacts</div>
             <p>
-              Diff, retained-worktree handoff, and comparison evidence stay here
-              as review-only engineering details.
+              Important run evidence appears as named local artifact rows with
+              bounded previews and source metadata.
             </p>
           </div>
           <span className="handoff-state ready">review only</span>
         </div>
       </section>
+      <LoadSlot state={artifacts}>
+        {(data) => <ArtifactInventory artifacts={data} />}
+      </LoadSlot>
       <LoadSlot state={diff}>{(data) => <DiffViewer diff={data} />}</LoadSlot>
       <LoadSlot state={handoff}>
         {(data) => (
@@ -477,6 +567,105 @@ function ArtifactsPanel({
           />
         )}
       </LoadSlot>
+    </div>
+  );
+}
+
+function ArtifactInventory({
+  artifacts
+}: {
+  artifacts: ReviewArtifact[];
+}): JSX.Element {
+  const [selectedArtifactId, setSelectedArtifactId] = useState(
+    artifacts[0]?.id ?? ""
+  );
+
+  useEffect(() => {
+    if (
+      selectedArtifactId &&
+      artifacts.some((artifact) => artifact.id === selectedArtifactId)
+    ) {
+      return;
+    }
+    setSelectedArtifactId(artifacts[0]?.id ?? "");
+  }, [artifacts, selectedArtifactId]);
+
+  const selectedArtifact =
+    artifacts.find((artifact) => artifact.id === selectedArtifactId) ??
+    artifacts[0];
+
+  if (artifacts.length === 0) {
+    return (
+      <section>
+        <div className="panel-label">Artifact Inventory</div>
+        <p className="muted-copy">No local artifacts were recorded for this run.</p>
+      </section>
+    );
+  }
+
+  return (
+    <div className="summary-stack artifact-inventory">
+      <section>
+        <div className="review-section-head">
+          <div>
+            <div className="panel-label">Artifact Inventory</div>
+            <p className="muted-copy">
+              {artifacts.length} local artifact row(s) backed by run_artifacts.
+            </p>
+          </div>
+        </div>
+        <div className="artifact-row-list">
+          {artifacts.map((artifact) => (
+            <button
+              key={artifact.id}
+              className={`artifact-row-button ${
+                artifact.id === selectedArtifact?.id ? "active" : ""
+              }`}
+              onClick={() => setSelectedArtifactId(artifact.id)}
+            >
+              <span className={`artifact-type ${artifact.artifactType}`}>
+                {artifact.kind}
+              </span>
+              <span>
+                <strong>{artifact.title}</strong>
+                <em>{artifact.summary}</em>
+              </span>
+              <span className={`artifact-availability ${artifact.availability}`}>
+                {artifact.availability}
+              </span>
+            </button>
+          ))}
+        </div>
+      </section>
+
+      {selectedArtifact ? (
+        <>
+          <section className="summary-metrics wide">
+            <Metric label="Type" value={selectedArtifact.kind} />
+            <Metric label="Source Run" value={selectedArtifact.sourceRunId} />
+            <Metric label="Source Task" value={selectedArtifact.sourceTaskId} />
+            <Metric label="Thread" value={selectedArtifact.threadId ?? "unknown"} />
+            <Metric label="Created By" value={selectedArtifact.createdBy ?? "unknown"} />
+            <Metric label="Created" value={formatTime(selectedArtifact.createdAt)} />
+            <Metric
+              label="Content"
+              value={`${selectedArtifact.contentCharacters} chars`}
+            />
+            <Metric
+              label="Preview"
+              value={
+                selectedArtifact.truncated
+                  ? `${selectedArtifact.previewCharacters} chars bounded`
+                  : `${selectedArtifact.previewCharacters} chars`
+              }
+            />
+          </section>
+          <section>
+            <div className="panel-label">Bounded Preview</div>
+            <pre className="context-preview">{selectedArtifact.contentPreview?.trim() || "Artifact content is empty."}</pre>
+          </section>
+        </>
+      ) : null}
     </div>
   );
 }
@@ -619,6 +808,208 @@ function HandoffPanel({
         <p>
           Agent Hub does not merge, push, apply patches, delete worktrees, or write
           repository context files from this handoff.
+        </p>
+      </section>
+    </div>
+  );
+}
+
+function LifecyclePanel({
+  lifecycle,
+  onMarkKeep,
+  onCleanup,
+  onPreviewApply,
+  onConfirmApply
+}: {
+  lifecycle: RunLifecycle;
+  onMarkKeep(reason?: string): void;
+  onCleanup(confirmation?: string, reason?: string): void;
+  onPreviewApply(): void;
+  onConfirmApply(confirmation?: string, reason?: string): void;
+}): JSX.Element {
+  const [keepReason, setKeepReason] = useState("");
+  const [cleanupConfirmation, setCleanupConfirmation] = useState("");
+  const [cleanupReason, setCleanupReason] = useState("");
+  const [applyConfirmation, setApplyConfirmation] = useState("");
+  const [applyReason, setApplyReason] = useState("");
+  const handoff = lifecycle.handoff;
+  const applyPreview = lifecycle.applyPreview;
+  const cleanupPhrase = `cleanup ${lifecycle.runId}`;
+
+  return (
+    <div className="summary-stack lifecycle-panel">
+      <section>
+        <div className="summary-heading">
+          <div>
+            <div className="panel-label">Lifecycle</div>
+            <p>{lifecycle.message}</p>
+          </div>
+          <span className={`handoff-state ${handoff.available ? "ready" : "unavailable"}`}>
+            {handoff.available ? "retained" : "unavailable"}
+          </span>
+        </div>
+      </section>
+
+      <section className="summary-metrics wide">
+        <Metric label="Worktree" value={handoff.worktreePath ?? "none"} />
+        <Metric label="Branch" value={handoff.branchName ?? "none"} />
+        <Metric
+          label="Cleanup"
+          value={handoff.cleanup.cleaned ? "cleaned" : handoff.cleanup.retained ? "retained" : "unknown"}
+        />
+        <Metric label="Files" value={`${handoff.changedFiles.length}`} />
+        <Metric label="Risk" value={applyPreview.riskLevel} />
+        <Metric label="Apply" value={applyPreview.blocked ? "blocked" : applyPreview.available ? "ready" : "unavailable"} />
+      </section>
+
+      <section>
+        <div className="review-section-head">
+          <div>
+            <div className="panel-label">Retained Worktree</div>
+            <p className="muted-copy">
+              Marking keep records intent. Cleanup removes only the retained local worktree after confirmation.
+            </p>
+          </div>
+        </div>
+        <div className="lifecycle-control-grid">
+          <label>
+            <span>Keep note</span>
+            <input
+              value={keepReason}
+              onChange={(event) => setKeepReason(event.target.value)}
+              placeholder="optional reason"
+            />
+          </label>
+          <button
+            className="ghost-button"
+            onClick={() => onMarkKeep(keepReason)}
+            disabled={!handoff.available}
+          >
+            Mark Keep
+          </button>
+        </div>
+        <div className="lifecycle-confirm-box">
+          <div>
+            <span>Cleanup phrase</span>
+            <code>{cleanupPhrase}</code>
+          </div>
+          <label>
+            <span>Confirmation</span>
+            <input
+              value={cleanupConfirmation}
+              onChange={(event) => setCleanupConfirmation(event.target.value)}
+              placeholder={cleanupPhrase}
+            />
+          </label>
+          <label>
+            <span>Reason</span>
+            <input
+              value={cleanupReason}
+              onChange={(event) => setCleanupReason(event.target.value)}
+              placeholder="optional cleanup note"
+            />
+          </label>
+          <button
+            className="ghost-button danger"
+            onClick={() => onCleanup(cleanupConfirmation, cleanupReason)}
+            disabled={!handoff.available || handoff.cleanup.cleaned === true}
+          >
+            Cleanup Worktree
+          </button>
+        </div>
+      </section>
+
+      <section>
+        <div className="review-section-head">
+          <div>
+            <div className="panel-label">Explicit Apply</div>
+            <p className="muted-copy">{applyPreview.message}</p>
+          </div>
+          <span className={`handoff-state ${applyPreview.blocked ? "unavailable" : applyPreview.available ? "ready" : "unavailable"}`}>
+            {applyPreview.blocked ? "blocked" : applyPreview.available ? "preview" : "none"}
+          </span>
+        </div>
+        <div className="handoff-action-row">
+          <button className="ghost-button" onClick={onPreviewApply}>
+            Refresh Preview
+          </button>
+        </div>
+        <div className="summary-metrics wide">
+          <Metric label="Confirmation" value={applyPreview.confirmationPhrase} />
+          <Metric label="Changed" value={`${applyPreview.changedFiles.length} files`} />
+          <Metric label="Risk Gate" value={applyPreview.blocked ? "blocking" : "clear"} />
+          <Metric label="Scope" value="local apply only" />
+        </div>
+        {applyPreview.changedFiles.length === 0 ? (
+          <p className="muted-copy">No changed files are available for apply preview.</p>
+        ) : (
+          <ul className="file-list">
+            {applyPreview.changedFiles.map((file) => (
+              <li key={file.path}>
+                <span className={`file-status ${file.status}`}>{file.status}</span>
+                <strong>{file.path}</strong>
+                <em>+{file.additions}/-{file.deletions}</em>
+              </li>
+            ))}
+          </ul>
+        )}
+        <div className="lifecycle-confirm-box">
+          <label>
+            <span>Confirmation</span>
+            <input
+              value={applyConfirmation}
+              onChange={(event) => setApplyConfirmation(event.target.value)}
+              placeholder={applyPreview.confirmationPhrase}
+            />
+          </label>
+          <label>
+            <span>Reason</span>
+            <input
+              value={applyReason}
+              onChange={(event) => setApplyReason(event.target.value)}
+              placeholder="optional apply note"
+            />
+          </label>
+          <button
+            className="primary-button"
+            onClick={() => onConfirmApply(applyConfirmation, applyReason)}
+            disabled={!applyPreview.available || applyPreview.blocked}
+          >
+            Apply Locally
+          </button>
+        </div>
+        {applyPreview.patchPreview ? (
+          <pre className="context-preview">{applyPreview.patchPreview}</pre>
+        ) : null}
+      </section>
+
+      <section>
+        <div className="panel-label">Audit Trail</div>
+        {lifecycle.audit.length === 0 ? (
+          <p className="muted-copy">No lifecycle decisions have been recorded.</p>
+        ) : (
+          <div className="lifecycle-audit-list">
+            {lifecycle.audit.map((entry) => (
+              <article key={entry.id}>
+                <div>
+                  <strong>{entry.action}</strong>
+                  <span className={`handoff-state ${entry.status === "completed" ? "ready" : entry.status === "blocked" || entry.status === "failed" ? "unavailable" : ""}`}>
+                    {entry.status}
+                  </span>
+                </div>
+                <p>{entry.message}</p>
+                <time>{formatTime(entry.createdAt)}</time>
+              </article>
+            ))}
+          </div>
+        )}
+      </section>
+
+      <section>
+        <div className="panel-label">Boundary</div>
+        <p>
+          Apply modifies only the local project checkout after confirmation. It
+          does not commit, push, merge, approve memory, or write repository context.
         </p>
       </section>
     </div>

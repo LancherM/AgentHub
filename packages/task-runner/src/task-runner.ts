@@ -1001,8 +1001,26 @@ export class TaskRunner {
   }
 
   private async sharedTaskStatus(taskId: string): Promise<Task["status"]> {
+    const task = await this.taskRepository.get(taskId);
     const runs = await this.taskRunRepository.listByTaskId(taskId);
     if (runs.some((run) => run.status === "queued" || run.status === "running")) {
+      return "running";
+    }
+    const expectedRunCount = metadataNumber(
+      task?.metadata,
+      "executableAssignmentCount"
+    );
+    if (expectedRunCount !== undefined && runs.length < expectedRunCount) {
+      const assignments = executableAssignmentStatuses(task?.metadata);
+      if (
+        assignments.length === expectedRunCount &&
+        assignments.every(isTerminalAssignmentStatus)
+      ) {
+        return runs.length === expectedRunCount &&
+          runs.every((run) => run.status === "succeeded")
+          ? "completed"
+          : "open";
+      }
       return "running";
     }
     if (runs.length > 0 && runs.every((run) => run.status === "succeeded")) {
@@ -1228,6 +1246,41 @@ function compactMetadata(metadata: JsonObject): JsonObject {
   return Object.fromEntries(
     Object.entries(metadata).filter(([, value]) => value !== undefined)
   ) as JsonObject;
+}
+
+function metadataNumber(
+  metadata: JsonObject | undefined,
+  key: string
+): number | undefined {
+  const value = metadata?.[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function executableAssignmentStatuses(
+  metadata: JsonObject | undefined
+): string[] {
+  const assignments = metadata?.assignments;
+  if (!Array.isArray(assignments)) {
+    return [];
+  }
+  return assignments.flatMap((entry) => {
+    if (!entry || typeof entry !== "object") {
+      return [];
+    }
+    const assignment = entry as Record<string, unknown>;
+    return assignment.executable === true && typeof assignment.status === "string"
+      ? [assignment.status]
+      : [];
+  });
+}
+
+function isTerminalAssignmentStatus(status: string): boolean {
+  return (
+    status === "completed" ||
+    status === "failed" ||
+    status === "cancelled" ||
+    status === "skipped"
+  );
 }
 
 function finalRunStatus(status: RunStatus, finalizationFailed: boolean): RunStatus {
