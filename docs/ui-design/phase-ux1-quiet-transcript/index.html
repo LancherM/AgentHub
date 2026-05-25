@@ -1,0 +1,482 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Agent Hub Phase UX-1 Quiet Transcript</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #0d1110;
+        --panel: #151917;
+        --panel-2: #101412;
+        --line: #2a322e;
+        --line-soft: #202823;
+        --text: #f0ebdc;
+        --muted: #9da599;
+        --muted-2: #6f796f;
+        --accent: #d8ff57;
+        --cyan: #67d8c4;
+        --amber: #f5bd5a;
+        --red: #ff7d6b;
+        --green: #8be977;
+        --radius: 8px;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background:
+          linear-gradient(180deg, rgba(103, 216, 196, 0.12), transparent 380px),
+          var(--bg);
+        color: var(--text);
+        font-family:
+          "Avenir Next",
+          "SF Pro Display",
+          -apple-system,
+          BlinkMacSystemFont,
+          "Segoe UI",
+          sans-serif;
+      }
+
+      .window {
+        display: grid;
+        grid-template-columns: 210px minmax(0, 1fr) 260px;
+        width: 1000px;
+        height: 700px;
+        margin: 0 auto;
+        border: 1px solid var(--line);
+        background: rgba(13, 17, 16, 0.98);
+        overflow: hidden;
+      }
+
+      .sidebar,
+      .inspector {
+        background: rgba(18, 22, 20, 0.96);
+      }
+
+      .sidebar {
+        padding: 18px 14px;
+        border-right: 1px solid var(--line);
+      }
+
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        min-height: 54px;
+        padding: 10px;
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        background: #161d19;
+      }
+
+      .mark,
+      .avatar {
+        display: grid;
+        place-items: center;
+        width: 32px;
+        height: 32px;
+        border-radius: var(--radius);
+        font-weight: 900;
+      }
+
+      .mark {
+        border: 1px solid rgba(216, 255, 87, 0.45);
+        color: var(--accent);
+      }
+
+      .brand strong,
+      .room-title strong,
+      .inspector-card strong {
+        display: block;
+        font-size: 16px;
+      }
+
+      .brand span,
+      .room-title span,
+      .muted {
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      .section-label {
+        margin: 22px 6px 10px;
+        color: var(--muted-2);
+        font-size: 12px;
+        font-weight: 850;
+        letter-spacing: 0;
+        text-transform: uppercase;
+      }
+
+      .nav-row {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        min-height: 36px;
+        padding: 0 11px;
+        border-radius: var(--radius);
+        color: #ded8c8;
+        font-size: 14px;
+      }
+
+      .nav-row.active {
+        border: 1px solid rgba(103, 216, 196, 0.36);
+        background: rgba(103, 216, 196, 0.1);
+      }
+
+      .nav-dot {
+        width: 11px;
+        height: 11px;
+        border-radius: 4px;
+        background: #36413a;
+      }
+
+      .nav-row.active .nav-dot {
+        background: var(--cyan);
+      }
+
+      .center {
+        display: grid;
+        grid-template-rows: auto minmax(0, 1fr) auto;
+        min-width: 0;
+        background: rgba(12, 16, 14, 0.98);
+      }
+
+      .topbar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 18px;
+        min-height: 92px;
+        padding: 18px 22px 16px;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+      }
+
+      .room-title h1 {
+        margin: 2px 0 8px;
+        font-size: 25px;
+        letter-spacing: 0;
+      }
+
+      .context-strip {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+
+      .pill,
+      .action {
+        display: inline-flex;
+        align-items: center;
+        min-height: 28px;
+        border-radius: 999px;
+        font-size: 12px;
+        font-weight: 850;
+      }
+
+      .pill {
+        padding: 3px 9px;
+        border: 1px solid var(--line);
+        color: var(--muted);
+        background: rgba(255, 255, 255, 0.03);
+      }
+
+      .pill.good {
+        border-color: rgba(139, 233, 119, 0.34);
+        background: rgba(139, 233, 119, 0.1);
+        color: var(--green);
+      }
+
+      .pill.info {
+        border-color: rgba(103, 216, 196, 0.34);
+        background: rgba(103, 216, 196, 0.1);
+        color: var(--cyan);
+      }
+
+      .thread {
+        padding: 18px 22px;
+        overflow: hidden;
+      }
+
+      .message-list {
+        display: flex;
+        width: min(100%, 540px);
+        margin: 0 auto;
+        flex-direction: column;
+        gap: 10px;
+      }
+
+      .row {
+        display: grid;
+        grid-template-columns: 36px minmax(0, 1fr);
+        gap: 11px;
+        align-items: start;
+      }
+
+      .avatar.user {
+        border: 1px solid var(--line);
+        color: var(--muted);
+        background: rgba(255, 255, 255, 0.03);
+      }
+
+      .avatar.agent {
+        background: rgba(103, 216, 196, 0.18);
+        color: var(--cyan);
+      }
+
+      .bubble {
+        width: fit-content;
+        max-width: min(520px, 100%);
+        padding: 12px 14px;
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        background: rgba(255, 255, 255, 0.04);
+      }
+
+      .bubble.agent {
+        width: min(540px, 100%);
+        border-color: rgba(103, 216, 196, 0.26);
+        background:
+          linear-gradient(90deg, rgba(103, 216, 196, 0.08), transparent 34%),
+          rgba(17, 25, 24, 0.82);
+      }
+
+      .meta {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        align-items: center;
+        margin-bottom: 8px;
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .bubble p,
+      .run-affordance p,
+      .inspector-card p {
+        margin: 0;
+        color: #e6dfcf;
+        line-height: 1.5;
+      }
+
+      .run-affordance {
+        display: grid;
+        gap: 8px;
+        padding: 10px 12px;
+        border: 1px solid rgba(216, 255, 87, 0.22);
+        border-radius: var(--radius);
+        background: rgba(19, 23, 18, 0.92);
+      }
+
+      .run-affordance.active {
+        border-color: rgba(216, 255, 87, 0.48);
+      }
+
+      .run-line {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+      }
+
+      .stage {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 4px;
+        width: 96px;
+      }
+
+      .stage span {
+        height: 4px;
+        border-radius: 999px;
+        background: #2b342d;
+      }
+
+      .stage span.done {
+        background: var(--accent);
+      }
+
+      .actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 7px;
+      }
+
+      .action {
+        padding: 3px 10px;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        color: var(--muted);
+        background: rgba(255, 255, 255, 0.03);
+      }
+
+      .action.primary {
+        border-color: rgba(103, 216, 196, 0.42);
+        color: var(--cyan);
+        background: rgba(103, 216, 196, 0.1);
+      }
+
+      .composer {
+        margin: 0 22px 18px;
+        padding: 12px;
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        background: #121712;
+      }
+
+      .composer span {
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      .inspector {
+        display: grid;
+        grid-template-rows: auto minmax(0, 1fr);
+        border-left: 1px solid var(--line);
+      }
+
+      .inspector-header {
+        padding: 18px 16px 14px;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .inspector-header h2 {
+        margin: 0 0 8px;
+        font-size: 20px;
+        letter-spacing: 0;
+      }
+
+      .inspector-scroll {
+        display: grid;
+        align-content: start;
+        gap: 12px;
+        padding: 14px;
+      }
+
+      .inspector-card {
+        display: grid;
+        gap: 8px;
+        padding: 14px;
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        background: rgba(255, 255, 255, 0.03);
+      }
+
+      .tabs {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 7px;
+      }
+    </style>
+  </head>
+  <body>
+    <main class="window">
+      <aside class="sidebar">
+        <div class="brand">
+          <div class="mark">AH</div>
+          <div>
+            <strong>Agent Hub</strong>
+            <span>Local room</span>
+          </div>
+        </div>
+
+        <div class="section-label">Rooms</div>
+        <div class="nav-row active"><span class="nav-dot"></span> general</div>
+        <div class="nav-row"><span class="nav-dot"></span> review</div>
+        <div class="nav-row"><span class="nav-dot"></span> knowledge</div>
+      </aside>
+
+      <section class="center">
+        <header class="topbar">
+          <div class="room-title">
+            <span>Room</span>
+            <h1>general</h1>
+            <div class="context-strip">
+              <span class="pill info">Context: Auto</span>
+              <span class="pill good">Project unchanged</span>
+              <span class="pill">Evidence saved</span>
+            </div>
+          </div>
+          <span class="pill info">Review ready</span>
+        </header>
+
+        <section class="thread">
+          <div class="message-list">
+            <div class="row">
+              <div class="avatar user">U</div>
+              <div class="bubble">
+                <div class="meta"><strong>You</strong><span>10:42</span></div>
+                <p>@codex tighten the desktop transcript so completed runs do not flood the room.</p>
+              </div>
+            </div>
+
+            <div class="run-affordance active">
+              <div class="run-line">
+                <div class="meta"><strong>@codex</strong><span>Running</span><span>waiting for agent output</span></div>
+                <div class="stage">
+                  <span class="done"></span>
+                  <span class="done"></span>
+                  <span></span>
+                  <span></span>
+                </div>
+              </div>
+              <p>Active runs stay visible as compact progress. Raw event lines are not the transcript.</p>
+            </div>
+
+            <div class="row">
+              <div class="avatar agent">C</div>
+              <div class="bubble agent">
+                <div class="meta"><strong>@codex</strong><span>Agent answer</span><span class="pill good">completed</span></div>
+                <p>The transcript now keeps the agent answer as the durable row. I moved lifecycle details into review, preserved the isolated worktree evidence, and kept follow-up context focused on this room's prior Codex answer.</p>
+              </div>
+            </div>
+
+            <div class="run-affordance">
+              <div class="run-line">
+                <div class="meta"><strong>@codex run</strong><span class="pill good">Review ready</span><span>Evidence saved</span></div>
+                <div class="actions">
+                  <span class="action primary">View review</span>
+                  <span class="action">Brief</span>
+                  <span class="action">Events</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <div class="composer"><span>@codex follow up with tests...</span></div>
+      </section>
+
+      <aside class="inspector">
+        <header class="inspector-header">
+          <h2>Review</h2>
+          <p class="muted">The evidence is still inspectable, but it starts outside the transcript.</p>
+        </header>
+        <div class="inspector-scroll">
+          <div class="inspector-card">
+            <strong>Conclusion</strong>
+            <p>Agent answer available. Project root unchanged. Worktree evidence saved.</p>
+          </div>
+          <div class="inspector-card">
+            <strong>Checks</strong>
+            <p>Focused transcript and context tests passed in the local run.</p>
+          </div>
+          <div class="inspector-card">
+            <strong>Secondary evidence</strong>
+            <div class="tabs">
+              <span class="pill">Brief</span>
+              <span class="pill">Events</span>
+              <span class="pill">Logs</span>
+              <span class="pill">Diff</span>
+              <span class="pill">Risks</span>
+            </div>
+          </div>
+        </div>
+      </aside>
+    </main>
+  </body>
+</html>

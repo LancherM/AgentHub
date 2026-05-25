@@ -7,6 +7,15 @@ export interface AgentDetectionResult {
   available: boolean;
   version?: string;
   reason?: string;
+  diagnostics?: AgentCliDiagnostics;
+}
+
+export interface AgentCliDiagnostics {
+  executable: string;
+  detectCommand: string;
+  verifyCommand: string;
+  cwd: string;
+  pathEntries: string[];
 }
 
 export interface AgentRunInput {
@@ -185,6 +194,11 @@ export class FakeAgentAdapter implements AgentAdapter {
       message: `fake agent wrote ${path.basename(outputPath)}`
     };
     yield {
+      type: "message",
+      message: "fake agent completed",
+      metadata: { assistantOutput: true }
+    };
+    yield {
       type: "exit",
       message: "fake agent completed",
       exitCode: 0,
@@ -310,18 +324,19 @@ function samePath(left: string, right: string): boolean {
 
 function* failureEvents(
   message: string,
-  metadata: JsonObject = { error: message }
+  metadata: JsonObject = { error: message, assistantOutput: false }
 ): Iterable<AgentRunEvent> {
+  const eventMetadata = { ...metadata, assistantOutput: false };
   yield {
     type: "error",
     message,
-    metadata
+    metadata: eventMetadata
   };
   yield {
     type: "exit",
     message,
     exitCode: 1,
-    metadata
+    metadata: eventMetadata
   };
 }
 
@@ -395,21 +410,40 @@ async function detectProcessAgent(input: {
     if (result.available) {
       return {
         available: true,
-        version: result.version
+        version: result.version,
+        diagnostics: processAgentDiagnostics(input)
       };
     }
     return {
       available: false,
-      reason: `${input.displayName} CLI unavailable: ${result.reason ?? "not found or not authenticated"}`
+      reason: `${input.displayName} CLI unavailable: ${result.reason ?? "not found or not authenticated"}`,
+      diagnostics: processAgentDiagnostics(input)
     };
   } catch (error) {
     return {
       available: false,
       reason: `${input.displayName} CLI detection failed: ${
         error instanceof Error ? error.message : String(error)
-      }`
+      }`,
+      diagnostics: processAgentDiagnostics(input)
     };
   }
+}
+
+function processAgentDiagnostics(input: {
+  executable: string;
+  args: string[];
+  cwd?: string;
+  env?: Record<string, string | undefined>;
+}): AgentCliDiagnostics {
+  const pathValue = input.env?.PATH ?? process.env.PATH ?? "";
+  return {
+    executable: input.executable,
+    detectCommand: [input.executable, ...input.args].join(" "),
+    verifyCommand: `${input.executable} --version`,
+    cwd: path.resolve(input.cwd ?? process.cwd()),
+    pathEntries: pathValue.split(path.delimiter).filter(Boolean).slice(0, 12)
+  };
 }
 
 async function* runProcessAgentWithPreflight(input: {
@@ -451,7 +485,8 @@ async function* runProcessAgentWithPreflight(input: {
       }`,
       {
         adapter: input.adapterKind,
-        detection
+        detection,
+        cliDiagnostics: detection.diagnostics
       }
     );
     return;

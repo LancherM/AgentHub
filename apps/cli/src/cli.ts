@@ -8,8 +8,10 @@ import {
   buildContextArtifacts,
   ConversationContextBuilder,
   ConversationThreadSummaryBuilder,
+  createGlobalSkill,
   exportContextToRepository,
   initContextStore,
+  listGlobalSkills,
   showContextStore,
   type ContextBuildResult,
   type ConversationContextMessage
@@ -46,6 +48,7 @@ import {
   type Project,
   type RunContextDeliveryMode,
   type RunEventType,
+  type SkillReference,
   type TaskRunStatus,
   type VerificationResult,
   type WorkgroupExecutor,
@@ -345,6 +348,14 @@ export async function main(
     return contextExport(rest.slice(1), io, cwd);
   }
 
+  if (command === "skills" && rest[0] === "global" && rest[1] === "create") {
+    return createGlobalSkillCommand(rest.slice(2), io, cwd);
+  }
+
+  if (command === "skills" && rest[0] === "global" && rest[1] === "list") {
+    return listGlobalSkillsCommand(rest.slice(2), io, cwd);
+  }
+
   if (command === "run" && rest[0] === "event" && rest[1] === "add") {
     return addRunEvent(rest.slice(2), io, activeRuntime);
   }
@@ -489,8 +500,10 @@ export function helpText(): string {
     "  agent-hub context show --project-root <path> --project-id <project-id>",
     "  agent-hub context build --project-root <path> --project-id <project-id> --task-id <task-id> --title <title> --prompt <prompt>",
     "  agent-hub context export --project-root <path> --project-id <project-id> [--target repo] --dry-run|--write",
-    "  agent-hub [--db <path>] run --task <task-id> --agent fake|codex|claude-code [--workspace-base <path>]",
-    "  agent-hub [--db <path>] run [--repo <path>] [--workspace-base <path>] [--retain-on-failure] [--continue-from-run <run-id>|--continue-from-message <message-id>] \"@fake|@codex|@claude-code <task>\"",
+    "  agent-hub skills global create --id <id> --name <name> --description <text> [--body <markdown>] [--agent-hub-home <path>]",
+    "  agent-hub skills global list [--agent-hub-home <path>]",
+    "  agent-hub [--db <path>] run --task <task-id> --agent fake|codex|claude-code [--workspace-base <path>] [--skill [scope:]id]",
+    "  agent-hub [--db <path>] run [--repo <path>] [--workspace-base <path>] [--retain-on-failure] [--continue-from-run <run-id>|--continue-from-message <message-id>] [--skill [scope:]id] \"@fake|@codex|@claude-code <task>\"",
     "  agent-hub [--db <path>] run event add --run-id <run-id> --type <type> --message <message>",
     "  agent-hub [--db <path>] threads list",
     "  agent-hub [--db <path>] threads show <thread-id>",
@@ -502,7 +515,7 @@ export function helpText(): string {
     "  agent-hub [--db <path>] chat [--thread <thread-id>|--room <handle-or-thread-id>]",
     "  agent-hub [--db <path>] team roles list --project-id <project-id>",
     "  agent-hub [--db <path>] team roles show --project-id <project-id> --role <handle>",
-    "  agent-hub [--db <path>] team roles save --project-id <project-id> --handle <handle> [--display-name <name>] [--executor fake|codex|claude-code|human|llm_api|workflow]",
+    "  agent-hub [--db <path>] team roles save --project-id <project-id> --handle <handle> [--display-name <name>] [--executor fake|codex|claude-code|human|llm_api|workflow] [--skill [scope:]id]",
     "  agent-hub [--db <path>] team roles executor --project-id <project-id> --role <handle>",
     "  agent-hub runs list",
     "  agent-hub runs events <run-id>",
@@ -1238,6 +1251,7 @@ async function runChatTurn(
       agentKind: participant.agentKind,
       deliveryMode: "runtime_injection",
       conversationBrief,
+      roleSkillReferences: participant.role?.defaultSkillReferences,
       workspaceBasePath: state.workspaceBasePath,
       workspaceCleanupPolicy: state.retainOnFailure ? "retain_on_failure" : undefined,
       dryRun: state.dryRun,
@@ -1322,18 +1336,14 @@ async function buildChatConversationBrief(input: {
   role?: WorkgroupRoleRunMetadata;
   priorMessages: ConversationMessage[];
 }) {
-  const assistantRunIds = new Set(
-    input.priorMessages
-      .filter((message) => message.role === "assistant" && message.runId)
-      .map((message) => message.runId as string)
+  const contextSourceMessages = chatContextSourceMessagesForAgent(
+    input.priorMessages,
+    input.agentKind
   );
   const messages = await Promise.all(
-    input.priorMessages
-      .filter(
-        (message) =>
-          !(message.kind === "run_card" && message.runId && assistantRunIds.has(message.runId))
-      )
-      .map((message) => toChatConversationContextMessage(input.runtime, message))
+    contextSourceMessages.map((message) =>
+      toChatConversationContextMessage(input.runtime, message)
+    )
   );
   return new ConversationContextBuilder().build({
     thread: {
@@ -1359,6 +1369,49 @@ async function buildChatConversationBrief(input: {
       ...roleContextReferences(input.role)
     ]
   });
+}
+
+function chatContextSourceMessagesForAgent(
+  messages: ConversationMessage[],
+  agentKind: AgentKind
+): ConversationMessage[] {
+  const assistantRunIds = new Set(
+    messages
+      .filter((message) => isChatAssistantContextMessage(message) && message.runId)
+      .map((message) => message.runId as string)
+  );
+  return messages.filter((message) => {
+    if (isPendingChatAssistantMessage(message) || isInternalChatTimelineMessage(message)) {
+      return false;
+    }
+    if (
+      message.kind === "run_card" &&
+      message.runId &&
+      assistantRunIds.has(message.runId)
+    ) {
+      return false;
+    }
+    if (message.role === "assistant" || message.kind === "run_card") {
+      return message.agentKind ? message.agentKind === agentKind : true;
+    }
+    return true;
+  });
+}
+
+function isChatAssistantContextMessage(message: ConversationMessage): boolean {
+  return message.role === "assistant" && !isPendingChatAssistantMessage(message);
+}
+
+function isPendingChatAssistantMessage(message: ConversationMessage): boolean {
+  return message.role === "assistant" && message.metadata?.pending === true;
+}
+
+function isInternalChatTimelineMessage(message: ConversationMessage): boolean {
+  return (
+    message.role === "system" &&
+    (typeof message.metadata?.taskEvent === "string" ||
+      typeof message.metadata?.workflowEvent === "string")
+  );
 }
 
 async function toChatConversationContextMessage(
@@ -2243,7 +2296,14 @@ function roleContextReferences(role: WorkgroupRoleRunMetadata | undefined): stri
     `role:${role.roleHandle}`,
     `role_executor:${role.executorKind}${role.adapterKind ? `/${role.adapterKind}` : ""}`,
     `role_persona:${role.persona}`,
-    `role_instructions:${role.defaultInstructions}`
+    `role_instructions:${role.defaultInstructions}`,
+    `role_skills:${
+      role.defaultSkillReferences
+        ?.map((reference) =>
+          reference.scope ? `${reference.scope}:${reference.id}` : reference.id
+        )
+        .join(", ") ?? "none"
+    }`
   ];
 }
 
@@ -2544,6 +2604,10 @@ async function roleFromSaveArgs(
       repeatedFlag(args, "--permission").length > 0
         ? repeatedFlag(args, "--permission")
         : base?.permissions ?? ["read_project_context", "read_thread_context"],
+    defaultSkillReferences:
+      repeatedFlag(args, "--skill").length > 0
+        ? repeatedFlag(args, "--skill").map(parseSkillReferenceFlag)
+        : base?.defaultSkillReferences,
     contextPolicy: {
       scope: optionalFlag(args, "--context-scope") ?? base?.contextPolicy.scope ?? "current_thread_and_project_context",
       includeApprovedMemory: !args.includes("--no-approved-memory") && (base?.contextPolicy.includeApprovedMemory ?? true),
@@ -2598,6 +2662,25 @@ function parseRoleExecutor(value: string): WorkgroupExecutor {
   throw new Error("--executor must be fake, codex, claude-code, human, llm_api, or workflow");
 }
 
+function parseSkillReferenceFlag(value: string): {
+  id: string;
+  scope?: "task" | "role" | "project" | "global";
+} {
+  const trimmed = value.trim();
+  const scoped = /^(task|role|project|global):(.+)$/.exec(trimmed);
+  if (scoped) {
+    const id = scoped[2].trim();
+    if (!id) {
+      throw new Error("--skill requires a skill id");
+    }
+    return { scope: scoped[1] as "task" | "role" | "project" | "global", id };
+  }
+  if (!trimmed) {
+    throw new Error("--skill requires a skill id");
+  }
+  return { id: trimmed };
+}
+
 function upsertStoredRole(
   existing: WorkgroupRole[],
   role: WorkgroupRole
@@ -2646,13 +2729,19 @@ function metadataString(metadata: JsonObject | undefined, key: string): string |
 
 function chatAssistantContent(result: CliRunResult): string {
   const extracted = extractAgentOutput(result).trim();
-  const content =
-    extracted ||
-    result.error ||
-    (result.ok
-      ? `@${result.run.agentKind} completed.`
-      : `@${result.run.agentKind} failed.`);
+  const content = extracted || terminalChatAssistantSummary(result);
   return truncateText(content, 2_000);
+}
+
+function terminalChatAssistantSummary(result: CliRunResult): string {
+  const agent = `@${result.run.agentKind}`;
+  if (result.ok) {
+    return `${agent} completed without agent-facing output. Run evidence is available through the run review commands.`;
+  }
+  if (result.run.status === "cancelled") {
+    return `${agent} was cancelled before producing agent-facing output. Run evidence is available through the run review commands.`;
+  }
+  return `${agent} failed before producing agent-facing output. Run evidence is available through the run review commands.`;
 }
 
 function titleFromPrompt(prompt: string): string {
@@ -2850,6 +2939,70 @@ async function contextExport(args: string[], io: CliIO, cwd: string): Promise<nu
         ...(result.warnings.length === 0
           ? ["  - none"]
           : result.warnings.map((warning) => `  - ${warning}`)),
+        ""
+      ].join("\n")
+    );
+    return 0;
+  } catch (error) {
+    io.stderr.write(`error: ${error instanceof Error ? error.message : String(error)}\n`);
+    return 1;
+  }
+}
+
+async function createGlobalSkillCommand(
+  args: string[],
+  io: CliIO,
+  cwd: string
+): Promise<number> {
+  try {
+    const skill = await createGlobalSkill({
+      id: optionalFlag(args, "--id"),
+      name: requiredFlag(args, "--name"),
+      description: requiredFlag(args, "--description"),
+      body: optionalFlag(args, "--body"),
+      agentHubHome: optionalFlag(args, "--agent-hub-home")
+        ? path.resolve(cwd, requiredFlag(args, "--agent-hub-home"))
+        : undefined,
+      overwrite: args.includes("--overwrite")
+    });
+    io.stdout.write(
+      [
+        "Created global skill",
+        `id: ${skill.id}`,
+        `scope: ${skill.scope}`,
+        `name: ${skill.name}`,
+        `path: ${skill.path}`,
+        `content_sha256: ${skill.contentHash}`,
+        ""
+      ].join("\n")
+    );
+    return 0;
+  } catch (error) {
+    io.stderr.write(`error: ${error instanceof Error ? error.message : String(error)}\n`);
+    return 1;
+  }
+}
+
+async function listGlobalSkillsCommand(
+  args: string[],
+  io: CliIO,
+  cwd: string
+): Promise<number> {
+  try {
+    const skills = await listGlobalSkills({
+      agentHubHome: optionalFlag(args, "--agent-hub-home")
+        ? path.resolve(cwd, requiredFlag(args, "--agent-hub-home"))
+        : undefined
+    });
+    io.stdout.write(
+      [
+        "Global skills",
+        ...(skills.length === 0
+          ? ["  - none"]
+          : skills.map(
+              (skill) =>
+                `  - ${skill.id} (${skill.name}) ${skill.contentHash}`
+            )),
         ""
       ].join("\n")
     );
@@ -3644,6 +3797,8 @@ interface ParsedRunArgs {
   workspaceBasePath?: string;
   deliveryMode?: RunContextDeliveryMode;
   contextStoreRoot?: string;
+  agentHubHome?: string;
+  selectedSkillReferences: SkillReference[];
   continueFromRunId?: string;
   continueFromMessageId?: string;
   retainOnFailure: boolean;
@@ -3657,6 +3812,10 @@ async function resolveRunInput(
   runtime: CliRuntime
 ): Promise<RunTaskInput> {
   const continueFrom = await resolveRunContinuation(options, runtime);
+  const selectedSkillReferences =
+    options.selectedSkillReferences.length > 0
+      ? options.selectedSkillReferences
+      : undefined;
   if (options.registeredTask) {
     if (!options.taskId) {
       throw new Error("--task requires an id");
@@ -3677,6 +3836,8 @@ async function resolveRunInput(
       title: task.title,
       taskPrompt: task.description ?? task.title,
       agentKind,
+      agentHubHome: options.agentHubHome,
+      selectedSkillReferences,
       continueFrom
     };
   }
@@ -3693,6 +3854,8 @@ async function resolveRunInput(
       title: options.title,
       taskPrompt,
       agentKind,
+      agentHubHome: options.agentHubHome,
+      selectedSkillReferences,
       continueFrom
     };
   }
@@ -3705,6 +3868,8 @@ async function resolveRunInput(
     projectRoot: options.projectRoot,
     rawPrompt: options.rawPrompt,
     agentKind: parsed.agentKind,
+    agentHubHome: options.agentHubHome,
+    selectedSkillReferences,
     continueFrom
   };
 }
@@ -3749,6 +3914,8 @@ function parseRunArgs(args: string[], cwd: string): ParsedRunArgs {
   let workspaceBasePath: string | undefined;
   let deliveryMode: RunContextDeliveryMode | undefined;
   let contextStoreRoot: string | undefined;
+  let agentHubHome: string | undefined;
+  const selectedSkillReferences: SkillReference[] = [];
   let continueFromRunId: string | undefined;
   let continueFromMessageId: string | undefined;
   let retainOnFailure = false;
@@ -3861,6 +4028,24 @@ function parseRunArgs(args: string[], cwd: string): ParsedRunArgs {
       index += 1;
       continue;
     }
+    if (parsingFlags && arg === "--agent-hub-home") {
+      const value = args[index + 1];
+      if (!value) {
+        throw new Error("--agent-hub-home requires a path");
+      }
+      agentHubHome = path.resolve(cwd, value);
+      index += 1;
+      continue;
+    }
+    if (parsingFlags && arg === "--skill") {
+      const value = args[index + 1];
+      if (!value) {
+        throw new Error("--skill requires a skill id");
+      }
+      selectedSkillReferences.push(parseSkillReferenceFlag(value));
+      index += 1;
+      continue;
+    }
     if (parsingFlags && arg === "--continue-from-run") {
       const value = args[index + 1];
       if (!value) {
@@ -3906,6 +4091,8 @@ function parseRunArgs(args: string[], cwd: string): ParsedRunArgs {
     workspaceBasePath,
     deliveryMode,
     contextStoreRoot,
+    agentHubHome,
+    selectedSkillReferences,
     continueFromRunId,
     continueFromMessageId,
     retainOnFailure,

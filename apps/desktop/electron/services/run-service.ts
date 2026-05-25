@@ -451,6 +451,8 @@ class RepositoryRunService implements RunService {
       title: task.title,
       taskStatusMode: input.assignment ? "shared_task" : "single_run",
       deliveryMode: input.deliveryMode,
+      agentHubHome: this.context.agentHubHome,
+      roleSkillReferences: input.role?.defaultSkillReferences,
       conversationBrief: input.conversationBrief,
       userConstraints: roleUserConstraints(input.role),
       executionHints: roleExecutionHints(input.role),

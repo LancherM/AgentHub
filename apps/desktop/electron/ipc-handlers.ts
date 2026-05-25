@@ -10,6 +10,7 @@ import type {
   RunEvent,
   SaveTeamRoleInput,
   SendThreadMessageInput,
+  UpdateThreadInput,
   VerificationSettings
 } from "../src/lib/types";
 import { IPC_CHANNELS, runEventChannel } from "./ipc-channels";
@@ -162,6 +163,8 @@ export function createIpcHandlers(
       services.threads.getThread(parseId(input, "threadId")),
     [IPC_CHANNELS.threadsCreate]: async (_event, input) =>
       services.threads.createThread(parseCreateThreadInput(input)),
+    [IPC_CHANNELS.threadsUpdate]: async (_event, input) =>
+      services.threads.updateThread(parseUpdateThreadInput(input)),
     [IPC_CHANNELS.threadsSendMessage]: async (_event, input) =>
       services.threads.sendMessage(parseSendThreadMessageInput(input)),
     [IPC_CHANNELS.reviewSummary]: async (_event, input) =>
@@ -481,7 +484,25 @@ function parseCreateThreadInput(input: unknown): CreateThreadInput {
       value.description === undefined
         ? undefined
         : parseId(value.description, "description"),
-    pinned: value.pinned === undefined ? undefined : parseBoolean(value.pinned, "pinned")
+    pinned: value.pinned === undefined ? undefined : parseBoolean(value.pinned, "pinned"),
+    sharedContextEnabled:
+      value.sharedContextEnabled === undefined
+        ? undefined
+        : parseBoolean(value.sharedContextEnabled, "sharedContextEnabled")
+  };
+}
+
+function parseUpdateThreadInput(input: unknown): UpdateThreadInput {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    throw new Error("thread update input is required");
+  }
+  const value = input as Partial<UpdateThreadInput>;
+  return {
+    threadId: parseId(value.threadId, "threadId"),
+    sharedContextEnabled: parseBoolean(
+      value.sharedContextEnabled,
+      "sharedContextEnabled"
+    )
   };
 }
 

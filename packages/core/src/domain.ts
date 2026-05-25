@@ -10,6 +10,7 @@ import {
   normalizeWorkgroupRoleHandle,
   riskLevels,
   runEventTypes,
+  skillScopes,
   taskRunStatuses,
   taskStatuses,
   verificationStatuses,
@@ -329,6 +330,11 @@ export function validateWorkgroupRole(input: WorkgroupRole): WorkgroupRole {
   if (typeof input.enabled !== "boolean") {
     issues.push("workgroupRole.enabled must be a boolean");
   }
+  optionalSkillReferences(
+    input.defaultSkillReferences,
+    "workgroupRole.defaultSkillReferences",
+    issues
+  );
   optionalString(input.defaultRoom, "workgroupRole.defaultRoom", issues);
   if (
     input.tags !== undefined &&
@@ -400,6 +406,7 @@ export function validateContextPack(input: ContextPack): ContextPack {
   stringArray(input.contextSections, "contextPack.contextSections", issues);
   stringArray(input.approvedMemorySections, "contextPack.approvedMemorySections", issues);
   stringArray(input.skillReferences, "contextPack.skillReferences", issues);
+  optionalInjectedSkills(input.injectedSkills, "contextPack.injectedSkills", issues);
   timestamp(input.createdAt, "contextPack.createdAt", issues);
   return finish(input, issues);
 }
@@ -465,6 +472,58 @@ function stringArray(value: unknown, field: string, issues: string[]): void {
   if (!Array.isArray(value) || value.some((entry) => typeof entry !== "string")) {
     issues.push(`${field} must be an array of strings`);
   }
+}
+
+function optionalInjectedSkills(
+  value: unknown,
+  field: string,
+  issues: string[]
+): void {
+  if (value === undefined) {
+    return;
+  }
+  if (!Array.isArray(value)) {
+    issues.push(`${field} must be an array when provided`);
+    return;
+  }
+  value.forEach((entry, index) => {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+      issues.push(`${field}.${index} must be an object`);
+      return;
+    }
+    const skill = entry as Record<string, unknown>;
+    required(skill.id, `${field}.${index}.id`, issues);
+    enumValue(skill.scope, skillScopes, `${field}.${index}.scope`, issues);
+    required(skill.name, `${field}.${index}.name`, issues);
+    required(skill.description, `${field}.${index}.description`, issues);
+    required(skill.contentHash, `${field}.${index}.contentHash`, issues);
+    optionalString(skill.sourcePath, `${field}.${index}.sourcePath`, issues);
+  });
+}
+
+function optionalSkillReferences(
+  value: unknown,
+  field: string,
+  issues: string[]
+): void {
+  if (value === undefined) {
+    return;
+  }
+  if (!Array.isArray(value)) {
+    issues.push(`${field} must be an array when provided`);
+    return;
+  }
+  value.forEach((entry, index) => {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+      issues.push(`${field}.${index} must be an object`);
+      return;
+    }
+    const reference = entry as Record<string, unknown>;
+    required(reference.id, `${field}.${index}.id`, issues);
+    if (reference.scope !== undefined) {
+      enumValue(reference.scope, skillScopes, `${field}.${index}.scope`, issues);
+    }
+  });
 }
 
 function secretFreeSettingKey(value: unknown, field: string, issues: string[]): void {

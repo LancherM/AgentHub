@@ -1,0 +1,486 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Agent Hub Phase UX-2 Room Creation and Shared Context</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #0f100d;
+        --panel: #151612;
+        --panel-2: #1c1d18;
+        --line: #34372c;
+        --text: #f4f0e7;
+        --muted: #aaa48f;
+        --muted-2: #807b6d;
+        --accent: #d8ff57;
+        --cyan: #67d8c4;
+        --ink: #1d2602;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        display: grid;
+        min-height: 100vh;
+        margin: 0;
+        place-items: center;
+        background:
+          linear-gradient(rgba(255, 255, 255, 0.018) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(255, 255, 255, 0.014) 1px, transparent 1px),
+          radial-gradient(circle at 74% 10%, rgba(103, 216, 196, 0.1), transparent 32%),
+          var(--bg);
+        background-size: 32px 32px, 32px 32px, 100% 100%, 100% 100%;
+        color: var(--text);
+        font-family:
+          "Aptos",
+          "SF Pro Text",
+          "Segoe UI",
+          ui-sans-serif,
+          system-ui,
+          sans-serif;
+      }
+
+      .window {
+        display: grid;
+        grid-template-columns: 300px minmax(0, 1fr);
+        width: 1000px;
+        height: 760px;
+        border: 1px solid var(--line);
+        background: rgba(15, 16, 13, 0.98);
+        overflow: hidden;
+      }
+
+      .sidebar {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+        padding: 18px 14px;
+        border-right: 1px solid var(--line);
+        background: rgba(18, 19, 16, 0.94);
+      }
+
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 2px 4px 8px;
+      }
+
+      .mark {
+        display: grid;
+        width: 36px;
+        height: 36px;
+        place-items: center;
+        border: 1px solid rgba(216, 255, 87, 0.56);
+        border-radius: 8px;
+        background: var(--accent);
+        color: var(--ink);
+        font-size: 12px;
+        font-weight: 900;
+      }
+
+      h1,
+      h2,
+      p {
+        margin: 0;
+      }
+
+      .brand strong {
+        display: block;
+        font-size: 16px;
+      }
+
+      .muted,
+      .row-subtitle,
+      .context-switch {
+        color: var(--muted);
+      }
+
+      .section-label {
+        margin-bottom: 8px;
+        color: var(--muted-2);
+        font-size: 11px;
+        font-weight: 850;
+        text-transform: uppercase;
+      }
+
+      .selected-project,
+      .add-project,
+      .room-form,
+      .room-row,
+      .message,
+      .context-switch {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: rgba(255, 255, 255, 0.026);
+      }
+
+      .selected-project {
+        display: grid;
+        grid-template-columns: 10px minmax(0, 1fr);
+        gap: 10px;
+        align-items: center;
+        min-height: 48px;
+        padding: 10px;
+        border-color: rgba(216, 255, 87, 0.22);
+        background: rgba(216, 255, 87, 0.055);
+      }
+
+      .dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: var(--accent);
+      }
+
+      .row-title {
+        overflow: hidden;
+        font-size: 13px;
+        font-weight: 800;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .row-subtitle {
+        overflow: hidden;
+        font-size: 12px;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .add-project {
+        margin-top: 10px;
+      }
+
+      .add-project summary {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        min-height: 34px;
+        padding: 0 10px;
+        font-size: 12px;
+        font-weight: 850;
+        list-style: none;
+      }
+
+      .add-project summary::after {
+        content: "+";
+        color: var(--accent);
+        font-size: 17px;
+      }
+
+      .section-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+      }
+
+      .icon-button,
+      .primary-button,
+      .ghost-button {
+        display: grid;
+        place-items: center;
+        min-height: 34px;
+        border-radius: 8px;
+        font-weight: 850;
+      }
+
+      .icon-button,
+      .ghost-button {
+        border: 1px solid var(--line);
+        background: rgba(255, 255, 255, 0.035);
+        color: var(--text);
+      }
+
+      .icon-button {
+        width: 28px;
+        height: 28px;
+        color: var(--accent);
+        font-size: 18px;
+      }
+
+      .primary-button {
+        border: 0;
+        background: var(--accent);
+        color: var(--ink);
+      }
+
+      .room-form {
+        display: grid;
+        grid-template-columns: 1fr 0.9fr;
+        gap: 8px;
+        padding: 10px;
+        border-color: rgba(103, 216, 196, 0.24);
+        background: rgba(103, 216, 196, 0.045);
+      }
+
+      label {
+        display: grid;
+        gap: 5px;
+      }
+
+      label span {
+        color: var(--muted-2);
+        font-size: 11px;
+        font-weight: 850;
+        text-transform: uppercase;
+      }
+
+      input,
+      textarea {
+        width: 100%;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: rgba(8, 9, 7, 0.72);
+        color: var(--text);
+      }
+
+      input {
+        height: 34px;
+        padding: 0 9px;
+      }
+
+      textarea {
+        min-height: 58px;
+        padding: 8px 9px;
+        resize: none;
+      }
+
+      .wide,
+      .room-actions {
+        grid-column: 1 / -1;
+      }
+
+      .room-actions {
+        display: flex;
+        justify-content: flex-end;
+        gap: 8px;
+      }
+
+      .room-list {
+        display: grid;
+        gap: 8px;
+        overflow: hidden;
+      }
+
+      .room-row {
+        display: grid;
+        gap: 7px;
+        padding: 11px;
+      }
+
+      .room-row.active {
+        border-color: rgba(216, 255, 87, 0.45);
+        background: rgba(216, 255, 87, 0.08);
+      }
+
+      .room-main {
+        display: grid;
+        grid-template-columns: 9px minmax(0, 1fr) auto;
+        gap: 9px;
+        align-items: center;
+      }
+
+      .content {
+        display: grid;
+        grid-template-rows: auto minmax(0, 1fr) auto;
+        min-width: 0;
+      }
+
+      .header {
+        display: flex;
+        justify-content: space-between;
+        gap: 18px;
+        padding: 22px 28px 14px;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+      }
+
+      .header > div:first-child {
+        min-width: 0;
+      }
+
+      .header h1 {
+        margin-bottom: 8px;
+        font-size: 22px;
+      }
+
+      .context-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .context-switch {
+        display: grid;
+        flex: 0 0 260px;
+        grid-template-columns: auto minmax(0, 1fr);
+        gap: 10px;
+        align-items: center;
+        max-width: 310px;
+        min-height: 42px;
+        padding: 8px 10px;
+        font-size: 12px;
+        line-height: 1.25;
+      }
+
+      .switch {
+        position: relative;
+        width: 38px;
+        height: 22px;
+        border-radius: 999px;
+        background: var(--accent);
+      }
+
+      .switch::after {
+        position: absolute;
+        top: 3px;
+        right: 3px;
+        width: 16px;
+        height: 16px;
+        border-radius: 50%;
+        background: var(--ink);
+        content: "";
+      }
+
+      .scroll {
+        display: grid;
+        align-content: start;
+        gap: 14px;
+        padding: 20px 28px;
+      }
+
+      .message {
+        width: min(100%, 720px);
+        padding: 14px;
+      }
+
+      .message p,
+      .context-switch span:last-child {
+        overflow-wrap: anywhere;
+      }
+
+      .message.agent {
+        width: min(calc(100% - 48px), 720px);
+        margin-left: 48px;
+        border-color: rgba(216, 255, 87, 0.24);
+        background: rgba(216, 255, 87, 0.04);
+      }
+
+      .composer {
+        margin: 0 28px 20px;
+        padding: 12px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: rgba(17, 18, 14, 0.96);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="window">
+      <aside class="sidebar">
+        <div class="brand">
+          <div class="mark">AH</div>
+          <div>
+            <strong>Agent Hub</strong>
+            <p class="muted">Local workgroup</p>
+          </div>
+        </div>
+
+        <section>
+          <div class="section-label">Project</div>
+          <div class="selected-project">
+            <span class="dot"></span>
+            <div>
+              <div class="row-title">agent-hub</div>
+              <div class="row-subtitle">/Users/lan/agent-hub</div>
+            </div>
+          </div>
+          <details class="add-project">
+            <summary>Add project</summary>
+          </details>
+        </section>
+
+        <section>
+          <div class="section-header">
+            <div class="section-label">Rooms</div>
+            <button class="icon-button" aria-label="Create room">+</button>
+          </div>
+          <form class="room-form">
+            <label>
+              <span>Room title</span>
+              <input value="Design Review" />
+            </label>
+            <label>
+              <span>Handle</span>
+              <input value="design-review" />
+            </label>
+            <label class="wide">
+              <span>Description</span>
+              <textarea>Focused review room for desktop interaction work.</textarea>
+            </label>
+            <div class="room-actions">
+              <button class="ghost-button" type="button">Cancel</button>
+              <button class="primary-button" type="button">Create room</button>
+            </div>
+          </form>
+          <div class="room-list">
+            <div class="room-row">
+              <div class="room-main">
+                <span class="dot"></span>
+                <div class="row-title">#general</div>
+                <span class="row-subtitle">4m</span>
+              </div>
+              <div class="row-subtitle">Project-wide coordination and agent prompts.</div>
+            </div>
+            <div class="room-row active">
+              <div class="room-main">
+                <span class="dot"></span>
+                <div class="row-title">#design-review</div>
+                <span class="row-subtitle">now</span>
+              </div>
+              <div class="row-subtitle">Focused review room for desktop interaction work.</div>
+            </div>
+          </div>
+        </section>
+      </aside>
+
+      <main class="content">
+        <header class="header">
+          <div>
+            <h1>#design-review</h1>
+            <p class="muted">Focused review room for desktop interaction work.</p>
+            <div class="context-row">
+              <span>Project: agent-hub</span>
+              <span>Room: custom</span>
+              <span>Mode: local desktop</span>
+              <span>Context: runtime injection by default</span>
+            </div>
+          </div>
+          <div class="context-switch">
+            <span class="switch"></span>
+            <span>Use this room's prior conversation in future agent runs</span>
+          </div>
+        </header>
+
+        <section class="scroll">
+          <div class="message">
+            <strong>User</strong>
+            <p>Create a follow-up checklist for the desktop review.</p>
+          </div>
+          <div class="message agent">
+            <strong>@fake</strong>
+            <p>Checklist created. The next run can use this room's prior conversation while the switch remains on.</p>
+          </div>
+        </section>
+
+        <div class="composer">@fake continue with the selected room context</div>
+      </main>
+    </div>
+  </body>
+</html>

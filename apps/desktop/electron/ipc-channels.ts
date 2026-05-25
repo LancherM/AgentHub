@@ -10,6 +10,7 @@ export const IPC_CHANNELS = {
   threadsList: "agent-hub:threads:list",
   threadsGet: "agent-hub:threads:get",
   threadsCreate: "agent-hub:threads:create",
+  threadsUpdate: "agent-hub:threads:update",
   threadsSendMessage: "agent-hub:threads:send-message",
   reviewSummary: "agent-hub:review:summary",
   reviewContext: "agent-hub:review:context",

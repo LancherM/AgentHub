@@ -47,6 +47,7 @@ import type {
   ThreadSummary,
   TimelineEventKind,
   TimelineEventMetadata,
+  UpdateThreadInput,
   UserMessage
 } from "../../src/lib/types";
 import {
@@ -106,6 +107,7 @@ export interface ThreadService {
   listThreads(): Promise<ThreadSummary[]>;
   getThread(threadId: string): Promise<ThreadDetail>;
   createThread(input?: CreateThreadInput): Promise<ThreadSummary>;
+  updateThread(input: UpdateThreadInput): Promise<ThreadDetail>;
   appendUserMessage(
     threadId: string,
     text: string,
@@ -223,13 +225,37 @@ class RepositoryThreadService implements ThreadService {
           roomType: input.roomType ?? "custom",
           roomHandle,
           description: input.description,
-          pinned: input.pinned
+          pinned: input.pinned,
+          sharedContextEnabled: input.sharedContextEnabled
         }),
         createdAt: now,
         updatedAt: now
       })
     );
     return toThreadSummary(toThreadDetail(thread, [], new Map()));
+  }
+
+  async updateThread(input: UpdateThreadInput): Promise<ThreadDetail> {
+    const thread = await this.requireThread(input.threadId);
+    const room = roomMetadataForThread(thread);
+    const updated = await this.threads.update(
+      validateConversationThread({
+        ...thread,
+        metadata: {
+          ...(thread.metadata ?? {}),
+          ...roomMetadata({
+            ...room,
+            sharedContextEnabled: input.sharedContextEnabled
+          })
+        },
+        updatedAt: this.dependencies.context.now()
+      })
+    );
+    const [messages, runStatusById] = await Promise.all([
+      this.messages.listByThreadId(updated.id),
+      this.runStatusById(updated.projectId)
+    ]);
+    return toThreadDetail(updated, messages, runStatusById);
   }
 
   async appendUserMessage(
@@ -814,19 +840,10 @@ class RepositoryThreadService implements ThreadService {
     contextMode: ContextMode;
     priorMessages: ConversationMessage[];
   }) {
-    const assistantRunIds = new Set(
-      input.priorMessages
-        .filter((message) => isAssistantContextMessage(message) && message.runId)
-        .map((message) => message.runId as string)
-    );
-    const contextSourceMessages = input.priorMessages.filter(
-      (message) =>
-        !(
-          message.kind === "run_card" &&
-          message.runId &&
-          assistantRunIds.has(message.runId)
-        )
-    );
+    const room = roomMetadataForThread(input.thread);
+    const contextSourceMessages = room.sharedContextEnabled
+      ? contextSourceMessagesForAgent(input.priorMessages, input.agentId)
+      : [];
     const messages = await Promise.all(
       contextSourceMessages.map((message) => this.toConversationContextMessage(message))
     );
@@ -846,11 +863,14 @@ class RepositoryThreadService implements ThreadService {
       messages: messages.filter(
         (message): message is ConversationContextMessage => message !== undefined
       ),
-      threadSummary: await this.summaries.getByThreadId(input.thread.id),
+      threadSummary: room.sharedContextEnabled
+        ? await this.summaries.getByThreadId(input.thread.id)
+        : undefined,
       projectContextReferences: [
         `project:${input.thread.projectId}`,
         "Agent Hub-owned project context store",
         "Approved memory only; thread context is not promoted automatically",
+        `room_shared_context:${room.sharedContextEnabled ? "enabled" : "disabled"}`,
         ...roleContextReferences(input.role)
       ]
     });
@@ -860,6 +880,9 @@ class RepositoryThreadService implements ThreadService {
     message: ConversationMessage
   ): Promise<ConversationContextMessage | undefined> {
     if (isPendingAssistantOutputMessage(message)) {
+      return undefined;
+    }
+    if (isInternalTimelineMessage(message)) {
       return undefined;
     }
     if (message.role === "user") {
@@ -1533,14 +1556,20 @@ interface RoomMetadata {
   roomHandle: string;
   description?: string;
   pinned?: boolean;
+  sharedContextEnabled: boolean;
 }
 
-function roomMetadata(input: RoomMetadata): ConversationThread["metadata"] {
+function roomMetadata(
+  input: Omit<RoomMetadata, "sharedContextEnabled"> & {
+    sharedContextEnabled?: boolean;
+  }
+): ConversationThread["metadata"] {
   return {
     roomType: input.roomType,
     roomHandle: input.roomHandle,
     description: input.description,
-    pinned: input.pinned
+    pinned: input.pinned,
+    sharedContextEnabled: input.sharedContextEnabled ?? true
   };
 }
 
@@ -2108,7 +2137,8 @@ function roomMetadataForThread(thread: ConversationThread): RoomMetadata {
       typeof metadata.description === "string" && metadata.description.trim()
         ? metadata.description.trim()
         : undefined,
-    pinned: metadata.pinned === true
+    pinned: metadata.pinned === true,
+    sharedContextEnabled: metadata.sharedContextEnabled !== false
   };
 }
 
@@ -2174,6 +2204,7 @@ function toThreadDetail(
     roomHandle: room.roomHandle,
     description: room.description,
     pinned: room.pinned,
+    sharedContextEnabled: room.sharedContextEnabled,
     createdAt: thread.createdAt,
     updatedAt: latestUpdatedAt(thread, messages),
     messages: threadMessages
@@ -2190,6 +2221,13 @@ function roleContextReferences(role?: WorkgroupRoleRunMetadata): string[] {
     `role_persona: ${role.persona}`,
     `role_instructions: ${role.defaultInstructions}`,
     `role_permissions: ${role.permissions.join(", ") || "none"}`,
+    `role_skills: ${
+      role.defaultSkillReferences
+        ?.map((reference) =>
+          reference.scope ? `${reference.scope}:${reference.id}` : reference.id
+        )
+        .join(", ") ?? "none"
+    }`,
     `role_context_policy: ${role.contextPolicy.scope}; approved_memory=${String(
       role.contextPolicy.includeApprovedMemory
     )}; thread_summary=${String(role.contextPolicy.includeThreadSummary)}`,
@@ -2210,6 +2248,7 @@ function toThreadSummary(thread: ThreadDetail): ThreadSummary {
     roomHandle: thread.roomHandle,
     description: thread.description,
     pinned: thread.pinned,
+    sharedContextEnabled: thread.sharedContextEnabled,
     createdAt: thread.createdAt,
     updatedAt: thread.updatedAt,
     lastMessagePreview: lastMessage
@@ -2446,6 +2485,48 @@ function isAssistantContextMessage(message: ConversationMessage): boolean {
   return message.role === "assistant" && !isPendingAssistantOutputMessage(message);
 }
 
+function contextSourceMessagesForAgent(
+  messages: ConversationMessage[],
+  agentId: AgentId
+): ConversationMessage[] {
+  const assistantRunIds = new Set(
+    messages
+      .filter((message) => isAssistantContextMessage(message) && message.runId)
+      .map((message) => message.runId as string)
+  );
+  return messages.filter((message) => {
+    if (isPendingAssistantOutputMessage(message) || isInternalTimelineMessage(message)) {
+      return false;
+    }
+    if (
+      message.kind === "run_card" &&
+      message.runId &&
+      assistantRunIds.has(message.runId)
+    ) {
+      return false;
+    }
+    if (message.role === "assistant" || message.kind === "run_card") {
+      return messageBelongsToAgent(message, agentId);
+    }
+    return true;
+  });
+}
+
+function messageBelongsToAgent(
+  message: ConversationMessage,
+  agentId: AgentId
+): boolean {
+  return message.agentKind ? toAgentId(message.agentKind) === agentId : true;
+}
+
+function isInternalTimelineMessage(message: ConversationMessage): boolean {
+  return (
+    message.role === "system" &&
+    (typeof message.metadata?.taskEvent === "string" ||
+      typeof message.metadata?.workflowEvent === "string")
+  );
+}
+
 function terminalAssistantContent(run: ConversationRunSnapshot): string {
   const extracted = extractAgentFacingOutput(
     {
@@ -2453,7 +2534,7 @@ function terminalAssistantContent(run: ConversationRunSnapshot): string {
     },
     {
       includeRawStreams: false,
-      includeTerminalSummaries: true
+      includeTerminalSummaries: false
     }
   ).trim();
   return truncateAssistantContent(extracted || terminalStatusSummary(run));
@@ -2472,16 +2553,13 @@ function toAgentOutputEvent(event: RunEvent): {
 }
 
 function terminalStatusSummary(run: ConversationRunSnapshot): string {
-  if (run.summary.trim().length > 0) {
-    return run.summary.trim();
-  }
   if (run.status === "completed") {
-    return `@${run.agentId} completed.`;
+    return `@${run.agentId} completed without agent-facing output. Review evidence is available.`;
   }
   if (run.status === "cancelled") {
-    return `@${run.agentId} was cancelled.`;
+    return `@${run.agentId} was cancelled before producing agent-facing output. Review evidence is available.`;
   }
-  return `@${run.agentId} failed.`;
+  return `@${run.agentId} failed before producing agent-facing output. Review evidence is available.`;
 }
 
 function truncateAssistantContent(content: string): string {
