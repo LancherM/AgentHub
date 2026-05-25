@@ -42,6 +42,7 @@ interface ChatViewProps {
   onCancelRun(runId: string): Promise<void>;
   onSetSharedContext(enabled: boolean): void;
   onRegisterProject(projectPath: string): Promise<void>;
+  onSelectProjectDirectory(): Promise<string | undefined>;
   onOpenSettings(): void;
 }
 
@@ -65,6 +66,7 @@ export function ChatView({
   onCancelRun,
   onSetSharedContext,
   onRegisterProject,
+  onSelectProjectDirectory,
   onOpenSettings
 }: ChatViewProps): JSX.Element {
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -171,6 +173,7 @@ export function ChatView({
               <ProjectRegistrationForm
                 isBusy={isBusy}
                 onRegister={onRegisterProject}
+                onSelectDirectory={onSelectProjectDirectory}
               />
             </EmptyState>
           </div>

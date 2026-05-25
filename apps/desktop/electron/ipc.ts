@@ -1,4 +1,4 @@
-import { clipboard, ipcMain, shell } from "electron";
+import { clipboard, dialog, ipcMain, shell } from "electron";
 import {
   createDesktopServices,
   createIpcHandlers,
@@ -29,4 +29,11 @@ export function registerAgentHubIpc(
   for (const [channel, handler] of Object.entries(handlers)) {
     ipcMain.handle(channel, handler);
   }
+  ipcMain.handle(IPC_CHANNELS.projectsSelectDirectory, async () => {
+    const result = await dialog.showOpenDialog({
+      title: "Select local project folder",
+      properties: ["openDirectory"]
+    });
+    return result.canceled ? undefined : result.filePaths[0];
+  });
 }

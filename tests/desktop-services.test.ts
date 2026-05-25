@@ -3363,6 +3363,93 @@ describe("desktop services", () => {
     expect(artifact?.content).not.toContain("Task created:");
   });
 
+  it("resumes the previous Codex CLI session for follow-up turns to the same role", async () => {
+    const fixture = await createFixture();
+    const context = createDesktopServiceContext(fixture.repositories);
+    const projects = createProjectService(context);
+    const memory = createMemoryService(context);
+    const review = createReviewService(context, { memoryService: memory });
+    const processRunner = new MockProcessRunner(
+      [
+        [
+          {
+            type: "stdout",
+            data: "{\"type\":\"thread.started\",\"thread_id\":\"019e5f4d-a2fb-7b71-9a69-b6ecc2795aa2\"}\n"
+          },
+          {
+            type: "stdout",
+            data: "{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"first role reply\"}}\n"
+          },
+          { type: "exit", exitCode: 0, signal: null }
+        ],
+        [
+          {
+            type: "stdout",
+            data: "{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"continued role reply\"}}\n"
+          },
+          { type: "exit", exitCode: 0, signal: null }
+        ]
+      ],
+      Array.from({ length: 10 }, () => ({
+        available: true,
+        version: "codex-cli 0.130.0"
+      }))
+    );
+    const runs = createTestRunService(context, review, memory, fixture, {
+      processRunner
+    });
+    const threads = createThreadService({
+      context,
+      projects,
+      runs,
+      roles: presetWorkgroupRoles
+    });
+    const project = await projects.open(fixture.projectRoot);
+
+    const first = await threads.sendMessage({
+      projectId: project.id,
+      text: "@engineer first role turn",
+      contextMode: "auto"
+    });
+    const firstRun = first.messages.find(
+      (message): message is AgentRunMessage => message.type === "agent_run"
+    );
+    if (!firstRun) {
+      throw new Error("expected first role run");
+    }
+    await waitForRun(runs, firstRun.runId, "completed");
+
+    const second = await threads.sendMessage({
+      threadId: first.id,
+      text: "@engineer second role turn",
+      contextMode: "auto"
+    });
+    const secondRun = second.messages
+      .filter((message): message is AgentRunMessage => message.type === "agent_run")
+      .at(-1);
+    if (!secondRun) {
+      throw new Error("expected second role run");
+    }
+    await waitForRun(runs, secondRun.runId, "completed");
+
+    expect(processRunner.runCalls[0].args).toEqual(["exec", "--json", "-"]);
+    expect(processRunner.runCalls[1].args).toEqual([
+      "exec",
+      "resume",
+      "--json",
+      "019e5f4d-a2fb-7b71-9a69-b6ecc2795aa2",
+      "-"
+    ]);
+    await expect(threads.getThread(first.id)).resolves.toMatchObject({
+      messages: expect.arrayContaining([
+        expect.objectContaining({
+          type: "assistant",
+          text: "continued role reply"
+        })
+      ])
+    });
+  });
+
   it("uses the retitled thread in first-turn conversation briefs", async () => {
     const fixture = await createFixture();
     const context = createDesktopServiceContext(fixture.repositories);

@@ -18,6 +18,7 @@ interface SidebarProps {
   onSelectThread(threadId: string): void;
   onSelectProject(projectId: string): void;
   onRegisterProject(projectPath: string): Promise<void>;
+  onSelectProjectDirectory(): Promise<string | undefined>;
   onOpenKnowledge(): void;
   onOpenTeam(): void;
   onOpenSettings(): void;
@@ -36,6 +37,7 @@ export function Sidebar({
   onSelectThread,
   onSelectProject,
   onRegisterProject,
+  onSelectProjectDirectory,
   onOpenKnowledge,
   onOpenTeam,
   onOpenSettings,
@@ -141,6 +143,7 @@ export function Sidebar({
           <ProjectRegistrationForm
             isBusy={isBusy}
             onRegister={onRegisterProject}
+            onSelectDirectory={onSelectProjectDirectory}
           />
         </details>
         {projects.length === 0 ? (

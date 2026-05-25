@@ -572,6 +572,19 @@ textarea:disabled {
   border-color: rgba(216, 255, 87, 0.62);
 }
 
+.project-registration-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1fr);
+  gap: 8px;
+}
+
+.project-registration-actions button {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .project-registration-form .primary-button {
   width: 100%;
   min-height: 36px;
@@ -1900,6 +1913,18 @@ textarea:disabled {
   padding: 0 14px 12px;
 }
 
+.conversational-run-body {
+  padding-top: 0;
+  padding-bottom: 14px;
+}
+
+.conversational-run-body .run-activity-row {
+  padding: 10px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.055);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.024);
+}
+
 .run-progress-rail {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -2154,7 +2179,7 @@ textarea:disabled {
   max-height: calc(100vh - 120px);
   margin: 0 auto 18px;
   gap: 10px;
-  overflow: auto;
+  overflow: visible;
   padding: 12px;
   border: 1px solid rgba(216, 255, 87, 0.62);
   border-radius: 8px;
@@ -2236,10 +2261,11 @@ textarea:disabled {
 .composer-suggestions {
   position: absolute;
   left: 0;
-  bottom: calc(100% - 10px);
-  z-index: 4;
+  bottom: calc(100% + 8px);
+  z-index: 30;
   width: min(430px, 100%);
-  overflow: hidden;
+  max-height: min(360px, 44vh);
+  overflow: auto;
   border: 1px solid rgba(103, 216, 196, 0.36);
   border-radius: 8px;
   background: #111512;

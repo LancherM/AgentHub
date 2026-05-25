@@ -90,13 +90,18 @@ interface ActiveRun {
 interface ParsedCreateRunInput
   extends Omit<
     Required<CreateRunInput>,
-    "continueFromRunId" | "continueFromMessageId" | "role" | "taskId"
+    | "agentSessionId"
+    | "continueFromRunId"
+    | "continueFromMessageId"
+    | "role"
+    | "taskId"
   > {
   taskId?: string;
   assignment?: WorkgroupTaskAssignmentMetadata;
   conversationBrief?: string | ConversationContextBrief;
   role?: WorkgroupRoleRunMetadata;
   startImmediately: boolean;
+  agentSessionId?: string;
   continueFromRunId?: string;
   continueFromMessageId?: string;
 }
@@ -454,6 +459,7 @@ class RepositoryRunService implements RunService {
       agentHubHome: this.context.agentHubHome,
       roleSkillReferences: input.role?.defaultSkillReferences,
       conversationBrief: input.conversationBrief,
+      agentSessionId: input.agentSessionId,
       userConstraints: roleUserConstraints(input.role),
       executionHints: roleExecutionHints(input.role),
       verificationCommands,
@@ -825,6 +831,9 @@ function parseCreateRunInput(input: CreateDesktopRunInput): ParsedCreateRunInput
   if (input.continueFromMessageId !== undefined && input.continueFromRunId === undefined) {
     throw new Error("continueFromRunId is required when continueFromMessageId is provided");
   }
+  if (input.agentSessionId !== undefined) {
+    parseNonEmptyString(input.agentSessionId, "agentSessionId");
+  }
   return {
     taskId: input.taskId,
     projectId: input.projectId,
@@ -834,6 +843,7 @@ function parseCreateRunInput(input: CreateDesktopRunInput): ParsedCreateRunInput
     contextMode,
     deliveryMode,
     conversationBrief: input.conversationBrief,
+    agentSessionId: input.agentSessionId,
     role: parseRoleMetadata(input.role),
     assignment: parseTaskAssignmentMetadata(input.assignment),
     startImmediately: input.startImmediately !== false,

@@ -426,8 +426,10 @@ interaction surface. Each registered project receives default local rooms
 alongside the preset workgroup roles and local task/run status counts. When
 there are no registered projects, the desktop renders local project path
 registration controls in the project sidebar and the empty conversation pane;
-submitting either control calls the existing `window.agentHub.projects.open`
-IPC path and selects the project's `#general` room after default room seeding.
+users can either paste a path or open the system folder picker through the
+sandboxed preload API. Submitting either control calls the existing
+`window.agentHub.projects.open` IPC path and selects the project's `#general`
+room after default room seeding.
 The sidebar keeps an Add project disclosure visible after setup so additional
 local repositories can be registered without returning to onboarding. The
 selected project also has an inline custom-room creation flow for title,
@@ -489,13 +491,14 @@ verification output, risk reports, or memory details into the room transcript.
 
 Active inline run cards subscribe to the existing desktop run event stream and
 replay already-persisted events when a subscription starts after a fast run has
-advanced. They show agent identity, status, a stable Prepare/Run/Verify/Review
-stage rail, the latest persisted activity, current wait state, and compact
-review pills while a run is active. Raw event lines stay behind the inspector's
-Audit view by default. Once a terminal run has a durable assistant answer, the
-transcript keeps that answer as the main visible row and collapses the run card
-to a small review affordance. Terminal cards lead with View review, Compare,
-Continue, Handoff, and Audit actions; disabled actions explain why they are not
+advanced. Routine one-agent chat turns render as compact participant activity
+and prefer the latest agent-facing natural-language output over lifecycle
+details. Raw event lines stay behind the inspector's Audit view by default.
+Once a completed run has a durable assistant answer and no changed files, the
+default transcript hides the run card entirely and keeps the answer as the main
+visible row. Runs that modify files, fail, are cancelled, or have comparison
+peers remain visible as review affordances with View review, Compare, Continue,
+Handoff, and Audit actions; disabled actions explain why they are not
 available. Compare becomes available only when another terminal run from the
 same task or the same multi-agent turn is present. Terminal cards do not load
 full run review evidence when a thread is merely selected, but they refresh the
@@ -534,7 +537,11 @@ explicit continuation, but prior room messages and the room summary are left
 out of the generated conversation brief. Role-targeted desktop turns add the
 resolved role handle, display name, executor, persona, default instructions,
 permissions, default skill references, context policy, and approval policy to
-that same brief and to TaskRunner constraints/hints before execution. A zero
+that same brief and to TaskRunner constraints/hints before execution. Follow-up
+Codex turns to the same role or direct `@codex` target also pass the prior
+Codex CLI session id when a previous `thread.started` event exists, so the
+process-backed adapter resumes the CLI conversation instead of starting a fresh
+Codex session. A zero
 recent-message budget includes no prior messages, and the first message in an
 empty thread uses the retitled thread name in the injected brief. Agent Hub
 persists that exact brief as a

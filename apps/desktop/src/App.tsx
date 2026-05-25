@@ -214,6 +214,16 @@ export function App(): JSX.Element {
     }
   }
 
+  async function selectProjectDirectory(): Promise<string | undefined> {
+    setError(undefined);
+    try {
+      return await agentHubApi.projects.selectDirectory();
+    } catch (err) {
+      setError(errorMessage(err));
+      return undefined;
+    }
+  }
+
   async function createNewThread(input: CreateThreadInput = {}): Promise<void> {
     setError(undefined);
     setIsBusy(true);
@@ -441,6 +451,7 @@ export function App(): JSX.Element {
         }}
         onSelectProject={(projectId) => void selectProject(projectId)}
         onRegisterProject={registerProject}
+        onSelectProjectDirectory={selectProjectDirectory}
         onOpenKnowledge={() => switchWorkspace("knowledge")}
         onOpenTeam={() => switchWorkspace("team")}
         onOpenSettings={() => setSettingsOpen(true)}
@@ -484,6 +495,7 @@ export function App(): JSX.Element {
               }
             }}
             onRegisterProject={registerProject}
+            onSelectProjectDirectory={selectProjectDirectory}
             onOpenSettings={() => setSettingsOpen(true)}
           />
         )}
