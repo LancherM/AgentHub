@@ -100,4 +100,43 @@ describe("desktop mention parsing", () => {
     });
     expect(parsed.participants).toHaveLength(1);
   });
+
+  it("records non-executable role mentions without creating run participants", () => {
+    const humanRoles: WorkgroupRole[] = [
+      {
+        id: "role_custom_qa",
+        handle: "qa",
+        displayName: "QA",
+        purpose: "Review acceptance evidence.",
+        capabilitySummary: "Human verification.",
+        persona: "Careful human reviewer.",
+        defaultInstructions: "Review the grouped task output.",
+        permissions: ["read_run_evidence"],
+        contextPolicy: {
+          scope: "current_thread",
+          includeApprovedMemory: false,
+          includeThreadSummary: true,
+          instructions: ["Stay inside thread context."]
+        },
+        approvalPolicy: {
+          requiredFor: ["acceptance"],
+          summary: "Human approval required."
+        },
+        executor: { kind: "human", unavailableReason: "Human runtime is reserved." },
+        enabled: true
+      }
+    ];
+
+    const parsed = parseWorkgroupMentions("@qa review release evidence", humanRoles);
+
+    expect(parsed.cleanedPrompt).toBe("review release evidence");
+    expect(parsed.roleMentions).toEqual([
+      expect.objectContaining({
+        roleHandle: "qa",
+        executorKind: "human",
+        adapterKind: undefined
+      })
+    ]);
+    expect(parsed.participants).toHaveLength(0);
+  });
 });

@@ -1,0 +1,817 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Agent Hub Phase 8 Team Roles</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #071018;
+        --panel: #0d1824;
+        --panel-2: #101f2d;
+        --panel-3: #14283a;
+        --line: rgba(151, 178, 205, 0.18);
+        --line-strong: rgba(151, 178, 205, 0.28);
+        --text: #edf4fb;
+        --muted: #9caebe;
+        --soft: #c4d0dc;
+        --blue: #2f82ff;
+        --cyan: #1fbfc2;
+        --green: #43c263;
+        --amber: #f1aa2f;
+        --red: #f06464;
+        --plum: #8a67da;
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background:
+          radial-gradient(circle at 12% 10%, rgba(47, 130, 255, 0.14), transparent 28%),
+          linear-gradient(145deg, #050b12 0%, #0a1520 46%, #071018 100%);
+        color: var(--text);
+      }
+
+      .shell {
+        display: grid;
+        grid-template-columns: 292px minmax(680px, 1fr) 420px;
+        gap: 8px;
+        height: 100vh;
+        padding: 8px;
+      }
+
+      aside,
+      main,
+      .inspector {
+        border: 1px solid var(--line);
+        background: rgba(13, 24, 36, 0.9);
+        backdrop-filter: blur(16px);
+        min-height: 0;
+      }
+
+      aside {
+        border-radius: 8px 0 0 8px;
+        display: flex;
+        flex-direction: column;
+      }
+
+      main {
+        border-radius: 3px;
+        overflow: hidden;
+        display: flex;
+        flex-direction: column;
+      }
+
+      .inspector {
+        border-radius: 0 8px 8px 0;
+        padding: 18px;
+        overflow: hidden;
+      }
+
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 20px;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .mark,
+      .avatar,
+      .role-dot {
+        display: grid;
+        place-items: center;
+        flex: 0 0 auto;
+        border-radius: 50%;
+        color: white;
+        font-weight: 750;
+      }
+
+      .mark {
+        width: 40px;
+        height: 40px;
+        border: 1px solid rgba(47, 130, 255, 0.65);
+        color: #7eb0ff;
+        background: rgba(47, 130, 255, 0.12);
+      }
+
+      .brand h1,
+      .top h1 {
+        margin: 0;
+        font-size: 18px;
+        letter-spacing: 0;
+      }
+
+      .brand p,
+      .section-label,
+      .muted,
+      .sub,
+      .tiny,
+      th {
+        color: var(--muted);
+      }
+
+      .brand p {
+        margin: 2px 0 0;
+        font-size: 12px;
+      }
+
+      .section {
+        padding: 16px 16px 0;
+      }
+
+      .section-label {
+        margin-bottom: 9px;
+        font-size: 11px;
+        text-transform: uppercase;
+      }
+
+      .project-card,
+      .nav-row,
+      .utility,
+      .status-card {
+        border: 1px solid var(--line);
+        background: rgba(16, 31, 45, 0.62);
+        border-radius: 8px;
+      }
+
+      .project-card {
+        padding: 12px;
+      }
+
+      .row-title {
+        font-size: 14px;
+        font-weight: 700;
+      }
+
+      .sub {
+        margin-top: 3px;
+        font-size: 12px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      .nav-list {
+        display: grid;
+        gap: 6px;
+      }
+
+      .nav-row {
+        display: grid;
+        grid-template-columns: 22px 1fr auto;
+        align-items: center;
+        gap: 8px;
+        min-height: 40px;
+        padding: 9px 10px;
+        color: var(--soft);
+      }
+
+      .nav-row.selected {
+        background: rgba(47, 130, 255, 0.22);
+        border-color: rgba(47, 130, 255, 0.45);
+        color: white;
+      }
+
+      .hash {
+        color: #7eb0ff;
+        font-weight: 800;
+      }
+
+      .count {
+        min-width: 22px;
+        padding: 2px 7px;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.08);
+        color: var(--soft);
+        text-align: center;
+        font-size: 11px;
+      }
+
+      .role-list {
+        display: grid;
+        gap: 6px;
+      }
+
+      .role-row {
+        display: grid;
+        grid-template-columns: 26px 1fr auto;
+        align-items: center;
+        gap: 9px;
+        min-height: 34px;
+        padding: 4px 6px;
+        color: var(--soft);
+      }
+
+      .role-row.selected {
+        border-radius: 8px;
+        background: rgba(31, 191, 194, 0.16);
+      }
+
+      .role-dot,
+      .avatar {
+        width: 26px;
+        height: 26px;
+        background: var(--blue);
+        font-size: 12px;
+      }
+
+      .role-dot.plum,
+      .avatar.plum {
+        background: var(--plum);
+      }
+
+      .role-dot.orange {
+        background: #ff8c33;
+      }
+
+      .role-dot.green {
+        background: var(--green);
+      }
+
+      .role-dot.amber {
+        background: var(--amber);
+      }
+
+      .role-dot.cyan {
+        background: var(--cyan);
+      }
+
+      .sidebar-spacer {
+        flex: 1;
+      }
+
+      .utility {
+        margin: 16px;
+        padding: 12px;
+        display: grid;
+        gap: 10px;
+      }
+
+      .status-line {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        color: var(--soft);
+        font-size: 12px;
+      }
+
+      .online {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: var(--green);
+        box-shadow: 0 0 0 4px rgba(67, 194, 99, 0.12);
+      }
+
+      .top {
+        display: grid;
+        grid-template-columns: 1fr auto;
+        gap: 20px;
+        padding: 24px;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .top p {
+        margin: 7px 0 0;
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      .actions {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+
+      .button {
+        border: 1px solid var(--line-strong);
+        background: rgba(16, 31, 45, 0.8);
+        color: var(--text);
+        border-radius: 8px;
+        min-height: 36px;
+        padding: 0 13px;
+        font-size: 13px;
+      }
+
+      .button.primary {
+        border-color: rgba(47, 130, 255, 0.7);
+        background: linear-gradient(180deg, #2f82ff, #1f5fd4);
+      }
+
+      .tabs {
+        display: flex;
+        gap: 4px;
+        padding: 14px 24px 0;
+      }
+
+      .tab {
+        min-width: 80px;
+        padding: 8px 12px;
+        border-radius: 8px 8px 0 0;
+        color: var(--muted);
+        text-align: center;
+        font-size: 13px;
+      }
+
+      .tab.selected {
+        color: white;
+        background: rgba(47, 130, 255, 0.22);
+        border-bottom: 2px solid var(--blue);
+      }
+
+      .toolbar {
+        display: grid;
+        grid-template-columns: 1fr repeat(3, 150px);
+        gap: 10px;
+        padding: 16px 24px;
+      }
+
+      .input,
+      .select {
+        min-height: 36px;
+        border: 1px solid var(--line);
+        background: rgba(7, 16, 24, 0.7);
+        border-radius: 8px;
+        padding: 9px 11px;
+        color: var(--soft);
+        font-size: 13px;
+      }
+
+      .content {
+        min-height: 0;
+        overflow: hidden;
+        padding: 0 24px 24px;
+      }
+
+      table {
+        width: 100%;
+        border-collapse: separate;
+        border-spacing: 0 8px;
+        table-layout: fixed;
+      }
+
+      th {
+        padding: 0 12px 6px;
+        text-align: left;
+        font-size: 11px;
+        font-weight: 600;
+        text-transform: uppercase;
+      }
+
+      td {
+        padding: 13px 12px;
+        background: rgba(16, 31, 45, 0.62);
+        border-top: 1px solid var(--line);
+        border-bottom: 1px solid var(--line);
+        font-size: 13px;
+        vertical-align: top;
+      }
+
+      td:first-child {
+        border-left: 1px solid var(--line);
+        border-radius: 8px 0 0 8px;
+      }
+
+      td:last-child {
+        border-right: 1px solid var(--line);
+        border-radius: 0 8px 8px 0;
+      }
+
+      tr.selected td {
+        background: rgba(31, 191, 194, 0.15);
+        border-color: rgba(31, 191, 194, 0.44);
+      }
+
+      .role-cell {
+        display: flex;
+        gap: 10px;
+        align-items: center;
+      }
+
+      .badge,
+      .pill {
+        display: inline-flex;
+        align-items: center;
+        min-height: 24px;
+        border-radius: 999px;
+        padding: 2px 8px;
+        border: 1px solid var(--line);
+        background: rgba(255, 255, 255, 0.06);
+        color: var(--soft);
+        font-size: 12px;
+      }
+
+      .badge.live {
+        color: #8df0a3;
+        border-color: rgba(67, 194, 99, 0.45);
+        background: rgba(67, 194, 99, 0.12);
+      }
+
+      .badge.reserved {
+        color: #ffc976;
+        border-color: rgba(241, 170, 47, 0.45);
+        background: rgba(241, 170, 47, 0.13);
+      }
+
+      .badge.off {
+        color: #ffabab;
+        border-color: rgba(240, 100, 100, 0.42);
+        background: rgba(240, 100, 100, 0.12);
+      }
+
+      .split {
+        display: grid;
+        grid-template-columns: 1fr 320px;
+        gap: 12px;
+        margin-top: 12px;
+      }
+
+      .edit-panel,
+      .profile-block,
+      .policy-block {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: rgba(16, 31, 45, 0.62);
+      }
+
+      .edit-panel {
+        padding: 14px;
+      }
+
+      .edit-panel h2,
+      .inspector h2,
+      .profile-block h3,
+      .policy-block h3 {
+        margin: 0 0 10px;
+        font-size: 15px;
+      }
+
+      .form-grid {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 10px;
+      }
+
+      .field {
+        display: grid;
+        gap: 6px;
+      }
+
+      .field label {
+        color: var(--muted);
+        font-size: 11px;
+        text-transform: uppercase;
+      }
+
+      .textarea {
+        min-height: 72px;
+        resize: none;
+      }
+
+      .wide {
+        grid-column: 1 / -1;
+      }
+
+      .toggle-row {
+        display: flex;
+        gap: 10px;
+        align-items: center;
+        margin-top: 12px;
+      }
+
+      .switch {
+        width: 38px;
+        height: 22px;
+        border-radius: 999px;
+        background: var(--green);
+        padding: 3px;
+      }
+
+      .switch::after {
+        content: "";
+        display: block;
+        width: 16px;
+        height: 16px;
+        margin-left: 16px;
+        border-radius: 50%;
+        background: white;
+      }
+
+      .profile-head {
+        display: grid;
+        grid-template-columns: 48px 1fr;
+        gap: 12px;
+        align-items: center;
+        padding-bottom: 16px;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .avatar {
+        width: 48px;
+        height: 48px;
+        font-size: 18px;
+      }
+
+      .profile-head h2 {
+        margin: 0;
+        font-size: 20px;
+      }
+
+      .profile-head p {
+        margin: 3px 0 0;
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      .inspector-body {
+        display: grid;
+        gap: 12px;
+        margin-top: 16px;
+      }
+
+      .profile-block,
+      .policy-block {
+        padding: 14px;
+      }
+
+      .kv {
+        display: grid;
+        grid-template-columns: 118px 1fr;
+        gap: 8px;
+        margin: 7px 0;
+        color: var(--soft);
+        font-size: 13px;
+      }
+
+      .kv span:first-child {
+        color: var(--muted);
+      }
+
+      .chip-wrap {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+      }
+
+      .activity {
+        display: grid;
+        gap: 8px;
+      }
+
+      .activity-row {
+        display: grid;
+        grid-template-columns: 1fr auto;
+        gap: 10px;
+        color: var(--soft);
+        font-size: 13px;
+      }
+
+      .tiny {
+        font-size: 11px;
+      }
+
+      @media (max-width: 1180px) {
+        .shell {
+          grid-template-columns: 244px minmax(560px, 1fr);
+        }
+
+        .inspector {
+          display: none;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="shell">
+      <aside>
+        <div class="brand">
+          <div class="mark">AH</div>
+          <div>
+            <h1>Agent Hub</h1>
+            <p>Local workgroup</p>
+          </div>
+        </div>
+        <section class="section">
+          <div class="section-label">Project</div>
+          <div class="project-card">
+            <div class="row-title">agenthub-core</div>
+            <div class="sub">/Users/lan/agent-hub</div>
+          </div>
+        </section>
+        <section class="section">
+          <div class="section-label">Topics</div>
+          <div class="nav-list">
+            <div class="nav-row"><span class="hash">#</span><span>general</span><span class="count">4</span></div>
+            <div class="nav-row selected"><span class="hash">#</span><span>planning</span><span class="count">8</span></div>
+            <div class="nav-row"><span class="hash">#</span><span>research</span><span class="count">3</span></div>
+            <div class="nav-row"><span class="hash">#</span><span>review</span><span class="count">6</span></div>
+          </div>
+        </section>
+        <section class="section">
+          <div class="section-label">Team</div>
+          <div class="role-list">
+            <div class="role-row"><span class="role-dot">R</span><span>@researcher</span><span class="online"></span></div>
+            <div class="role-row"><span class="role-dot orange">W</span><span>@writer</span><span class="online"></span></div>
+            <div class="role-row selected"><span class="role-dot plum">A</span><span>@analyst</span><span class="online"></span></div>
+            <div class="role-row"><span class="role-dot green">O</span><span>@operator</span><span class="online"></span></div>
+            <div class="role-row"><span class="role-dot amber">Q</span><span>@qa</span><span class="count">custom</span></div>
+            <div class="role-row"><span class="role-dot cyan">M</span><span>@memory</span><span class="online"></span></div>
+          </div>
+        </section>
+        <div class="sidebar-spacer"></div>
+        <div class="utility">
+          <div class="status-line"><span>Local-first</span><span class="online"></span></div>
+          <div class="status-line"><span>Workspace synced</span><span>SQLite</span></div>
+        </div>
+      </aside>
+
+      <main>
+        <header class="top">
+          <div>
+            <h1>Team / Role Configuration</h1>
+            <p>Manage preset roles, local custom roles, executor bindings, and auditable policy metadata.</p>
+          </div>
+          <div class="actions">
+            <button class="button">Duplicate Preset</button>
+            <button class="button primary">New Role</button>
+          </div>
+        </header>
+        <div class="tabs">
+          <div class="tab selected">Roles</div>
+          <div class="tab">Executors</div>
+          <div class="tab">Policies</div>
+          <div class="tab">Activity</div>
+        </div>
+        <div class="toolbar">
+          <div class="input">Search role, permission, executor...</div>
+          <div class="select">All status</div>
+          <div class="select">All executors</div>
+          <div class="select">Preset + custom</div>
+        </div>
+        <section class="content">
+          <table>
+            <colgroup>
+              <col style="width: 18%" />
+              <col style="width: 20%" />
+              <col style="width: 15%" />
+              <col style="width: 16%" />
+              <col style="width: 16%" />
+              <col style="width: 15%" />
+            </colgroup>
+            <thead>
+              <tr>
+                <th>Role</th>
+                <th>Capability</th>
+                <th>Executor</th>
+                <th>Permissions</th>
+                <th>Policies</th>
+                <th>Activity</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><div class="role-cell"><span class="role-dot">R</span><div><strong>@researcher</strong><div class="sub">Preset</div></div></div></td>
+                <td>Research, source review, question framing.</td>
+                <td><span class="badge live">agent_adapter / fake</span></td>
+                <td>context read, thread read</td>
+                <td>approved memory, summary</td>
+                <td>2 recent tasks</td>
+              </tr>
+              <tr class="selected">
+                <td><div class="role-cell"><span class="role-dot plum">A</span><div><strong>@analyst</strong><div class="sub">Preset override</div></div></div></td>
+                <td>Analysis, comparison, prioritization.</td>
+                <td><span class="badge live">agent_adapter / codex</span></td>
+                <td>read evidence, propose tasks</td>
+                <td>review required for memory</td>
+                <td>4 recent tasks</td>
+              </tr>
+              <tr>
+                <td><div class="role-cell"><span class="role-dot amber">Q</span><div><strong>@qa</strong><div class="sub">Custom</div></div></div></td>
+                <td>Acceptance checks and release risks.</td>
+                <td><span class="badge reserved">human reserved</span></td>
+                <td>read evidence only</td>
+                <td>manual assignment</td>
+                <td>waiting</td>
+              </tr>
+              <tr>
+                <td><div class="role-cell"><span class="role-dot cyan">M</span><div><strong>@memory</strong><div class="sub">Preset</div></div></div></td>
+                <td>Memory proposals and decision extraction.</td>
+                <td><span class="badge live">agent_adapter / fake</span></td>
+                <td>thread evidence</td>
+                <td>never auto-approve</td>
+                <td>1 linked memory</td>
+              </tr>
+              <tr>
+                <td><div class="role-cell"><span class="role-dot green">L</span><div><strong>@legal</strong><div class="sub">Custom disabled</div></div></div></td>
+                <td>Policy notes for future local review.</td>
+                <td><span class="badge off">llm_api reserved</span></td>
+                <td>disabled</td>
+                <td>cannot execute</td>
+                <td>none</td>
+              </tr>
+            </tbody>
+          </table>
+
+          <div class="split">
+            <section class="edit-panel">
+              <h2>Edit Role</h2>
+              <div class="form-grid">
+                <div class="field">
+                  <label>Handle</label>
+                  <div class="input">@analyst</div>
+                </div>
+                <div class="field">
+                  <label>Display name</label>
+                  <div class="input">Analyst</div>
+                </div>
+                <div class="field wide">
+                  <label>Purpose</label>
+                  <div class="input">Compare options, identify tradeoffs, and summarize signals.</div>
+                </div>
+                <div class="field">
+                  <label>Executor kind</label>
+                  <div class="select">agent_adapter</div>
+                </div>
+                <div class="field">
+                  <label>Adapter</label>
+                  <div class="select">codex</div>
+                </div>
+                <div class="field wide">
+                  <label>Default instructions</label>
+                  <div class="input textarea">Compare evidence, list risks and unknowns, keep recommendations bounded.</div>
+                </div>
+              </div>
+              <div class="toggle-row">
+                <div class="switch"></div>
+                <span class="muted">Enabled for local mentions and assignment metadata</span>
+              </div>
+            </section>
+            <section class="edit-panel">
+              <h2>Policy Metadata</h2>
+              <div class="chip-wrap">
+                <span class="pill">read_project_context</span>
+                <span class="pill">read_thread_context</span>
+                <span class="pill">read_run_evidence</span>
+                <span class="pill">scope: current thread</span>
+                <span class="pill">approved memory</span>
+                <span class="pill">review before external effects</span>
+              </div>
+              <p class="sub">Only existing hard safety boundaries are enforced now. Other fields are stored as auditable local policy metadata.</p>
+            </section>
+          </div>
+        </section>
+      </main>
+
+      <aside class="inspector">
+        <div class="profile-head">
+          <div class="avatar plum">A</div>
+          <div>
+            <h2>@analyst</h2>
+            <p>Preset override · enabled</p>
+          </div>
+        </div>
+        <div class="inspector-body">
+          <section class="profile-block">
+            <h3>Profile</h3>
+            <div class="kv"><span>Persona</span><strong>Structured analyst who makes tradeoffs explicit.</strong></div>
+            <div class="kv"><span>Default room</span><span>#planning</span></div>
+            <div class="kv"><span>Tags</span><span>analysis, planning</span></div>
+          </section>
+          <section class="policy-block">
+            <h3>Executor Binding</h3>
+            <div class="kv"><span>Kind</span><span class="badge live">agent_adapter</span></div>
+            <div class="kv"><span>Adapter</span><span>codex</span></div>
+            <div class="kv"><span>Config ref</span><span>local adapter profile only</span></div>
+          </section>
+          <section class="policy-block">
+            <h3>Context & Approval</h3>
+            <div class="kv"><span>Context</span><span>project context, current thread, approved memory</span></div>
+            <div class="kv"><span>Approval</span><span>memory approval, external effects, repository-side writes</span></div>
+          </section>
+          <section class="policy-block">
+            <h3>Recent Tasks</h3>
+            <div class="activity">
+              <div class="activity-row"><span>Q3 prioritization matrix</span><span class="tiny">09:31</span></div>
+              <div class="activity-row"><span>Compare Codex and Claude outputs</span><span class="tiny">May 24</span></div>
+              <div class="activity-row"><span>Scope MVP boundaries</span><span class="tiny">May 23</span></div>
+            </div>
+          </section>
+          <section class="policy-block">
+            <h3>Linked Memory</h3>
+            <div class="chip-wrap">
+              <span class="pill">MVP boundary decision</span>
+              <span class="pill">Planning room summary</span>
+            </div>
+          </section>
+        </div>
+      </aside>
+    </div>
+  </body>
+</html>

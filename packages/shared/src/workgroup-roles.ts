@@ -66,6 +66,31 @@ export interface WorkgroupRoleRunMetadata {
   approvalPolicy: WorkgroupApprovalPolicy;
 }
 
+export type WorkgroupTaskAssignmentStatus =
+  | "assigned"
+  | "queued"
+  | "running"
+  | "completed"
+  | "failed"
+  | "cancelled"
+  | "skipped";
+
+export interface WorkgroupTaskAssignmentMetadata {
+  assignmentId: string;
+  taskId: string;
+  threadId: string;
+  sourceMessageId: string;
+  assignmentRole: "agent" | "role";
+  agentId?: "fake" | "codex" | "claude";
+  roleHandle?: string;
+  displayName: string;
+  executorKind: WorkgroupExecutorKind;
+  adapterKind?: WorkgroupAgentAdapterKind;
+  executable: boolean;
+  runId?: string;
+  status: WorkgroupTaskAssignmentStatus;
+}
+
 export const presetWorkgroupRoleHandles = [
   "researcher",
   "writer",

@@ -657,6 +657,13 @@ CREATE INDEX IF NOT EXISTS idx_task_runs_parent_message
 ALTER TABLE run_metadata
   ADD COLUMN role_json TEXT CHECK (role_json IS NULL OR json_valid(role_json));
 `
+  },
+  {
+    version: 11,
+    sql: `
+ALTER TABLE tasks
+  ADD COLUMN metadata_json TEXT CHECK (metadata_json IS NULL OR json_valid(metadata_json));
+`
   }
 ];
 
@@ -945,12 +952,20 @@ export class SQLiteTaskRepository implements TaskRepository {
     }
     await this.database.execute(`
 INSERT INTO tasks (
-  id, project_id, title, description, status, created_at, updated_at
+  id,
+  project_id,
+  title,
+  description,
+  metadata_json,
+  status,
+  created_at,
+  updated_at
 ) VALUES (
   ${sqlString(validTask.id)},
   ${sqlString(validTask.projectId)},
   ${sqlString(validTask.title)},
   ${sqlNullableString(validTask.description)},
+  ${sqlJson(validTask.metadata)},
   ${sqlString(validTask.status)},
   ${sqlString(validTask.createdAt)},
   ${sqlString(validTask.updatedAt)}
@@ -959,6 +974,7 @@ ON CONFLICT(id) DO UPDATE SET
   project_id = excluded.project_id,
   title = excluded.title,
   description = excluded.description,
+  metadata_json = excluded.metadata_json,
   status = excluded.status,
   created_at = excluded.created_at,
   updated_at = excluded.updated_at;
@@ -995,6 +1011,7 @@ SELECT
   project_id AS projectId,
   title,
   description,
+  metadata_json AS metadataJson,
   status,
   created_at AS createdAt,
   updated_at AS updatedAt
@@ -1013,6 +1030,7 @@ SELECT
   project_id AS projectId,
   title,
   description,
+  metadata_json AS metadataJson,
   status,
   created_at AS createdAt,
   updated_at AS updatedAt
@@ -1029,6 +1047,7 @@ SELECT
   project_id AS projectId,
   title,
   description,
+  metadata_json AS metadataJson,
   status,
   created_at AS createdAt,
   updated_at AS updatedAt
@@ -2125,6 +2144,7 @@ interface TaskRow extends Record<string, unknown> {
   projectId: string;
   title: string;
   description: string | null;
+  metadataJson: string | null;
   status: string;
   createdAt: string;
   updatedAt: string;
@@ -2313,6 +2333,7 @@ function taskFromRow(row: TaskRow): Task {
     projectId: row.projectId,
     title: row.title,
     description: nullToUndefined(row.description),
+    metadata: parseJson(row.metadataJson),
     status: row.status as TaskStatus,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt

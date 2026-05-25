@@ -7,6 +7,16 @@ import {
   toWorkgroupRoleRunMetadata as importedToWorkgroupRoleRunMetadata,
   workgroupExecutorKinds as importedWorkgroupExecutorKinds
 } from "./workgroup-roles";
+import {
+  builtInWorkgroupPacks as importedBuiltInWorkgroupPacks,
+  coreWorkgroupSurfaceLabels as importedCoreWorkgroupSurfaceLabels,
+  engineeringTermSurface as importedEngineeringTermSurface,
+  getBuiltInWorkgroupPack as importedGetBuiltInWorkgroupPack,
+  labelWorkgroupVocabulary as importedLabelWorkgroupVocabulary,
+  listBuiltInWorkgroupPacks as importedListBuiltInWorkgroupPacks,
+  requireBuiltInWorkgroupPack as importedRequireBuiltInWorkgroupPack,
+  validateWorkgroupPackDefinition as importedValidateWorkgroupPackDefinition
+} from "./workgroup-packs";
 
 export * from "./process-environment";
 export type {
@@ -19,8 +29,23 @@ export type {
   WorkgroupExecutorKind,
   WorkgroupReservedExecutor,
   WorkgroupRole,
-  WorkgroupRoleRunMetadata
+  WorkgroupRoleRunMetadata,
+  WorkgroupTaskAssignmentMetadata,
+  WorkgroupTaskAssignmentStatus
 } from "./workgroup-roles";
+export type {
+  EngineeringVocabularyTerm,
+  WorkgroupPack,
+  WorkgroupPackArtifactType,
+  WorkgroupPackCheckType,
+  WorkgroupPackContextSectionProvider,
+  WorkgroupPackExecutorCapability,
+  WorkgroupPackId,
+  WorkgroupPackLabels,
+  WorkgroupPackRiskCategory,
+  WorkgroupSurfaceTerm,
+  WorkgroupVocabularyTerm
+} from "./workgroup-packs";
 
 export const findWorkgroupRoleByHandle = importedFindWorkgroupRoleByHandle;
 export const normalizeWorkgroupRoleHandle = importedNormalizeWorkgroupRoleHandle;
@@ -28,6 +53,15 @@ export const presetWorkgroupRoleHandles = importedPresetWorkgroupRoleHandles;
 export const presetWorkgroupRoles = importedPresetWorkgroupRoles;
 export const toWorkgroupRoleRunMetadata = importedToWorkgroupRoleRunMetadata;
 export const workgroupExecutorKinds = importedWorkgroupExecutorKinds;
+export const builtInWorkgroupPacks = importedBuiltInWorkgroupPacks;
+export const coreWorkgroupSurfaceLabels = importedCoreWorkgroupSurfaceLabels;
+export const engineeringTermSurface = importedEngineeringTermSurface;
+export const getBuiltInWorkgroupPack = importedGetBuiltInWorkgroupPack;
+export const labelWorkgroupVocabulary = importedLabelWorkgroupVocabulary;
+export const listBuiltInWorkgroupPacks = importedListBuiltInWorkgroupPacks;
+export const requireBuiltInWorkgroupPack = importedRequireBuiltInWorkgroupPack;
+export const validateWorkgroupPackDefinition =
+  importedValidateWorkgroupPackDefinition;
 
 export const agentKinds = ["fake", "codex", "claude-code"] as const;
 export type AgentKind = (typeof agentKinds)[number];
@@ -126,6 +160,7 @@ export interface Task {
   projectId: string;
   title: string;
   description?: string;
+  metadata?: JsonObject;
   status: TaskStatus;
   createdAt: string;
   updatedAt: string;

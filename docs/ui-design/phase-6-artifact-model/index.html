@@ -1,0 +1,733 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Agent Hub Phase 6 Artifact Model</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #10110e;
+        --panel: #171813;
+        --panel-2: #20221b;
+        --ink: #f5f1e8;
+        --muted: #aaa48f;
+        --quiet: #807b6d;
+        --line: #34372c;
+        --line-strong: #515940;
+        --accent: #d8ff57;
+        --cyan: #67d8c4;
+        --green: #8be977;
+        --amber: #f5bd5a;
+        --red: #ff7d6b;
+        --plum: #c59bff;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        margin: 0;
+        min-height: 100%;
+        background: var(--bg);
+        color: var(--ink);
+        font-family:
+          Aptos,
+          "SF Pro Text",
+          "Segoe UI",
+          ui-sans-serif,
+          system-ui,
+          sans-serif;
+      }
+
+      body {
+        display: grid;
+        place-items: center;
+        padding: 30px;
+      }
+
+      .app {
+        display: grid;
+        width: 1600px;
+        height: 980px;
+        grid-template-columns: 300px minmax(0, 1fr) 560px;
+        overflow: hidden;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background:
+          linear-gradient(rgba(255, 255, 255, 0.018) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(255, 255, 255, 0.014) 1px, transparent 1px),
+          var(--bg);
+        background-size: 32px 32px;
+        box-shadow: 0 30px 90px rgba(0, 0, 0, 0.45);
+      }
+
+      .sidebar,
+      .inspector {
+        background: rgba(18, 19, 16, 0.98);
+      }
+
+      .sidebar {
+        display: flex;
+        flex-direction: column;
+        gap: 18px;
+        padding: 20px 16px;
+        border-right: 1px solid var(--line);
+      }
+
+      .brand,
+      .side-card,
+      .message,
+      .panel,
+      .composer {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: rgba(255, 255, 255, 0.028);
+      }
+
+      .brand {
+        display: grid;
+        grid-template-columns: 38px minmax(0, 1fr);
+        gap: 12px;
+        align-items: center;
+        padding: 12px;
+      }
+
+      .mark,
+      .avatar {
+        display: grid;
+        place-items: center;
+        border-radius: 8px;
+        font-weight: 900;
+      }
+
+      .mark {
+        width: 38px;
+        height: 38px;
+        background: var(--accent);
+        color: #1d2602;
+      }
+
+      .brand span,
+      .muted,
+      .section-label,
+      .meta {
+        color: var(--muted);
+      }
+
+      .section-label,
+      .eyebrow {
+        margin-bottom: 8px;
+        color: var(--quiet);
+        font-size: 11px;
+        font-weight: 900;
+        text-transform: uppercase;
+      }
+
+      .nav {
+        display: grid;
+        gap: 8px;
+      }
+
+      .nav-row {
+        display: grid;
+        grid-template-columns: 9px minmax(0, 1fr) auto;
+        gap: 10px;
+        align-items: center;
+        min-height: 42px;
+        padding: 0 10px;
+        border: 1px solid transparent;
+        border-radius: 8px;
+        font-size: 13px;
+      }
+
+      .nav-row.active {
+        border-color: rgba(216, 255, 87, 0.36);
+        background: rgba(216, 255, 87, 0.1);
+      }
+
+      .dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: var(--quiet);
+      }
+
+      .active .dot {
+        background: var(--accent);
+      }
+
+      .count,
+      .chip,
+      .tag,
+      .pill {
+        border-radius: 999px;
+        font-size: 11px;
+        font-weight: 850;
+      }
+
+      .count {
+        padding: 2px 7px;
+        background: rgba(255, 255, 255, 0.07);
+        color: var(--muted);
+      }
+
+      .side-card {
+        display: grid;
+        gap: 10px;
+        padding: 12px;
+      }
+
+      .role {
+        display: grid;
+        grid-template-columns: 24px minmax(0, 1fr) 8px;
+        gap: 8px;
+        align-items: center;
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      .role .avatar {
+        width: 24px;
+        height: 24px;
+        background: rgba(103, 216, 196, 0.18);
+        color: var(--cyan);
+        font-size: 10px;
+      }
+
+      .role .dot {
+        background: var(--green);
+      }
+
+      .center {
+        display: grid;
+        min-width: 0;
+        grid-template-rows: auto minmax(0, 1fr) auto;
+        border-right: 1px solid var(--line);
+      }
+
+      .room-header {
+        display: flex;
+        justify-content: space-between;
+        gap: 16px;
+        padding: 22px 28px 16px;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+      }
+
+      .room-header h1 {
+        margin: 0 0 8px;
+        font-size: 22px;
+        letter-spacing: 0;
+      }
+
+      .room-header p,
+      .message p,
+      .panel p {
+        margin: 0;
+        color: #e8e0cf;
+        font-size: 13px;
+        line-height: 1.45;
+      }
+
+      .room-header p {
+        color: var(--muted);
+      }
+
+      .room-tabs,
+      .tabs,
+      .chips {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+      }
+
+      .pill,
+      .tabs button {
+        min-height: 30px;
+        border: 1px solid var(--line);
+        background: rgba(255, 255, 255, 0.03);
+        color: var(--muted);
+      }
+
+      .pill {
+        padding: 6px 10px;
+      }
+
+      .pill.active,
+      .tabs button.active {
+        border-color: rgba(103, 216, 196, 0.6);
+        background: rgba(103, 216, 196, 0.12);
+        color: var(--ink);
+      }
+
+      .timeline {
+        display: grid;
+        align-content: start;
+        gap: 12px;
+        min-height: 0;
+        overflow: hidden;
+        padding: 22px 28px;
+      }
+
+      .message {
+        display: grid;
+        grid-template-columns: 36px minmax(0, 1fr) auto;
+        gap: 12px;
+        align-items: start;
+        padding: 14px;
+      }
+
+      .message.active {
+        border-color: rgba(197, 155, 255, 0.48);
+        background:
+          linear-gradient(90deg, rgba(197, 155, 255, 0.1), transparent 36%),
+          rgba(255, 255, 255, 0.03);
+      }
+
+      .avatar {
+        width: 36px;
+        height: 36px;
+        background: rgba(216, 255, 87, 0.16);
+        color: var(--accent);
+        font-size: 11px;
+      }
+
+      .message strong {
+        display: inline-block;
+        margin-bottom: 5px;
+      }
+
+      .chips {
+        margin-top: 10px;
+      }
+
+      .chip {
+        min-height: 22px;
+        padding: 3px 8px;
+        border: 1px solid var(--line);
+        color: var(--muted);
+      }
+
+      .chip.artifact {
+        border-color: rgba(197, 155, 255, 0.42);
+        color: var(--plum);
+      }
+
+      .chip.context {
+        border-color: rgba(103, 216, 196, 0.38);
+        color: var(--cyan);
+      }
+
+      .chip.diff {
+        border-color: rgba(245, 189, 90, 0.38);
+        color: var(--amber);
+      }
+
+      .chip.review {
+        border-color: rgba(139, 233, 119, 0.34);
+        color: var(--green);
+      }
+
+      .time {
+        color: var(--quiet);
+        font-size: 12px;
+      }
+
+      .composer {
+        margin: 0 28px 22px;
+        padding: 12px 14px;
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      .inspector {
+        display: grid;
+        min-width: 0;
+        grid-template-rows: auto auto minmax(0, 1fr);
+      }
+
+      .inspector-header {
+        display: flex;
+        justify-content: space-between;
+        gap: 14px;
+        padding: 18px;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .inspector h2 {
+        margin: 0;
+        font-size: 20px;
+      }
+
+      .state-row {
+        display: flex;
+        gap: 8px;
+        margin-top: 10px;
+      }
+
+      .state {
+        min-height: 22px;
+        padding: 3px 8px;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        color: var(--muted);
+        font-size: 11px;
+        font-weight: 850;
+        text-transform: uppercase;
+      }
+
+      .state.ok {
+        border-color: rgba(139, 233, 119, 0.36);
+        color: var(--green);
+      }
+
+      .actions {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+        gap: 6px;
+      }
+
+      .actions button,
+      .tabs button {
+        min-height: 30px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: rgba(255, 255, 255, 0.03);
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .tabs {
+        padding: 12px;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .tabs button {
+        flex: 1 1 64px;
+      }
+
+      .body {
+        display: grid;
+        align-content: start;
+        gap: 14px;
+        min-height: 0;
+        overflow: hidden;
+        padding: 16px;
+      }
+
+      .panel {
+        display: grid;
+        gap: 10px;
+        padding: 14px;
+      }
+
+      .panel h3 {
+        margin: 0;
+        font-size: 15px;
+      }
+
+      .artifact-list {
+        display: grid;
+        gap: 10px;
+      }
+
+      .artifact-row {
+        display: grid;
+        grid-template-columns: 92px minmax(0, 1fr) 92px;
+        gap: 10px;
+        align-items: start;
+        padding: 12px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: rgba(255, 255, 255, 0.026);
+      }
+
+      .artifact-row.active {
+        border-color: rgba(197, 155, 255, 0.45);
+        background: rgba(197, 155, 255, 0.08);
+      }
+
+      .artifact-row strong,
+      .artifact-row span {
+        display: block;
+      }
+
+      .artifact-row strong {
+        margin-bottom: 5px;
+      }
+
+      .artifact-row .meta {
+        font-size: 12px;
+        line-height: 1.45;
+      }
+
+      .tag {
+        justify-self: start;
+        padding: 3px 8px;
+        border: 1px solid var(--line);
+        color: var(--muted);
+        text-transform: uppercase;
+      }
+
+      .tag.context {
+        border-color: rgba(103, 216, 196, 0.38);
+        color: var(--cyan);
+      }
+
+      .tag.diff {
+        border-color: rgba(245, 189, 90, 0.38);
+        color: var(--amber);
+      }
+
+      .tag.review {
+        border-color: rgba(139, 233, 119, 0.34);
+        color: var(--green);
+      }
+
+      .availability {
+        justify-self: end;
+        color: var(--green);
+        font-size: 11px;
+        font-weight: 850;
+        text-transform: uppercase;
+      }
+
+      .metadata-grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 8px;
+      }
+
+      .metric {
+        min-width: 0;
+        padding: 9px;
+        border: 1px solid rgba(255, 255, 255, 0.06);
+        border-radius: 8px;
+        background: #0b0c09;
+      }
+
+      .metric span {
+        display: block;
+        color: var(--quiet);
+        font-size: 10px;
+        font-weight: 850;
+        text-transform: uppercase;
+      }
+
+      .metric strong {
+        display: block;
+        margin-top: 4px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .preview {
+        max-height: 180px;
+        overflow: hidden;
+        padding: 12px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: #0a0b09;
+        color: #d8d1c1;
+        font-family: "SFMono-Regular", "Cascadia Code", Consolas, monospace;
+        font-size: 12px;
+        line-height: 1.5;
+        white-space: pre-wrap;
+      }
+
+      .boundary {
+        border-color: rgba(103, 216, 196, 0.28);
+        background: rgba(103, 216, 196, 0.07);
+      }
+    </style>
+  </head>
+  <body>
+    <main class="app">
+      <aside class="sidebar">
+        <div class="brand">
+          <div class="mark">AH</div>
+          <div>
+            <strong>agenthub-core</strong>
+            <span>Local-first workspace</span>
+          </div>
+        </div>
+
+        <div>
+          <div class="section-label">Projects</div>
+          <div class="nav">
+            <div class="nav-row active"><span class="dot"></span><span>agenthub-core</span><span class="count">4</span></div>
+            <div class="nav-row"><span class="dot"></span><span>desktop-shell</span><span class="count">2</span></div>
+          </div>
+        </div>
+
+        <div>
+          <div class="section-label">Topics</div>
+          <div class="nav">
+            <div class="nav-row"><span class="dot"></span><span># general</span></div>
+            <div class="nav-row active"><span class="dot"></span><span># review</span><span class="count">12</span></div>
+            <div class="nav-row"><span class="dot"></span><span># knowledge</span><span class="count">5</span></div>
+          </div>
+        </div>
+
+        <div class="side-card">
+          <div class="section-label">Team</div>
+          <div class="role"><span class="avatar">R</span><span>@researcher</span><span class="dot"></span></div>
+          <div class="role"><span class="avatar">A</span><span>@analyst</span><span class="dot"></span></div>
+          <div class="role"><span class="avatar">E</span><span>@engineer</span><span class="dot"></span></div>
+          <div class="role"><span class="avatar">M</span><span>@memory</span><span class="dot"></span></div>
+        </div>
+      </aside>
+
+      <section class="center">
+        <header class="room-header">
+          <div>
+            <div class="eyebrow">Phase 6 Artifacts</div>
+            <h1># review</h1>
+            <p>Named local artifacts are promoted from selected run evidence and remain bounded.</p>
+          </div>
+          <div class="room-tabs">
+            <span class="pill active">Timeline</span>
+            <span class="pill">Tasks</span>
+            <span class="pill">Board</span>
+          </div>
+        </header>
+
+        <div class="timeline">
+          <article class="message">
+            <span class="avatar">MK</span>
+            <div>
+              <strong>MK</strong>
+              <p>Show the reusable outputs from the last desktop run without exposing every log line.</p>
+            </div>
+            <time class="time">14:00</time>
+          </article>
+
+          <article class="message active">
+            <span class="avatar">E</span>
+            <div>
+              <strong>@engineer run completed</strong>
+              <p>Promoted bounded run evidence into named artifact metadata rows.</p>
+              <div class="chips">
+                <span class="chip artifact">Artifacts 3</span>
+                <span class="chip context">conversation_brief</span>
+                <span class="chip diff">git_diff</span>
+                <span class="chip review">review_decision</span>
+              </div>
+            </div>
+            <time class="time">14:03</time>
+          </article>
+
+          <article class="message">
+            <span class="avatar">M</span>
+            <div>
+              <strong>@memory</strong>
+              <p>Artifact summaries can be linked to future context without becoming approved memory automatically.</p>
+              <div class="chips">
+                <span class="chip artifact">local only</span>
+              </div>
+            </div>
+            <time class="time">14:05</time>
+          </article>
+        </div>
+
+        <div class="composer">@agent message this topic, for example: @fake summarize the latest run</div>
+      </section>
+
+      <aside class="inspector">
+        <header class="inspector-header">
+          <div>
+            <div class="eyebrow">Workgroup Inspector</div>
+            <h2>Reusable Run Outputs</h2>
+            <div class="state-row">
+              <span class="state ok">completed</span>
+              <span class="state">artifacts 3</span>
+            </div>
+          </div>
+          <div class="actions">
+            <button>Refresh</button>
+            <button>Record Accept</button>
+          </div>
+        </header>
+
+        <nav class="tabs" aria-label="Inspector tabs">
+          <button>Brief</button>
+          <button>Context</button>
+          <button class="active">Artifacts</button>
+          <button>Checks</button>
+          <button>Risks</button>
+          <button>Memory</button>
+          <button>Audit</button>
+        </nav>
+
+        <div class="body">
+          <section class="panel">
+            <div class="eyebrow">Artifacts</div>
+            <p>Run artifacts become named local rows with source metadata and bounded previews.</p>
+            <div class="artifact-list">
+              <div class="artifact-row active">
+                <span class="tag context">context</span>
+                <div>
+                  <strong>Conversation brief for latest fake run</strong>
+                  <span class="meta">conversation_brief · source run run_89f2 · task task_q3 · #review · created by @engineer</span>
+                  <span class="meta">Summary: runtime context snapshot injected into the agent.</span>
+                </div>
+                <span class="availability">local</span>
+              </div>
+              <div class="artifact-row">
+                <span class="tag diff">diff</span>
+                <div>
+                  <strong>Bounded diff artifact</strong>
+                  <span class="meta">git_diff · source run run_89f2 · task task_q3 · #review</span>
+                  <span class="meta">Summary: fake-agent-output.md changed, +63/-0.</span>
+                </div>
+                <span class="availability">bounded</span>
+              </div>
+              <div class="artifact-row">
+                <span class="tag review">review</span>
+                <div>
+                  <strong>Review decision record</strong>
+                  <span class="meta">review_decision · source run run_89f2 · task task_q3 · #review</span>
+                  <span class="meta">Summary: accept/reject state is audit-only and does not merge code.</span>
+                </div>
+                <span class="availability">local</span>
+              </div>
+            </div>
+          </section>
+
+          <section class="panel">
+            <div class="eyebrow">Selected Artifact Metadata</div>
+            <div class="metadata-grid">
+              <div class="metric"><span>Type</span><strong>conversation_brief</strong></div>
+              <div class="metric"><span>Source Run</span><strong>run_89f2</strong></div>
+              <div class="metric"><span>Source Task</span><strong>task_q3</strong></div>
+              <div class="metric"><span>Room</span><strong>#review</strong></div>
+              <div class="metric"><span>Created By</span><strong>@engineer</strong></div>
+              <div class="metric"><span>Availability</span><strong>local bounded</strong></div>
+            </div>
+          </section>
+
+          <section class="panel">
+            <div class="eyebrow">Bounded Preview</div>
+            <div class="preview"># Agent Hub Conversation Brief
+
+thread_id: thread_review
+selected_agent: fake
+created_by: @engineer
+
+## Current Turn
+User: Show reusable outputs from the last desktop run.</div>
+          </section>
+
+          <section class="panel boundary">
+            <div class="eyebrow">Boundary</div>
+            <p>Artifacts are local review records. There is no editing, versioning, search, external publishing, merge, apply, push, or automatic memory approval.</p>
+          </section>
+        </div>
+      </aside>
+    </main>
+  </body>
+</html>

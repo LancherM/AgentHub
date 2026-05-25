@@ -1,0 +1,738 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Agent Hub Phase 5 Structured Inspector</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #10110e;
+        --panel: #171813;
+        --panel-2: #20221b;
+        --panel-3: #11130f;
+        --line: #34372c;
+        --line-strong: #535a41;
+        --text: #f5f1e8;
+        --muted: #aba590;
+        --quiet: #807a6c;
+        --accent: #d8ff57;
+        --cyan: #67d8c4;
+        --green: #8be977;
+        --amber: #f5bd5a;
+        --red: #ff7d6b;
+        --plum: #c59bff;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        margin: 0;
+        min-height: 100%;
+        background: var(--bg);
+        color: var(--text);
+        font-family:
+          Aptos,
+          "SF Pro Text",
+          "Segoe UI",
+          ui-sans-serif,
+          system-ui,
+          sans-serif;
+      }
+
+      body {
+        display: grid;
+        place-items: center;
+        padding: 32px;
+      }
+
+      .app {
+        display: grid;
+        width: 1600px;
+        height: 980px;
+        grid-template-columns: 300px minmax(0, 1fr) 520px;
+        overflow: hidden;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background:
+          linear-gradient(rgba(255, 255, 255, 0.018) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(255, 255, 255, 0.014) 1px, transparent 1px),
+          var(--bg);
+        background-size: 32px 32px;
+        box-shadow: 0 30px 90px rgba(0, 0, 0, 0.45);
+      }
+
+      .sidebar {
+        display: flex;
+        flex-direction: column;
+        gap: 18px;
+        padding: 20px 16px;
+        border-right: 1px solid var(--line);
+        background: rgba(19, 20, 16, 0.94);
+      }
+
+      .brand,
+      .side-card,
+      .message,
+      .panel,
+      .composer {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: rgba(255, 255, 255, 0.028);
+      }
+
+      .brand {
+        display: grid;
+        grid-template-columns: 38px minmax(0, 1fr);
+        gap: 12px;
+        align-items: center;
+        padding: 12px;
+      }
+
+      .mark,
+      .avatar {
+        display: grid;
+        place-items: center;
+        border-radius: 8px;
+        font-weight: 900;
+      }
+
+      .mark {
+        width: 38px;
+        height: 38px;
+        background: var(--accent);
+        color: #1d2602;
+      }
+
+      .brand strong,
+      .message strong,
+      .panel h3 {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .brand span,
+      .muted,
+      .meta,
+      .section-label {
+        color: var(--muted);
+      }
+
+      .section-label {
+        margin: 4px 0 8px;
+        font-size: 11px;
+        font-weight: 850;
+        text-transform: uppercase;
+      }
+
+      .nav {
+        display: grid;
+        gap: 8px;
+      }
+
+      .nav-row {
+        display: grid;
+        grid-template-columns: 16px minmax(0, 1fr) auto;
+        gap: 10px;
+        align-items: center;
+        min-height: 38px;
+        padding: 0 10px;
+        border: 1px solid transparent;
+        border-radius: 8px;
+        color: #e9e2d4;
+        font-size: 13px;
+      }
+
+      .nav-row.active {
+        border-color: rgba(216, 255, 87, 0.34);
+        background: rgba(216, 255, 87, 0.1);
+      }
+
+      .dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: var(--quiet);
+      }
+
+      .active .dot {
+        background: var(--accent);
+      }
+
+      .count {
+        padding: 2px 7px;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.07);
+        color: var(--muted);
+        font-size: 11px;
+        font-weight: 850;
+      }
+
+      .side-card {
+        display: grid;
+        gap: 10px;
+        padding: 12px;
+      }
+
+      .role {
+        display: grid;
+        grid-template-columns: 24px minmax(0, 1fr) 8px;
+        gap: 8px;
+        align-items: center;
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      .role .avatar {
+        width: 24px;
+        height: 24px;
+        background: rgba(103, 216, 196, 0.18);
+        color: var(--cyan);
+        font-size: 10px;
+      }
+
+      .role .dot {
+        background: var(--green);
+      }
+
+      .center {
+        display: grid;
+        min-width: 0;
+        grid-template-rows: auto minmax(0, 1fr) auto;
+        border-right: 1px solid var(--line);
+      }
+
+      .room-header {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 16px;
+        padding: 22px 28px 16px;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+      }
+
+      .room-header h1 {
+        margin: 0 0 8px;
+        font-size: 22px;
+        letter-spacing: 0;
+      }
+
+      .room-header p {
+        margin: 0;
+        color: var(--muted);
+        font-size: 13px;
+        line-height: 1.45;
+      }
+
+      .room-tabs,
+      .tabs {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+      }
+
+      .pill,
+      .tabs button {
+        min-height: 30px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: rgba(255, 255, 255, 0.03);
+        color: var(--muted);
+        font-size: 12px;
+        font-weight: 800;
+      }
+
+      .pill {
+        padding: 6px 10px;
+      }
+
+      .pill.active,
+      .tabs button.active {
+        border-color: rgba(103, 216, 196, 0.58);
+        background: rgba(103, 216, 196, 0.12);
+        color: var(--text);
+      }
+
+      .timeline {
+        display: grid;
+        align-content: start;
+        gap: 12px;
+        min-height: 0;
+        overflow: hidden;
+        padding: 22px 28px;
+      }
+
+      .message {
+        display: grid;
+        grid-template-columns: 36px minmax(0, 1fr) auto;
+        gap: 12px;
+        align-items: start;
+        padding: 14px;
+      }
+
+      .message.active {
+        border-color: rgba(216, 255, 87, 0.44);
+        background:
+          linear-gradient(90deg, rgba(216, 255, 87, 0.09), transparent 34%),
+          rgba(255, 255, 255, 0.03);
+      }
+
+      .avatar {
+        width: 36px;
+        height: 36px;
+        background: rgba(216, 255, 87, 0.16);
+        color: var(--accent);
+        font-size: 11px;
+      }
+
+      .message p {
+        margin: 5px 0 0;
+        color: #e8e0cf;
+        font-size: 13px;
+        line-height: 1.45;
+      }
+
+      .chips {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        margin-top: 10px;
+      }
+
+      .chip {
+        min-height: 22px;
+        padding: 3px 8px;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        color: var(--muted);
+        font-size: 11px;
+        font-weight: 850;
+      }
+
+      .chip.ok {
+        border-color: rgba(139, 233, 119, 0.35);
+        color: var(--green);
+      }
+
+      .chip.warn {
+        border-color: rgba(245, 189, 90, 0.38);
+        color: var(--amber);
+      }
+
+      .chip.art {
+        border-color: rgba(197, 155, 255, 0.42);
+        color: var(--plum);
+      }
+
+      .time {
+        color: var(--quiet);
+        font-size: 12px;
+      }
+
+      .composer {
+        margin: 0 28px 22px;
+        padding: 12px 14px;
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      .inspector {
+        display: grid;
+        min-width: 0;
+        grid-template-rows: auto auto minmax(0, 1fr);
+        background: rgba(18, 19, 16, 0.98);
+      }
+
+      .inspector-header {
+        display: flex;
+        justify-content: space-between;
+        gap: 14px;
+        padding: 18px;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .eyebrow {
+        margin-bottom: 8px;
+        color: var(--quiet);
+        font-size: 11px;
+        font-weight: 900;
+        text-transform: uppercase;
+      }
+
+      .inspector h2 {
+        margin: 0;
+        font-size: 20px;
+        letter-spacing: 0;
+      }
+
+      .state-row {
+        display: flex;
+        gap: 8px;
+        margin-top: 10px;
+      }
+
+      .state {
+        min-height: 22px;
+        padding: 3px 8px;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        color: var(--muted);
+        font-size: 11px;
+        font-weight: 850;
+        text-transform: uppercase;
+      }
+
+      .state.ok {
+        border-color: rgba(139, 233, 119, 0.36);
+        color: var(--green);
+      }
+
+      .actions {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+        gap: 6px;
+      }
+
+      .actions button {
+        min-height: 30px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: rgba(255, 255, 255, 0.03);
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .actions button.danger {
+        border-color: rgba(255, 125, 107, 0.35);
+        color: #ffd6cf;
+      }
+
+      .tabs {
+        padding: 12px;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .tabs button {
+        flex: 1 1 62px;
+      }
+
+      .body {
+        display: grid;
+        align-content: start;
+        gap: 14px;
+        min-height: 0;
+        overflow: hidden;
+        padding: 16px;
+      }
+
+      .panel {
+        display: grid;
+        gap: 10px;
+        padding: 14px;
+      }
+
+      .panel h3 {
+        margin: 0;
+        font-size: 15px;
+      }
+
+      .panel p {
+        margin: 0;
+        color: #e7decd;
+        font-size: 13px;
+        line-height: 1.48;
+      }
+
+      .metrics {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 8px;
+      }
+
+      .metric {
+        min-width: 0;
+        padding: 9px;
+        border: 1px solid rgba(255, 255, 255, 0.06);
+        border-radius: 8px;
+        background: var(--panel-3);
+      }
+
+      .metric span {
+        display: block;
+        color: var(--quiet);
+        font-size: 10px;
+        font-weight: 850;
+        text-transform: uppercase;
+      }
+
+      .metric strong {
+        display: block;
+        margin-top: 4px;
+        overflow: hidden;
+        color: var(--text);
+        font-size: 12px;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .context-preview,
+      .audit {
+        max-height: 150px;
+        overflow: hidden;
+        padding: 12px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: #0b0c09;
+        color: #d8d1c1;
+        font-family: "SFMono-Regular", "Cascadia Code", Consolas, monospace;
+        font-size: 12px;
+        line-height: 1.5;
+        white-space: pre-wrap;
+      }
+
+      .artifact-row,
+      .check-row,
+      .risk-row,
+      .memory-row {
+        display: grid;
+        grid-template-columns: auto minmax(0, 1fr) auto;
+        gap: 10px;
+        align-items: center;
+        padding: 9px 10px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: rgba(255, 255, 255, 0.024);
+        color: #e6dfcf;
+        font-size: 12px;
+      }
+
+      .risk-row {
+        grid-template-columns: 78px minmax(0, 1fr);
+      }
+
+      .memory-row {
+        grid-template-columns: 72px minmax(0, 1fr) 74px;
+      }
+
+      .tag {
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        padding: 2px 7px;
+        color: var(--muted);
+        font-size: 10px;
+        font-weight: 850;
+        text-transform: uppercase;
+      }
+
+      .tag.green {
+        border-color: rgba(139, 233, 119, 0.34);
+        color: var(--green);
+      }
+
+      .tag.amber {
+        border-color: rgba(245, 189, 90, 0.38);
+        color: var(--amber);
+      }
+
+      .tag.plum {
+        border-color: rgba(197, 155, 255, 0.4);
+        color: var(--plum);
+      }
+
+      .tag.red {
+        border-color: rgba(255, 125, 107, 0.4);
+        color: var(--red);
+      }
+
+      .boundary {
+        border-color: rgba(103, 216, 196, 0.28);
+        background: rgba(103, 216, 196, 0.07);
+      }
+    </style>
+  </head>
+  <body>
+    <main class="app">
+      <aside class="sidebar">
+        <div class="brand">
+          <div class="mark">AH</div>
+          <div>
+            <strong>agenthub-core</strong>
+            <span>Local-first workspace</span>
+          </div>
+        </div>
+
+        <div>
+          <div class="section-label">Projects</div>
+          <div class="nav">
+            <div class="nav-row active"><span class="dot"></span><span>agenthub-core</span><span class="count">4</span></div>
+            <div class="nav-row"><span class="dot"></span><span>desktop-shell</span><span class="count">2</span></div>
+          </div>
+        </div>
+
+        <div>
+          <div class="section-label">Topics</div>
+          <div class="nav">
+            <div class="nav-row"><span class="dot"></span><span># general</span></div>
+            <div class="nav-row active"><span class="dot"></span><span># planning</span><span class="count">9</span></div>
+            <div class="nav-row"><span class="dot"></span><span># review</span><span class="count">3</span></div>
+            <div class="nav-row"><span class="dot"></span><span># tasks/product</span></div>
+          </div>
+        </div>
+
+        <div class="side-card">
+          <div class="section-label">Team</div>
+          <div class="role"><span class="avatar">R</span><span>@researcher</span><span class="dot"></span></div>
+          <div class="role"><span class="avatar">A</span><span>@analyst</span><span class="dot"></span></div>
+          <div class="role"><span class="avatar">W</span><span>@writer</span><span class="dot"></span></div>
+          <div class="role"><span class="avatar">M</span><span>@memory</span><span class="dot"></span></div>
+        </div>
+      </aside>
+
+      <section class="center">
+        <header class="room-header">
+          <div>
+            <h1># planning</h1>
+            <p>Q3 planning thread with role messages, run cards, and review evidence chips.</p>
+          </div>
+          <div class="room-tabs">
+            <span class="pill active">Timeline</span>
+            <span class="pill">Threads</span>
+            <span class="pill">Tasks</span>
+          </div>
+        </header>
+
+        <div class="timeline">
+          <article class="message">
+            <span class="avatar">MK</span>
+            <div>
+              <strong>MK</strong>
+              <p>@researcher @analyst @writer 请一起制定 Q3 产品计划，包含用户洞察、优先级排序和关键交付物。</p>
+            </div>
+            <time class="time">09:00</time>
+          </article>
+
+          <article class="message">
+            <span class="avatar">R</span>
+            <div>
+              <strong>@researcher</strong>
+              <p>用户研究已完成，关键洞察与机会清单已附上。</p>
+              <div class="chips">
+                <span class="chip art">Context</span>
+                <span class="chip">user-interviews.md</span>
+              </div>
+            </div>
+            <time class="time">09:24</time>
+          </article>
+
+          <article class="message active">
+            <span class="avatar">A</span>
+            <div>
+              <strong>@analyst run completed</strong>
+              <p>优先级矩阵已生成，建议优先推进 2 个高影响力项目。</p>
+              <div class="chips">
+                <span class="chip ok">Checks passed</span>
+                <span class="chip warn">Risk medium</span>
+                <span class="chip art">Artifacts 4</span>
+                <span class="chip">Memory 1</span>
+                <span class="chip">Audit 18</span>
+              </div>
+            </div>
+            <time class="time">09:31</time>
+          </article>
+
+          <article class="message">
+            <span class="avatar">RV</span>
+            <div>
+              <strong>@reviewer</strong>
+              <p>风险：范围边界仍需补充，部分需求验收标准不够清晰。</p>
+              <div class="chips">
+                <span class="chip warn">Needs review</span>
+              </div>
+            </div>
+            <time class="time">09:45</time>
+          </article>
+        </div>
+
+        <div class="composer">@agent 输入指令，例如：@analyst 生成 Q3 优先级建议</div>
+      </section>
+
+      <aside class="inspector">
+        <header class="inspector-header">
+          <div>
+            <div class="eyebrow">Workgroup Inspector</div>
+            <h2>Q3 Planning Priority Matrix</h2>
+            <div class="state-row">
+              <span class="state ok">completed</span>
+              <span class="state">review pending</span>
+            </div>
+          </div>
+          <div class="actions">
+            <button>Refresh</button>
+            <button>Record Accept</button>
+            <button class="danger">Record Reject</button>
+          </div>
+        </header>
+
+        <nav class="tabs" aria-label="Inspector tabs">
+          <button class="active">Brief</button>
+          <button>Context</button>
+          <button>Artifacts</button>
+          <button>Checks</button>
+          <button>Risks</button>
+          <button>Memory</button>
+          <button>Audit</button>
+        </nav>
+
+        <div class="body">
+          <section class="panel">
+            <div class="eyebrow">Brief</div>
+            <h3>Goal</h3>
+            <p>Produce a Q3 priority recommendation using user insights, market notes, and team constraints.</p>
+            <div class="metrics">
+              <div class="metric"><span>Agent</span><strong>@analyst</strong></div>
+              <div class="metric"><span>Status</span><strong>completed</strong></div>
+              <div class="metric"><span>Review</span><strong>pending</strong></div>
+              <div class="metric"><span>Memory</span><strong>1 proposal</strong></div>
+            </div>
+          </section>
+
+          <section class="panel">
+            <div class="eyebrow">Context Preview</div>
+            <div class="context-preview">## Conversation Brief
+Last user goal: define Q3 product plan.
+Participants: @researcher, @analyst, @writer.
+Relevant artifacts: user-interviews.md, priority-matrix.md.</div>
+          </section>
+
+          <section class="panel">
+            <div class="eyebrow">Engineering Pack</div>
+            <div class="artifact-row"><span class="tag plum">diff</span><strong>priority-matrix.md</strong><span>+124/-8</span></div>
+            <div class="artifact-row"><span class="tag">handoff</span><strong>Retained worktree path and review commands</strong><span>local only</span></div>
+            <div class="artifact-row"><span class="tag">compare</span><strong>Same-turn Claude/Codex comparison available</strong><span>review only</span></div>
+          </section>
+
+          <section class="panel">
+            <div class="eyebrow">Checks / Risks</div>
+            <div class="check-row"><span class="tag green">passed</span><strong>pnpm test -- desktop-services</strong><span>8.2s</span></div>
+            <div class="risk-row"><span class="tag amber">medium</span><strong>Scope boundary still needs reviewer confirmation.</strong></div>
+          </section>
+
+          <section class="panel">
+            <div class="eyebrow">Memory</div>
+            <div class="memory-row"><span class="tag">proposed</span><strong>Q3 planning rubric can be reused for later roadmap tasks.</strong><span>Approve</span></div>
+          </section>
+
+          <section class="panel boundary">
+            <div class="eyebrow">Boundary</div>
+            <p>Accept/reject records review state only. Agent Hub does not merge, push, apply patches, delete worktrees, or write repo context files from this inspector.</p>
+          </section>
+        </div>
+      </aside>
+    </main>
+  </body>
+</html>
