@@ -1,0 +1,460 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>UX5 Conclusion Inspector</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #0d100d;
+        --panel: #161914;
+        --panel-2: #1f231b;
+        --line: rgba(238, 231, 216, 0.12);
+        --line-strong: rgba(238, 231, 216, 0.2);
+        --text: #f3eddd;
+        --muted: #aaa28d;
+        --muted-2: #7d765f;
+        --accent: #d8ff57;
+        --cyan: #67d8c4;
+        --amber: #f5bd5a;
+        --red: #ff7d6b;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background:
+          linear-gradient(135deg, rgba(216, 255, 87, 0.07), transparent 36%),
+          radial-gradient(circle at 82% 12%, rgba(255, 125, 107, 0.13), transparent 30%),
+          var(--bg);
+        color: var(--text);
+        font-family:
+          ui-sans-serif,
+          system-ui,
+          -apple-system,
+          BlinkMacSystemFont,
+          "Segoe UI",
+          sans-serif;
+      }
+
+      main {
+        width: min(1180px, calc(100vw - 48px));
+        margin: 0 auto;
+        padding: 32px 0;
+      }
+
+      .frame {
+        display: grid;
+        grid-template-columns: minmax(0, 0.7fr) minmax(620px, 1fr);
+        gap: 18px;
+        align-items: stretch;
+      }
+
+      .room,
+      .inspector {
+        min-width: 0;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: rgba(17, 20, 14, 0.88);
+        box-shadow: 0 28px 76px rgba(0, 0, 0, 0.24);
+      }
+
+      .room {
+        display: grid;
+        align-content: start;
+        gap: 14px;
+        padding: 18px;
+      }
+
+      .eyebrow {
+        color: var(--accent);
+        font-size: 11px;
+        font-weight: 850;
+        letter-spacing: 0;
+        text-transform: uppercase;
+      }
+
+      h1,
+      h2 {
+        margin: 5px 0 0;
+        letter-spacing: 0;
+      }
+
+      h1 {
+        font-size: 28px;
+      }
+
+      h2 {
+        font-size: 22px;
+      }
+
+      p {
+        margin: 0;
+        color: var(--muted);
+        font-size: 13px;
+        line-height: 1.5;
+      }
+
+      .message,
+      .run-card,
+      .panel {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: rgba(255, 255, 255, 0.028);
+      }
+
+      .message {
+        padding: 12px;
+        color: #ded6c5;
+      }
+
+      .run-card {
+        display: grid;
+        gap: 8px;
+        padding: 12px;
+      }
+
+      .run-card header,
+      .inspector-head,
+      .panel-head,
+      .metric-grid {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+      }
+
+      .badge,
+      .state,
+      .risk-pill {
+        display: inline-flex;
+        align-items: center;
+        min-height: 22px;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        padding: 3px 8px;
+        font-size: 11px;
+        font-weight: 850;
+        text-transform: uppercase;
+      }
+
+      .badge {
+        border-color: rgba(103, 216, 196, 0.32);
+        color: var(--cyan);
+      }
+
+      .risk-pill.blocking,
+      .state.reject {
+        border-color: rgba(255, 125, 107, 0.45);
+        color: var(--red);
+        background: rgba(255, 125, 107, 0.08);
+      }
+
+      .inspector {
+        display: grid;
+        grid-template-rows: auto auto minmax(0, 1fr);
+        overflow: hidden;
+      }
+
+      .inspector-head {
+        align-items: flex-start;
+        padding: 18px;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .actions {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+        gap: 8px;
+      }
+
+      button {
+        min-height: 34px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: rgba(255, 255, 255, 0.035);
+        color: var(--muted);
+        padding: 0 11px;
+        font: inherit;
+        font-size: 12px;
+      }
+
+      button.primary {
+        border-color: rgba(216, 255, 87, 0.46);
+        color: var(--text);
+      }
+
+      .tabs {
+        display: grid;
+        grid-template-columns: repeat(8, minmax(0, 1fr));
+        gap: 6px;
+        padding: 12px;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .tabs button {
+        min-width: 0;
+        padding: 0 4px;
+      }
+
+      .tabs button.active {
+        border-color: rgba(103, 216, 196, 0.7);
+        background: rgba(103, 216, 196, 0.12);
+        color: var(--text);
+      }
+
+      .body {
+        display: grid;
+        gap: 12px;
+        overflow: auto;
+        padding: 16px;
+      }
+
+      .blocking-banner {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 14px;
+        border: 1px solid rgba(255, 125, 107, 0.42);
+        border-radius: 8px;
+        padding: 14px;
+        background: linear-gradient(90deg, rgba(255, 125, 107, 0.12), rgba(255, 125, 107, 0.035));
+      }
+
+      .blocking-banner strong,
+      .panel strong {
+        overflow-wrap: anywhere;
+      }
+
+      .panel {
+        display: grid;
+        gap: 11px;
+        padding: 14px;
+      }
+
+      .conclusion-grid {
+        display: grid;
+        grid-template-columns: minmax(0, 1.1fr) minmax(260px, 0.9fr);
+        gap: 12px;
+      }
+
+      .metric-grid {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+      }
+
+      .metric {
+        min-width: 0;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 10px;
+        background: rgba(0, 0, 0, 0.12);
+      }
+
+      .metric span,
+      .action-list span {
+        color: var(--muted-2);
+        font-size: 10px;
+        font-weight: 850;
+        text-transform: uppercase;
+      }
+
+      .metric strong {
+        display: block;
+        margin-top: 4px;
+        overflow: hidden;
+        color: var(--text);
+        font-size: 15px;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .action-list {
+        display: grid;
+        gap: 8px;
+      }
+
+      .action {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 10px;
+        align-items: center;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 10px;
+        background: rgba(12, 18, 17, 0.7);
+      }
+
+      .action strong {
+        display: block;
+        margin-top: 3px;
+      }
+
+      .secondary-strip {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+
+      .secondary-strip span {
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        padding: 5px 9px;
+        color: var(--muted);
+        font-size: 11px;
+      }
+
+      @media (max-width: 920px) {
+        main {
+          width: min(100vw - 28px, 1180px);
+        }
+
+        .frame,
+        .conclusion-grid,
+        .blocking-banner {
+          grid-template-columns: 1fr;
+        }
+
+        .tabs {
+          grid-template-columns: repeat(4, minmax(0, 1fr));
+        }
+
+        .metric-grid {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <section class="frame">
+        <div class="room">
+          <div>
+            <div class="eyebrow">Agent Hub Desktop / UX-5</div>
+            <h1>Conclusion-first review</h1>
+          </div>
+          <p>
+            The room stays quiet. Opening review starts with decision context,
+            not raw logs or full diffs.
+          </p>
+          <div class="message">Review the run-card output before any local apply workflow.</div>
+          <article class="run-card">
+            <header>
+              <strong>@codex</strong>
+              <span class="badge">completed</span>
+            </header>
+            <p>Review ready - blocking risk pinned in inspector.</p>
+            <div class="secondary-strip">
+              <span>Checks failed</span>
+              <span>Risks blocking</span>
+              <span>Artifacts 3</span>
+            </div>
+          </article>
+        </div>
+
+        <aside class="inspector">
+          <header class="inspector-head">
+            <div>
+              <div class="eyebrow">Workgroup Inspector</div>
+              <h2>Retained worktree cleanup guard</h2>
+              <div class="secondary-strip">
+                <span class="badge">completed</span>
+                <span class="state reject">pending</span>
+              </div>
+            </div>
+            <div class="actions">
+              <button>Refresh</button>
+              <button>Record Accept</button>
+              <button>Record Reject</button>
+              <button>Close</button>
+            </div>
+          </header>
+
+          <nav class="tabs" aria-label="Inspector tabs">
+            <button class="active">Brief</button>
+            <button>Context</button>
+            <button>Artifacts</button>
+            <button>Checks</button>
+            <button>Risks</button>
+            <button>Lifecycle</button>
+            <button>Memory</button>
+            <button>Audit</button>
+          </nav>
+
+          <div class="body">
+            <section class="blocking-banner">
+              <div>
+                <div class="eyebrow">Blocking Risk</div>
+                <h2>Sensitive path changed in retained worktree</h2>
+                <p>
+                  Apply and acceptance should wait until the Risks tab is
+                  reviewed. The boundary remains review-only.
+                </p>
+              </div>
+              <span class="risk-pill blocking">blocking</span>
+            </section>
+
+            <section class="panel">
+              <div class="panel-head">
+                <div>
+                  <div class="eyebrow">Conclusion</div>
+                  <h2>Needs review before acceptance</h2>
+                </div>
+                <span class="state reject">suggest reject</span>
+              </div>
+              <p>
+                The run completed, but failed checks and a blocking risk make it
+                unsuitable for acceptance until inspected manually.
+              </p>
+              <div class="metric-grid">
+                <div class="metric"><span>Changed Output</span><strong>3 files +144/-8</strong></div>
+                <div class="metric"><span>Checks</span><strong>failed</strong></div>
+                <div class="metric"><span>Risks</span><strong>blocking</strong></div>
+                <div class="metric"><span>Memory</span><strong>2 proposals</strong></div>
+              </div>
+            </section>
+
+            <div class="conclusion-grid">
+              <section class="panel">
+                <div class="eyebrow">Manual Next Actions</div>
+                <div class="action-list">
+                  <div class="action">
+                    <div><span>First</span><strong>Open Risks and inspect blocking evidence</strong></div>
+                    <button class="primary">Risks</button>
+                  </div>
+                  <div class="action">
+                    <div><span>Then</span><strong>Open Checks to review failed command output</strong></div>
+                    <button>Checks</button>
+                  </div>
+                  <div class="action">
+                    <div><span>Finally</span><strong>Record reject or request a follow-up run</strong></div>
+                    <button>Audit only</button>
+                  </div>
+                </div>
+              </section>
+
+              <section class="panel">
+                <div class="eyebrow">Evidence Behind Tabs</div>
+                <p>
+                  Context previews, full diffs, handoff details, exit metadata,
+                  and raw event logs stay behind secondary inspector tabs.
+                </p>
+                <div class="secondary-strip">
+                  <span>Context preview</span>
+                  <span>Full diff</span>
+                  <span>Handoff</span>
+                  <span>Raw audit</span>
+                </div>
+              </section>
+            </div>
+          </div>
+        </aside>
+      </section>
+    </main>
+  </body>
+</html>

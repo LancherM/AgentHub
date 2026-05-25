@@ -47,6 +47,7 @@ import type {
   ThreadSummary,
   TimelineEventKind,
   TimelineEventMetadata,
+  UpdateThreadInput,
   UserMessage
 } from "../../src/lib/types";
 import {
@@ -106,6 +107,7 @@ export interface ThreadService {
   listThreads(): Promise<ThreadSummary[]>;
   getThread(threadId: string): Promise<ThreadDetail>;
   createThread(input?: CreateThreadInput): Promise<ThreadSummary>;
+  updateThread(input: UpdateThreadInput): Promise<ThreadDetail>;
   appendUserMessage(
     threadId: string,
     text: string,
@@ -223,13 +225,37 @@ class RepositoryThreadService implements ThreadService {
           roomType: input.roomType ?? "custom",
           roomHandle,
           description: input.description,
-          pinned: input.pinned
+          pinned: input.pinned,
+          sharedContextEnabled: input.sharedContextEnabled
         }),
         createdAt: now,
         updatedAt: now
       })
     );
     return toThreadSummary(toThreadDetail(thread, [], new Map()));
+  }
+
+  async updateThread(input: UpdateThreadInput): Promise<ThreadDetail> {
+    const thread = await this.requireThread(input.threadId);
+    const room = roomMetadataForThread(thread);
+    const updated = await this.threads.update(
+      validateConversationThread({
+        ...thread,
+        metadata: {
+          ...(thread.metadata ?? {}),
+          ...roomMetadata({
+            ...room,
+            sharedContextEnabled: input.sharedContextEnabled
+          })
+        },
+        updatedAt: this.dependencies.context.now()
+      })
+    );
+    const [messages, runStatusById] = await Promise.all([
+      this.messages.listByThreadId(updated.id),
+      this.runStatusById(updated.projectId)
+    ]);
+    return toThreadDetail(updated, messages, runStatusById);
   }
 
   async appendUserMessage(
@@ -814,10 +840,10 @@ class RepositoryThreadService implements ThreadService {
     contextMode: ContextMode;
     priorMessages: ConversationMessage[];
   }) {
-    const contextSourceMessages = contextSourceMessagesForAgent(
-      input.priorMessages,
-      input.agentId
-    );
+    const room = roomMetadataForThread(input.thread);
+    const contextSourceMessages = room.sharedContextEnabled
+      ? contextSourceMessagesForAgent(input.priorMessages, input.agentId)
+      : [];
     const messages = await Promise.all(
       contextSourceMessages.map((message) => this.toConversationContextMessage(message))
     );
@@ -837,11 +863,14 @@ class RepositoryThreadService implements ThreadService {
       messages: messages.filter(
         (message): message is ConversationContextMessage => message !== undefined
       ),
-      threadSummary: await this.summaries.getByThreadId(input.thread.id),
+      threadSummary: room.sharedContextEnabled
+        ? await this.summaries.getByThreadId(input.thread.id)
+        : undefined,
       projectContextReferences: [
         `project:${input.thread.projectId}`,
         "Agent Hub-owned project context store",
         "Approved memory only; thread context is not promoted automatically",
+        `room_shared_context:${room.sharedContextEnabled ? "enabled" : "disabled"}`,
         ...roleContextReferences(input.role)
       ]
     });
@@ -1527,14 +1556,20 @@ interface RoomMetadata {
   roomHandle: string;
   description?: string;
   pinned?: boolean;
+  sharedContextEnabled: boolean;
 }
 
-function roomMetadata(input: RoomMetadata): ConversationThread["metadata"] {
+function roomMetadata(
+  input: Omit<RoomMetadata, "sharedContextEnabled"> & {
+    sharedContextEnabled?: boolean;
+  }
+): ConversationThread["metadata"] {
   return {
     roomType: input.roomType,
     roomHandle: input.roomHandle,
     description: input.description,
-    pinned: input.pinned
+    pinned: input.pinned,
+    sharedContextEnabled: input.sharedContextEnabled ?? true
   };
 }
 
@@ -2102,7 +2137,8 @@ function roomMetadataForThread(thread: ConversationThread): RoomMetadata {
       typeof metadata.description === "string" && metadata.description.trim()
         ? metadata.description.trim()
         : undefined,
-    pinned: metadata.pinned === true
+    pinned: metadata.pinned === true,
+    sharedContextEnabled: metadata.sharedContextEnabled !== false
   };
 }
 
@@ -2168,6 +2204,7 @@ function toThreadDetail(
     roomHandle: room.roomHandle,
     description: room.description,
     pinned: room.pinned,
+    sharedContextEnabled: room.sharedContextEnabled,
     createdAt: thread.createdAt,
     updatedAt: latestUpdatedAt(thread, messages),
     messages: threadMessages
@@ -2184,6 +2221,13 @@ function roleContextReferences(role?: WorkgroupRoleRunMetadata): string[] {
     `role_persona: ${role.persona}`,
     `role_instructions: ${role.defaultInstructions}`,
     `role_permissions: ${role.permissions.join(", ") || "none"}`,
+    `role_skills: ${
+      role.defaultSkillReferences
+        ?.map((reference) =>
+          reference.scope ? `${reference.scope}:${reference.id}` : reference.id
+        )
+        .join(", ") ?? "none"
+    }`,
     `role_context_policy: ${role.contextPolicy.scope}; approved_memory=${String(
       role.contextPolicy.includeApprovedMemory
     )}; thread_summary=${String(role.contextPolicy.includeThreadSummary)}`,
@@ -2204,6 +2248,7 @@ function toThreadSummary(thread: ThreadDetail): ThreadSummary {
     roomHandle: thread.roomHandle,
     description: thread.description,
     pinned: thread.pinned,
+    sharedContextEnabled: thread.sharedContextEnabled,
     createdAt: thread.createdAt,
     updatedAt: thread.updatedAt,
     lastMessagePreview: lastMessage

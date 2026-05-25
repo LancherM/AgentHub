@@ -1,0 +1,305 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Agent Hub Phase UX-3 Composer Controls</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #0f100d;
+        --panel: #151612;
+        --line: #34372c;
+        --line-strong: #515940;
+        --text: #f4f0e7;
+        --muted: #aaa48f;
+        --muted-2: #807b6d;
+        --accent: #d8ff57;
+        --cyan: #67d8c4;
+        --amber: #f5bd5a;
+        --plum: #c59bff;
+        --ink: #1d2602;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        display: grid;
+        min-height: 100vh;
+        margin: 0;
+        place-items: center;
+        background:
+          linear-gradient(rgba(255, 255, 255, 0.018) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(255, 255, 255, 0.014) 1px, transparent 1px),
+          radial-gradient(circle at 75% 20%, rgba(216, 255, 87, 0.08), transparent 34%),
+          var(--bg);
+        background-size: 32px 32px, 32px 32px, 100% 100%, 100% 100%;
+        color: var(--text);
+        font-family:
+          "Aptos",
+          "SF Pro Text",
+          "Segoe UI",
+          ui-sans-serif,
+          system-ui,
+          sans-serif;
+      }
+
+      .frame {
+        display: grid;
+        align-content: end;
+        width: 1000px;
+        height: 720px;
+        padding: 28px;
+        border: 1px solid var(--line);
+        background: rgba(15, 16, 13, 0.98);
+      }
+
+      .room-preview {
+        align-self: start;
+        margin-bottom: 120px;
+      }
+
+      .room-preview h1 {
+        margin: 0 0 8px;
+        font-size: 28px;
+        letter-spacing: 0;
+      }
+
+      .room-preview p {
+        margin: 0;
+        color: var(--muted);
+      }
+
+      .composer {
+        position: relative;
+        display: grid;
+        gap: 10px;
+        width: 100%;
+        padding: 12px;
+        border: 1px solid rgba(216, 255, 87, 0.62);
+        border-radius: 8px;
+        background: rgba(13, 14, 11, 0.96);
+        box-shadow: 0 26px 90px rgba(0, 0, 0, 0.42);
+      }
+
+      .toolbar,
+      .footer {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+      }
+
+      .chips {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+      }
+
+      .chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        min-height: 26px;
+        padding: 2px 8px;
+        border: 1px solid rgba(216, 255, 87, 0.28);
+        border-radius: 999px;
+        background: rgba(216, 255, 87, 0.11);
+        color: var(--accent);
+        font-size: 12px;
+        font-weight: 850;
+      }
+
+      .chip.role {
+        border-color: rgba(197, 155, 255, 0.36);
+        background: rgba(197, 155, 255, 0.1);
+        color: var(--plum);
+      }
+
+      .chip button {
+        display: grid;
+        width: 17px;
+        height: 17px;
+        place-items: center;
+        border: 0;
+        border-radius: 50%;
+        background: rgba(255, 255, 255, 0.12);
+        color: inherit;
+      }
+
+      .segments {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 3px;
+        padding: 3px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: #10110e;
+      }
+
+      .segments button {
+        min-height: 30px;
+        border: 0;
+        border-radius: 6px;
+        background: transparent;
+        color: var(--muted);
+        font-weight: 800;
+      }
+
+      .segments button.active {
+        background: var(--accent);
+        color: var(--ink);
+      }
+
+      .input {
+        min-height: 118px;
+        padding: 13px 0;
+        border-top: 1px solid rgba(255, 255, 255, 0.06);
+        border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+        color: var(--text);
+        line-height: 1.5;
+      }
+
+      .caret-token {
+        color: var(--accent);
+      }
+
+      .suggestions {
+        position: absolute;
+        left: 18px;
+        bottom: 88px;
+        width: 390px;
+        overflow: hidden;
+        border: 1px solid rgba(103, 216, 196, 0.36);
+        border-radius: 8px;
+        background: #111512;
+        box-shadow: 0 18px 52px rgba(0, 0, 0, 0.38);
+      }
+
+      .suggestion {
+        display: grid;
+        grid-template-columns: 34px minmax(0, 1fr) auto;
+        gap: 10px;
+        align-items: center;
+        min-height: 48px;
+        padding: 8px 10px;
+        border: 0;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+        background: transparent;
+        color: var(--text);
+        text-align: left;
+      }
+
+      .suggestion:last-child {
+        border-bottom: 0;
+      }
+
+      .suggestion.active {
+        background: rgba(103, 216, 196, 0.1);
+      }
+
+      .badge {
+        display: grid;
+        width: 30px;
+        height: 30px;
+        place-items: center;
+        border-radius: 8px;
+        background: rgba(103, 216, 196, 0.14);
+        color: var(--cyan);
+        font-weight: 900;
+      }
+
+      .suggestion strong,
+      .suggestion span {
+        display: block;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .suggestion span,
+      .footer span {
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .kind {
+        color: var(--muted-2);
+        font-size: 11px;
+        font-weight: 850;
+        text-transform: uppercase;
+      }
+
+      .footer button {
+        min-width: 132px;
+        min-height: 38px;
+        border: 0;
+        border-radius: 8px;
+        background: var(--accent);
+        color: var(--ink);
+        font-weight: 900;
+      }
+    </style>
+  </head>
+  <body>
+    <main class="frame">
+      <section class="room-preview">
+        <h1>#general</h1>
+        <p>Composer controls surface targets and context before a local run starts.</p>
+      </section>
+
+      <section class="composer">
+        <div class="toolbar">
+          <div class="chips">
+            <span class="chip">@codex <button aria-label="Remove codex">x</button></span>
+            <span class="chip role">@engineer <button aria-label="Remove engineer">x</button></span>
+          </div>
+          <div class="segments" aria-label="Context mode">
+            <button>auto</button>
+            <button>minimal</button>
+            <button class="active">full</button>
+            <button>workspace</button>
+          </div>
+        </div>
+
+        <div class="input">
+          <span class="caret-token">@eng</span> compare the room plan with the latest review notes
+        </div>
+
+        <div class="suggestions">
+          <button class="suggestion active">
+            <span class="badge">E</span>
+            <span>
+              <strong>@engineer</strong>
+              <span>Build-oriented preset role</span>
+            </span>
+            <span class="kind">role</span>
+          </button>
+          <button class="suggestion">
+            <span class="badge">C</span>
+            <span>
+              <strong>@codex</strong>
+              <span>Run Codex CLI in the task worktree</span>
+            </span>
+            <span class="kind">agent</span>
+          </button>
+          <button class="suggestion">
+            <span class="badge">/</span>
+            <span>
+              <strong>/workflow review_loop</strong>
+              <span>Start a bounded local review workflow</span>
+            </span>
+            <span class="kind">command</span>
+          </button>
+        </div>
+
+        <div class="footer">
+          <span>Arrow keys select suggestions. Unknown mentions stay in the prompt.</span>
+          <button>Run 2 targets</button>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>

@@ -17,7 +17,11 @@ import {
   DefaultContextCompiler,
   MarkdownContextFormatter,
   createTaskBrief as createContextTaskBrief,
+  createStoreContextCompiler,
+  injectedSkillEvidence,
   materializeWorktreeOverlay,
+  resolveGlobalSkillStoreRoot,
+  resolveProjectContextStoreRoot,
   type ConversationContextBrief,
   type GeneratedFileBaseline,
   type ContextBundle,
@@ -42,6 +46,7 @@ import {
   validateTaskRun,
   type AgentKind,
   type ContextPack,
+  type InjectedSkillEvidence,
   type JsonObject,
   type RiskReport,
   type RunContextDeliveryMode,
@@ -49,7 +54,8 @@ import {
   type Task,
   type TaskBrief,
   type TaskRun,
-  type VerificationResult
+  type VerificationResult,
+  type SkillReference
 } from "@agent-hub/core";
 import { RiskReportGenerator } from "@agent-hub/safety";
 import { generateMemoryProposalsFromCompletedRun } from "./memory-proposals";
@@ -109,6 +115,9 @@ export interface RunTaskInput {
   taskStatusMode?: "single_run" | "shared_task";
   deliveryMode?: RunContextDeliveryMode;
   contextStoreRoot?: string;
+  agentHubHome?: string;
+  selectedSkillReferences?: SkillReference[];
+  roleSkillReferences?: SkillReference[];
   runRoot?: string;
   workspaceBasePath?: string;
   workspaceCleanupPolicy?: WorkspaceCleanupPolicy;
@@ -246,6 +255,7 @@ export class TaskRunner {
   readonly memoryItemRepository: MemoryItemRepository;
   readonly runMetadataRepository: RunMetadataRepository;
   private readonly contextCompiler: ContextCompiler;
+  private readonly hasCustomContextCompiler: boolean;
   private readonly contextFormatter: ContextFormatter;
   private readonly agentRegistry: AgentRegistry;
   private readonly workspaceManager: WorkspaceManager;
@@ -260,6 +270,7 @@ export class TaskRunner {
   constructor(dependencies: TaskRunnerDependencies = {}) {
     const shellExecutor = dependencies.shellExecutor ?? new NodeShellExecutor();
     const processRunner = dependencies.processRunner ?? new NodeProcessRunner();
+    this.hasCustomContextCompiler = dependencies.contextCompiler !== undefined;
     this.contextCompiler = dependencies.contextCompiler ?? new DefaultContextCompiler();
     this.contextFormatter = dependencies.contextFormatter ?? new MarkdownContextFormatter();
     this.taskRepository =
@@ -300,6 +311,36 @@ export class TaskRunner {
       dependencies.defaultRunRoot ?? path.join(os.tmpdir(), "agent-hub-runs");
   }
 
+  private contextCompilerForRun(input: RunTaskInput): ContextCompiler {
+    if (this.hasCustomContextCompiler) {
+      return this.contextCompiler;
+    }
+    if (
+      input.contextStoreRoot === undefined &&
+      input.agentHubHome === undefined &&
+      input.selectedSkillReferences === undefined &&
+      input.roleSkillReferences === undefined
+    ) {
+      return this.contextCompiler;
+    }
+    return createStoreContextCompiler({
+      projectStoreRoot:
+        input.contextStoreRoot ??
+        (input.projectId
+          ? resolveProjectContextStoreRoot({
+              projectRoot: input.projectRoot,
+              projectId: input.projectId,
+              agentHubHome: input.agentHubHome
+            })
+          : undefined),
+      globalSkillStoreRoot: resolveGlobalSkillStoreRoot({
+        agentHubHome: input.agentHubHome
+      }),
+      selectedSkillReferences: input.selectedSkillReferences,
+      roleSkillReferences: input.roleSkillReferences
+    });
+  }
+
   async run(input: RunTaskInput): Promise<RunResult> {
     const parsed = parseRunInput(input);
     const projectRoot = path.resolve(input.projectRoot);
@@ -335,13 +376,16 @@ export class TaskRunner {
       input.taskStatusMode ?? "single_run"
     );
 
-    const contextBundle = await this.contextCompiler.compile({
+    const contextCompiler = this.contextCompilerForRun(input);
+    const contextBundle = await contextCompiler.compile({
       taskPrompt: parsed.taskPrompt,
       selectedAgentId: parsed.agentKind,
       targetRepository: targetRepository(projectRoot, input.targetRepository),
       conversationBrief: input.conversationBrief,
       userConstraints: input.userConstraints,
-      executionHints: input.executionHints
+      executionHints: input.executionHints,
+      selectedSkillReferences: input.selectedSkillReferences,
+      roleSkillReferences: input.roleSkillReferences
     });
     const contextMarkdown = this.contextFormatter.format(contextBundle);
     const contextPack = createRuntimeContextPack(
@@ -812,6 +856,25 @@ export class TaskRunner {
         );
       } catch (error) {
         recordDiagnostic("conversation brief artifact persistence", error);
+      }
+    }
+    if ((contextPack.injectedSkills ?? []).length > 0) {
+      try {
+        await this.runArtifactRepository.create(
+          createTextArtifact({
+            runId: run.id,
+            kind: "skill_inventory",
+            content: renderSkillInventory(contextPack.injectedSkills ?? []),
+            metadata: {
+              skills: contextPack.injectedSkills,
+              skillReferences: contextPack.skillReferences
+            },
+            clock: this.clock,
+            idGenerator: this.idGenerator
+          })
+        );
+      } catch (error) {
+        recordDiagnostic("skill inventory artifact persistence", error);
       }
     }
     if (codeStateProvenance) {
@@ -1389,6 +1452,7 @@ function createRuntimeContextPack(
     skillReferences: bundle.sections
       .filter((entry) => entry.source.kind === "skill")
       .map((entry) => entry.source.id),
+    injectedSkills: injectedSkillEvidence(bundle),
     createdAt: nowIso()
   };
 }
@@ -1457,6 +1521,22 @@ function conversationBriefArtifact(
         }
       }
     : undefined;
+}
+
+function renderSkillInventory(skills: InjectedSkillEvidence[]): string {
+  const lines = ["# Injected Skills", ""];
+  for (const skill of skills) {
+    lines.push(`## ${skill.scope}:${skill.id}`);
+    lines.push("");
+    lines.push(`name: ${skill.name}`);
+    lines.push(`description: ${skill.description}`);
+    lines.push(`content_sha256: ${skill.contentHash}`);
+    if (skill.sourcePath) {
+      lines.push(`source_path: ${skill.sourcePath}`);
+    }
+    lines.push("");
+  }
+  return lines.join("\n");
 }
 
 function createTextArtifact(input: {

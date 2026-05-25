@@ -192,6 +192,7 @@ export interface ThreadSummary {
   roomHandle?: string;
   description?: string;
   pinned?: boolean;
+  sharedContextEnabled: boolean;
   createdAt: string;
   updatedAt: string;
   lastMessagePreview?: string;
@@ -207,6 +208,7 @@ export interface ThreadDetail {
   roomHandle?: string;
   description?: string;
   pinned?: boolean;
+  sharedContextEnabled: boolean;
   createdAt: string;
   updatedAt: string;
   messages: ThreadMessage[];
@@ -263,6 +265,12 @@ export interface CreateThreadInput {
   roomHandle?: string;
   description?: string;
   pinned?: boolean;
+  sharedContextEnabled?: boolean;
+}
+
+export interface UpdateThreadInput {
+  threadId: string;
+  sharedContextEnabled: boolean;
 }
 
 export interface SendThreadMessageInput {
@@ -820,6 +828,7 @@ export interface AgentHubApi {
   threads: {
     list(): Promise<ThreadSummary[]>;
     create(input?: CreateThreadInput): Promise<ThreadSummary>;
+    update(input: UpdateThreadInput): Promise<ThreadDetail>;
     get(threadId: string): Promise<ThreadDetail>;
     sendMessage(input: SendThreadMessageInput): Promise<ThreadDetail>;
   };
