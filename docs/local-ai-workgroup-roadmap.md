@@ -24,6 +24,12 @@ contracts should leave room for richer roles, executor types, workflows,
 artifacts, knowledge systems, packs, optional sync, and multi-person review
 without forcing a rewrite.
 
+The companion near-term interaction plan lives in
+`docs/interaction-optimization-roadmap.md`. Use it when a phase needs to reduce
+visible complexity, improve the room transcript, clarify project/room creation,
+govern room shared context, add global skill scope, or polish composer,
+run-card, inspector, empty-state, preference, and keyboard workflows.
+
 ## Guardrails
 
 - Keep Agent Hub CLI-first and local-first.
