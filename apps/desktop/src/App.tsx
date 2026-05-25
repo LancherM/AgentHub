@@ -1,12 +1,15 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ChatView } from "./components/chat/ChatView";
 import { RunInspectorModal } from "./components/inspector/RunInspectorModal";
+import { KnowledgeWorkspace } from "./components/knowledge/KnowledgeWorkspace";
 import { Sidebar } from "./components/sidebar/Sidebar";
 import { VerificationSettingsPanel } from "./components/settings/VerificationSettingsPanel";
+import { TeamWorkspace } from "./components/team/TeamWorkspace";
 import { agentHubApi } from "./lib/agentHubApi";
 import type {
   AgentId,
   AgentRunMessage,
+  CollaborationWorkflowInput,
   ContextMode,
   ProjectSummary,
   RunDetail,
@@ -16,6 +19,8 @@ import type {
   ThreadMessage,
   ThreadSummary
 } from "./lib/types";
+
+type DesktopWorkspace = "chat" | "knowledge" | "team";
 
 export function App(): JSX.Element {
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
@@ -28,6 +33,8 @@ export function App(): JSX.Element {
     { runId: string; tab?: RunInspectorTab } | undefined
   >();
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [activeWorkspace, setActiveWorkspace] =
+    useState<DesktopWorkspace>("chat");
   const [lastUsedAgents, setLastUsedAgents] = useState<AgentId[]>(["fake"]);
   const [pendingContinueFrom, setPendingContinueFrom] =
     useState<RunContinuationTarget | undefined>();
@@ -206,7 +213,8 @@ export function App(): JSX.Element {
 
   async function submitMessage(
     input: string,
-    contextMode: ContextMode
+    contextMode: ContextMode,
+    workflow?: CollaborationWorkflowInput
   ): Promise<void> {
     setError(undefined);
     setIsBusy(true);
@@ -216,6 +224,7 @@ export function App(): JSX.Element {
         projectId: activeProjectId ?? projects[0]?.id,
         text: input,
         contextMode,
+        workflow,
         continueFromRunId: pendingContinueFrom?.parentRunId,
         continueFromMessageId: pendingContinueFrom?.parentMessageId
       });
@@ -243,31 +252,50 @@ export function App(): JSX.Element {
         threads={threads}
         selectedThreadId={selectedThreadId}
         selectedProjectId={selectedProject?.id ?? selectedProjectId}
+        activeWorkspace={activeWorkspace}
         onNewThread={() => void createNewThread()}
-        onSelectThread={(threadId) => void loadThread(threadId)}
+        onSelectThread={(threadId) => {
+          setActiveWorkspace("chat");
+          void loadThread(threadId);
+        }}
         onSelectProject={(projectId) => void selectProject(projectId)}
         onRegisterProject={registerProject}
+        onOpenKnowledge={() => setActiveWorkspace("knowledge")}
+        onOpenTeam={() => setActiveWorkspace("team")}
         onOpenSettings={() => setSettingsOpen(true)}
         isBusy={isBusy}
       />
       <main className="center-pane">
-        <ChatView
-          thread={currentThread}
-          project={selectedProject}
-          messages={selectedMessages}
-          runDetails={runDetails}
-          isBusy={isBusy}
-          lastUsedAgents={lastUsedAgents}
-          pendingContinueFrom={pendingContinueFrom}
-          error={error}
-          onSubmit={submitMessage}
-          onContinueFromRun={(target) => setPendingContinueFrom(target)}
-          onClearContinueFrom={() => setPendingContinueFrom(undefined)}
-          onRunUpdated={handleRunUpdated}
-          onOpenInspector={(runId, tab) => setSelectedInspector({ runId, tab })}
-          onCancelRun={cancelRun}
-          onRegisterProject={registerProject}
-        />
+        {activeWorkspace === "knowledge" ? (
+          <KnowledgeWorkspace
+            project={selectedProject}
+            onOpenThread={(threadId) => {
+              setActiveWorkspace("chat");
+              void loadThread(threadId);
+            }}
+            onOpenInspector={(runId, tab) => setSelectedInspector({ runId, tab })}
+          />
+        ) : activeWorkspace === "team" ? (
+          <TeamWorkspace project={selectedProject} />
+        ) : (
+          <ChatView
+            thread={currentThread}
+            project={selectedProject}
+            messages={selectedMessages}
+            runDetails={runDetails}
+            isBusy={isBusy}
+            lastUsedAgents={lastUsedAgents}
+            pendingContinueFrom={pendingContinueFrom}
+            error={error}
+            onSubmit={submitMessage}
+            onContinueFromRun={(target) => setPendingContinueFrom(target)}
+            onClearContinueFrom={() => setPendingContinueFrom(undefined)}
+            onRunUpdated={handleRunUpdated}
+            onOpenInspector={(runId, tab) => setSelectedInspector({ runId, tab })}
+            onCancelRun={cancelRun}
+            onRegisterProject={registerProject}
+          />
+        )}
       </main>
       {selectedInspector ? (
         <RunInspectorModal

@@ -81,7 +81,13 @@ export function MessageList({
     if (message.type === "assistant") {
       return <AssistantMessageBubble key={message.id} message={message} />;
     }
-    return <SystemMessage key={message.id} message={message} />;
+    return (
+      <SystemMessage
+        key={message.id}
+        message={message}
+        onOpenInspector={onOpenInspector}
+      />
+    );
   }
 
   function renderRunCard(message: AgentRunMessage): JSX.Element {

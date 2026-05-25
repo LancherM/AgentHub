@@ -194,8 +194,13 @@ layout, styling, navigation, or inspector panels must be split into two steps:
    artifacts are a static HTML/CSS mockup, a rendered screenshot, or a set of
    screen images saved under `docs/ui-design/`.
 2. Proceed with production UI implementation after the design artifact exists.
-   Do not stop for user review by default. Only wait for explicit approval when
-   the user asks for a review gate on that phase.
+   Do not stop for user review by default, including future UI phases. Only
+   wait for explicit approval when the user asks for a review gate on that
+   phase.
+
+The default UI workflow is therefore: produce the UI image first, then implement
+the matching production code directly. The UI image is a required implementation
+input, not a default manual approval gate.
 
 The implementation prompt for UI phases must explicitly say:
 
