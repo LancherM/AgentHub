@@ -430,6 +430,18 @@ local repositories can be registered without returning to onboarding. The
 selected project also has an inline custom-room creation flow for title,
 optional handle, and optional description; newly created rooms are selected
 immediately and start with room shared context enabled.
+Empty desktop states are action-oriented rather than explanatory dead ends:
+project setup, empty room lists, filtered Team and Knowledge results, empty
+artifact inventory, and missing inspector details each show the next local
+action such as adding a project, creating a room or role, clearing a filter, or
+opening settings. The desktop also includes a renderer-only command palette
+opened with Cmd/Ctrl+K for primary local actions such as creating a room,
+opening Knowledge or Team workspaces, opening verification settings, and
+toggling sidebar density. Harmless local preferences persist in browser
+storage for the selected project and room, active workspace, context mode,
+inspector tab, sidebar density, and recent agent or role targets. These
+preferences do not store prompts, logs, diffs, secrets, repository paths, or
+approved memory.
 
 The composer accepts mention-based prompts such as `@fake ...` or multi-agent
 mentions, and it now also accepts enabled role handles such as `@researcher`
@@ -495,6 +507,12 @@ assistant output only for the selected room. Older conversation threads without
 room metadata remain readable as custom rooms. Run records, events, skipped or
 configured verification rows, collected diffs, and risk review rows remain
 SQLite-backed.
+
+Verification setup failures in the desktop point back to the Settings panel
+instead of leaving a generic room error. Empty verification settings include
+the expected executable-plus-args shape, while validation errors explain that
+commands should be split into executable and argument fields and that
+secret-like option names are rejected before persistence.
 
 Agent Hub keeps project context, thread context, current-turn context, and
 per-run context snapshots as separate layers. Desktop follow-up turns build a
@@ -638,7 +656,11 @@ memory evidence. Mentioned `@codex` and `@claude` runs invoke the local
 process-backed adapter preflight through TaskRunner; unavailable CLIs fail as
 inspectable persisted run events instead of service crashes. Desktop runs do
 not write Agent Hub context files into the target repository root, merge, push,
-export repository context, apply code, or approve memory automatically. Explicit
+export repository context, apply code, or approve memory automatically. Failed
+Codex or Claude preflight events include the adapter's detection reason,
+executable name, verification command, worktree cwd, and PATH entries when
+available; inline run cards surface that evidence so the user can fix the local
+CLI installation or authentication without opening raw logs first. Explicit
 desktop memory approval writes only to Agent Hub's context store and confirms
 the local approved-memory path in the inspector. Current
 desktop paths accept run-linked or message-linked continuation requests,

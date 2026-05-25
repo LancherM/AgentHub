@@ -6,6 +6,7 @@ import type {
   WorkgroupRole
 } from "@agent-hub/shared";
 import { agentHubApi } from "../../lib/agentHubApi";
+import { EmptyState } from "../EmptyState";
 import type {
   ProjectSummary,
   TeamRoleSource,
@@ -150,11 +151,12 @@ export function TeamWorkspace({ project }: TeamWorkspaceProps): JSX.Element {
   if (!project) {
     return (
       <section className="knowledge-empty">
-        <div>
-          <div className="eyebrow">Team / Roles</div>
-          <h1>Register a project to configure roles</h1>
-          <p className="muted-copy">Team roles are scoped to one local project.</p>
-        </div>
+        <EmptyState
+          eyebrow="Team / Roles"
+          title="Register a project to configure roles"
+          body="Team roles are scoped to one local project."
+          note="Project selection stays local and does not write role files into the repository."
+        />
       </section>
     );
   }
@@ -211,9 +213,22 @@ export function TeamWorkspace({ project }: TeamWorkspaceProps): JSX.Element {
                   <span>Activity</span>
                 </div>
                 {filteredRoles.length === 0 ? (
-                  <div className="knowledge-empty-state">
-                    No roles match this filter.
-                  </div>
+                  <EmptyState
+                    eyebrow="Team Roles"
+                    title="No roles match this filter"
+                    body="Clear the filter or create a custom role for this project."
+                    actions={[
+                      {
+                        label: "Show All",
+                        onClick: () => setActiveFilter("all"),
+                        variant: "primary"
+                      },
+                      {
+                        label: "New Role",
+                        onClick: newRole
+                      }
+                    ]}
+                  />
                 ) : (
                   filteredRoles.map((summary) => (
                     <button
@@ -270,7 +285,18 @@ export function TeamWorkspace({ project }: TeamWorkspaceProps): JSX.Element {
             onSave={() => void saveRole()}
           />
         ) : (
-          <div className="knowledge-empty-state">No role selected.</div>
+          <EmptyState
+            eyebrow="Role Profile"
+            title="No role selected"
+            body="Select a role from the table or create a custom local role."
+            actions={[
+              {
+                label: "New Role",
+                onClick: newRole,
+                variant: "primary"
+              }
+            ]}
+          />
         )}
       </aside>
     </section>

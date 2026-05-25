@@ -138,7 +138,15 @@ export function VerificationSettingsPanel({
 
         <div className="settings-body">
           {message ? <div className="decision-strip">{message}</div> : null}
-          {error ? <div className="inline-error">{error}</div> : null}
+          {error ? (
+            <div className="inline-error actionable">
+              <span>{error}</span>
+              <span>
+                Check the executable, split args onto separate lines, or remove
+                the command from this settings panel.
+              </span>
+            </div>
+          ) : null}
 
           {!project ? (
             <p className="muted-copy">
@@ -164,6 +172,8 @@ export function VerificationSettingsPanel({
                 {commands.length === 0 ? (
                   <div className="settings-empty">
                     Runs will record skipped verification until a command is added.
+                    Use Add Command to point at a local executable such as
+                    pnpm, npm, or a project script runner.
                   </div>
                 ) : (
                   commands.map((command, index) => (

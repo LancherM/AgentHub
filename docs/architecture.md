@@ -263,6 +263,21 @@ expected run fan-out from known adapter mentions plus executable role mentions.
 Unknown mentions are intentionally ignored by the helper and remain ordinary
 prompt text, matching the main-process mention parser. Slash suggestions insert
 prompt text only; they do not create a new command execution backend.
+The Cmd/Ctrl+K command palette is also renderer-only. It receives a bounded
+list of local UI actions from `App`, filters and navigates them in React, and
+invokes existing component callbacks such as opening the room form, switching
+workspaces, opening settings, or toggling sidebar density. It does not execute
+shell commands, call adapters, read files, or bypass the existing preload IPC
+surface.
+
+Desktop UI preferences are stored only in renderer browser storage through the
+sanitizing helper in `apps/desktop/src/lib/local-preferences.ts`. The persisted
+shape is limited to harmless IDs and enums: selected project/thread ids,
+active workspace, context mode, inspector tab, sidebar density, and recent
+agent or role handles. The helper rejects arbitrary object shapes, unsafe id
+characters, unknown agents, and invalid role handles, and it never stores
+prompts, transcripts, logs, diffs, repository paths, command text, secrets, or
+approved memory.
 
 The multi-turn architecture has persisted thread/message repositories, thread
 summary storage, the desktop thread service separated from task runs, and a
@@ -492,6 +507,12 @@ malformed structured output remains preserved as raw stdout, and exit events
 record both exit code and signal metadata. A non-zero exit marks the run failed,
 and the failed run is still persisted through the same repositories as
 successful runs.
+Process adapter detection results also carry bounded CLI diagnostics:
+executable name, detect command, user-facing verify command, cwd, and inherited
+PATH entries. Failed preflight run events persist those diagnostics in metadata
+for desktop review. The renderer extracts them with a pure helper and renders
+an actionable preflight panel on the run card, but it never reruns detection,
+reads the environment, or shells out from the sandboxed renderer.
 
 The context compiler owns the boundary for generated context artifacts. It can
 initialize and inspect context stores, read external context from Agent
@@ -739,6 +760,9 @@ private-key, and client-secret option names inside args, and loaded by
 `RunService` immediately before invoking TaskRunner. TaskRunner remains the
 execution boundary and continues to run verification in the isolated worktree
 with dangerous-command validation.
+Renderer verification-setting empty and error states only explain this existing
+settings boundary and route the user back to the Settings panel; they do not
+parse prompts into shell commands or create alternate execution paths.
 
 All adapters run against an isolated worktree and refuse to run when that
 directory is the original project root or when the generated task brief is

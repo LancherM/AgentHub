@@ -30,6 +30,7 @@ import { DiffViewer } from "../DiffViewer";
 import { MemoryProposals } from "../MemoryProposals";
 import { RiskReport } from "../RiskReport";
 import { RunStatusBadge } from "../RunStatusBadge";
+import { EmptyState } from "../EmptyState";
 import { VerificationPanel } from "../VerificationPanel";
 
 interface RunInspectorModalProps {
@@ -685,10 +686,11 @@ function ArtifactInventory({
 
   if (artifacts.length === 0) {
     return (
-      <section>
-        <div className="panel-label">Artifact Inventory</div>
-        <p className="muted-copy">No local artifacts were recorded for this run.</p>
-      </section>
+      <EmptyState
+        eyebrow="Artifact Inventory"
+        title="No artifact evidence recorded"
+        body="Open Audit for raw run events, or run a task that produces diff, brief, lifecycle, or skill artifacts."
+      />
     );
   }
 
