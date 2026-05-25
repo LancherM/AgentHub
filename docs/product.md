@@ -341,6 +341,20 @@ folders. The UI clearly marks `agent_adapter` roles as runnable through the
 existing local adapters and keeps `llm_api`, `workflow`, and `human` roles as
 reserved non-runnable metadata in this phase.
 
+Desktop rooms now support the first bounded collaboration workflow metadata.
+Users can start `handoff`, `review_loop`, or `panel_discussion` workflows from
+the room workflow launcher, and power users can also start one with a
+`/workflow <mode>` room command. A workflow records participants, executor
+availability, max rounds, stop condition, expected outputs, and a visible
+summary on the shared task/message metadata. Runnable participants still create
+normal TaskRunner-backed local runs with conversation briefs and isolated
+worktrees; non-runnable participants remain assigned or waiting. The workflow
+does not create autonomous agent chatter, remote queues, hidden follow-up runs,
+automatic apply, merge, or push behavior. Timeline events show handoff or
+review start, review completion when linked runs finish, and workflow
+completion once all executable participants reach terminal state or the
+workflow contains only non-runnable participants.
+
 Agent Hub Desktop is now available as a local conversation console under
 `apps/desktop`. It starts with `pnpm --filter desktop dev` and presents a
 room-based project shell: project selection and room navigation on the left, a

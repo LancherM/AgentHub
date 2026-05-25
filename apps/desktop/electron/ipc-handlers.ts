@@ -1,6 +1,7 @@
 import type {
   AgentId,
   AgentHubApi,
+  CollaborationWorkflowInput,
   ComparisonCreateInput,
   CreateThreadInput,
   CreateRunInput,
@@ -457,6 +458,10 @@ function parseSendThreadMessageInput(input: unknown): SendThreadMessageInput {
     text,
     contextMode,
     agents: value.agents === undefined ? undefined : parseAgentList(value.agents),
+    workflow:
+      value.workflow === undefined
+        ? undefined
+        : parseCollaborationWorkflowInput(value.workflow),
     continueFromRunId:
       value.continueFromRunId === undefined
         ? undefined
@@ -465,6 +470,40 @@ function parseSendThreadMessageInput(input: unknown): SendThreadMessageInput {
       value.continueFromMessageId === undefined
         ? undefined
         : parseId(value.continueFromMessageId, "continueFromMessageId")
+  };
+}
+
+function parseCollaborationWorkflowInput(input: unknown): CollaborationWorkflowInput {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    throw new Error("workflow input must be an object");
+  }
+  const value = input as Partial<CollaborationWorkflowInput>;
+  if (
+    value.mode !== "handoff" &&
+    value.mode !== "review_loop" &&
+    value.mode !== "panel_discussion"
+  ) {
+    throw new Error("workflow mode must be handoff, review_loop, or panel_discussion");
+  }
+  const maxRounds = value.maxRounds;
+  if (typeof maxRounds !== "number" || !Number.isInteger(maxRounds)) {
+    throw new Error("workflow maxRounds must be an integer");
+  }
+  if (typeof value.stopCondition !== "string" || value.stopCondition.trim() === "") {
+    throw new Error("workflow stopCondition is required");
+  }
+  if (
+    !Array.isArray(value.expectedOutputs) ||
+    value.expectedOutputs.some((entry) => typeof entry !== "string" || entry.trim() === "")
+  ) {
+    throw new Error("workflow expectedOutputs must be non-empty strings");
+  }
+  return {
+    mode: value.mode,
+    maxRounds,
+    stopCondition: value.stopCondition,
+    expectedOutputs: value.expectedOutputs,
+    summary: value.summary
   };
 }
 
@@ -499,7 +538,7 @@ const GENERIC_IPC_ERROR = "Agent Hub could not complete that local desktop reque
 
 function safeErrorMessage(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
-  if (/not found|required|must be|cannot be|already|deliveryMode|agentId|contextMode|reason|projectId|runId|threadId|prompt|text|settings|verification|command|executable|args|timeout|handoff|comparison|baseline|candidate|same task|multi-agent|team|role|executor|permission|contextPolicy|approvalPolicy/i.test(message)) {
+  if (/not found|required|must be|cannot be|already|deliveryMode|agentId|contextMode|reason|projectId|runId|threadId|prompt|text|settings|verification|command|executable|args|timeout|handoff|comparison|baseline|candidate|same task|multi-agent|team|role|executor|permission|contextPolicy|approvalPolicy|workflow|maxRounds|stopCondition|expectedOutputs/i.test(message)) {
     return message;
   }
   return GENERIC_IPC_ERROR;

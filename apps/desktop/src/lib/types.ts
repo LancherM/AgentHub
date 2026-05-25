@@ -74,6 +74,10 @@ export type TimelineEventKind =
   | "task_created"
   | "assignment_created"
   | "assignment_start_failed"
+  | "workflow_handoff"
+  | "workflow_review_requested"
+  | "workflow_review_completed"
+  | "workflow_completed"
   | "run_started"
   | "run_completed"
   | "run_failed"
@@ -95,6 +99,7 @@ export type TimelineEventTone =
 export interface TimelineEventLinkedIds extends JsonObject {
   taskId?: string;
   runId?: string;
+  workflowId?: string;
   assignmentId?: string;
   assignmentIds?: string[];
   artifactId?: string;
@@ -260,8 +265,53 @@ export interface SendThreadMessageInput {
   text: string;
   contextMode?: ContextMode;
   agents?: AgentId[];
+  workflow?: CollaborationWorkflowInput;
   continueFromRunId?: string;
   continueFromMessageId?: string;
+}
+
+export type CollaborationWorkflowMode =
+  | "handoff"
+  | "review_loop"
+  | "panel_discussion";
+export type CollaborationWorkflowStatus = "active" | "completed";
+
+export interface CollaborationWorkflowInput extends JsonObject {
+  mode: CollaborationWorkflowMode;
+  maxRounds: number;
+  stopCondition: string;
+  expectedOutputs: string[];
+  summary?: string;
+}
+
+export interface CollaborationWorkflowParticipant extends JsonObject {
+  assignmentId: string;
+  label: string;
+  assignmentRole: "agent" | "role";
+  agentId?: AgentId;
+  roleHandle?: string;
+  executorKind: string;
+  executable: boolean;
+  runId?: string;
+  status: string;
+}
+
+export interface CollaborationWorkflowState extends JsonObject {
+  workflowId: string;
+  mode: CollaborationWorkflowMode;
+  status: CollaborationWorkflowStatus;
+  taskId: string;
+  threadId: string;
+  sourceMessageId: string;
+  maxRounds: number;
+  currentRound: number;
+  stopCondition: string;
+  expectedOutputs: string[];
+  summary: string;
+  participants: CollaborationWorkflowParticipant[];
+  createdAt: string;
+  updatedAt: string;
+  completedAt?: string;
 }
 
 export interface RunSummary {

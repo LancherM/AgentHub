@@ -2125,6 +2125,153 @@ describe("desktop services", () => {
     ).rejects.toThrow(/role handle/);
   });
 
+  it("persists bounded workflow state and completion timeline metadata", async () => {
+    const fixture = await createFixture();
+    const context = createDesktopServiceContext(fixture.repositories);
+    const projects = createProjectService(context);
+    const memory = createMemoryService(context);
+    const review = createReviewService(context, { memoryService: memory });
+    const settings = createSettingsService(context);
+    const comparison = createComparisonService(context);
+    const knowledge = createKnowledgeService(context);
+    const team = createTeamService(context);
+    const runs = createTestRunService(context, review, memory, fixture);
+    const threads = createThreadService({ context, projects, runs, team });
+    const handlers = createIpcHandlers({
+      projects,
+      runs,
+      threads,
+      review,
+      comparison,
+      memory,
+      knowledge,
+      team,
+      settings
+    });
+    const sender = { send: vi.fn() };
+    const project = await projects.open(fixture.projectRoot);
+
+    const detail = await handlers[IPC_CHANNELS.threadsSendMessage](
+      { sender } as never,
+      {
+        projectId: project.id,
+        text: "@researcher review the bounded workflow implementation",
+        contextMode: "auto",
+        workflow: {
+          mode: "review_loop",
+          maxRounds: 2,
+          stopCondition: "reviewer_passed OR max_rounds_reached",
+          expectedOutputs: ["reviewer_findings", "final_summary"]
+        }
+      }
+    );
+    const threadDetail = detail as Awaited<ReturnType<typeof threads.getThread>>;
+    const runMessage = threadDetail.messages.find(
+      (message): message is AgentRunMessage => message.type === "agent_run"
+    );
+    if (!runMessage) {
+      throw new Error("expected workflow-linked run");
+    }
+    await waitForRun(runs, runMessage.runId, "completed");
+    const completed = await threads.getThread(threadDetail.id);
+    const tasks = await fixture.repositories.taskRepository.listByProjectId(project.id);
+    const workflowTask = tasks.find((task) => task.id === runMessage.taskId);
+    const workflowState = workflowTask?.metadata?.workflowState as
+      | { mode?: string; status?: string; maxRounds?: number; participants?: unknown[] }
+      | undefined;
+
+    expect(workflowState).toMatchObject({
+      mode: "review_loop",
+      status: "completed",
+      maxRounds: 2
+    });
+    expect(workflowState?.participants).toEqual([
+      expect.objectContaining({
+        roleHandle: "researcher",
+        runId: runMessage.runId,
+        status: "completed"
+      })
+    ]);
+    expect(
+      completed.messages
+        .filter((message) => message.type === "system")
+        .map((message) => message.metadata?.workflowEvent)
+    ).toEqual(
+      expect.arrayContaining([
+        "workflow_review_requested",
+        "workflow_review_completed",
+        "workflow_completed"
+      ])
+    );
+    expect(runMessage.timelineEvent?.linkedIds?.workflowId).toEqual(
+      expect.any(String)
+    );
+    expect(
+      completed.messages.find(
+        (message) =>
+          message.type === "system" &&
+          message.metadata?.workflowEvent === "workflow_completed"
+      )?.timelineEvent
+    ).toMatchObject({
+      kind: "workflow_completed",
+      linkedIds: expect.objectContaining({
+        taskId: runMessage.taskId,
+        workflowId: expect.any(String)
+      })
+    });
+  });
+
+  it("enforces workflow max rounds and records handoff start events", async () => {
+    const fixture = await createFixture();
+    const context = createDesktopServiceContext(fixture.repositories);
+    const projects = createProjectService(context);
+    const memory = createMemoryService(context);
+    const review = createReviewService(context, { memoryService: memory });
+    const settings = createSettingsService(context);
+    const comparison = createComparisonService(context);
+    const knowledge = createKnowledgeService(context);
+    const team = createTeamService(context);
+    const runs = createTestRunService(context, review, memory, fixture);
+    const threads = createThreadService({ context, projects, runs, team });
+    const handlers = createIpcHandlers({
+      projects,
+      runs,
+      threads,
+      review,
+      comparison,
+      memory,
+      knowledge,
+      team,
+      settings
+    });
+    const sender = { send: vi.fn() };
+    const project = await projects.open(fixture.projectRoot);
+
+    await expect(
+      handlers[IPC_CHANNELS.threadsSendMessage]({ sender } as never, {
+        projectId: project.id,
+        text: "@researcher hand off scoped findings",
+        workflow: {
+          mode: "handoff",
+          maxRounds: 2,
+          stopCondition: "handoff_summary_recorded",
+          expectedOutputs: ["handoff_summary"]
+        }
+      })
+    ).rejects.toThrow(/workflow maxRounds/);
+
+    const detail = (await threads.sendMessage({
+      projectId: project.id,
+      text: "/workflow handoff @researcher hand off scoped findings",
+      contextMode: "auto"
+    })) as Awaited<ReturnType<typeof threads.getThread>>;
+    expect(
+      detail.messages
+        .filter((message) => message.type === "system")
+        .map((message) => message.metadata?.workflowEvent)
+    ).toContain("workflow_handoff");
+  });
+
   it("keeps non-executable role assignments on the shared task without starting a run", async () => {
     const fixture = await createFixture();
     const context = createDesktopServiceContext(fixture.repositories);

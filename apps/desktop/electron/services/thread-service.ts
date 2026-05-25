@@ -10,6 +10,7 @@ import {
   type ConversationThreadRepository,
   type ConversationThreadSummary,
   type ConversationThreadSummaryRepository,
+  type Task,
   type TaskRepository
 } from "@agent-hub/core";
 import {
@@ -28,6 +29,10 @@ import type {
 import type {
   AgentId,
   AssistantMessage,
+  CollaborationWorkflowInput,
+  CollaborationWorkflowMode,
+  CollaborationWorkflowParticipant,
+  CollaborationWorkflowState,
   AgentRunMessage,
   ContextMode,
   CreateThreadInput,
@@ -86,6 +91,16 @@ const defaultRoomDefinitions = [
 const defaultRoomOrder: Map<string, number> = new Map(
   defaultRoomDefinitions.map((room, index) => [room.handle, index])
 );
+const workflowModeSet = new Set<CollaborationWorkflowMode>([
+  "handoff",
+  "review_loop",
+  "panel_discussion"
+]);
+const maxWorkflowRoundsByMode: Record<CollaborationWorkflowMode, number> = {
+  handoff: 1,
+  review_loop: 3,
+  panel_discussion: 3
+};
 
 export interface ThreadService {
   listThreads(): Promise<ThreadSummary[]>;
@@ -125,6 +140,7 @@ interface AgentRunTaskMetadata {
   taskId: string;
   taskTitle: string;
   assignment: WorkgroupTaskAssignmentMetadata;
+  workflowState?: CollaborationWorkflowState;
 }
 
 export function createThreadService(
@@ -140,6 +156,8 @@ class RepositoryThreadService implements ThreadService {
   private readonly tasks: TaskRepository;
   private readonly conversationContextBuilder: ConversationContextBuilder;
   private readonly conversationThreadSummaryBuilder = new ConversationThreadSummaryBuilder();
+  private readonly threadReconciliationByThreadId = new Map<string, Promise<void>>();
+  private readonly workflowReconciliationByThreadId = new Map<string, Promise<void>>();
   private importedLegacyRuns = false;
 
   constructor(private readonly dependencies: ThreadServiceDependencies) {
@@ -299,6 +317,7 @@ class RepositoryThreadService implements ThreadService {
           taskId: taskMetadata?.taskId,
           taskTitle: taskMetadata?.taskTitle,
           assignment: taskMetadata?.assignment,
+          workflowState: taskMetadata?.workflowState,
           timelineEvent: timelineEvent({
             kind: "run_started",
             actor: "agent",
@@ -309,6 +328,7 @@ class RepositoryThreadService implements ThreadService {
             status: run.status,
             taskId: taskMetadata?.taskId,
             runId,
+            workflowId: taskMetadata?.workflowState?.workflowId,
             assignmentId: taskMetadata?.assignment.assignmentId,
             chips: [
               {
@@ -349,9 +369,80 @@ class RepositoryThreadService implements ThreadService {
     return toSystemMessage(message);
   }
 
+  private async appendWorkflowStartMessages(
+    threadId: string,
+    workflowState: CollaborationWorkflowState
+  ): Promise<void> {
+    const startKind = workflowStartKind(workflowState.mode);
+    const startTitle = workflowStartTitle(workflowState.mode);
+    await this.appendSystemMessage(
+      threadId,
+      workflowStartSummary(workflowState),
+      {
+        taskEvent: startKind,
+        workflowEvent: startKind,
+        taskId: workflowState.taskId,
+        workflowState,
+        timelineEvent: timelineEvent({
+          kind: startKind,
+          actor: "system",
+          title: startTitle,
+          summary: workflowStartSummary(workflowState),
+          status: workflowState.status,
+          tone: "accent",
+          taskId: workflowState.taskId,
+          workflowId: workflowState.workflowId,
+          assignmentIds: workflowState.participants.map(
+            (participant) => participant.assignmentId
+          ),
+          chips: workflowChips(workflowState)
+        })
+      }
+    );
+
+    if (!workflowHasExecutableParticipants(workflowState)) {
+      await this.appendWorkflowCompletionMessage(threadId, workflowState);
+    }
+  }
+
+  private async appendWorkflowCompletionMessage(
+    threadId: string,
+    workflowState: CollaborationWorkflowState
+  ): Promise<void> {
+    const completed = completeWorkflowState(
+      workflowState,
+      this.dependencies.context.now()
+    );
+    await this.appendSystemMessage(
+      threadId,
+      workflowCompletionSummary(completed),
+      {
+        taskEvent: "workflow_completed",
+        workflowEvent: "workflow_completed",
+        taskId: completed.taskId,
+        workflowState: completed,
+        timelineEvent: timelineEvent({
+          kind: "workflow_completed",
+          actor: "system",
+          title: "Workflow completed",
+          summary: workflowCompletionSummary(completed),
+          status: "completed",
+          tone: "success",
+          taskId: completed.taskId,
+          workflowId: completed.workflowId,
+          assignmentIds: completed.participants.map(
+            (participant) => participant.assignmentId
+          ),
+          chips: workflowChips(completed)
+        })
+      }
+    );
+  }
+
   async sendMessage(input: SendThreadMessageInput): Promise<ThreadDetail> {
     await this.ensureLegacyRunThreads();
     const contextMode = parseContextMode(input.contextMode ?? "auto");
+    const workflowRequest = resolveWorkflowRequest(input.text, input.workflow);
     const thread = input.threadId
       ? await this.requireThread(input.threadId)
       : await this.defaultRoomThread(
@@ -361,7 +452,7 @@ class RepositoryThreadService implements ThreadService {
     const roles =
       this.dependencies.roles ??
       (await this.dependencies.team?.rolesForProject(thread.projectId));
-    const parsed = parseWorkgroupMentions(input.text, roles);
+    const parsed = parseWorkgroupMentions(workflowRequest.text, roles);
     const cleanedPrompt = parsed.cleanedPrompt.trim();
     if (!cleanedPrompt) {
       throw new Error("message text is required");
@@ -402,6 +493,18 @@ class RepositoryThreadService implements ThreadService {
       roleMentions: parsed.roleMentions,
       nextId: (prefix) => this.dependencies.context.nextId(prefix)
     });
+    let workflowState = workflowRequest.workflow
+      ? createWorkflowState({
+          workflowId: this.dependencies.context.nextId("workflow"),
+          workflow: workflowRequest.workflow,
+          taskId,
+          threadId: currentThread.id,
+          sourceMessageId: userMessage.id,
+          assignments,
+          createdAt: userMessage.createdAt,
+          updatedAt: userMessage.createdAt
+        })
+      : undefined;
     const task = await this.tasks.create(
       validateTask({
         id: taskId,
@@ -411,7 +514,8 @@ class RepositoryThreadService implements ThreadService {
         metadata: taskMetadata({
           thread: currentThread,
           sourceMessageId: userMessage.id,
-          assignments
+          assignments,
+          workflowState
         }),
         status: "open",
         createdAt: userMessage.createdAt,
@@ -420,7 +524,8 @@ class RepositoryThreadService implements ThreadService {
     );
     await this.linkUserMessageToTask(userMessage.id, {
       taskId: task.id,
-      taskTitle: task.title
+      taskTitle: task.title,
+      workflowState
     });
     await this.appendSystemMessage(
       currentThread.id,
@@ -548,17 +653,35 @@ class RepositoryThreadService implements ThreadService {
       }
     }
 
+    if (workflowState) {
+      workflowState = refreshWorkflowState(
+        workflowState,
+        assignments,
+        this.dependencies.context.now()
+      );
+    }
+
     await this.tasks.create(
       validateTask({
         ...task,
         metadata: taskMetadata({
           thread: currentThread,
           sourceMessageId: userMessage.id,
-          assignments
+          assignments,
+          workflowState
         }),
         updatedAt: this.dependencies.context.now()
       })
     );
+
+    if (workflowState) {
+      await this.linkUserMessageToTask(userMessage.id, {
+        taskId: task.id,
+        taskTitle: task.title,
+        workflowState
+      });
+      await this.appendWorkflowStartMessages(currentThread.id, workflowState);
+    }
 
     for (const { run, participant, assignment } of createdRuns) {
       await this.appendAgentRunMessage(
@@ -569,7 +692,8 @@ class RepositoryThreadService implements ThreadService {
         {
           taskId: task.id,
           taskTitle: task.title,
-          assignment
+          assignment,
+          workflowState
         }
       );
     }
@@ -619,7 +743,11 @@ class RepositoryThreadService implements ThreadService {
 
   private async linkUserMessageToTask(
     messageId: string,
-    task: { taskId: string; taskTitle: string }
+    task: {
+      taskId: string;
+      taskTitle: string;
+      workflowState?: CollaborationWorkflowState;
+    }
   ): Promise<void> {
     const message = await this.messages.get(messageId);
     if (!message) {
@@ -637,8 +765,10 @@ class RepositoryThreadService implements ThreadService {
             title: existingEvent?.title ?? "User message",
             summary: existingEvent?.summary ?? message.content,
             taskId: task.taskId,
+            workflowId: task.workflowState?.workflowId,
             chips: existingEvent?.chips
-          })
+          }),
+          workflowState: task.workflowState
         }
       })
     );
@@ -864,6 +994,19 @@ class RepositoryThreadService implements ThreadService {
   }
 
   private async reconcileAssistantMessages(threadId: string): Promise<void> {
+    const existing = this.threadReconciliationByThreadId.get(threadId);
+    if (existing) {
+      await existing;
+      return;
+    }
+    const pending = this.reconcileAssistantMessagesUnlocked(threadId).finally(() => {
+      this.threadReconciliationByThreadId.delete(threadId);
+    });
+    this.threadReconciliationByThreadId.set(threadId, pending);
+    await pending;
+  }
+
+  private async reconcileAssistantMessagesUnlocked(threadId: string): Promise<void> {
     const thread = await this.threads.get(threadId);
     if (!thread) {
       return;
@@ -947,6 +1090,130 @@ class RepositoryThreadService implements ThreadService {
       await this.touchThread(thread, { updatedAt: now });
       refreshedAssistantRunIds.add(message.runId);
     }
+    await this.reconcileWorkflowEvents(thread);
+  }
+
+  private async reconcileWorkflowEvents(thread: ConversationThread): Promise<void> {
+    const existing = this.workflowReconciliationByThreadId.get(thread.id);
+    if (existing) {
+      await existing;
+      return;
+    }
+    const pending = this.reconcileWorkflowEventsUnlocked(thread).finally(() => {
+      this.workflowReconciliationByThreadId.delete(thread.id);
+    });
+    this.workflowReconciliationByThreadId.set(thread.id, pending);
+    await pending;
+  }
+
+  private async reconcileWorkflowEventsUnlocked(
+    thread: ConversationThread
+  ): Promise<void> {
+    const tasks = await this.tasks.listByProjectId(thread.projectId);
+    for (const task of tasks) {
+      if (task.metadata?.threadId !== thread.id) {
+        continue;
+      }
+      const workflowState = metadataWorkflowState(task.metadata);
+      if (!workflowState || workflowState.status === "completed") {
+        continue;
+      }
+      const participants = await this.refreshedWorkflowParticipants(workflowState);
+      if (!participants.every((participant) => workflowParticipantIsTerminal(participant))) {
+        continue;
+      }
+      const completed = completeWorkflowState(
+        {
+          ...workflowState,
+          participants
+        },
+        this.dependencies.context.now()
+      );
+      await this.tasks.create(
+        validateTask({
+          ...task,
+          metadata: {
+            ...(task.metadata ?? {}),
+            workflowState: completed
+          },
+          updatedAt: completed.updatedAt
+        })
+      );
+      if (
+        completed.mode === "review_loop" &&
+        !(await this.hasWorkflowEvent(
+          thread.id,
+          completed.workflowId,
+          "workflow_review_completed"
+        ))
+      ) {
+        await this.appendSystemMessage(
+          thread.id,
+          `Review completed for ${completed.summary}.`,
+          {
+            taskEvent: "workflow_review_completed",
+            workflowEvent: "workflow_review_completed",
+            taskId: completed.taskId,
+            workflowState: completed,
+            timelineEvent: timelineEvent({
+              kind: "workflow_review_completed",
+              actor: "system",
+              title: "Review completed",
+              summary: `Review completed for ${completed.summary}.`,
+              status: "completed",
+              tone: "success",
+              taskId: completed.taskId,
+              workflowId: completed.workflowId,
+              assignmentIds: completed.participants.map(
+                (participant) => participant.assignmentId
+              ),
+              chips: workflowChips(completed)
+            })
+          }
+        );
+      }
+      if (
+        !(await this.hasWorkflowEvent(
+          thread.id,
+          completed.workflowId,
+          "workflow_completed"
+        ))
+      ) {
+        await this.appendWorkflowCompletionMessage(thread.id, completed);
+      }
+    }
+  }
+
+  private async hasWorkflowEvent(
+    threadId: string,
+    workflowId: string,
+    workflowEvent: string
+  ): Promise<boolean> {
+    const messages = await this.messages.listByThreadId(threadId);
+    return messages.some(
+      (message) =>
+        message.metadata?.workflowEvent === workflowEvent &&
+        metadataWorkflowState(message.metadata)?.workflowId === workflowId
+    );
+  }
+
+  private async refreshedWorkflowParticipants(
+    workflowState: CollaborationWorkflowState
+  ): Promise<CollaborationWorkflowParticipant[]> {
+    return Promise.all(
+      workflowState.participants.map(async (participant) => {
+        if (!participant.runId) {
+          return participant;
+        }
+        const snapshot = await this.conversationRunSnapshot(participant.runId);
+        return snapshot
+          ? {
+              ...participant,
+              status: snapshot.status
+            }
+          : participant;
+      })
+    );
   }
 
   private async finalizeAssistantMessage(
@@ -1281,6 +1548,7 @@ function taskMetadata(input: {
   thread: ConversationThread;
   sourceMessageId: string;
   assignments: WorkgroupTaskAssignmentMetadata[];
+  workflowState?: CollaborationWorkflowState;
 }): JsonObject {
   const room = roomMetadataForThread(input.thread);
   return {
@@ -1293,7 +1561,8 @@ function taskMetadata(input: {
     executableAssignmentCount: input.assignments.filter(
       (assignment) => assignment.executable
     ).length,
-    assignments: input.assignments
+    assignments: input.assignments,
+    workflowState: input.workflowState
   };
 }
 
@@ -1401,6 +1670,309 @@ function assignmentChips(
   }));
 }
 
+function resolveWorkflowRequest(
+  text: string,
+  workflowInput?: CollaborationWorkflowInput
+): { text: string; workflow?: CollaborationWorkflowInput } {
+  const command = parseWorkflowCommand(text);
+  const workflow = workflowInput
+    ? normalizeWorkflowInput(workflowInput)
+    : command.workflow;
+  return {
+    text: command.text,
+    workflow
+  };
+}
+
+function parseWorkflowCommand(text: string): {
+  text: string;
+  workflow?: CollaborationWorkflowInput;
+} {
+  const trimmed = text.trim();
+  if (!trimmed.toLowerCase().startsWith("/workflow")) {
+    return { text };
+  }
+  const tokens = trimmed.split(/\s+/);
+  const mode = tokens[1];
+  if (!isCollaborationWorkflowMode(mode)) {
+    throw new Error("workflow mode must be handoff, review_loop, or panel_discussion");
+  }
+  const rest: string[] = [];
+  const input: CollaborationWorkflowInput = defaultWorkflowInput(mode);
+  for (const token of tokens.slice(2)) {
+    const [key, rawValue] = token.split("=", 2);
+    if (rawValue !== undefined && (key === "max" || key === "max_rounds")) {
+      input.maxRounds = Number(rawValue);
+      continue;
+    }
+    if (rawValue !== undefined && key === "stop") {
+      input.stopCondition = rawValue.replace(/_/g, " ");
+      continue;
+    }
+    if (rawValue !== undefined && key === "outputs") {
+      input.expectedOutputs = rawValue.split(",").map((entry) => entry.trim());
+      continue;
+    }
+    rest.push(token);
+  }
+  return {
+    text: rest.join(" "),
+    workflow: normalizeWorkflowInput(input)
+  };
+}
+
+function defaultWorkflowInput(
+  mode: CollaborationWorkflowMode
+): CollaborationWorkflowInput {
+  if (mode === "handoff") {
+    return {
+      mode,
+      maxRounds: 1,
+      stopCondition: "handoff_summary_recorded",
+      expectedOutputs: ["handoff_summary", "linked_run_evidence"],
+      summary: "Handoff workflow"
+    };
+  }
+  if (mode === "panel_discussion") {
+    return {
+      mode,
+      maxRounds: 3,
+      stopCondition: "all_participants_reported OR max_rounds_reached",
+      expectedOutputs: ["participant_findings", "final_synthesis"],
+      summary: "Panel discussion"
+    };
+  }
+  return {
+    mode,
+    maxRounds: 2,
+    stopCondition: "reviewer_passed OR max_rounds_reached",
+    expectedOutputs: ["reviewer_findings", "final_summary", "linked_run_evidence"],
+    summary: "Review loop"
+  };
+}
+
+function normalizeWorkflowInput(
+  input: CollaborationWorkflowInput
+): CollaborationWorkflowInput {
+  if (!isCollaborationWorkflowMode(input.mode)) {
+    throw new Error("workflow mode must be handoff, review_loop, or panel_discussion");
+  }
+  const maxRounds = input.maxRounds;
+  const allowedMax = maxWorkflowRoundsByMode[input.mode];
+  if (!Number.isInteger(maxRounds) || maxRounds < 1 || maxRounds > allowedMax) {
+    throw new Error(
+      `workflow maxRounds must be between 1 and ${allowedMax} for ${input.mode}`
+    );
+  }
+  return {
+    mode: input.mode,
+    maxRounds,
+    stopCondition: boundedRequiredText(input.stopCondition, "workflow stopCondition", 160),
+    expectedOutputs: normalizeExpectedOutputs(input.expectedOutputs),
+    summary:
+      input.summary === undefined
+        ? defaultWorkflowInput(input.mode).summary
+        : boundedRequiredText(input.summary, "workflow summary", 160)
+  };
+}
+
+function normalizeExpectedOutputs(input: unknown): string[] {
+  if (!Array.isArray(input) || input.length === 0 || input.length > 8) {
+    throw new Error("workflow expectedOutputs must contain 1 to 8 entries");
+  }
+  return input.map((entry) =>
+    boundedRequiredText(entry, "workflow expectedOutputs", 80)
+  );
+}
+
+function boundedRequiredText(
+  input: unknown,
+  label: string,
+  maxLength: number
+): string {
+  if (typeof input !== "string" || input.trim().length === 0) {
+    throw new Error(`${label} is required`);
+  }
+  const trimmed = input.trim();
+  if (trimmed.length > maxLength) {
+    throw new Error(`${label} must be ${maxLength} characters or fewer`);
+  }
+  return trimmed;
+}
+
+function isCollaborationWorkflowMode(
+  value: unknown
+): value is CollaborationWorkflowMode {
+  return (
+    typeof value === "string" &&
+    workflowModeSet.has(value as CollaborationWorkflowMode)
+  );
+}
+
+function createWorkflowState(input: {
+  workflowId: string;
+  workflow: CollaborationWorkflowInput;
+  taskId: string;
+  threadId: string;
+  sourceMessageId: string;
+  assignments: WorkgroupTaskAssignmentMetadata[];
+  createdAt: string;
+  updatedAt: string;
+}): CollaborationWorkflowState {
+  const participants = workflowParticipants(input.assignments);
+  const hasExecutableParticipants = participants.some(
+    (participant) => participant.executable
+  );
+  return {
+    workflowId: input.workflowId,
+    mode: input.workflow.mode,
+    status: hasExecutableParticipants ? "active" : "completed",
+    taskId: input.taskId,
+    threadId: input.threadId,
+    sourceMessageId: input.sourceMessageId,
+    maxRounds: input.workflow.maxRounds,
+    currentRound: 1,
+    stopCondition: input.workflow.stopCondition,
+    expectedOutputs: input.workflow.expectedOutputs,
+    summary: input.workflow.summary ?? defaultWorkflowInput(input.workflow.mode).summary ?? input.workflow.mode,
+    participants,
+    createdAt: input.createdAt,
+    updatedAt: input.updatedAt,
+    completedAt: hasExecutableParticipants ? undefined : input.updatedAt
+  };
+}
+
+function refreshWorkflowState(
+  state: CollaborationWorkflowState,
+  assignments: WorkgroupTaskAssignmentMetadata[],
+  updatedAt: string
+): CollaborationWorkflowState {
+  const participants = workflowParticipants(assignments);
+  const completed = participants.every((participant) =>
+    workflowParticipantIsTerminal(participant)
+  );
+  return {
+    ...state,
+    status: completed ? "completed" : "active",
+    participants,
+    updatedAt,
+    completedAt: completed ? updatedAt : undefined
+  };
+}
+
+function completeWorkflowState(
+  state: CollaborationWorkflowState,
+  updatedAt: string
+): CollaborationWorkflowState {
+  return {
+    ...state,
+    status: "completed",
+    currentRound: Math.min(state.maxRounds, Math.max(1, state.currentRound)),
+    updatedAt,
+    completedAt: state.completedAt ?? updatedAt
+  };
+}
+
+function workflowParticipants(
+  assignments: WorkgroupTaskAssignmentMetadata[]
+): CollaborationWorkflowParticipant[] {
+  return assignments.map((assignment) => ({
+    assignmentId: assignment.assignmentId,
+    label: assignment.roleHandle ? `@${assignment.roleHandle}` : assignment.displayName,
+    assignmentRole: assignment.assignmentRole,
+    agentId: assignment.agentId,
+    roleHandle: assignment.roleHandle,
+    executorKind: assignment.executorKind,
+    executable: assignment.executable,
+    runId: assignment.runId,
+    status: assignment.status
+  }));
+}
+
+function workflowHasExecutableParticipants(
+  state: Pick<CollaborationWorkflowState, "participants">
+): boolean {
+  return state.participants.some((participant) => participant.executable);
+}
+
+function workflowParticipantIsTerminal(
+  participant: CollaborationWorkflowParticipant
+): boolean {
+  if (!participant.executable) {
+    return true;
+  }
+  return (
+    participant.status === "completed" ||
+    participant.status === "failed" ||
+    participant.status === "cancelled" ||
+    participant.status === "skipped"
+  );
+}
+
+function workflowStartKind(
+  mode: CollaborationWorkflowMode
+): Extract<
+  TimelineEventKind,
+  "workflow_handoff" | "workflow_review_requested"
+> {
+  return mode === "handoff" ? "workflow_handoff" : "workflow_review_requested";
+}
+
+function workflowStartTitle(mode: CollaborationWorkflowMode): string {
+  if (mode === "handoff") {
+    return "Handoff started";
+  }
+  if (mode === "panel_discussion") {
+    return "Panel discussion started";
+  }
+  return "Review requested";
+}
+
+function workflowStartSummary(state: CollaborationWorkflowState): string {
+  return `${workflowModeLabel(state.mode)} started with ${state.participants.length} participant(s), max ${state.maxRounds} round(s), stop: ${state.stopCondition}.`;
+}
+
+function workflowCompletionSummary(state: CollaborationWorkflowState): string {
+  return `${workflowModeLabel(state.mode)} completed after ${state.currentRound}/${state.maxRounds} round(s).`;
+}
+
+function workflowModeLabel(mode: CollaborationWorkflowMode): string {
+  if (mode === "handoff") {
+    return "Handoff";
+  }
+  if (mode === "panel_discussion") {
+    return "Panel discussion";
+  }
+  return "Review loop";
+}
+
+function workflowChips(
+  state: CollaborationWorkflowState
+): TimelineEventMetadata["chips"] {
+  return [
+    {
+      kind: workflowStartKind(state.mode),
+      label: workflowModeLabel(state.mode),
+      tone: "accent"
+    },
+    {
+      kind: "system_event",
+      label: `rounds ${state.currentRound}/${state.maxRounds}`,
+      tone: state.status === "completed" ? "success" : "warning"
+    },
+    {
+      kind: "system_event",
+      label: state.stopCondition,
+      tone: "neutral"
+    },
+    ...state.expectedOutputs.slice(0, 3).map((output) => ({
+      kind: "artifact_created" as const,
+      label: output,
+      tone: "neutral" as const
+    }))
+  ];
+}
+
 function timelineEvent(input: {
   kind: TimelineEventKind;
   actor: TimelineEventMetadata["actor"];
@@ -1410,6 +1982,7 @@ function timelineEvent(input: {
   tone?: TimelineEventMetadata["tone"];
   taskId?: string;
   runId?: string;
+  workflowId?: string;
   assignmentId?: string;
   assignmentIds?: string[];
   chips?: TimelineEventMetadata["chips"];
@@ -1424,6 +1997,7 @@ function timelineEvent(input: {
     linkedIds: {
       taskId: boundedTimelineText(input.taskId, 120),
       runId: boundedTimelineText(input.runId, 120),
+      workflowId: boundedTimelineText(input.workflowId, 120),
       assignmentId: boundedTimelineText(input.assignmentId, 120),
       assignmentIds: input.assignmentIds?.slice(0, 12).map((id) => id.slice(0, 120))
     },
@@ -1755,6 +2329,25 @@ function metadataAssignment(
     return undefined;
   }
   return assignment;
+}
+
+function metadataWorkflowState(metadata: JsonObject | undefined): CollaborationWorkflowState | undefined {
+  const value = metadata?.workflowState;
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+  const state = value as CollaborationWorkflowState;
+  if (
+    typeof state.workflowId !== "string" ||
+    !isCollaborationWorkflowMode(state.mode) ||
+    typeof state.taskId !== "string" ||
+    typeof state.threadId !== "string" ||
+    typeof state.maxRounds !== "number" ||
+    !Array.isArray(state.participants)
+  ) {
+    return undefined;
+  }
+  return state;
 }
 
 function latestUpdatedAt(

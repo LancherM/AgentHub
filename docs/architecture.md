@@ -172,6 +172,19 @@ durable user message, stores resolved role metadata on that message when
 present, creates one shared task for the turn, stores local task assignment
 metadata, appends task-created and participants-assigned system messages, and
 creates one run per executable adapter or role participant through `RunService`.
+It also accepts bounded collaboration workflow input, either as structured IPC
+metadata from the room launcher or as a `/workflow <mode>` room command.
+Workflow state is stored first as JSON metadata on the user message, shared
+task, and workflow timeline messages. Supported modes are `handoff`,
+`review_loop`, and `panel_discussion`; each persists participants, max rounds,
+stop condition, expected outputs, executor availability, and local status. The
+service enforces the per-mode round bounds before any run is created and never
+starts hidden follow-up work. Workflow timeline events reuse conversation
+messages with explicit kinds for handoff, review requested, review completed,
+and workflow completed. When linked executable runs reach terminal state,
+selected-room reconciliation reads run snapshots through `RunService`, updates
+the workflow state, and appends review/completion events without mutating
+worktrees, applying changes, merging, pushing, or creating remote jobs.
 Reserved non-executable role executors remain assignment metadata only until a
 future executor exists. When the caller does not provide a thread id, the
 service resolves the project's seeded `#general` room instead of creating a

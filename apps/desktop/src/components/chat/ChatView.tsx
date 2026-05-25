@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import type {
   AgentId,
+  CollaborationWorkflowInput,
   ContextMode,
   ProjectSummary,
   RunDetail,
@@ -12,6 +13,7 @@ import type {
 import { ProjectRegistrationForm } from "../projects/ProjectRegistrationForm";
 import { Composer } from "./Composer";
 import { MessageList } from "./MessageList";
+import { WorkflowLauncher } from "./WorkflowLauncher";
 
 interface ChatViewProps {
   thread?: ThreadDetail;
@@ -22,7 +24,11 @@ interface ChatViewProps {
   lastUsedAgents: AgentId[];
   pendingContinueFrom?: RunContinuationTarget;
   error?: string;
-  onSubmit(input: string, contextMode: ContextMode): Promise<void>;
+  onSubmit(
+    input: string,
+    contextMode: ContextMode,
+    workflow?: CollaborationWorkflowInput
+  ): Promise<void>;
   onContinueFromRun(target: RunContinuationTarget): void;
   onClearContinueFrom(): void;
   onRunUpdated(run: RunDetail): void;
@@ -110,6 +116,13 @@ export function ChatView({
           </div>
         )}
       </div>
+
+      {project ? (
+        <WorkflowLauncher
+          isBusy={isBusy}
+          onSubmit={(input, workflow) => onSubmit(input, "auto", workflow)}
+        />
+      ) : null}
 
       <Composer
         isBusy={isBusy}

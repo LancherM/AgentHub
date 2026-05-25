@@ -215,6 +215,14 @@ function titleForEventKind(kind: TimelineEventKind): string {
       return "Assignments created";
     case "assignment_start_failed":
       return "Assignment start failed";
+    case "workflow_handoff":
+      return "Workflow handoff";
+    case "workflow_review_requested":
+      return "Review requested";
+    case "workflow_review_completed":
+      return "Review completed";
+    case "workflow_completed":
+      return "Workflow completed";
     case "risk_detected":
       return "Risk detected";
     case "check_completed":
@@ -230,6 +238,12 @@ function titleForEventKind(kind: TimelineEventKind): string {
 
 function toneForEventKind(kind: TimelineEventKind): TimelineEventTone {
   if (kind === "task_created" || kind === "assignment_created") {
+    return "accent";
+  }
+  if (kind === "workflow_completed" || kind === "workflow_review_completed") {
+    return "success";
+  }
+  if (kind === "workflow_review_requested" || kind === "workflow_handoff") {
     return "accent";
   }
   if (kind === "assignment_start_failed" || kind === "risk_detected") {
