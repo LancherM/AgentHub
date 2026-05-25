@@ -696,6 +696,11 @@ is proven, then persist a `desktopScope` marker in `comparison_reports.details`
 for later reads. Renderer components call only `window.agentHub.comparison.*`
 through preload IPC; they do not calculate scores, read SQLite, inspect
 conversation tables, or mutate agent output.
+The renderer may derive a lightweight compare affordance from the already
+loaded room transcript and run status map so terminal same-task or same-turn
+peers are visible from compact run cards. That affordance only opens the
+inspector Artifacts context; the main-process comparison service remains the
+authority for candidate validation and report creation.
 
 The first desktop runtime integration is deliberately narrow. `apps/desktop`
 uses SQLite-backed services for project registration, run listing/detail,
@@ -848,6 +853,11 @@ artifacts, review decisions, memory proposals, and audit logs. Raw logs,
 diffs, verification rows, risk reports, memory details, context previews, and
 comparison data remain on run evidence repositories and continue to load
 through review IPC only when the user opens the relevant inspector context.
+Inline run cards compute a renderer-only Prepare/Run/Verify/Review stage model
+from persisted run status and event types. The model controls compact progress,
+last-activity, wait-state, disabled-action, and compare-entry display only; it
+does not create new persistence, duplicate raw event streams into the
+transcript, or bypass inspector IPC for review data.
 
 Phase 5 keeps the inspector as a renderer-only shell over those IPC services
 but changes its visible vocabulary from run-centric tabs to the workgroup

@@ -462,14 +462,19 @@ verification output, risk reports, or memory details into the room transcript.
 
 Active inline run cards subscribe to the existing desktop run event stream and
 replay already-persisted events when a subscription starts after a fast run has
-advanced. They show agent identity, status, the latest streamed line, and
-compact review pills while a run is active. Once a terminal run has a durable
-assistant answer, the transcript keeps that answer as the main visible row and
-collapses the run card to a small review affordance; raw event lines no longer
-sit in the default transcript. Terminal cards do not load full run review
-evidence when a thread is merely selected; artifacts, checks, risks, memory
-proposals, brief data, context previews, and audit logs load lazily when the
-user opens the on-demand workgroup inspector drawer.
+advanced. They show agent identity, status, a stable Prepare/Run/Verify/Review
+stage rail, the latest persisted activity, current wait state, and compact
+review pills while a run is active. Raw event lines stay behind the inspector's
+Audit view by default. Once a terminal run has a durable assistant answer, the
+transcript keeps that answer as the main visible row and collapses the run card
+to a small review affordance. Terminal cards lead with View review, Compare,
+Continue, Handoff, and Audit actions; disabled actions explain why they are not
+available. Compare becomes available only when another terminal run from the
+same task or the same multi-agent turn is present. Terminal cards do not load
+full run review evidence when a thread is merely selected; artifacts, checks,
+risks, memory proposals, brief data, context previews, comparison reports, and
+audit logs load lazily when the user opens the on-demand workgroup inspector
+drawer.
 Existing persisted run records are
 synthesized into thread-shaped conversations only as a compatibility import
 when no durable conversation threads exist yet, so old desktop run data remains
