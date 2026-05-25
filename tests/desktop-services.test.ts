@@ -697,6 +697,63 @@ describe("desktop services", () => {
     ]);
   });
 
+  it("redacts sensitive git diff artifact previews", async () => {
+    const fixture = await createFixture();
+    const context = createDesktopServiceContext(fixture.repositories);
+    const projects = createProjectService(context);
+    const review = createReviewService(context);
+    const project = await projects.open(fixture.projectRoot);
+    const now = context.now();
+    const task = await fixture.repositories.taskRepository.create(
+      validateTask({
+        id: "task_sensitive_artifact_preview",
+        projectId: project.id,
+        title: "Inspect sensitive artifact preview",
+        status: "completed",
+        createdAt: now,
+        updatedAt: now
+      })
+    );
+    const run = await fixture.repositories.taskRunRepository.create(
+      validateTaskRun({
+        id: "run_sensitive_artifact_preview",
+        taskId: task.id,
+        agentKind: "codex",
+        status: "succeeded",
+        createdAt: now,
+        updatedAt: now
+      })
+    );
+    await fixture.repositories.runArtifactRepository.create(
+      validateRunArtifact({
+        id: "artifact_sensitive_artifact_preview",
+        taskRunId: run.id,
+        kind: "git_diff",
+        content: [
+          "diff --git a/.env.local b/.env.local",
+          "--- a/.env.local",
+          "+++ b/.env.local",
+          "@@ -1 +1 @@",
+          "-TOKEN=old",
+          "+TOKEN=secret-value"
+        ].join("\n"),
+        metadata: {
+          changedFiles: [{ path: ".env.local", status: "modified" }]
+        },
+        createdAt: now
+      })
+    );
+
+    const artifacts = await review.getArtifacts(run.id);
+
+    expect(artifacts[0]).toMatchObject({
+      kind: "git_diff",
+      contentPreview: "Patch redacted because sensitive file path changed: .env.local",
+      truncated: false
+    });
+    expect(artifacts[0]?.contentPreview).not.toContain("secret-value");
+  });
+
   it("redacts sensitive retained worktree diff patches in desktop review", async () => {
     const fixture = await createFixture();
     const context = createDesktopServiceContext(fixture.repositories);

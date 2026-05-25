@@ -75,12 +75,15 @@ local metadata model with title, type, source run/task ids, optional thread id,
 creator, summary, availability, and a capped content preview. This Phase 6
 model intentionally reuses `run_artifacts` instead of adding an artifact table,
 so existing task briefs, conversation briefs, diffs, review decisions, and
-provenance records remain readable. Handoff, comparison, and diff data remain
-inside the Artifacts tab as engineering evidence. Persisted non-placeholder
-risk reports take precedence over the deterministic desktop fallback, including
-`blocking` levels and mapped finding/risk-factor evidence, so desktop review
-does not downgrade scanner output from sensitive path changes or dangerous
-instructions. `DiffService`
+provenance records remain readable. `git_diff` artifact previews apply
+sensitive-path patch redaction before content crosses IPC, matching the diff
+review boundary while preserving raw run evidence in local persistence.
+Handoff, comparison, and diff data remain inside the Artifacts tab as
+engineering evidence. Persisted non-placeholder risk reports take precedence
+over the deterministic desktop fallback, including `blocking` levels and
+mapped finding/risk-factor evidence, so desktop review does not downgrade
+scanner output from sensitive path changes or dangerous instructions.
+`DiffService`
 uses persisted diff artifacts when available and can read retained worktrees
 with read-only Git commands through
 `DiffCollector`, `NodeShellExecutor`, and safe Git configuration. It redacts

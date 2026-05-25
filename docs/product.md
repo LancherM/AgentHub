@@ -419,6 +419,9 @@ shows a clear unavailable state. Artifacts now begins with a local artifact
 inventory derived from persisted `run_artifacts`. Each artifact has bounded
 metadata for title, artifact type, source run, source task, thread id when
 known, creator, summary, local availability, and a capped content preview.
+`git_diff` artifact previews use the same sensitive-path redaction boundary as
+the Diff review so secret-bearing patches are not copied into artifact chips or
+the sandboxed renderer.
 Important run outputs can also appear as named artifact chips on timeline run
 cards, linking back to the Artifacts inspector tab without copying raw evidence
 into the room transcript. The same tab still contains engineering-specific
