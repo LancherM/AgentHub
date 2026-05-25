@@ -343,6 +343,17 @@ configurable roles, executor backends, workflow templates, artifact and
 knowledge models, pack metadata, and optional sync/collaboration surfaces while
 preserving local-first operation as the default.
 
+The companion interaction optimization plan lives in
+`docs/interaction-optimization-roadmap.md`. It records the near-term
+experience corrections for reducing visible complexity: quiet room transcripts,
+agent-output-only answers, same-agent multi-turn room context, discoverable
+project and room creation, room-level shared-context governance, global skill
+scope, composer autocomplete, button/control states, run progress, inspector
+hierarchy, error states, preferences, and keyboard polish. These changes should
+keep internal run evidence auditable while presenting the default product
+surface as a small set of user concepts: rooms, roles, skills, runs, and
+decisions.
+
 Built-in workgroup pack metadata is now defined locally for Core Workgroup,
 Engineering, Research, Writing, Analysis, and Operations. Packs are
 deterministic product metadata, not a marketplace or third-party code loading
