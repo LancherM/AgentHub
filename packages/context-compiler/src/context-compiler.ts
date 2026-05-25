@@ -768,6 +768,7 @@ export class DefaultContextCompiler implements ContextCompiler {
   }
 
   async compile(input: ContextCompilerInput): Promise<ContextBundle> {
+    assertSupportedSkillReferences(input);
     const warnings: string[] = [];
     const sections: ContextSection[] = [
       section(10, "task", "task", "Task Prompt", input.taskPrompt),
@@ -1814,6 +1815,11 @@ function resolveScopedSkills(input: {
     if (reference.scope === "global") {
       return globalById.get(reference.id);
     }
+    if (reference.scope === "task" || reference.scope === "role") {
+      throw new Error(
+        `Skill scope ${reference.scope} is not supported by context resolution yet`
+      );
+    }
     return projectById.get(reference.id) ?? globalById.get(reference.id);
   };
 
@@ -1839,6 +1845,22 @@ function resolveScopedSkills(input: {
       ? skillContextReferenceId(left).localeCompare(skillContextReferenceId(right))
       : left.name.localeCompare(right.name)
   );
+}
+
+function assertSupportedSkillReferences(input: {
+  selectedSkillReferences?: SkillReference[];
+  roleSkillReferences?: SkillReference[];
+}): void {
+  for (const reference of [
+    ...(input.roleSkillReferences ?? []),
+    ...(input.selectedSkillReferences ?? [])
+  ]) {
+    if (reference.scope === "task" || reference.scope === "role") {
+      throw new Error(
+        `Skill scope ${reference.scope} is not supported by context resolution yet`
+      );
+    }
+  }
 }
 
 export function injectedSkillEvidence(

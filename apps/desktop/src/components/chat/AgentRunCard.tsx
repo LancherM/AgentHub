@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { agentHubApi } from "../../lib/agentHubApi";
+import { findCliUnavailableDiagnostic } from "../../lib/cli-diagnostics";
 import {
   buildRunProgress,
   isActiveRunStatus,
@@ -129,11 +130,15 @@ export function AgentRunCard({
   }, [loadRun, message.runId, message.status]);
 
   useEffect(() => {
-    if (!isTerminalRunStatus(message.status) || run) {
+    if (!isTerminalRunStatus(status)) {
+      return;
+    }
+    if (run) {
+      void loadReviewData();
       return;
     }
     void loadRun({ includeReview: true });
-  }, [loadRun, message.status, run]);
+  }, [loadReviewData, loadRun, run, status]);
 
   const progress = useMemo(
     () =>
@@ -181,7 +186,11 @@ export function AgentRunCard({
     eventCount: events.length,
     status
   });
-  const quietCompleted = compactCompleted && isTerminalRunStatus(status);
+  const cliDiagnostic = useMemo(
+    () => findCliUnavailableDiagnostic(events),
+    [events]
+  );
+  const quietCompleted = compactCompleted && isTerminalRunStatus(status) && !cliDiagnostic;
 
   async function cancel(): Promise<void> {
     setCancelError(undefined);
@@ -317,6 +326,24 @@ export function AgentRunCard({
             <p className="fake-boundary">
               Last event at {formatTime(progress.activityTimestamp)}.
             </p>
+          ) : null}
+          {cliDiagnostic ? (
+            <div className="cli-diagnostic-panel">
+              <div>
+                <div className="panel-label">CLI Diagnostic</div>
+                <strong>{cliDiagnostic.reason}</strong>
+                {cliDiagnostic.cwd ? <p>cwd: {cliDiagnostic.cwd}</p> : null}
+              </div>
+              {cliDiagnostic.verifyCommand ? (
+                <code>{cliDiagnostic.verifyCommand}</code>
+              ) : null}
+              <p>
+                PATH checked:{" "}
+                {cliDiagnostic.pathEntries.length > 0
+                  ? cliDiagnostic.pathEntries.join(", ")
+                  : "No PATH entries were available."}
+              </p>
+            </div>
           ) : null}
         </div>
       ) : null}

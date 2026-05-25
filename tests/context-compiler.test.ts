@@ -592,6 +592,53 @@ describe("ContextCompiler", () => {
     );
   });
 
+  it("rejects task and role skill scopes until scoped stores are implemented", async () => {
+    const projectRoot = await createTestDirectory("context-unsupported-skill-scope-project");
+    const agentHubHome = await createTestDirectory("context-unsupported-skill-scope-home");
+    const initialized = await initContextStore({
+      projectRoot,
+      projectId: "project_unsupported_skill_scope",
+      agentHubHome
+    });
+    await fs.mkdir(path.join(initialized.storeRoot, "skills", "review"), {
+      recursive: true
+    });
+    await fs.writeFile(
+      path.join(initialized.storeRoot, "skills", "review", "SKILL.md"),
+      skillMarkdown({
+        name: "project-review",
+        description: "Project review method."
+      }),
+      "utf8"
+    );
+
+    await expect(
+      buildContextArtifacts({
+        projectRoot,
+        projectId: "project_unsupported_skill_scope",
+        taskId: "task_unsupported_skill_scope",
+        title: "Build unsupported task skill context",
+        prompt: "Compile task context",
+        selectedAgentId: "fake",
+        selectedSkillReferences: [{ id: "review", scope: "task" }],
+        agentHubHome
+      })
+    ).rejects.toThrow("Skill scope task is not supported by context resolution yet");
+
+    await expect(
+      buildContextArtifacts({
+        projectRoot,
+        projectId: "project_unsupported_skill_scope",
+        taskId: "role_unsupported_skill_scope",
+        title: "Build unsupported role skill context",
+        prompt: "Compile role context",
+        selectedAgentId: "fake",
+        roleSkillReferences: [{ id: "review", scope: "role" }],
+        agentHubHome
+      })
+    ).rejects.toThrow("Skill scope role is not supported by context resolution yet");
+  });
+
   it("warns and skips malformed file skills", async () => {
     const projectRoot = await createTestDirectory("context-malformed-skill-project");
     const agentHubHome = await createTestDirectory("context-malformed-skill-home");
