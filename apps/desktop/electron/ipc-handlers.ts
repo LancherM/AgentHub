@@ -6,6 +6,7 @@ import type {
   CreateThreadInput,
   CreateRunInput,
   HandoffCopyKind,
+  LifecycleActionInput,
   RunEvent,
   SaveTeamRoleInput,
   SendThreadMessageInput,
@@ -44,6 +45,10 @@ import {
   type ComparisonService
 } from "./services/comparison-service";
 import {
+  createLifecycleService,
+  type LifecycleService
+} from "./services/lifecycle-service";
+import {
   createKnowledgeService,
   type KnowledgeService
 } from "./services/knowledge-service";
@@ -59,6 +64,7 @@ export interface DesktopServices {
   runs: RunService;
   threads: ThreadService;
   review: ReviewService;
+  lifecycle?: LifecycleService;
   comparison: ComparisonService;
   memory: MemoryService;
   knowledge: KnowledgeService;
@@ -96,6 +102,7 @@ export function createDesktopServices(
     settingsService: settings
   });
   const comparison = createComparisonService(context);
+  const lifecycle = createLifecycleService(context, { reviewService: review });
   const knowledge = createKnowledgeService(context);
   const team = createTeamService(context);
   return {
@@ -103,6 +110,7 @@ export function createDesktopServices(
     runs,
     threads: createThreadService({ context, projects, runs, team }),
     review,
+    lifecycle,
     comparison,
     memory,
     knowledge,
@@ -186,6 +194,20 @@ export function createIpcHandlers(
     },
     [IPC_CHANNELS.reviewRefresh]: async (_event, input) =>
       services.review.refreshReview(parseId(input, "runId")),
+    [IPC_CHANNELS.lifecycleGet]: async (_event, input) =>
+      requireLifecycleService(services).get(parseId(input, "runId")),
+    [IPC_CHANNELS.lifecycleMarkKeep]: async (_event, input) =>
+      requireLifecycleService(services).markKeep(parseLifecycleActionInput(input)),
+    [IPC_CHANNELS.lifecycleCleanupWorktree]: async (_event, input) =>
+      requireLifecycleService(services).cleanupWorktree(
+        parseLifecycleActionInput(input)
+      ),
+    [IPC_CHANNELS.lifecyclePreviewApply]: async (_event, input) =>
+      requireLifecycleService(services).previewApply(parseId(input, "runId")),
+    [IPC_CHANNELS.lifecycleConfirmApply]: async (_event, input) =>
+      requireLifecycleService(services).confirmApply(
+        parseLifecycleActionInput(input)
+      ),
     [IPC_CHANNELS.comparisonListCandidates]: async (_event, input) =>
       services.comparison.listCandidates(parseId(input, "runId")),
     [IPC_CHANNELS.comparisonListForRun]: async (_event, input) =>
@@ -323,6 +345,48 @@ function parseHandoffCopyInput(input: unknown): {
     );
   }
   return { runId, kind: value.kind };
+}
+
+function parseLifecycleActionInput(input: unknown): LifecycleActionInput {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    throw new Error("lifecycle input is required");
+  }
+  const value = input as Partial<LifecycleActionInput>;
+  const runId = parseId(value.runId, "runId");
+  const confirmation =
+    value.confirmation === undefined || value.confirmation === null
+      ? undefined
+      : parseBoundedOptionalString(value.confirmation, "confirmation", 500);
+  const reason =
+    value.reason === undefined || value.reason === null
+      ? undefined
+      : parseBoundedOptionalString(value.reason, "reason", 1_000);
+  return { runId, confirmation, reason };
+}
+
+function parseBoundedOptionalString(
+  input: unknown,
+  label: string,
+  maxLength: number
+): string | undefined {
+  if (typeof input !== "string") {
+    throw new Error(`${label} must be a string`);
+  }
+  const value = input.trim();
+  if (value.length === 0) {
+    return undefined;
+  }
+  if (value.length > maxLength) {
+    throw new Error(`${label} must be ${maxLength} characters or fewer`);
+  }
+  return value;
+}
+
+function requireLifecycleService(services: DesktopServices): LifecycleService {
+  if (!services.lifecycle) {
+    throw new Error("lifecycle service is unavailable");
+  }
+  return services.lifecycle;
 }
 
 function parseComparisonCreateInput(input: unknown): ComparisonCreateInput {
@@ -538,7 +602,7 @@ const GENERIC_IPC_ERROR = "Agent Hub could not complete that local desktop reque
 
 function safeErrorMessage(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
-  if (/not found|required|must be|cannot be|already|deliveryMode|agentId|contextMode|reason|projectId|runId|threadId|prompt|text|settings|verification|command|executable|args|timeout|handoff|comparison|baseline|candidate|same task|multi-agent|team|role|executor|permission|contextPolicy|approvalPolicy|workflow|maxRounds|stopCondition|expectedOutputs/i.test(message)) {
+  if (/not found|required|must be|cannot be|already|deliveryMode|agentId|contextMode|reason|projectId|runId|threadId|prompt|text|settings|verification|command|executable|args|timeout|handoff|lifecycle|confirmation|cleanup|apply|worktree|comparison|baseline|candidate|same task|multi-agent|team|role|executor|permission|contextPolicy|approvalPolicy|workflow|maxRounds|stopCondition|expectedOutputs/i.test(message)) {
     return message;
   }
   return GENERIC_IPC_ERROR;

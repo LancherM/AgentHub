@@ -475,7 +475,7 @@ function toReviewArtifact(input: {
   metadata: RunMetadata | undefined;
 }): ReviewArtifact {
   const artifactMetadata = input.artifact.metadata as JsonObject;
-  const preview = boundedArtifactPreview(input.artifact.content);
+  const preview = reviewArtifactPreview(input.artifact);
   const threadId =
     stringMetadata(artifactMetadata, "threadId") ??
     stringMetadata(artifactMetadata, "thread_id") ??
@@ -505,6 +505,26 @@ function toReviewArtifact(input: {
   };
 }
 
+function reviewArtifactPreview(artifact: RunArtifact): {
+  content: string;
+  truncated: boolean;
+} {
+  if (artifact.kind !== "git_diff") {
+    return boundedArtifactPreview(artifact.content);
+  }
+  const sensitivePaths = sensitivePatchPaths(
+    artifact.content,
+    artifactChangedPaths(artifact.metadata as JsonObject)
+  );
+  if (sensitivePaths.length > 0) {
+    return {
+      content: `Patch redacted because sensitive file path changed: ${sensitivePaths.join(", ")}`,
+      truncated: false
+    };
+  }
+  return boundedArtifactPreview(artifact.content);
+}
+
 function boundedArtifactPreview(content: string): {
   content: string;
   truncated: boolean;
@@ -516,6 +536,59 @@ function boundedArtifactPreview(content: string): {
     content: `${content.slice(0, MAX_ARTIFACT_PREVIEW_CHARS)}\n[Artifact preview truncated after ${MAX_ARTIFACT_PREVIEW_CHARS} characters.]`,
     truncated: true
   };
+}
+
+function artifactChangedPaths(metadata: JsonObject): string[] {
+  const changedFiles = metadata.changedFiles;
+  if (!Array.isArray(changedFiles)) {
+    return [];
+  }
+  return changedFiles.flatMap((entry) => {
+    if (typeof entry === "string") {
+      return [entry];
+    }
+    if (!entry || typeof entry !== "object") {
+      return [];
+    }
+    const filePath = (entry as Record<string, unknown>).path;
+    return typeof filePath === "string" ? [filePath] : [];
+  });
+}
+
+function sensitivePatchPaths(patch: string, changedPaths: string[]): string[] {
+  const paths = new Set<string>();
+  for (const filePath of changedPaths) {
+    if (isSensitiveFilePath(filePath)) {
+      paths.add(filePath);
+    }
+  }
+  for (const line of patch.split(/\r?\n/)) {
+    const filePath = diffPathFromHeader(line);
+    if (filePath && isSensitiveFilePath(filePath)) {
+      paths.add(filePath);
+    }
+  }
+  return [...paths].sort();
+}
+
+function diffPathFromHeader(line: string): string | undefined {
+  const gitMatch = line.match(/^diff --git a\/(.+?) b\/(.+)$/);
+  if (gitMatch) {
+    return gitMatch[2];
+  }
+  const markerMatch = line.match(/^(?:---|\+\+\+) [ab]\/(.+)$/);
+  return markerMatch?.[1];
+}
+
+function isSensitiveFilePath(filePath: string): boolean {
+  return /(^|\/)\.env(?:\.|$)/i.test(filePath) ||
+    /\.pem$/i.test(filePath) ||
+    /\.key$/i.test(filePath) ||
+    /(^|\/)id_rsa$/i.test(filePath) ||
+    /(^|\/)id_ed25519$/i.test(filePath) ||
+    /(^|\/)secrets?\./i.test(filePath) ||
+    /(^|\/)credentials?\./i.test(filePath) ||
+    /(^|\/)tokens?\./i.test(filePath);
 }
 
 function artifactType(kind: string): string {

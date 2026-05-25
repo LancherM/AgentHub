@@ -68,19 +68,22 @@ proposal counts, local accept/reject decision artifacts, the latest persisted
 conversation brief artifact, bounded artifact metadata derived from existing
 `run_artifacts`, and the latest persisted TaskRunner safety report when one
 exists. The desktop-facing inspector maps that evidence to workgroup tabs named
-Brief, Context, Artifacts, Checks, Risks, Memory, and Audit. Context is a
+Brief, Context, Artifacts, Checks, Risks, Lifecycle, Memory, and Audit. Context is a
 review IPC read of the `conversation_brief` artifact. Artifacts are exposed by
 `ReviewService.getArtifacts(runId)`, which maps persisted run artifacts into a
 local metadata model with title, type, source run/task ids, optional thread id,
 creator, summary, availability, and a capped content preview. This Phase 6
 model intentionally reuses `run_artifacts` instead of adding an artifact table,
 so existing task briefs, conversation briefs, diffs, review decisions, and
-provenance records remain readable. Handoff, comparison, and diff data remain
-inside the Artifacts tab as engineering evidence. Persisted non-placeholder
-risk reports take precedence over the deterministic desktop fallback, including
-`blocking` levels and mapped finding/risk-factor evidence, so desktop review
-does not downgrade scanner output from sensitive path changes or dangerous
-instructions. `DiffService`
+provenance records remain readable. `git_diff` artifact previews apply
+sensitive-path patch redaction before content crosses IPC, matching the diff
+review boundary while preserving raw run evidence in local persistence.
+Handoff, comparison, and diff data remain inside the Artifacts tab as
+engineering evidence. Persisted non-placeholder risk reports take precedence
+over the deterministic desktop fallback, including `blocking` levels and
+mapped finding/risk-factor evidence, so desktop review does not downgrade
+scanner output from sensitive path changes or dangerous instructions.
+`DiffService`
 uses persisted diff artifacts when available and can read retained worktrees
 with read-only Git commands through
 `DiffCollector`, `NodeShellExecutor`, and safe Git configuration. It redacts
@@ -96,7 +99,21 @@ chooses arbitrary clipboard content or opens filesystem paths directly.
 is deterministic and evidence based; it classifies changed paths, verification
 failures, large diffs, dependency/config changes, generated files, and
 source-without-tests conditions without calling an LLM when no persisted
-safety report is available. `MemoryService` lists and generates a small number
+safety report is available. `LifecycleService` owns explicit post-run local
+actions. It reuses `ReviewService` for retained-worktree, diff, and risk
+evidence; validates workspace ownership before cleanup; requires exact
+confirmation phrases for cleanup and apply; records every keep, cleanup,
+preview, blocked apply, failed apply, and completed apply decision as a
+`lifecycle_audit` run artifact plus a lifecycle run event; and appends a linked
+room timeline event when a conversation message is associated with the run.
+Cleanup invokes hardened `git worktree remove --force` only for a retained
+Agent Hub-owned worktree. Apply writes raw persisted diff content, not the
+bounded or redacted inspector preview, to a temporary Agent Hub process path,
+runs safe `git apply --check`, then safe `git apply` against the local project
+checkout only when the latest risk level is not `blocking` and the
+confirmation phrase matches. The service does not commit, merge, push, delete
+branches, create pull requests, approve memory, or export repository context.
+`MemoryService` lists and generates a small number
 of conservative pending proposals, serializes generation per run, deduplicates
 proposal content, and caps generated proposals for a run before mapping
 ignore to the rejected memory item state. Its explicit approve path moves items
@@ -119,8 +136,9 @@ Run review decisions are stored as local `run_artifacts` entries of kind
 `review_decision`. They are not execution status transitions and they do not
 mutate branches, merge output, push code, apply patches, clean worktrees,
 delete files, or write repository-side context files. Retained-worktree handoff
-is manual review assistance only, leaving any explicit apply/merge workflow for
-a later phase.
+is manual review assistance only. The separate `LifecycleService` provides the
+only desktop cleanup and local apply paths, and both remain explicit,
+audited, confirmation-gated IPC operations.
 
 `packages/core` and `packages/db` now include durable conversation thread and
 message repositories backed by local SQLite tables. They store thread metadata,
@@ -831,6 +849,20 @@ policy metadata, enabled state, and executor bindings, but only
 Code adapters. Reserved `llm_api`, `workflow`, and `human` roles are stored and
 rendered as non-runnable assignment metadata until later runtime phases define
 explicit local executors.
+
+Phase 11 adds deterministic pack metadata in
+`packages/shared/src/workgroup-packs.ts`. Built-in packs cover Core Workgroup,
+Engineering, Research, Writing, Analysis, and Operations. A pack is a local
+metadata object with artifact type definitions, check types, risk categories,
+default role template handles, executor capability hints, context section
+provider metadata, and labels. The registry is read-only code, not a
+marketplace, plugin loader, or remote integration boundary. Pack metadata is
+exported through `packages/shared` and re-exported by `packages/core`, so CLI,
+desktop main-process services, and future local packages can share lookup and
+label mapping without giving the renderer authority to load code. Core label
+mapping returns Brief, Context, Artifacts, Checks, Risks, and Memory; terms
+such as Diff, Tests, Worktree, PR, and CI resolve to those general surfaces
+unless the Engineering pack is explicitly selected.
 
 Repository CI/CD lives in `.github/workflows/ci-cd.yml` and stays outside the
 Agent Hub runtime. The workflow installs the pinned pnpm and Node versions from
