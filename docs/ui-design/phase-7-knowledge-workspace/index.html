@@ -1,0 +1,741 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Agent Hub Phase 7 Knowledge Workspace</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #10110e;
+        --panel: #171813;
+        --panel-2: #20221b;
+        --ink: #f5f1e8;
+        --muted: #aaa48f;
+        --quiet: #807b6d;
+        --line: #34372c;
+        --line-strong: #515940;
+        --accent: #d8ff57;
+        --cyan: #67d8c4;
+        --green: #8be977;
+        --amber: #f5bd5a;
+        --red: #ff7d6b;
+        --plum: #c59bff;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        margin: 0;
+        min-height: 100%;
+        background: var(--bg);
+        color: var(--ink);
+        font-family:
+          Aptos,
+          "SF Pro Text",
+          "Segoe UI",
+          ui-sans-serif,
+          system-ui,
+          sans-serif;
+      }
+
+      body {
+        display: grid;
+        place-items: center;
+        padding: 30px;
+      }
+
+      .app {
+        display: grid;
+        width: 1600px;
+        height: 980px;
+        grid-template-columns: 300px minmax(0, 1fr) 520px;
+        overflow: hidden;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background:
+          linear-gradient(rgba(255, 255, 255, 0.018) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(255, 255, 255, 0.014) 1px, transparent 1px),
+          var(--bg);
+        background-size: 32px 32px;
+        box-shadow: 0 30px 90px rgba(0, 0, 0, 0.45);
+      }
+
+      .sidebar,
+      .inspector {
+        background: rgba(18, 19, 16, 0.98);
+      }
+
+      .sidebar {
+        display: flex;
+        flex-direction: column;
+        gap: 18px;
+        padding: 20px 16px;
+        border-right: 1px solid var(--line);
+      }
+
+      .brand,
+      .side-card,
+      .memory-card,
+      .panel,
+      .composer,
+      .source-row,
+      .audit-row {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: rgba(255, 255, 255, 0.028);
+      }
+
+      .brand {
+        display: grid;
+        grid-template-columns: 38px minmax(0, 1fr);
+        gap: 12px;
+        align-items: center;
+        padding: 12px;
+      }
+
+      .mark,
+      .avatar {
+        display: grid;
+        place-items: center;
+        border-radius: 8px;
+        font-weight: 900;
+      }
+
+      .mark {
+        width: 38px;
+        height: 38px;
+        background: var(--accent);
+        color: #1d2602;
+      }
+
+      .brand span,
+      .muted,
+      .section-label,
+      .meta {
+        color: var(--muted);
+      }
+
+      .section-label,
+      .eyebrow {
+        margin-bottom: 8px;
+        color: var(--quiet);
+        font-size: 11px;
+        font-weight: 900;
+        text-transform: uppercase;
+      }
+
+      .nav {
+        display: grid;
+        gap: 8px;
+      }
+
+      .nav-row {
+        display: grid;
+        grid-template-columns: 9px minmax(0, 1fr) auto;
+        gap: 10px;
+        align-items: center;
+        min-height: 42px;
+        padding: 0 10px;
+        border: 1px solid transparent;
+        border-radius: 8px;
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      .nav-row.active {
+        border-color: rgba(216, 255, 87, 0.36);
+        background: rgba(216, 255, 87, 0.1);
+        color: var(--ink);
+      }
+
+      .dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: var(--quiet);
+      }
+
+      .active .dot,
+      .dot.green {
+        background: var(--accent);
+      }
+
+      .count,
+      .chip,
+      .tag,
+      .state {
+        border-radius: 999px;
+        font-size: 11px;
+        font-weight: 850;
+      }
+
+      .count {
+        padding: 2px 7px;
+        background: rgba(255, 255, 255, 0.07);
+        color: var(--muted);
+      }
+
+      .side-card {
+        display: grid;
+        gap: 10px;
+        padding: 12px;
+      }
+
+      .role {
+        display: grid;
+        grid-template-columns: 24px minmax(0, 1fr) 8px;
+        gap: 8px;
+        align-items: center;
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      .role .avatar {
+        width: 24px;
+        height: 24px;
+        background: rgba(103, 216, 196, 0.18);
+        color: var(--cyan);
+        font-size: 10px;
+      }
+
+      .center {
+        display: grid;
+        min-width: 0;
+        grid-template-rows: auto minmax(0, 1fr) auto;
+        border-right: 1px solid var(--line);
+      }
+
+      .workspace-header {
+        display: flex;
+        justify-content: space-between;
+        gap: 18px;
+        padding: 22px 28px 16px;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+      }
+
+      h1,
+      h2,
+      h3,
+      p {
+        margin: 0;
+      }
+
+      h1 {
+        margin-bottom: 8px;
+        font-size: 24px;
+        letter-spacing: 0;
+      }
+
+      h2 {
+        font-size: 20px;
+      }
+
+      h3 {
+        font-size: 15px;
+      }
+
+      p {
+        color: #e8e0cf;
+        font-size: 13px;
+        line-height: 1.45;
+      }
+
+      .workspace-header p,
+      .panel p,
+      .memory-card p {
+        color: var(--muted);
+      }
+
+      .tabs,
+      .chips,
+      .source-actions,
+      .state-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+      }
+
+      .tabs button,
+      .source-actions button,
+      .action-button {
+        min-height: 30px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: rgba(255, 255, 255, 0.03);
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .tabs button {
+        min-width: 86px;
+        padding: 0 10px;
+      }
+
+      .tabs button.active,
+      .action-button.primary {
+        border-color: rgba(103, 216, 196, 0.6);
+        background: rgba(103, 216, 196, 0.12);
+        color: var(--ink);
+      }
+
+      .workspace-body {
+        display: grid;
+        align-content: start;
+        gap: 12px;
+        min-height: 0;
+        overflow: hidden;
+        padding: 18px 28px;
+      }
+
+      .metrics {
+        display: grid;
+        grid-template-columns: repeat(5, minmax(0, 1fr));
+        gap: 8px;
+      }
+
+      .metric {
+        min-width: 0;
+        padding: 10px;
+        border: 1px solid rgba(255, 255, 255, 0.06);
+        border-radius: 8px;
+        background: rgba(255, 255, 255, 0.026);
+      }
+
+      .metric span,
+      .meta-label {
+        display: block;
+        color: var(--quiet);
+        font-size: 10px;
+        font-weight: 850;
+        text-transform: uppercase;
+      }
+
+      .metric strong {
+        display: block;
+        margin-top: 5px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .memory-list {
+        display: grid;
+        gap: 10px;
+      }
+
+      .memory-card {
+        display: grid;
+        grid-template-columns: 38px minmax(0, 1fr) auto;
+        gap: 12px;
+        align-items: start;
+        min-height: 98px;
+        padding: 14px;
+      }
+
+      .memory-card.active {
+        border-color: rgba(197, 155, 255, 0.48);
+        background:
+          linear-gradient(90deg, rgba(197, 155, 255, 0.1), transparent 38%),
+          rgba(255, 255, 255, 0.03);
+      }
+
+      .avatar {
+        width: 38px;
+        height: 38px;
+        background: rgba(216, 255, 87, 0.16);
+        color: var(--accent);
+        font-size: 11px;
+      }
+
+      .card-head {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 7px;
+        align-items: center;
+        margin-bottom: 8px;
+      }
+
+      .chip,
+      .tag,
+      .state {
+        min-height: 22px;
+        padding: 3px 8px;
+        border: 1px solid var(--line);
+        color: var(--muted);
+      }
+
+      .tag.proposed {
+        border-color: rgba(197, 155, 255, 0.42);
+        color: var(--plum);
+      }
+
+      .tag.approved,
+      .state.ok {
+        border-color: rgba(139, 233, 119, 0.34);
+        color: var(--green);
+      }
+
+      .tag.rejected {
+        border-color: rgba(255, 125, 107, 0.36);
+        color: var(--red);
+      }
+
+      .tag.summary,
+      .state.info {
+        border-color: rgba(103, 216, 196, 0.38);
+        color: var(--cyan);
+      }
+
+      .tag.decision {
+        border-color: rgba(245, 189, 90, 0.38);
+        color: var(--amber);
+      }
+
+      .chip {
+        color: var(--muted);
+      }
+
+      .card-time {
+        color: var(--quiet);
+        font-size: 12px;
+      }
+
+      .composer {
+        margin: 0 28px 22px;
+        padding: 12px 14px;
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      .inspector {
+        display: grid;
+        min-width: 0;
+        grid-template-rows: auto auto minmax(0, 1fr);
+      }
+
+      .inspector-header {
+        display: flex;
+        justify-content: space-between;
+        gap: 14px;
+        padding: 18px;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .inspector-actions {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+        gap: 6px;
+      }
+
+      .inspector-tabs {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 6px;
+        padding: 12px;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .inspector-tabs button {
+        min-height: 30px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: rgba(255, 255, 255, 0.03);
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .inspector-tabs button.active {
+        border-color: rgba(103, 216, 196, 0.6);
+        color: var(--ink);
+      }
+
+      .inspector-body {
+        display: grid;
+        align-content: start;
+        gap: 14px;
+        min-height: 0;
+        overflow: hidden;
+        padding: 16px;
+      }
+
+      .panel {
+        display: grid;
+        gap: 10px;
+        padding: 14px;
+      }
+
+      .source-grid {
+        display: grid;
+        gap: 8px;
+      }
+
+      .source-row {
+        display: grid;
+        grid-template-columns: 86px minmax(0, 1fr) auto;
+        gap: 10px;
+        align-items: center;
+        padding: 10px;
+      }
+
+      .source-row strong {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .audit-row {
+        display: grid;
+        grid-template-columns: 74px minmax(0, 1fr);
+        gap: 10px;
+        padding: 10px;
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .preview {
+        max-height: 180px;
+        overflow: hidden;
+        border: 1px solid rgba(255, 255, 255, 0.06);
+        border-radius: 8px;
+        background: #0b0c09;
+        padding: 12px;
+        color: #e7e0d1;
+        font-family: "SF Mono", Consolas, monospace;
+        font-size: 12px;
+        line-height: 1.45;
+        white-space: pre-wrap;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="app">
+      <aside class="sidebar">
+        <div class="brand">
+          <div class="mark">AH</div>
+          <div>
+            <strong>Agent Hub</strong>
+            <span>Local workgroup</span>
+          </div>
+        </div>
+
+        <section>
+          <div class="section-label">Project</div>
+          <div class="nav-row active">
+            <span class="dot"></span>
+            <div>
+              <strong>agent-hub</strong>
+              <div class="muted">/Users/lan/agent-hub</div>
+            </div>
+            <span class="count">local</span>
+          </div>
+        </section>
+
+        <section>
+          <div class="section-label">Rooms</div>
+          <div class="nav">
+            <div class="nav-row"><span class="dot"></span><span>#general</span><span class="count">2</span></div>
+            <div class="nav-row"><span class="dot"></span><span>#planning</span><span class="count">4</span></div>
+            <div class="nav-row"><span class="dot"></span><span>#research</span><span class="count">1</span></div>
+            <div class="nav-row"><span class="dot"></span><span>#review</span><span class="count">3</span></div>
+            <div class="nav-row active"><span class="dot"></span><span>#knowledge</span><span class="count">12</span></div>
+          </div>
+        </section>
+
+        <section class="side-card">
+          <div class="section-label">Workspace</div>
+          <div class="nav-row active"><span class="dot green"></span><span>Knowledge</span><span class="count">open</span></div>
+          <div class="nav-row"><span class="dot"></span><span>Settings</span><span></span></div>
+        </section>
+
+        <section class="side-card">
+          <div class="section-label">Team</div>
+          <div class="role"><span class="avatar">R</span><span>@researcher</span><span class="dot green"></span></div>
+          <div class="role"><span class="avatar">W</span><span>@writer</span><span class="dot green"></span></div>
+          <div class="role"><span class="avatar">A</span><span>@analyst</span><span class="dot green"></span></div>
+          <div class="role"><span class="avatar">M</span><span>@memory</span><span class="dot green"></span></div>
+        </section>
+      </aside>
+
+      <main class="center">
+        <header class="workspace-header">
+          <div>
+            <div class="eyebrow">Knowledge / Memory</div>
+            <h1>Team Memory Workspace</h1>
+            <p>Proposals, approved memory, thread summaries, decisions, and local audit records.</p>
+          </div>
+          <div class="tabs" aria-label="Knowledge filters">
+            <button class="active">All</button>
+            <button>Decisions</button>
+            <button>Summaries</button>
+            <button>Proposed</button>
+            <button>Approved</button>
+            <button>Rejected</button>
+          </div>
+        </header>
+
+        <section class="workspace-body">
+          <div class="metrics">
+            <div class="metric"><span>Proposed</span><strong>4</strong></div>
+            <div class="metric"><span>Approved</span><strong>18</strong></div>
+            <div class="metric"><span>Rejected</span><strong>3</strong></div>
+            <div class="metric"><span>Summaries</span><strong>5 rooms</strong></div>
+            <div class="metric"><span>Decisions</span><strong>7</strong></div>
+          </div>
+
+          <div class="memory-list">
+            <article class="memory-card active">
+              <span class="avatar">M</span>
+              <div>
+                <div class="card-head">
+                  <strong>Use runtime injection by default</strong>
+                  <span class="tag approved">approved</span>
+                  <span class="tag decision">decision</span>
+                </div>
+                <p>Agent Hub context should be injected at runtime unless a user explicitly requests repo export.</p>
+                <div class="chips">
+                  <span class="chip">source: #planning</span>
+                  <span class="chip">task_42</span>
+                  <span class="chip">run_cdx</span>
+                </div>
+              </div>
+              <span class="card-time">09:42</span>
+            </article>
+
+            <article class="memory-card">
+              <span class="avatar">P</span>
+              <div>
+                <div class="card-head">
+                  <strong>Keep comparison review read-only</strong>
+                  <span class="tag proposed">proposed</span>
+                  <span class="tag summary">memory</span>
+                </div>
+                <p>Comparison reports can recommend a candidate, but accepting remains an audit action only.</p>
+                <div class="chips">
+                  <span class="chip">source: run_817</span>
+                  <span class="chip">review proposal</span>
+                </div>
+              </div>
+              <span class="card-time">09:28</span>
+            </article>
+
+            <article class="memory-card">
+              <span class="avatar">S</span>
+              <div>
+                <div class="card-head">
+                  <strong>#review thread summary</strong>
+                  <span class="tag summary">summary</span>
+                </div>
+                <p>Open items: verify desktop cancellation, keep handoff commands review-only, check risk copy.</p>
+                <div class="chips">
+                  <span class="chip">thread local</span>
+                  <span class="chip">not approved memory</span>
+                </div>
+              </div>
+              <span class="card-time">08:55</span>
+            </article>
+
+            <article class="memory-card">
+              <span class="avatar">R</span>
+              <div>
+                <div class="card-head">
+                  <strong>Do not store secret-like verification commands</strong>
+                  <span class="tag rejected">rejected</span>
+                  <span class="tag summary">memory</span>
+                </div>
+                <p>Rejected duplicate proposal. Secret filtering already lives in settings validation.</p>
+                <div class="chips">
+                  <span class="chip">source: verification</span>
+                  <span class="chip">duplicate</span>
+                </div>
+              </div>
+              <span class="card-time">May 24</span>
+            </article>
+          </div>
+        </section>
+
+        <div class="composer">#knowledge  @memory review pending proposals and decisions</div>
+      </main>
+
+      <aside class="inspector">
+        <header class="inspector-header">
+          <div>
+            <div class="eyebrow">Memory Governance</div>
+            <h2>Runtime Injection Decision</h2>
+            <div class="state-row">
+              <span class="state ok">approved</span>
+              <span class="state info">source linked</span>
+            </div>
+          </div>
+          <div class="inspector-actions">
+            <button class="action-button primary">Approve</button>
+            <button class="action-button">Reject</button>
+          </div>
+        </header>
+
+        <nav class="inspector-tabs">
+          <button class="active">Record</button>
+          <button>Sources</button>
+          <button>Tasks</button>
+          <button>Audit</button>
+        </nav>
+
+        <section class="inspector-body">
+          <section class="panel">
+            <div class="meta-label">Content</div>
+            <p>Agent Hub context should be injected at runtime unless a user explicitly requests repo export.</p>
+          </section>
+
+          <section class="panel">
+            <div class="meta-label">Scope</div>
+            <div class="chips">
+              <span class="chip">project: agent-hub</span>
+              <span class="chip">rooms: #planning #review</span>
+              <span class="chip">future briefs</span>
+            </div>
+          </section>
+
+          <section class="panel">
+            <div class="meta-label">Source Links</div>
+            <div class="source-grid">
+              <div class="source-row">
+                <span class="tag summary">message</span>
+                <strong>#planning May 24 09:41</strong>
+                <div class="source-actions"><button>Open</button></div>
+              </div>
+              <div class="source-row">
+                <span class="tag decision">task</span>
+                <strong>Define context delivery boundary</strong>
+                <div class="source-actions"><button>Open</button></div>
+              </div>
+              <div class="source-row">
+                <span class="tag proposed">run</span>
+                <strong>run_codex_732</strong>
+                <div class="source-actions"><button>Inspect</button></div>
+              </div>
+            </div>
+          </section>
+
+          <section class="panel">
+            <div class="meta-label">Decision Artifact Preview</div>
+            <div class="preview">review_decision: accepted
+created_by: @reviewer
+source_run: run_codex_732
+summary: Runtime injection remains the default context delivery path.</div>
+          </section>
+
+          <section class="panel">
+            <div class="meta-label">Audit</div>
+            <div class="audit-row"><strong>09:42</strong><span>Approved by local user</span></div>
+            <div class="audit-row"><strong>09:40</strong><span>Linked to #planning source message</span></div>
+            <div class="audit-row"><strong>09:38</strong><span>Created from review decision artifact</span></div>
+          </section>
+        </section>
+      </aside>
+    </div>
+  </body>
+</html>

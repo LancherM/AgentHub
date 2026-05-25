@@ -36,7 +36,8 @@ describe("SQLite storage", () => {
       { version: 7 },
       { version: 8 },
       { version: 9 },
-      { version: 10 }
+      { version: 10 },
+      { version: 11 }
     ]);
     await expect(
       database.query<{ name: string }>(
@@ -109,6 +110,17 @@ describe("SQLite storage", () => {
       projectId: "project_1",
       title: "Persist metadata",
       description: "Persist workspace, cleanup, diff, verification, and risk.",
+      metadata: {
+        source: "desktop_thread",
+        threadId: "thread_1",
+        assignments: [
+          {
+            assignmentId: "assignment_1",
+            roleHandle: "researcher",
+            executorKind: "agent_adapter"
+          }
+        ]
+      },
       status: "open",
       createdAt,
       updatedAt: createdAt
@@ -289,7 +301,14 @@ describe("SQLite storage", () => {
       expect.objectContaining({ id: "project_1", name: "Project One" })
     ]);
     await expect(second.taskRepository.list()).resolves.toEqual([
-      expect.objectContaining({ id: "task_1", status: "completed" })
+      expect.objectContaining({
+        id: "task_1",
+        status: "completed",
+        metadata: expect.objectContaining({
+          source: "desktop_thread",
+          threadId: "thread_1"
+        })
+      })
     ]);
     await expect(second.taskRunRepository.get("run_1")).resolves.toEqual(
       expect.objectContaining({
@@ -876,7 +895,8 @@ VALUES (
       { version: 7 },
       { version: 8 },
       { version: 9 },
-      { version: 10 }
+      { version: 10 },
+      { version: 11 }
     ]);
   });
 
@@ -926,7 +946,8 @@ VALUES (
       { version: 7 },
       { version: 8 },
       { version: 9 },
-      { version: 10 }
+      { version: 10 },
+      { version: 11 }
     ]);
     await expect(repositories.database.execute(`
 INSERT INTO tasks (id, project_id, title, status, created_at, updated_at)
@@ -998,7 +1019,8 @@ VALUES ('message_summary_legacy', 'thread_summary_legacy', 0, 'user', 'text', 'P
       { version: 7 },
       { version: 8 },
       { version: 9 },
-      { version: 10 }
+      { version: 10 },
+      { version: 11 }
     ]);
   });
 

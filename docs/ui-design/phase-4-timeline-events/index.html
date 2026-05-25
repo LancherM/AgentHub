@@ -1,0 +1,620 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Agent Hub Phase 4 Timeline Events</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #091019;
+        --panel: #101b27;
+        --panel-2: #0d1722;
+        --line: #26384a;
+        --line-soft: #1a2a3a;
+        --text: #e8edf3;
+        --muted: #8d9ba8;
+        --blue: #3f8cff;
+        --green: #45c66b;
+        --yellow: #e5a12d;
+        --red: #e46262;
+        --cyan: #27c8c3;
+        --violet: #9a73ff;
+        --radius: 8px;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background:
+          linear-gradient(180deg, rgba(33, 54, 78, 0.42), transparent 26rem),
+          var(--bg);
+        color: var(--text);
+        font-family:
+          "Avenir Next",
+          "SF Pro Display",
+          -apple-system,
+          BlinkMacSystemFont,
+          "Segoe UI",
+          sans-serif;
+      }
+
+      .window {
+        width: 1600px;
+        height: 1000px;
+        margin: 0 auto;
+        display: grid;
+        grid-template-columns: 300px minmax(0, 1fr) 430px;
+        border: 1px solid #25384b;
+        background: rgba(7, 15, 24, 0.96);
+        overflow: hidden;
+      }
+
+      .sidebar,
+      .review {
+        background: rgba(11, 23, 34, 0.96);
+      }
+
+      .sidebar {
+        border-right: 1px solid var(--line);
+        padding: 28px 22px;
+      }
+
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        padding: 14px;
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        background: #122033;
+      }
+
+      .brand-mark {
+        display: grid;
+        place-items: center;
+        width: 38px;
+        height: 38px;
+        border: 1px solid var(--blue);
+        border-radius: 8px;
+        color: var(--blue);
+        font-weight: 800;
+      }
+
+      .brand strong,
+      .timeline-title strong,
+      .event-title strong,
+      .review-card strong {
+        display: block;
+        font-size: 16px;
+      }
+
+      .brand span,
+      .timeline-title span,
+      .review-card span,
+      .muted {
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      .section-label {
+        margin: 28px 6px 12px;
+        color: #7d8b9a;
+        font-size: 12px;
+        font-weight: 800;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      .nav-row {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        min-height: 42px;
+        padding: 0 12px;
+        border-radius: var(--radius);
+        color: #dce5ef;
+        font-size: 15px;
+      }
+
+      .nav-row.active {
+        background: #12335b;
+        border: 1px solid #245c9c;
+      }
+
+      .nav-dot {
+        width: 12px;
+        height: 12px;
+        border-radius: 4px;
+        background: #33485e;
+      }
+
+      .nav-row.active .nav-dot {
+        background: var(--blue);
+      }
+
+      .count {
+        margin-left: auto;
+        min-width: 24px;
+        padding: 2px 7px;
+        border-radius: 6px;
+        background: #203247;
+        text-align: center;
+        color: #bed0df;
+        font-size: 12px;
+        font-weight: 700;
+      }
+
+      .center {
+        display: grid;
+        grid-template-rows: auto minmax(0, 1fr) auto;
+        background: rgba(8, 17, 26, 0.98);
+      }
+
+      .topbar {
+        display: flex;
+        align-items: center;
+        gap: 18px;
+        min-height: 120px;
+        padding: 28px 32px 22px;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .room-icon {
+        display: grid;
+        place-items: center;
+        width: 62px;
+        height: 62px;
+        border: 1px solid var(--blue);
+        border-radius: 14px;
+        background: #112743;
+        color: var(--blue);
+        font-size: 34px;
+        font-weight: 800;
+      }
+
+      .timeline-title h1 {
+        margin: 2px 0 6px;
+        font-size: 30px;
+        letter-spacing: 0;
+      }
+
+      .mode-tabs {
+        margin-left: auto;
+        display: flex;
+        gap: 8px;
+      }
+
+      .mode-tabs span {
+        padding: 7px 12px;
+        border-radius: 7px;
+        background: #172537;
+        color: #9dacbd;
+        font-size: 13px;
+        font-weight: 700;
+      }
+
+      .mode-tabs .active {
+        background: #1d4d89;
+        color: #eaf3ff;
+      }
+
+      .timeline {
+        padding: 24px 36px 28px;
+        overflow: hidden;
+      }
+
+      .event {
+        display: grid;
+        grid-template-columns: 42px minmax(0, 1fr) 54px;
+        gap: 14px;
+        margin-bottom: 14px;
+        align-items: start;
+      }
+
+      .avatar {
+        display: grid;
+        place-items: center;
+        width: 42px;
+        height: 42px;
+        border-radius: 50%;
+        font-size: 13px;
+        font-weight: 800;
+      }
+
+      .avatar.user {
+        background: #1d64c8;
+      }
+
+      .avatar.system {
+        background: #565f6d;
+      }
+
+      .avatar.task {
+        background: #1c7050;
+      }
+
+      .avatar.run {
+        background: #2d9e64;
+      }
+
+      .avatar.risk {
+        background: #8a5b13;
+      }
+
+      .event-card {
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        background: var(--panel);
+        overflow: hidden;
+      }
+
+      .event-card.user {
+        border-color: #2460a8;
+        background: #13253a;
+      }
+
+      .event-card.system,
+      .event-card.risk {
+        background: #171c20;
+      }
+
+      .event-card.task {
+        border-color: #2d6f58;
+        background: #0f2626;
+      }
+
+      .event-card.run {
+        border-color: #315879;
+      }
+
+      .event-card.risk {
+        border-color: #7a5522;
+      }
+
+      .event-main {
+        padding: 16px 18px;
+      }
+
+      .event-title {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-bottom: 8px;
+      }
+
+      .event-title strong {
+        font-size: 15px;
+      }
+
+      .badge-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 12px;
+      }
+
+      .badge {
+        padding: 5px 9px;
+        border-radius: 6px;
+        background: #203143;
+        border: 1px solid #31465a;
+        color: #c7d5e2;
+        font-size: 12px;
+        font-weight: 700;
+      }
+
+      .badge.green {
+        background: rgba(69, 198, 107, 0.14);
+        border-color: rgba(69, 198, 107, 0.38);
+        color: #6ee08c;
+      }
+
+      .badge.yellow {
+        background: rgba(229, 161, 45, 0.16);
+        border-color: rgba(229, 161, 45, 0.42);
+        color: #f0b84b;
+      }
+
+      .badge.violet {
+        background: rgba(154, 115, 255, 0.18);
+        border-color: rgba(154, 115, 255, 0.42);
+        color: #b79cff;
+      }
+
+      .badge.red {
+        background: rgba(228, 98, 98, 0.14);
+        border-color: rgba(228, 98, 98, 0.42);
+        color: #f08b8b;
+      }
+
+      .event-link {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 14px;
+        padding: 12px 14px;
+        border-top: 1px solid var(--line-soft);
+        background: rgba(39, 200, 195, 0.08);
+      }
+
+      .event-link strong {
+        font-size: 13px;
+      }
+
+      .event-link button,
+      .composer button {
+        border: 0;
+        border-radius: 7px;
+        background: #2368c8;
+        color: #f4f8ff;
+        font-weight: 800;
+      }
+
+      .event-link button {
+        padding: 8px 12px;
+      }
+
+      .time {
+        padding-top: 12px;
+        color: #7f8b98;
+        font-size: 12px;
+        text-align: right;
+      }
+
+      .composer {
+        display: grid;
+        grid-template-columns: 38px minmax(0, 1fr) 38px;
+        gap: 10px;
+        margin: 0 30px 24px;
+        padding: 10px;
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        background: #0e1a27;
+      }
+
+      .composer span {
+        display: grid;
+        place-items: center;
+        color: var(--muted);
+      }
+
+      .composer p {
+        margin: 0;
+        color: #9ba9b7;
+        font-size: 14px;
+        line-height: 38px;
+      }
+
+      .composer button {
+        width: 38px;
+      }
+
+      .review {
+        border-left: 1px solid var(--line);
+        padding: 22px 18px;
+      }
+
+      .review-tabs {
+        display: flex;
+        gap: 8px;
+        padding-bottom: 12px;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .review-tabs span {
+        padding: 8px 11px;
+        border-radius: 7px;
+        color: #93a1af;
+        font-size: 13px;
+        font-weight: 700;
+      }
+
+      .review-tabs .active {
+        color: #f4f8ff;
+        background: #1d4d89;
+      }
+
+      .review-card {
+        margin-top: 14px;
+        padding: 15px;
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        background: var(--panel);
+      }
+
+      .review-grid {
+        display: grid;
+        grid-template-columns: 112px minmax(0, 1fr);
+        gap: 9px 12px;
+        margin-top: 14px;
+        font-size: 13px;
+      }
+
+      .review-grid span:nth-child(odd) {
+        color: #95a2ae;
+      }
+
+      .review-grid span:nth-child(even) {
+        color: #dce6f0;
+        font-weight: 700;
+      }
+    </style>
+  </head>
+  <body>
+    <main class="window">
+      <aside class="sidebar">
+        <div class="brand">
+          <div class="brand-mark">AH</div>
+          <div>
+            <strong>agenthub-core</strong>
+            <span>local project</span>
+          </div>
+        </div>
+
+        <div class="section-label">Projects</div>
+        <div class="nav-row active"><span class="nav-dot"></span><strong>agenthub-core</strong><span class="count">active</span></div>
+        <div class="nav-row"><span class="nav-dot"></span>trader<span class="count">idle</span></div>
+        <div class="nav-row"><span class="nav-dot"></span>docs-site<span class="count">idle</span></div>
+
+        <div class="section-label">Topics</div>
+        <div class="nav-row"># general</div>
+        <div class="nav-row"># planning</div>
+        <div class="nav-row"># research</div>
+        <div class="nav-row active"># review<span class="count">open</span></div>
+        <div class="nav-row"># knowledge</div>
+
+        <div class="section-label">Runs</div>
+        <div class="nav-row"><span class="nav-dot"></span>Open<span class="count">5</span></div>
+        <div class="nav-row"><span class="nav-dot"></span>Running<span class="count">2</span></div>
+        <div class="nav-row"><span class="nav-dot"></span>Needs review<span class="count">1</span></div>
+        <div class="nav-row"><span class="nav-dot"></span>Accepted<span class="count">18</span></div>
+      </aside>
+
+      <section class="center">
+        <header class="topbar">
+          <div class="room-icon">#</div>
+          <div class="timeline-title">
+            <span>Phase 4 timeline semantics</span>
+            <h1># review</h1>
+            <span>Chat stays readable while system rows become explicit audit events.</span>
+          </div>
+          <div class="mode-tabs">
+            <span class="active">Timeline</span>
+            <span>Thread</span>
+            <span>Review</span>
+          </div>
+        </header>
+
+        <section class="timeline">
+          <article class="event">
+            <div class="avatar user">MK</div>
+            <div class="event-card user">
+              <div class="event-main">
+                <div class="event-title"><strong>MK</strong><span class="muted">user message</span></div>
+                <div>Review the comparison output and call out any blocking risk.</div>
+              </div>
+            </div>
+            <div class="time">11:02</div>
+          </article>
+
+          <article class="event">
+            <div class="avatar task">T</div>
+            <div class="event-card task">
+              <div class="event-main">
+                <div class="event-title"><strong>Task created</strong><span class="muted">task_447</span></div>
+                <div>One shared task was created for the review request and two participants were assigned.</div>
+                <div class="badge-row">
+                  <span class="badge">task created</span>
+                  <span class="badge">assignment created</span>
+                  <span class="badge">2 runs linked</span>
+                </div>
+              </div>
+            </div>
+            <div class="time">11:03</div>
+          </article>
+
+          <article class="event">
+            <div class="avatar system">AH</div>
+            <div class="event-card system">
+              <div class="event-main">
+                <div class="event-title"><strong>System event</strong><span class="muted">runtime evidence</span></div>
+                <div>TaskRunner emitted context, worktree, adapter, verification, and terminal lifecycle events.</div>
+                <div class="badge-row">
+                  <span class="badge yellow">persisted events</span>
+                  <span class="badge">lazy evidence</span>
+                </div>
+              </div>
+            </div>
+            <div class="time">11:04</div>
+          </article>
+
+          <article class="event">
+            <div class="avatar run">C</div>
+            <div class="event-card run">
+              <div class="event-main">
+                <div class="event-title"><strong>Codex completed</strong><span class="badge green">completed</span></div>
+                <div>Implementation run completed. Verification passed. One memory proposal was generated.</div>
+                <div class="badge-row">
+                  <span class="badge green">check passed</span>
+                  <span class="badge violet">memory proposal</span>
+                  <span class="badge">diff 3 files</span>
+                </div>
+              </div>
+              <div class="event-link">
+                <div>
+                  <strong>Inline run card</strong><br />
+                  <span class="muted">Latest line, compact evidence pills, and on-demand inspector stay aligned with today's desktop.</span>
+                </div>
+                <button>Open review</button>
+              </div>
+            </div>
+            <div class="time">11:07</div>
+          </article>
+
+          <article class="event">
+            <div class="avatar risk">R</div>
+            <div class="event-card risk">
+              <div class="event-main">
+                <div class="event-title"><strong>Risk detected</strong><span class="badge yellow">medium</span></div>
+                <div>Changed-file footprint needs review before accepting the run.</div>
+                <div class="badge-row">
+                  <span class="badge red">risk</span>
+                  <span class="badge yellow">review required</span>
+                  <span class="badge">linked run</span>
+                </div>
+              </div>
+            </div>
+            <div class="time">11:08</div>
+          </article>
+        </section>
+
+        <div class="composer">
+          <span>+</span>
+          <p>@agent message this topic, for example: @fake summarize the latest run</p>
+          <button>&gt;</button>
+        </div>
+      </section>
+
+      <aside class="review">
+        <div class="review-tabs">
+          <span class="active">Summary</span>
+          <span>Diff</span>
+          <span>Tests</span>
+          <span>Risk</span>
+          <span>Memory</span>
+          <span>Logs</span>
+        </div>
+
+        <div class="review-card">
+          <strong>Event Inspector</strong>
+          <div class="review-grid">
+            <span>Message kind</span><span>user / system / agent_run / assistant</span>
+            <span>Event kind</span><span>risk_detected</span>
+            <span>Linked run</span><span>run_447</span>
+            <span>Lazy evidence</span><span>diff, tests, risk, memory, logs</span>
+          </div>
+        </div>
+
+        <div class="review-card">
+          <strong>No event sourcing</strong>
+          <span>Event semantics live in bounded message metadata.</span>
+        </div>
+
+        <div class="review-card">
+          <strong>Current fit</strong>
+          <span>Raw logs stay on run evidence, not message bodies.</span>
+        </div>
+
+        <div class="review-card">
+          <strong>Current boundary</strong>
+          <span>Renderer stays sandboxed. Review details load through main-process IPC; no merge, push, apply, cleanup, or memory approval happens automatically.</span>
+        </div>
+      </aside>
+    </main>
+  </body>
+</html>

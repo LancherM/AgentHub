@@ -1,11 +1,14 @@
 import type {
   AgentId,
   AgentHubApi,
+  CollaborationWorkflowInput,
   ComparisonCreateInput,
   CreateThreadInput,
   CreateRunInput,
   HandoffCopyKind,
+  LifecycleActionInput,
   RunEvent,
+  SaveTeamRoleInput,
   SendThreadMessageInput,
   VerificationSettings
 } from "../src/lib/types";
@@ -41,6 +44,18 @@ import {
   createComparisonService,
   type ComparisonService
 } from "./services/comparison-service";
+import {
+  createLifecycleService,
+  type LifecycleService
+} from "./services/lifecycle-service";
+import {
+  createKnowledgeService,
+  type KnowledgeService
+} from "./services/knowledge-service";
+import {
+  createTeamService,
+  type TeamService
+} from "./services/team-service";
 
 export { IPC_CHANNELS, runEventChannel } from "./ipc-channels";
 
@@ -49,8 +64,11 @@ export interface DesktopServices {
   runs: RunService;
   threads: ThreadService;
   review: ReviewService;
+  lifecycle?: LifecycleService;
   comparison: ComparisonService;
   memory: MemoryService;
+  knowledge: KnowledgeService;
+  team: TeamService;
   settings: SettingsService;
 }
 
@@ -84,13 +102,19 @@ export function createDesktopServices(
     settingsService: settings
   });
   const comparison = createComparisonService(context);
+  const lifecycle = createLifecycleService(context, { reviewService: review });
+  const knowledge = createKnowledgeService(context);
+  const team = createTeamService(context);
   return {
     projects,
     runs,
-    threads: createThreadService({ context, projects, runs }),
+    threads: createThreadService({ context, projects, runs, team }),
     review,
+    lifecycle,
     comparison,
     memory,
+    knowledge,
+    team,
     settings
   };
 }
@@ -142,6 +166,10 @@ export function createIpcHandlers(
       services.threads.sendMessage(parseSendThreadMessageInput(input)),
     [IPC_CHANNELS.reviewSummary]: async (_event, input) =>
       services.review.getSummary(parseId(input, "runId")),
+    [IPC_CHANNELS.reviewContext]: async (_event, input) =>
+      services.review.getContext(parseId(input, "runId")),
+    [IPC_CHANNELS.reviewArtifacts]: async (_event, input) =>
+      services.review.getArtifacts(parseId(input, "runId")),
     [IPC_CHANNELS.reviewDiff]: async (_event, input) =>
       services.review.getDiff(parseId(input, "runId")),
     [IPC_CHANNELS.reviewRisk]: async (_event, input) =>
@@ -166,6 +194,20 @@ export function createIpcHandlers(
     },
     [IPC_CHANNELS.reviewRefresh]: async (_event, input) =>
       services.review.refreshReview(parseId(input, "runId")),
+    [IPC_CHANNELS.lifecycleGet]: async (_event, input) =>
+      requireLifecycleService(services).get(parseId(input, "runId")),
+    [IPC_CHANNELS.lifecycleMarkKeep]: async (_event, input) =>
+      requireLifecycleService(services).markKeep(parseLifecycleActionInput(input)),
+    [IPC_CHANNELS.lifecycleCleanupWorktree]: async (_event, input) =>
+      requireLifecycleService(services).cleanupWorktree(
+        parseLifecycleActionInput(input)
+      ),
+    [IPC_CHANNELS.lifecyclePreviewApply]: async (_event, input) =>
+      requireLifecycleService(services).previewApply(parseId(input, "runId")),
+    [IPC_CHANNELS.lifecycleConfirmApply]: async (_event, input) =>
+      requireLifecycleService(services).confirmApply(
+        parseLifecycleActionInput(input)
+      ),
     [IPC_CHANNELS.comparisonListCandidates]: async (_event, input) =>
       services.comparison.listCandidates(parseId(input, "runId")),
     [IPC_CHANNELS.comparisonListForRun]: async (_event, input) =>
@@ -180,6 +222,12 @@ export function createIpcHandlers(
       services.memory.approve(parseIdList(input, "memory ids")),
     [IPC_CHANNELS.memoryIgnore]: async (_event, input) =>
       services.memory.ignore(parseIdList(input, "memory ids")),
+    [IPC_CHANNELS.knowledgeWorkspace]: async (_event, input) =>
+      services.knowledge.getWorkspace(parseId(input, "projectId")),
+    [IPC_CHANNELS.teamWorkspace]: async (_event, input) =>
+      services.team.getWorkspace(parseId(input, "projectId")),
+    [IPC_CHANNELS.teamSaveRole]: async (_event, input) =>
+      services.team.saveRole(parseSaveTeamRoleInput(input)),
     [IPC_CHANNELS.settingsGetVerification]: async (_event, input) =>
       services.settings.getVerification(parseId(input, "projectId")),
     [IPC_CHANNELS.settingsSaveVerification]: async (_event, input) =>
@@ -299,6 +347,48 @@ function parseHandoffCopyInput(input: unknown): {
   return { runId, kind: value.kind };
 }
 
+function parseLifecycleActionInput(input: unknown): LifecycleActionInput {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    throw new Error("lifecycle input is required");
+  }
+  const value = input as Partial<LifecycleActionInput>;
+  const runId = parseId(value.runId, "runId");
+  const confirmation =
+    value.confirmation === undefined || value.confirmation === null
+      ? undefined
+      : parseBoundedOptionalString(value.confirmation, "confirmation", 500);
+  const reason =
+    value.reason === undefined || value.reason === null
+      ? undefined
+      : parseBoundedOptionalString(value.reason, "reason", 1_000);
+  return { runId, confirmation, reason };
+}
+
+function parseBoundedOptionalString(
+  input: unknown,
+  label: string,
+  maxLength: number
+): string | undefined {
+  if (typeof input !== "string") {
+    throw new Error(`${label} must be a string`);
+  }
+  const value = input.trim();
+  if (value.length === 0) {
+    return undefined;
+  }
+  if (value.length > maxLength) {
+    throw new Error(`${label} must be ${maxLength} characters or fewer`);
+  }
+  return value;
+}
+
+function requireLifecycleService(services: DesktopServices): LifecycleService {
+  if (!services.lifecycle) {
+    throw new Error("lifecycle service is unavailable");
+  }
+  return services.lifecycle;
+}
+
 function parseComparisonCreateInput(input: unknown): ComparisonCreateInput {
   if (!input || typeof input !== "object" || Array.isArray(input)) {
     throw new Error("comparison input is required");
@@ -346,6 +436,8 @@ function parseCreateRunInput(input: unknown): CreateRunInput {
     );
   }
   return {
+    taskId:
+      value.taskId === undefined ? undefined : parseId(value.taskId, "taskId"),
     projectId,
     prompt,
     title,
@@ -378,8 +470,33 @@ function parseCreateThreadInput(input: unknown): CreateThreadInput {
         ? undefined
         : parseId(value.projectId, "projectId"),
     title:
-      value.title === undefined ? undefined : parseId(value.title, "title")
+      value.title === undefined ? undefined : parseId(value.title, "title"),
+    roomType:
+      value.roomType === undefined ? undefined : parseRoomType(value.roomType),
+    roomHandle:
+      value.roomHandle === undefined
+        ? undefined
+        : parseId(value.roomHandle, "roomHandle"),
+    description:
+      value.description === undefined
+        ? undefined
+        : parseId(value.description, "description"),
+    pinned: value.pinned === undefined ? undefined : parseBoolean(value.pinned, "pinned")
   };
+}
+
+function parseRoomType(value: unknown): CreateThreadInput["roomType"] {
+  if (value === "default" || value === "custom" || value === "legacy") {
+    return value;
+  }
+  throw new Error("roomType must be default, custom, or legacy");
+}
+
+function parseBoolean(value: unknown, label: string): boolean {
+  if (typeof value !== "boolean") {
+    throw new Error(`${label} must be a boolean`);
+  }
+  return value;
 }
 
 function parseSendThreadMessageInput(input: unknown): SendThreadMessageInput {
@@ -405,6 +522,10 @@ function parseSendThreadMessageInput(input: unknown): SendThreadMessageInput {
     text,
     contextMode,
     agents: value.agents === undefined ? undefined : parseAgentList(value.agents),
+    workflow:
+      value.workflow === undefined
+        ? undefined
+        : parseCollaborationWorkflowInput(value.workflow),
     continueFromRunId:
       value.continueFromRunId === undefined
         ? undefined
@@ -413,6 +534,51 @@ function parseSendThreadMessageInput(input: unknown): SendThreadMessageInput {
       value.continueFromMessageId === undefined
         ? undefined
         : parseId(value.continueFromMessageId, "continueFromMessageId")
+  };
+}
+
+function parseCollaborationWorkflowInput(input: unknown): CollaborationWorkflowInput {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    throw new Error("workflow input must be an object");
+  }
+  const value = input as Partial<CollaborationWorkflowInput>;
+  if (
+    value.mode !== "handoff" &&
+    value.mode !== "review_loop" &&
+    value.mode !== "panel_discussion"
+  ) {
+    throw new Error("workflow mode must be handoff, review_loop, or panel_discussion");
+  }
+  const maxRounds = value.maxRounds;
+  if (typeof maxRounds !== "number" || !Number.isInteger(maxRounds)) {
+    throw new Error("workflow maxRounds must be an integer");
+  }
+  if (typeof value.stopCondition !== "string" || value.stopCondition.trim() === "") {
+    throw new Error("workflow stopCondition is required");
+  }
+  if (
+    !Array.isArray(value.expectedOutputs) ||
+    value.expectedOutputs.some((entry) => typeof entry !== "string" || entry.trim() === "")
+  ) {
+    throw new Error("workflow expectedOutputs must be non-empty strings");
+  }
+  return {
+    mode: value.mode,
+    maxRounds,
+    stopCondition: value.stopCondition,
+    expectedOutputs: value.expectedOutputs,
+    summary: value.summary
+  };
+}
+
+function parseSaveTeamRoleInput(input: unknown): SaveTeamRoleInput {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    throw new Error("team role input is required");
+  }
+  const value = input as Partial<SaveTeamRoleInput>;
+  return {
+    projectId: parseId(value.projectId, "projectId"),
+    role: value.role as SaveTeamRoleInput["role"]
   };
 }
 
@@ -436,7 +602,7 @@ const GENERIC_IPC_ERROR = "Agent Hub could not complete that local desktop reque
 
 function safeErrorMessage(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
-  if (/not found|required|must be|cannot be|already|deliveryMode|agentId|contextMode|reason|projectId|runId|threadId|prompt|text|settings|verification|command|executable|args|timeout|handoff|comparison|baseline|candidate|same task|multi-agent/i.test(message)) {
+  if (/not found|required|must be|cannot be|already|deliveryMode|agentId|contextMode|reason|projectId|runId|threadId|prompt|text|settings|verification|command|executable|args|timeout|handoff|lifecycle|confirmation|cleanup|apply|worktree|comparison|baseline|candidate|same task|multi-agent|team|role|executor|permission|contextPolicy|approvalPolicy|workflow|maxRounds|stopCondition|expectedOutputs/i.test(message)) {
     return message;
   }
   return GENERIC_IPC_ERROR;

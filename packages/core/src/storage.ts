@@ -239,8 +239,8 @@ export class InMemoryTaskRepository implements TaskRepository {
     if (existing) {
       validateTaskStatusTransition(existing.status, validTask.status);
     }
-    this.tasks.set(validTask.id, { ...validTask });
-    return { ...validTask };
+    this.tasks.set(validTask.id, cloneTask(validTask));
+    return cloneTask(validTask);
   }
 
   async updateStatus(
@@ -254,24 +254,33 @@ export class InMemoryTaskRepository implements TaskRepository {
     }
     validateTaskStatusTransition(task.status, status);
     const updated = { ...task, status, updatedAt };
-    this.tasks.set(taskId, updated);
-    return { ...updated };
+    this.tasks.set(taskId, cloneTask(updated));
+    return cloneTask(updated);
   }
 
   async get(taskId: string): Promise<Task | undefined> {
     const task = this.tasks.get(taskId);
-    return task ? { ...task } : undefined;
+    return task ? cloneTask(task) : undefined;
   }
 
   async list(): Promise<Task[]> {
     return [...this.tasks.values()]
       .sort((left, right) => left.createdAt.localeCompare(right.createdAt))
-      .map((task) => ({ ...task }));
+      .map(cloneTask);
   }
 
   async listByProjectId(projectId: string): Promise<Task[]> {
     return (await this.list()).filter((task) => task.projectId === projectId);
   }
+}
+
+function cloneTask(task: Task): Task {
+  return {
+    ...task,
+    metadata: task.metadata
+      ? JSON.parse(JSON.stringify(task.metadata)) as Task["metadata"]
+      : undefined
+  };
 }
 
 export class InMemoryTaskRunRepository implements TaskRunRepository {

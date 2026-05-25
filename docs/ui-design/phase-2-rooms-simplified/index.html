@@ -1,0 +1,876 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Agent Hub Phase 2 Rooms Mockup</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --shell: #101318;
+        --panel: #161b22;
+        --panel-2: #1d232b;
+        --panel-3: #232a33;
+        --line: #303946;
+        --text: #f0f3f7;
+        --muted: #a8b0bb;
+        --dim: #737d8a;
+        --blue: #3d8bfd;
+        --cyan: #30d1c4;
+        --green: #44cf70;
+        --amber: #f3aa3d;
+        --red: #f36a5a;
+        --violet: #a77cf5;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background: #0c0f13;
+        color: var(--text);
+        font-family: "Aptos", "IBM Plex Sans", "SF Pro Text", sans-serif;
+      }
+
+      .frame {
+        width: 1600px;
+        height: 960px;
+        margin: 0 auto;
+        background: var(--shell);
+        border: 1px solid #202733;
+        display: grid;
+        grid-template-rows: 40px 1fr;
+        overflow: hidden;
+      }
+
+      .titlebar {
+        display: grid;
+        grid-template-columns: 160px 1fr 220px;
+        align-items: center;
+        border-bottom: 1px solid var(--line);
+        background: #0f1319;
+      }
+
+      .traffic {
+        display: flex;
+        gap: 8px;
+        padding-left: 18px;
+      }
+
+      .dot {
+        width: 12px;
+        height: 12px;
+        border-radius: 50%;
+      }
+
+      .dot.red { background: #ff6157; }
+      .dot.yellow { background: #ffbd2e; }
+      .dot.green { background: #28c840; }
+
+      .app-title {
+        text-align: center;
+        font-size: 15px;
+        color: #d9dde4;
+      }
+
+      .toolbar {
+        display: flex;
+        justify-content: flex-end;
+        align-items: center;
+        gap: 12px;
+        padding-right: 18px;
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      .workspace {
+        display: grid;
+        grid-template-columns: 288px 1fr 372px;
+        min-height: 0;
+      }
+
+      .sidebar,
+      .review {
+        background: var(--panel);
+        border-right: 1px solid var(--line);
+        min-width: 0;
+      }
+
+      .review {
+        border-right: 0;
+        border-left: 1px solid var(--line);
+      }
+
+      .sidebar {
+        display: grid;
+        grid-template-rows: auto auto 1fr auto;
+      }
+
+      .project-switcher {
+        padding: 18px 18px 16px;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .project-row {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+
+      .project-mark {
+        width: 38px;
+        height: 38px;
+        border-radius: 8px;
+        display: grid;
+        place-items: center;
+        border: 1px solid #315fcb;
+        background: #15213b;
+        color: #72a7ff;
+        font-weight: 700;
+      }
+
+      .project-name {
+        flex: 1;
+        min-width: 0;
+        font-weight: 700;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      .project-meta {
+        margin-top: 10px;
+        color: var(--dim);
+        font-size: 12px;
+      }
+
+      .section {
+        padding: 14px 12px;
+      }
+
+      .section-title {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        color: var(--dim);
+        font-size: 11px;
+        font-weight: 700;
+        text-transform: uppercase;
+      }
+
+      .nav-list {
+        margin-top: 10px;
+        display: grid;
+        gap: 4px;
+      }
+
+      .nav-item {
+        height: 34px;
+        border-radius: 7px;
+        padding: 0 10px;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        color: #d8dde5;
+        font-size: 14px;
+      }
+
+      .nav-item.active {
+        background: #1b3a67;
+        color: white;
+      }
+
+      .nav-item.pinned .hash {
+        color: var(--cyan);
+      }
+
+      .hash {
+        width: 22px;
+        color: var(--dim);
+        font-weight: 700;
+        text-align: center;
+      }
+
+      .room-name {
+        flex: 1;
+        min-width: 0;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      .room-count {
+        min-width: 22px;
+        height: 20px;
+        border-radius: 10px;
+        padding: 0 7px;
+        display: grid;
+        place-items: center;
+        background: #2a333e;
+        color: var(--muted);
+        font-size: 11px;
+      }
+
+      .team-row {
+        height: 32px;
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        color: #d7dde5;
+        font-size: 13px;
+      }
+
+      .avatar {
+        width: 22px;
+        height: 22px;
+        border-radius: 50%;
+        display: grid;
+        place-items: center;
+        font-size: 11px;
+        font-weight: 700;
+        color: white;
+      }
+
+      .avatar.blue { background: var(--blue); }
+      .avatar.violet { background: var(--violet); }
+      .avatar.green { background: #25a85a; }
+      .avatar.amber { background: #d88722; }
+      .avatar.cyan { background: #1a9f9b; }
+
+      .status-block {
+        padding: 14px 18px 18px;
+        border-top: 1px solid var(--line);
+        display: grid;
+        gap: 10px;
+      }
+
+      .status-line {
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .status-dot {
+        width: 9px;
+        height: 9px;
+        border-radius: 50%;
+        background: var(--green);
+      }
+
+      .main {
+        min-width: 0;
+        display: grid;
+        grid-template-rows: auto 1fr auto;
+        background: #12161c;
+      }
+
+      .room-header {
+        padding: 24px 28px 18px;
+        border-bottom: 1px solid var(--line);
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 24px;
+      }
+
+      .room-title-row {
+        display: flex;
+        align-items: center;
+        gap: 16px;
+      }
+
+      .room-icon {
+        width: 64px;
+        height: 64px;
+        border-radius: 12px;
+        border: 1px solid #2f68ce;
+        background: #16233a;
+        display: grid;
+        place-items: center;
+        color: #6ca6ff;
+        font-size: 36px;
+        font-weight: 800;
+      }
+
+      h1 {
+        margin: 0;
+        font-size: 28px;
+        line-height: 1.1;
+        font-weight: 760;
+      }
+
+      .subtitle {
+        margin-top: 8px;
+        color: var(--muted);
+        font-size: 14px;
+      }
+
+      .header-actions {
+        display: flex;
+        gap: 8px;
+      }
+
+      .icon-button {
+        width: 34px;
+        height: 34px;
+        border-radius: 7px;
+        border: 1px solid var(--line);
+        background: var(--panel-2);
+        color: var(--muted);
+        display: grid;
+        place-items: center;
+        font-size: 15px;
+      }
+
+      .tabs {
+        margin-top: 14px;
+        display: flex;
+        gap: 4px;
+        padding: 3px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        width: max-content;
+        background: #141920;
+      }
+
+      .tab {
+        height: 28px;
+        border-radius: 6px;
+        padding: 0 12px;
+        display: grid;
+        place-items: center;
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      .tab.active {
+        background: #245da8;
+        color: white;
+      }
+
+      .timeline {
+        padding: 18px 28px 22px;
+        overflow: hidden;
+        display: grid;
+        align-content: start;
+        gap: 16px;
+      }
+
+      .message {
+        display: grid;
+        grid-template-columns: 36px 1fr auto;
+        gap: 12px;
+        min-height: 52px;
+      }
+
+      .message-body {
+        border-bottom: 1px solid #222a34;
+        padding-bottom: 14px;
+        min-width: 0;
+      }
+
+      .message-head {
+        display: flex;
+        align-items: baseline;
+        gap: 10px;
+      }
+
+      .sender {
+        font-weight: 700;
+        color: #eef2f8;
+      }
+
+      .mention {
+        color: #74aaff;
+      }
+
+      .message-text {
+        margin-top: 6px;
+        color: #cbd2dc;
+        font-size: 14px;
+        line-height: 1.45;
+      }
+
+      .time {
+        color: var(--dim);
+        font-size: 12px;
+      }
+
+      .run-card {
+        margin-top: 10px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--panel-2);
+        padding: 12px 14px;
+        display: grid;
+        gap: 10px;
+      }
+
+      .run-title {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+      }
+
+      .pill {
+        height: 22px;
+        border-radius: 11px;
+        padding: 0 8px;
+        display: inline-grid;
+        place-items: center;
+        font-size: 11px;
+        border: 1px solid var(--line);
+        color: var(--muted);
+        background: #202833;
+      }
+
+      .pill.green {
+        color: #79e59a;
+        border-color: #2f7f49;
+        background: #173321;
+      }
+
+      .pill.amber {
+        color: #f4c168;
+        border-color: #815b19;
+        background: #332617;
+      }
+
+      .artifacts {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+
+      .file-chip {
+        min-height: 26px;
+        border-radius: 6px;
+        border: 1px solid var(--line);
+        padding: 4px 9px;
+        color: var(--muted);
+        font-size: 12px;
+        background: #171d24;
+      }
+
+      .composer {
+        margin: 0 18px 18px;
+        min-height: 58px;
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        background: #171c23;
+        display: grid;
+        grid-template-columns: 42px 1fr 42px 42px;
+        align-items: center;
+        gap: 8px;
+        padding: 8px;
+      }
+
+      .composer-text {
+        color: var(--dim);
+        font-size: 14px;
+      }
+
+      .send {
+        background: var(--blue);
+        color: white;
+        border-color: #5ea2ff;
+      }
+
+      .review {
+        display: grid;
+        grid-template-rows: auto 1fr;
+        min-width: 0;
+      }
+
+      .review-tabs {
+        display: flex;
+        gap: 2px;
+        padding: 13px 12px 0;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .review-tab {
+        height: 36px;
+        padding: 0 11px;
+        display: grid;
+        place-items: center;
+        color: var(--muted);
+        border-bottom: 2px solid transparent;
+        font-size: 13px;
+      }
+
+      .review-tab.active {
+        color: white;
+        border-bottom-color: var(--blue);
+      }
+
+      .review-content {
+        padding: 16px 14px;
+        display: grid;
+        gap: 12px;
+        align-content: start;
+      }
+
+      .review-section {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: #171d24;
+        padding: 14px;
+      }
+
+      .review-section h2 {
+        margin: 0 0 10px;
+        font-size: 15px;
+        line-height: 1.2;
+      }
+
+      .kv {
+        display: grid;
+        grid-template-columns: 92px 1fr;
+        gap: 8px;
+        font-size: 13px;
+        color: var(--muted);
+      }
+
+      .kv strong {
+        color: #e9edf3;
+        font-weight: 600;
+      }
+
+      .check-row {
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        color: #d2d8e0;
+        font-size: 13px;
+        min-height: 27px;
+      }
+
+      .check {
+        color: var(--green);
+        font-weight: 800;
+      }
+
+      .risk-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        color: #d7dde5;
+        font-size: 13px;
+      }
+
+      .task-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        color: #d7dde5;
+        min-height: 30px;
+        font-size: 13px;
+      }
+
+      .muted {
+        color: var(--muted);
+      }
+    </style>
+  </head>
+  <body>
+    <main class="frame">
+      <div class="titlebar">
+        <div class="traffic">
+          <span class="dot red"></span>
+          <span class="dot yellow"></span>
+          <span class="dot green"></span>
+        </div>
+        <div class="app-title">Agent Hub</div>
+        <div class="toolbar">
+          <span>Search</span>
+          <span>Terminal</span>
+          <span>Settings</span>
+          <span>MK</span>
+        </div>
+      </div>
+
+      <section class="workspace">
+        <aside class="sidebar">
+          <div class="project-switcher">
+            <div class="project-row">
+              <div class="project-mark">AH</div>
+              <div class="project-name">agenthub-core</div>
+              <div class="muted">v</div>
+            </div>
+            <div class="project-meta">Local project room set</div>
+          </div>
+
+          <div class="section">
+            <div class="section-title">
+              <span>Rooms</span>
+              <span>+</span>
+            </div>
+            <div class="nav-list">
+              <div class="nav-item active pinned">
+                <span class="hash">#</span>
+                <span class="room-name">general</span>
+                <span class="room-count">4</span>
+              </div>
+              <div class="nav-item pinned">
+                <span class="hash">#</span>
+                <span class="room-name">planning</span>
+              </div>
+              <div class="nav-item pinned">
+                <span class="hash">#</span>
+                <span class="room-name">research</span>
+              </div>
+              <div class="nav-item pinned">
+                <span class="hash">#</span>
+                <span class="room-name">review</span>
+                <span class="room-count">2</span>
+              </div>
+              <div class="nav-item pinned">
+                <span class="hash">#</span>
+                <span class="room-name">knowledge</span>
+              </div>
+              <div class="nav-item">
+                <span class="hash">#</span>
+                <span class="room-name">q3-roadmap</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="section">
+            <div class="section-title">
+              <span>Team</span>
+              <span>Roles</span>
+            </div>
+            <div class="nav-list">
+              <div class="team-row">
+                <span class="avatar blue">R</span>
+                <span>@researcher</span>
+              </div>
+              <div class="team-row">
+                <span class="avatar violet">A</span>
+                <span>@analyst</span>
+              </div>
+              <div class="team-row">
+                <span class="avatar amber">W</span>
+                <span>@writer</span>
+              </div>
+              <div class="team-row">
+                <span class="avatar green">E</span>
+                <span>@engineer</span>
+              </div>
+              <div class="team-row">
+                <span class="avatar cyan">M</span>
+                <span>@memory</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="status-block">
+            <div class="section-title">Task Status</div>
+            <div class="task-row">
+              <span>Open</span>
+              <span class="room-count">5</span>
+            </div>
+            <div class="task-row">
+              <span>Running</span>
+              <span class="room-count">2</span>
+            </div>
+            <div class="task-row">
+              <span>Needs Review</span>
+              <span class="room-count">1</span>
+            </div>
+            <div class="status-line">
+              <span class="status-dot"></span>
+              <span>Local-first</span>
+            </div>
+          </div>
+        </aside>
+
+        <section class="main">
+          <header class="room-header">
+            <div>
+              <div class="room-title-row">
+                <div class="room-icon">#</div>
+                <div>
+                  <h1># general</h1>
+                  <div class="subtitle">Project room backed by conversation messages and run cards.</div>
+                </div>
+              </div>
+              <div class="tabs">
+                <div class="tab active">Timeline</div>
+                <div class="tab">Tasks</div>
+                <div class="tab">Artifacts</div>
+                <div class="tab">Memory</div>
+              </div>
+            </div>
+            <div class="header-actions">
+              <button class="icon-button" aria-label="Participants">P</button>
+              <button class="icon-button" aria-label="Pinned">Pin</button>
+              <button class="icon-button" aria-label="More">...</button>
+            </div>
+          </header>
+
+          <div class="timeline">
+            <article class="message">
+              <div class="avatar blue">MK</div>
+              <div class="message-body">
+                <div class="message-head">
+                  <span class="sender">MK</span>
+                  <span class="mention">@researcher @analyst @writer</span>
+                </div>
+                <div class="message-text">
+                  Build the Q3 product brief from recent notes, risks, and accepted memory.
+                </div>
+              </div>
+              <time class="time">09:00</time>
+            </article>
+
+            <article class="message">
+              <div class="avatar blue">R</div>
+              <div class="message-body">
+                <div class="message-head">
+                  <span class="sender">researcher</span>
+                  <span class="pill green">completed</span>
+                </div>
+                <div class="message-text">
+                  Source review is complete. User interviews and market notes are linked.
+                </div>
+                <div class="run-card">
+                  <div class="run-title">
+                    <strong>@researcher run</strong>
+                    <span class="pill green">checks passed</span>
+                  </div>
+                  <div class="artifacts">
+                    <span class="file-chip">user-interviews.md</span>
+                    <span class="file-chip">market-notes.md</span>
+                  </div>
+                </div>
+              </div>
+              <time class="time">09:08</time>
+            </article>
+
+            <article class="message">
+              <div class="avatar violet">A</div>
+              <div class="message-body">
+                <div class="message-head">
+                  <span class="sender">analyst</span>
+                  <span class="pill amber">medium risk</span>
+                </div>
+                <div class="message-text">
+                  Priority tradeoffs are ready. One scope boundary needs review before acceptance.
+                </div>
+                <div class="run-card">
+                  <div class="run-title">
+                    <strong>@analyst run</strong>
+                    <span class="pill amber">review needed</span>
+                  </div>
+                  <div class="artifacts">
+                    <span class="file-chip">priority-matrix.md</span>
+                    <span class="file-chip">scope-risks.md</span>
+                  </div>
+                </div>
+              </div>
+              <time class="time">09:17</time>
+            </article>
+
+            <article class="message">
+              <div class="avatar amber">W</div>
+              <div class="message-body">
+                <div class="message-head">
+                  <span class="sender">writer</span>
+                  <span class="pill">drafting</span>
+                </div>
+                <div class="message-text">
+                  Drafting the product brief with accepted notes and a short open-items section.
+                </div>
+              </div>
+              <time class="time">09:24</time>
+            </article>
+          </div>
+
+          <div class="composer">
+            <button class="icon-button" aria-label="Add">+</button>
+            <div class="composer-text">@agent message this room</div>
+            <button class="icon-button" aria-label="Mention">@</button>
+            <button class="icon-button send" aria-label="Send">&gt;</button>
+          </div>
+        </section>
+
+        <aside class="review">
+          <div class="review-tabs">
+            <div class="review-tab active">Brief</div>
+            <div class="review-tab">Checks</div>
+            <div class="review-tab">Risks</div>
+            <div class="review-tab">Memory</div>
+          </div>
+          <div class="review-content">
+            <section class="review-section">
+              <h2>Selected Run</h2>
+              <div class="kv">
+                <span>Role</span>
+                <strong>@analyst</strong>
+                <span>Status</span>
+                <strong>Needs Review</strong>
+                <span>Task</span>
+                <strong>Q3 product brief</strong>
+              </div>
+            </section>
+
+            <section class="review-section">
+              <h2>Checks</h2>
+              <div class="check-row">
+                <span class="check">OK</span>
+                <span>Sources reviewed</span>
+              </div>
+              <div class="check-row">
+                <span class="check">OK</span>
+                <span>Brief generated</span>
+              </div>
+              <div class="check-row">
+                <span class="muted">--</span>
+                <span>Reviewer pending</span>
+              </div>
+            </section>
+
+            <section class="review-section">
+              <h2>Risks</h2>
+              <div class="risk-row">
+                <span>Scope boundary unclear</span>
+                <span class="pill amber">medium</span>
+              </div>
+            </section>
+
+            <section class="review-section">
+              <h2>Artifacts</h2>
+              <div class="artifacts">
+                <span class="file-chip">priority-matrix.md</span>
+                <span class="file-chip">scope-risks.md</span>
+                <span class="file-chip">brief-draft.md</span>
+              </div>
+            </section>
+
+            <section class="review-section">
+              <h2>Memory Proposal</h2>
+              <div class="message-text">
+                Reuse Q3 prioritization criteria for future planning rooms after review.
+              </div>
+              <div style="height: 10px"></div>
+              <div class="header-actions">
+                <button class="icon-button" aria-label="Approve">OK</button>
+                <button class="icon-button" aria-label="Reject">X</button>
+              </div>
+            </section>
+          </div>
+        </aside>
+      </section>
+    </main>
+  </body>
+</html>

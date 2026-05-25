@@ -70,11 +70,20 @@ describe("domain model validation", () => {
         id: "task_1",
         projectId: "project_1",
         title: "Run fake task",
+        metadata: {
+          threadId: "thread_1",
+          assignments: [{ roleHandle: "researcher" }]
+        },
         status: "open",
         createdAt: now,
         updatedAt: now
-      }).status
-    ).toBe("open");
+      })
+    ).toMatchObject({
+      status: "open",
+      metadata: {
+        threadId: "thread_1"
+      }
+    });
     expect(
       validateTaskRun({
         id: "run_child",

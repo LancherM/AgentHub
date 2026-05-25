@@ -30,7 +30,8 @@ import {
   type JsonObject,
   type RunEventType as CoreRunEventType,
   type TaskRunStatus as CoreRunStatus,
-  type WorkgroupRoleRunMetadata
+  type WorkgroupRoleRunMetadata,
+  type WorkgroupTaskAssignmentMetadata
 } from "@agent-hub/shared";
 import type {
   AgentId,
@@ -67,7 +68,9 @@ export interface RunServiceDependencies {
 }
 
 export interface CreateDesktopRunInput extends CreateRunInput {
+  assignment?: WorkgroupTaskAssignmentMetadata;
   conversationBrief?: string | ConversationContextBrief;
+  startImmediately?: boolean;
 }
 
 export interface ConversationRunSnapshot {
@@ -87,10 +90,13 @@ interface ActiveRun {
 interface ParsedCreateRunInput
   extends Omit<
     Required<CreateRunInput>,
-    "continueFromRunId" | "continueFromMessageId" | "role"
+    "continueFromRunId" | "continueFromMessageId" | "role" | "taskId"
   > {
+  taskId?: string;
+  assignment?: WorkgroupTaskAssignmentMetadata;
   conversationBrief?: string | ConversationContextBrief;
   role?: WorkgroupRoleRunMetadata;
+  startImmediately: boolean;
   continueFromRunId?: string;
   continueFromMessageId?: string;
 }
@@ -246,17 +252,19 @@ class RepositoryRunService implements RunService {
     }
 
     const createdAt = this.context.now();
-    const task = await this.tasks.create(
-      validateTask({
-        id: this.context.nextId("task"),
-        projectId: project.id,
-        title: parsed.title,
-        description: parsed.prompt,
-        status: "open",
-        createdAt,
-        updatedAt: createdAt
-      })
-    );
+    const task = parsed.taskId
+      ? await this.requireTaskForProject(parsed.taskId, project.id)
+      : await this.tasks.create(
+          validateTask({
+            id: this.context.nextId("task"),
+            projectId: project.id,
+            title: parsed.title,
+            description: parsed.prompt,
+            status: "open",
+            createdAt,
+            updatedAt: createdAt
+          })
+        );
     const run = await this.runs.create(
       validateTaskRun({
         id: this.context.nextId("run"),
@@ -277,11 +285,13 @@ class RepositoryRunService implements RunService {
     }
     this.runInputs.set(run.id, parsed);
 
-    queueMicrotask(() => {
-      void this.startRun(run.id).catch((error) => {
-        void this.failActiveRun(run.id, error);
+    if (parsed.startImmediately) {
+      queueMicrotask(() => {
+        void this.startRun(run.id).catch((error) => {
+          void this.failActiveRun(run.id, error);
+        });
       });
-    });
+    }
 
     return await this.toRunSummary(run, task, project);
   }
@@ -402,6 +412,20 @@ class RepositoryRunService implements RunService {
     }
   }
 
+  private async requireTaskForProject(
+    taskId: string,
+    projectId: string
+  ): Promise<Task> {
+    const task = await this.tasks.get(taskId);
+    if (!task) {
+      throw new Error(`task ${taskId} not found`);
+    }
+    if (task.projectId !== projectId) {
+      throw new Error(`task ${taskId} belongs to project ${task.projectId}`);
+    }
+    return task;
+  }
+
   private async executeTaskRunnerRun(
     run: TaskRun,
     task: Task,
@@ -425,6 +449,7 @@ class RepositoryRunService implements RunService {
       taskId: task.id,
       projectId: task.projectId,
       title: task.title,
+      taskStatusMode: input.assignment ? "shared_task" : "single_run",
       deliveryMode: input.deliveryMode,
       conversationBrief: input.conversationBrief,
       userConstraints: roleUserConstraints(input.role),
@@ -447,6 +472,7 @@ class RepositoryRunService implements RunService {
     });
 
     active.status = toDesktopRunStatus(result.run.status);
+    await this.updateTaskAssignmentStatus(run.id);
     await this.emitPersistedEvents(run.id);
   }
 
@@ -510,29 +536,115 @@ class RepositoryRunService implements RunService {
     }
 
     const updatedAt = this.context.now();
+    const sharedTask = Boolean(this.runInputs.get(runId)?.assignment);
     if (nextStatus === "running") {
-      await this.tasks.updateStatus(task.id, "running", updatedAt);
+      if (task.status === "open") {
+        await this.tasks.updateStatus(task.id, "running", updatedAt);
+      }
       await this.runs.updateStatus(runId, "running", updatedAt);
+      await this.updateTaskAssignmentStatus(runId);
     } else if (nextStatus === "verifying") {
       await this.runs.updateStatus(runId, "running", updatedAt);
     } else if (nextStatus === "completed") {
       await this.runs.updateStatus(runId, "succeeded", updatedAt);
-      await this.tasks.updateStatus(task.id, "completed", updatedAt);
+      await this.updateTaskAssignmentStatus(runId);
+      await this.updateTaskAfterDesktopRun(task, "completed", updatedAt, sharedTask);
     } else if (nextStatus === "failed") {
       await this.runs.updateStatus(runId, "failed", updatedAt);
-      if (task.status === "running") {
-        await this.tasks.updateStatus(task.id, "open", updatedAt);
-      }
+      await this.updateTaskAssignmentStatus(runId);
+      await this.updateTaskAfterDesktopRun(task, "failed", updatedAt, sharedTask);
     } else if (nextStatus === "cancelled") {
       await this.runs.updateStatus(runId, "cancelled", updatedAt);
-      if (task.status === "running") {
-        await this.tasks.updateStatus(task.id, "open", updatedAt);
-      }
+      await this.updateTaskAssignmentStatus(runId);
+      await this.updateTaskAfterDesktopRun(task, "cancelled", updatedAt, sharedTask);
     }
 
     if (active) {
       active.status = nextStatus;
     }
+  }
+
+  private async updateTaskAssignmentStatus(runId: string): Promise<void> {
+    const run = await this.runs.get(runId);
+    if (!run) {
+      return;
+    }
+    const task = await this.tasks.get(run.taskId);
+    const assignments = task?.metadata?.assignments;
+    if (!task || !Array.isArray(assignments)) {
+      return;
+    }
+    const statuses = new Map(
+      (await this.runs.listByTaskId(task.id)).map((taskRun) => [
+        taskRun.id,
+        toTaskAssignmentStatus(taskRun.status)
+      ])
+    );
+    let changed = false;
+    const updatedAssignments = assignments.map((entry) => {
+      const assignment = entry as WorkgroupTaskAssignmentMetadata;
+      const nextStatus = assignment.runId
+        ? statuses.get(assignment.runId)
+        : undefined;
+      if (
+        !entry ||
+        typeof entry !== "object" ||
+        !nextStatus ||
+        assignment.status === nextStatus
+      ) {
+        return entry;
+      }
+      changed = true;
+      return {
+        ...assignment,
+        status: nextStatus
+      };
+    });
+    if (!changed) {
+      return;
+    }
+    await this.tasks.create(
+      validateTask({
+        ...task,
+        metadata: {
+          ...task.metadata,
+          assignments: updatedAssignments
+        },
+        updatedAt: this.context.now()
+      })
+    );
+  }
+
+  private async updateTaskAfterDesktopRun(
+    task: Task,
+    runStatus: "completed" | "failed" | "cancelled",
+    updatedAt: string,
+    sharedTask: boolean
+  ): Promise<void> {
+    const nextStatus = sharedTask
+      ? await this.sharedTaskStatus(task.id)
+      : runStatus === "completed"
+        ? "completed"
+        : "open";
+    const current = await this.tasks.get(task.id);
+    if (!current || current.status === nextStatus) {
+      return;
+    }
+    if (!sharedTask && current.status !== "running" && nextStatus === "open") {
+      return;
+    }
+    await this.tasks.updateStatus(task.id, nextStatus, updatedAt);
+  }
+
+  private async sharedTaskStatus(taskId: string): Promise<Task["status"]> {
+    const runs = await this.runs.listByTaskId(taskId);
+    if (runs.some((run) => run.status === "queued" || run.status === "running")) {
+      return "running";
+    }
+    if (runs.length > 0 && runs.every((run) => run.status === "succeeded")) {
+      return "completed";
+    }
+    return "open";
   }
 
   private async persistDesktopEvent(
@@ -699,6 +811,9 @@ function parseCreateRunInput(input: CreateDesktopRunInput): ParsedCreateRunInput
   if (!input.projectId || typeof input.projectId !== "string") {
     throw new Error("projectId is required");
   }
+  if (input.taskId !== undefined) {
+    parseNonEmptyString(input.taskId, "taskId");
+  }
   if (input.continueFromRunId !== undefined) {
     parseNonEmptyString(input.continueFromRunId, "continueFromRunId");
   }
@@ -709,6 +824,7 @@ function parseCreateRunInput(input: CreateDesktopRunInput): ParsedCreateRunInput
     throw new Error("continueFromRunId is required when continueFromMessageId is provided");
   }
   return {
+    taskId: input.taskId,
     projectId: input.projectId,
     prompt,
     title: input.title?.trim() || titleFromPrompt(prompt),
@@ -717,9 +833,54 @@ function parseCreateRunInput(input: CreateDesktopRunInput): ParsedCreateRunInput
     deliveryMode,
     conversationBrief: input.conversationBrief,
     role: parseRoleMetadata(input.role),
+    assignment: parseTaskAssignmentMetadata(input.assignment),
+    startImmediately: input.startImmediately !== false,
     continueFromRunId: input.continueFromRunId,
     continueFromMessageId: input.continueFromMessageId
   };
+}
+
+function parseTaskAssignmentMetadata(
+  value: unknown
+): WorkgroupTaskAssignmentMetadata | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!value || typeof value !== "object") {
+    throw new Error("task assignment metadata must be an object when provided");
+  }
+  const assignment = value as WorkgroupTaskAssignmentMetadata;
+  if (
+    typeof assignment.assignmentId !== "string" ||
+    typeof assignment.taskId !== "string" ||
+    typeof assignment.threadId !== "string" ||
+    typeof assignment.sourceMessageId !== "string" ||
+    typeof assignment.displayName !== "string" ||
+    typeof assignment.executorKind !== "string" ||
+    typeof assignment.executable !== "boolean" ||
+    typeof assignment.status !== "string"
+  ) {
+    throw new Error("task assignment metadata is missing required fields");
+  }
+  if (assignment.assignmentRole !== "agent" && assignment.assignmentRole !== "role") {
+    throw new Error("task assignment role must be agent or role");
+  }
+  if (
+    assignment.agentId !== undefined &&
+    assignment.agentId !== "fake" &&
+    assignment.agentId !== "codex" &&
+    assignment.agentId !== "claude"
+  ) {
+    throw new Error("task assignment agentId must be fake, codex, or claude");
+  }
+  if (
+    !workgroupExecutorKinds.includes(
+      assignment.executorKind as WorkgroupTaskAssignmentMetadata["executorKind"]
+    )
+  ) {
+    throw new Error("task assignment executorKind is not supported");
+  }
+  return assignment;
 }
 
 function parseRoleMetadata(
@@ -874,6 +1035,18 @@ function toAgentId(agentKind: CoreAgentKind): AgentId {
 function toDesktopRunStatus(status: CoreRunStatus): RunStatus {
   if (status === "succeeded") {
     return "completed";
+  }
+  return status;
+}
+
+function toTaskAssignmentStatus(
+  status: RunStatus | CoreRunStatus
+): WorkgroupTaskAssignmentMetadata["status"] {
+  if (status === "succeeded") {
+    return "completed";
+  }
+  if (status === "verifying") {
+    return "running";
   }
   return status;
 }

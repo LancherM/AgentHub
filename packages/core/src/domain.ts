@@ -100,6 +100,7 @@ export function validateTask(input: Task): Task {
   required(input.projectId, "task.projectId", issues);
   required(input.title, "task.title", issues);
   optionalString(input.description, "task.description", issues);
+  optionalObject(input.metadata, "task.metadata", issues);
   enumValue(input.status, taskStatuses, "task.status", issues);
   timestamp(input.createdAt, "task.createdAt", issues);
   timestamp(input.updatedAt, "task.updatedAt", issues);
