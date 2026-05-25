@@ -390,6 +390,8 @@ automatic apply, merge, or push behavior. Timeline events show handoff or
 review start, review completion when linked runs finish, and workflow
 completion once all executable participants reach terminal state or the
 workflow contains only non-runnable participants.
+If a runnable assignment fails before its run row can be created, the shared
+task can still leave `running` once all executable assignments are terminal.
 
 Agent Hub Desktop is now available as a local conversation console under
 `apps/desktop`. It starts with `pnpm --filter desktop dev` and presents a
@@ -474,23 +476,29 @@ transcript text only and are never written to approved memory automatically.
 
 The workgroup inspector is the desktop drill-down surface for review evidence.
 Its top-level tabs use product vocabulary: Brief, Context, Artifacts, Checks,
-Risks, Memory, and Audit. Brief shows the goal, status, assignee, review state,
-acceptance-criteria placeholder, and decision boundary. Context loads the
-persisted `conversation_brief` run artifact through review IPC and otherwise
-shows a clear unavailable state. Artifacts now begins with a local artifact
+Risks, Lifecycle, Memory, and Audit. Brief shows the goal, status, assignee,
+review state, acceptance-criteria placeholder, and decision boundary. Context
+loads the persisted `conversation_brief` run artifact through review IPC and
+otherwise shows a clear unavailable state. Artifacts now begins with a local artifact
 inventory derived from persisted `run_artifacts`. Each artifact has bounded
 metadata for title, artifact type, source run, source task, thread id when
 known, creator, summary, local availability, and a capped content preview.
+`git_diff` artifact previews use the same sensitive-path redaction boundary as
+the Diff review so secret-bearing patches are not copied into artifact chips or
+the sandboxed renderer.
 Important run outputs can also appear as named artifact chips on timeline run
 cards, linking back to the Artifacts inspector tab without copying raw evidence
 into the room transcript. The same tab still contains engineering-specific
 evidence such as changed-file stats, bounded unified diffs, retained-worktree
 handoff, and local comparison reports, keeping those labels out of the
 top-level navigation. Checks shows captured verification rows, Risks shows
-persisted TaskRunner safety reports or deterministic fallback findings, Memory
-shows conservative proposals, and Audit shows bounded raw logs. All of this
+persisted TaskRunner safety reports or deterministic fallback findings,
+Lifecycle shows retained-worktree state plus explicit cleanup and local apply
+controls, Memory shows conservative proposals, and Audit shows bounded raw logs.
+All of this
 loads through `window.agentHub.review.*`, `window.agentHub.comparison.*`, and
-`window.agentHub.memory.*` IPC methods. Blocking persisted safety reports keep
+`window.agentHub.lifecycle.*`, and `window.agentHub.memory.*` IPC methods.
+Blocking persisted safety reports keep
 their `blocking` level and mapped evidence in the inspector so sensitive-path
 or dangerous-instruction findings are not downgraded by the desktop fallback
 risk classifier. Fake desktop runs explicitly show that no real repository
@@ -502,7 +510,18 @@ refs, cleanup status, changed files, and exact local review commands inside
 Artifacts. Open/copy actions are validated IPC calls handled by the main
 process, and the copied commands are review-only commands such as `git status`
 and `git diff`; Agent Hub does not generate merge, push, apply, or cleanup
-commands. Desktop memory proposal generation is idempotent for each run:
+commands from manual handoff. Lifecycle actions are separate explicit IPC calls:
+mark keep records user intent, cleanup requires the exact `cleanup <run-id>`
+confirmation phrase before removing a retained local worktree, and apply first
+previews the bounded patch, checks the latest risk report, blocks `blocking`
+risk, requires `apply <run-id>`, and then runs local `git apply --check` plus
+`git apply` only against the local project checkout. Apply execution reads the
+raw persisted patch in the Electron main process rather than the bounded,
+redacted inspector preview. It does not commit, push, merge, create pull
+requests, approve memory, or export repository context.
+Each lifecycle decision writes a `lifecycle_audit` run artifact, a lifecycle
+run event, and a linked room timeline event when the run belongs to a thread.
+Desktop memory proposal generation is idempotent for each run:
 summary cards, run-detail loading, and the memory tab can refresh in parallel
 without duplicating the same proposal content or growing beyond the bounded
 proposal set for that run. Verification-command memory proposals use the same
@@ -574,8 +593,10 @@ per-project; they are edited through validated IPC and then run by TaskRunner in
 the isolated worktree. The run inspector can also compare terminal same-task or
 same-turn runs and show persisted status, risk, verification, diff footprint,
 score, and winner signals. Explicit desktop memory approval writes only to Agent
-Hub's approved-memory context store. Worktree lifecycle management and explicit
-merge/apply workflows remain follow-up desktop wiring tasks.
+Hub's approved-memory context store. Worktree lifecycle management is now
+explicit in the inspector, and local apply is a human-gated review workflow;
+merge, push, pull request creation, and branch deletion remain outside the
+desktop apply flow.
 
 SQLite is stored in Agent Hub-owned application data by default, not in the
 target project repository. `AGENT_HUB_HOME` can point Agent Hub at an alternate
@@ -610,7 +631,7 @@ Structured run data is now also persisted in first-class SQLite tables:
 - adapter event streams in `run_events`
 - manually recorded run events in `run_events`
 - task briefs, conversation briefs, git diffs, review decisions, provenance,
-  and other local run evidence in `run_artifacts`
+  lifecycle audit decisions, and other local run evidence in `run_artifacts`
 - verification command rows in `verification_results`
 - risk reports in `risk_reports`
 - thread-local conversation summaries in `conversation_thread_summaries`

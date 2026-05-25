@@ -76,6 +76,7 @@ describe("desktop timeline event presentation", () => {
       "artifact_created",
       "review_decision",
       "review_decision",
+      "lifecycle_marked_keep",
       "memory_proposed",
       "system_event"
     ]);
@@ -107,6 +108,7 @@ describe("desktop timeline event presentation", () => {
       expect.objectContaining({ label: "Artifacts pending", tab: "artifacts" }),
       expect.objectContaining({ label: "Compare", tab: "artifacts" }),
       expect.objectContaining({ label: "Review pending", tab: "brief" }),
+      expect.objectContaining({ label: "Lifecycle", tab: "lifecycle" }),
       expect.objectContaining({ label: "Memory 0", tab: "memory" }),
       expect.objectContaining({ label: "Audit 4", tab: "audit" })
     ]);

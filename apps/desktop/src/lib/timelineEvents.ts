@@ -126,6 +126,12 @@ export function runEvidenceTimelineChips(
       tab: "brief"
     },
     {
+      kind: "lifecycle_marked_keep",
+      label: "Lifecycle",
+      tone: "neutral",
+      tab: "lifecycle"
+    },
+    {
       kind: "memory_proposed",
       label: `Memory ${memoryCount}`,
       tone: memoryCount > 0 ? "accent" : "neutral",
@@ -231,6 +237,16 @@ function titleForEventKind(kind: TimelineEventKind): string {
       return "Memory proposed";
     case "review_decision":
       return "Review decision";
+    case "lifecycle_marked_keep":
+      return "Worktree marked keep";
+    case "lifecycle_cleaned":
+      return "Worktree cleaned up";
+    case "apply_previewed":
+      return "Apply preview";
+    case "apply_applied":
+      return "Patch applied locally";
+    case "apply_blocked":
+      return "Apply blocked";
     default:
       return "System event";
   }
@@ -248,6 +264,15 @@ function toneForEventKind(kind: TimelineEventKind): TimelineEventTone {
   }
   if (kind === "assignment_start_failed" || kind === "risk_detected") {
     return "warning";
+  }
+  if (kind === "lifecycle_cleaned" || kind === "apply_applied") {
+    return "success";
+  }
+  if (kind === "apply_blocked") {
+    return "danger";
+  }
+  if (kind === "lifecycle_marked_keep" || kind === "apply_previewed") {
+    return "accent";
   }
   return "neutral";
 }
