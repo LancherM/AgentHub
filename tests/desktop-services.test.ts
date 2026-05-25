@@ -2048,8 +2048,8 @@ describe("desktop services", () => {
       }
     ]);
     expect(assistantMessages[0]?.text).toBe("fake agent completed");
-    expect(assistantMessages[1]?.text).toContain(
-      "Codex preflight failed: Codex CLI unavailable: desktop test unavailable"
+    expect(assistantMessages[1]?.text).toBe(
+      "@codex failed before producing agent-facing output. Review evidence is available."
     );
     expect(
       refreshed.messages
@@ -3209,7 +3209,7 @@ describe("desktop services", () => {
       kind: "conversation_brief",
       metadata: expect.objectContaining({
         source: "conversation_context_builder",
-        includedMessageCount: 4
+        includedMessageCount: 2
       })
     });
     expect(artifact?.content).toContain("second thread-aware prompt");
@@ -3228,7 +3228,61 @@ describe("desktop services", () => {
     expect(summary).toMatchObject({
       lastKnownUserGoal: "second thread-aware prompt"
     });
-    expect(summary?.sourceMessageCount).toBeGreaterThanOrEqual(3);
+    expect(summary?.sourceMessageCount).toBeGreaterThanOrEqual(2);
+  });
+
+  it("limits follow-up conversation briefs to same-agent assistant output", async () => {
+    const fixture = await createFixture();
+    const context = createDesktopServiceContext(fixture.repositories);
+    const projects = createProjectService(context);
+    const memory = createMemoryService(context);
+    const review = createReviewService(context, { memoryService: memory });
+    const processRunner = new MockProcessRunner(
+      [[{ type: "exit", exitCode: 0, signal: null }]],
+      [{ available: true, version: "codex-test" }]
+    );
+    const runs = createTestRunService(context, review, memory, fixture, {
+      processRunner
+    });
+    const threads = createThreadService({ context, projects, runs });
+    const project = await projects.open(fixture.projectRoot);
+
+    const first = await threads.sendMessage({
+      projectId: project.id,
+      text: "@fake first agent answer",
+      contextMode: "auto"
+    });
+    const firstRun = first.messages.find(
+      (message) => message.type === "agent_run"
+    );
+    if (!firstRun) {
+      throw new Error("expected first run card");
+    }
+    await waitForRun(runs, firstRun.runId, "completed");
+
+    const second = await threads.sendMessage({
+      threadId: first.id,
+      text: "@codex second agent prompt",
+      contextMode: "workspace"
+    });
+    const secondRun = second.messages
+      .filter((message) => message.type === "agent_run")
+      .at(-1);
+    if (!secondRun) {
+      throw new Error("expected second run card");
+    }
+    await waitForRun(runs, secondRun.runId, "completed");
+
+    const artifact =
+      await fixture.repositories.runArtifactRepository.getLatestByRunIdAndKind(
+        secondRun.runId,
+        "conversation_brief"
+      );
+    expect(artifact?.content).toContain("second agent prompt");
+    expect(artifact?.content).toContain("first agent answer");
+    expect(artifact?.content).not.toContain("Assistant @fake");
+    expect(artifact?.content).not.toContain("fake agent completed");
+    expect(artifact?.content).not.toContain("Task created:");
   });
 
   it("uses the retitled thread in first-turn conversation briefs", async () => {

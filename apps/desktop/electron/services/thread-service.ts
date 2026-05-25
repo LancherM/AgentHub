@@ -814,18 +814,9 @@ class RepositoryThreadService implements ThreadService {
     contextMode: ContextMode;
     priorMessages: ConversationMessage[];
   }) {
-    const assistantRunIds = new Set(
-      input.priorMessages
-        .filter((message) => isAssistantContextMessage(message) && message.runId)
-        .map((message) => message.runId as string)
-    );
-    const contextSourceMessages = input.priorMessages.filter(
-      (message) =>
-        !(
-          message.kind === "run_card" &&
-          message.runId &&
-          assistantRunIds.has(message.runId)
-        )
+    const contextSourceMessages = contextSourceMessagesForAgent(
+      input.priorMessages,
+      input.agentId
     );
     const messages = await Promise.all(
       contextSourceMessages.map((message) => this.toConversationContextMessage(message))
@@ -860,6 +851,9 @@ class RepositoryThreadService implements ThreadService {
     message: ConversationMessage
   ): Promise<ConversationContextMessage | undefined> {
     if (isPendingAssistantOutputMessage(message)) {
+      return undefined;
+    }
+    if (isInternalTimelineMessage(message)) {
       return undefined;
     }
     if (message.role === "user") {
@@ -2446,6 +2440,48 @@ function isAssistantContextMessage(message: ConversationMessage): boolean {
   return message.role === "assistant" && !isPendingAssistantOutputMessage(message);
 }
 
+function contextSourceMessagesForAgent(
+  messages: ConversationMessage[],
+  agentId: AgentId
+): ConversationMessage[] {
+  const assistantRunIds = new Set(
+    messages
+      .filter((message) => isAssistantContextMessage(message) && message.runId)
+      .map((message) => message.runId as string)
+  );
+  return messages.filter((message) => {
+    if (isPendingAssistantOutputMessage(message) || isInternalTimelineMessage(message)) {
+      return false;
+    }
+    if (
+      message.kind === "run_card" &&
+      message.runId &&
+      assistantRunIds.has(message.runId)
+    ) {
+      return false;
+    }
+    if (message.role === "assistant" || message.kind === "run_card") {
+      return messageBelongsToAgent(message, agentId);
+    }
+    return true;
+  });
+}
+
+function messageBelongsToAgent(
+  message: ConversationMessage,
+  agentId: AgentId
+): boolean {
+  return message.agentKind ? toAgentId(message.agentKind) === agentId : true;
+}
+
+function isInternalTimelineMessage(message: ConversationMessage): boolean {
+  return (
+    message.role === "system" &&
+    (typeof message.metadata?.taskEvent === "string" ||
+      typeof message.metadata?.workflowEvent === "string")
+  );
+}
+
 function terminalAssistantContent(run: ConversationRunSnapshot): string {
   const extracted = extractAgentFacingOutput(
     {
@@ -2453,7 +2489,7 @@ function terminalAssistantContent(run: ConversationRunSnapshot): string {
     },
     {
       includeRawStreams: false,
-      includeTerminalSummaries: true
+      includeTerminalSummaries: false
     }
   ).trim();
   return truncateAssistantContent(extracted || terminalStatusSummary(run));
@@ -2472,16 +2508,13 @@ function toAgentOutputEvent(event: RunEvent): {
 }
 
 function terminalStatusSummary(run: ConversationRunSnapshot): string {
-  if (run.summary.trim().length > 0) {
-    return run.summary.trim();
-  }
   if (run.status === "completed") {
-    return `@${run.agentId} completed.`;
+    return `@${run.agentId} completed without agent-facing output. Review evidence is available.`;
   }
   if (run.status === "cancelled") {
-    return `@${run.agentId} was cancelled.`;
+    return `@${run.agentId} was cancelled before producing agent-facing output. Review evidence is available.`;
   }
-  return `@${run.agentId} failed.`;
+  return `@${run.agentId} failed before producing agent-facing output. Review evidence is available.`;
 }
 
 function truncateAssistantContent(content: string): string {

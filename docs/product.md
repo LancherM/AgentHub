@@ -450,11 +450,14 @@ verification output, risk reports, or memory details into the room transcript.
 
 Active inline run cards subscribe to the existing desktop run event stream and
 replay already-persisted events when a subscription starts after a fast run has
-advanced. They show agent identity, status, the latest streamed line, compact
-review pills, and an expandable event log. Terminal cards do not load full run
-review evidence when a thread is merely selected; artifacts, checks, risks,
-memory proposals, brief data, context previews, and audit logs load lazily when
-the user expands a card or opens the on-demand workgroup inspector drawer.
+advanced. They show agent identity, status, the latest streamed line, and
+compact review pills while a run is active. Once a terminal run has a durable
+assistant answer, the transcript keeps that answer as the main visible row and
+collapses the run card to a small review affordance; raw event lines no longer
+sit in the default transcript. Terminal cards do not load full run review
+evidence when a thread is merely selected; artifacts, checks, risks, memory
+proposals, brief data, context previews, and audit logs load lazily when the
+user opens the on-demand workgroup inspector drawer.
 Existing persisted run records are
 synthesized into thread-shaped conversations only as a compatibility import
 when no durable conversation threads exist yet, so old desktop run data remains
@@ -469,10 +472,12 @@ SQLite-backed.
 Agent Hub keeps project context, thread context, current-turn context, and
 per-run context snapshots as separate layers. Desktop follow-up turns build a
 bounded conversation brief before each run. The brief includes the current
-turn, recent thread messages, the latest conservative thread summary, terminal
-assistant answers from prior runs, compact prior run summaries when no
-assistant answer exists yet, project context-store references, and explicit
-character-budget metadata. Role-targeted desktop turns add the resolved role
+turn, recent user messages, same-agent terminal assistant answers from prior
+runs, same-agent compact run summaries when no assistant answer exists yet, the
+latest conservative thread summary, project context-store references, and
+explicit character-budget metadata. Other agents' prior outputs stay out of the
+raw recent-message list and can affect future runs only through the bounded
+thread summary. Role-targeted desktop turns add the resolved role
 handle, display name, executor, persona, default instructions, permissions,
 context policy, and approval policy to that same brief and to TaskRunner
 constraints/hints before execution. A zero recent-message budget includes no
@@ -484,6 +489,10 @@ diffs, verification output, risk evidence, and other review artifacts. Full
 evidence remains on the run model; assistant messages store only bounded
 transcript text for future turns. Thread summaries are generated locally from
 transcript text only and are never written to approved memory automatically.
+Terminal process summaries such as adapter exit-code lines remain review
+evidence and are not promoted into assistant transcript answers. Successful
+terminal runs with no agent-facing output get a concise empty-output message
+and a review affordance instead of a fabricated answer.
 
 The workgroup inspector is the desktop drill-down surface for review evidence.
 Its top-level tabs use product vocabulary: Brief, Context, Artifacts, Checks,

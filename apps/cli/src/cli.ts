@@ -1322,18 +1322,14 @@ async function buildChatConversationBrief(input: {
   role?: WorkgroupRoleRunMetadata;
   priorMessages: ConversationMessage[];
 }) {
-  const assistantRunIds = new Set(
-    input.priorMessages
-      .filter((message) => message.role === "assistant" && message.runId)
-      .map((message) => message.runId as string)
+  const contextSourceMessages = chatContextSourceMessagesForAgent(
+    input.priorMessages,
+    input.agentKind
   );
   const messages = await Promise.all(
-    input.priorMessages
-      .filter(
-        (message) =>
-          !(message.kind === "run_card" && message.runId && assistantRunIds.has(message.runId))
-      )
-      .map((message) => toChatConversationContextMessage(input.runtime, message))
+    contextSourceMessages.map((message) =>
+      toChatConversationContextMessage(input.runtime, message)
+    )
   );
   return new ConversationContextBuilder().build({
     thread: {
@@ -1359,6 +1355,49 @@ async function buildChatConversationBrief(input: {
       ...roleContextReferences(input.role)
     ]
   });
+}
+
+function chatContextSourceMessagesForAgent(
+  messages: ConversationMessage[],
+  agentKind: AgentKind
+): ConversationMessage[] {
+  const assistantRunIds = new Set(
+    messages
+      .filter((message) => isChatAssistantContextMessage(message) && message.runId)
+      .map((message) => message.runId as string)
+  );
+  return messages.filter((message) => {
+    if (isPendingChatAssistantMessage(message) || isInternalChatTimelineMessage(message)) {
+      return false;
+    }
+    if (
+      message.kind === "run_card" &&
+      message.runId &&
+      assistantRunIds.has(message.runId)
+    ) {
+      return false;
+    }
+    if (message.role === "assistant" || message.kind === "run_card") {
+      return message.agentKind ? message.agentKind === agentKind : true;
+    }
+    return true;
+  });
+}
+
+function isChatAssistantContextMessage(message: ConversationMessage): boolean {
+  return message.role === "assistant" && !isPendingChatAssistantMessage(message);
+}
+
+function isPendingChatAssistantMessage(message: ConversationMessage): boolean {
+  return message.role === "assistant" && message.metadata?.pending === true;
+}
+
+function isInternalChatTimelineMessage(message: ConversationMessage): boolean {
+  return (
+    message.role === "system" &&
+    (typeof message.metadata?.taskEvent === "string" ||
+      typeof message.metadata?.workflowEvent === "string")
+  );
 }
 
 async function toChatConversationContextMessage(
@@ -2646,13 +2685,19 @@ function metadataString(metadata: JsonObject | undefined, key: string): string |
 
 function chatAssistantContent(result: CliRunResult): string {
   const extracted = extractAgentOutput(result).trim();
-  const content =
-    extracted ||
-    result.error ||
-    (result.ok
-      ? `@${result.run.agentKind} completed.`
-      : `@${result.run.agentKind} failed.`);
+  const content = extracted || terminalChatAssistantSummary(result);
   return truncateText(content, 2_000);
+}
+
+function terminalChatAssistantSummary(result: CliRunResult): string {
+  const agent = `@${result.run.agentKind}`;
+  if (result.ok) {
+    return `${agent} completed without agent-facing output. Run evidence is available through the run review commands.`;
+  }
+  if (result.run.status === "cancelled") {
+    return `${agent} was cancelled before producing agent-facing output. Run evidence is available through the run review commands.`;
+  }
+  return `${agent} failed before producing agent-facing output. Run evidence is available through the run review commands.`;
 }
 
 function titleFromPrompt(prompt: string): string {

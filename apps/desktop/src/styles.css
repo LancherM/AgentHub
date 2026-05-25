@@ -1632,6 +1632,32 @@ textarea:disabled {
   border-color: rgba(255, 125, 107, 0.4);
 }
 
+.agent-run-card.compact-completed {
+  background:
+    linear-gradient(90deg, rgba(216, 255, 87, 0.045), transparent 28%),
+    rgba(16, 19, 15, 0.9);
+  box-shadow: none;
+}
+
+.agent-run-card.compact-completed .run-card-header {
+  padding: 10px 12px;
+}
+
+.agent-run-card.compact-completed .agent-mark {
+  width: 28px;
+  height: 28px;
+  font-size: 10px;
+}
+
+.agent-run-card.compact-completed .run-card-title > span {
+  color: var(--muted-2);
+}
+
+.agent-run-card.compact-completed .run-card-pills {
+  padding: 0 12px 10px 52px;
+  border-top: 0;
+}
+
 .run-card-header {
   padding: 13px 14px;
 }

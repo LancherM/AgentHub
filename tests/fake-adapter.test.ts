@@ -11,7 +11,7 @@ describe("FakeAgentAdapter", () => {
     });
   });
 
-  it("reads the task brief, writes output inside the worktree, and emits exit", async () => {
+  it("reads the task brief, writes output inside the worktree, and emits assistant output before exit", async () => {
     const root = await createTestDirectory("fake-root");
     const worktree = await createTestDirectory("fake-worktree");
     const briefPath = path.join(worktree, ".agent-hub", "tasks", "task_1", "brief.md");
@@ -31,7 +31,12 @@ describe("FakeAgentAdapter", () => {
 
     const outputPath = path.join(worktree, "fake-agent-output.md");
     await expect(fs.readFile(outputPath, "utf8")).resolves.toContain("task_id: task_1");
-    expect(events.map((event) => event.type)).toEqual(["stdout", "exit"]);
+    expect(events.map((event) => event.type)).toEqual(["stdout", "message", "exit"]);
+    expect(events[1]).toMatchObject({
+      type: "message",
+      message: "fake agent completed",
+      metadata: { assistantOutput: true }
+    });
     expect(events.at(-1)).toMatchObject({ type: "exit", exitCode: 0 });
   });
 

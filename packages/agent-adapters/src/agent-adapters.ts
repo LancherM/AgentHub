@@ -185,6 +185,11 @@ export class FakeAgentAdapter implements AgentAdapter {
       message: `fake agent wrote ${path.basename(outputPath)}`
     };
     yield {
+      type: "message",
+      message: "fake agent completed",
+      metadata: { assistantOutput: true }
+    };
+    yield {
       type: "exit",
       message: "fake agent completed",
       exitCode: 0,
@@ -310,18 +315,19 @@ function samePath(left: string, right: string): boolean {
 
 function* failureEvents(
   message: string,
-  metadata: JsonObject = { error: message }
+  metadata: JsonObject = { error: message, assistantOutput: false }
 ): Iterable<AgentRunEvent> {
+  const eventMetadata = { ...metadata, assistantOutput: false };
   yield {
     type: "error",
     message,
-    metadata
+    metadata: eventMetadata
   };
   yield {
     type: "exit",
     message,
     exitCode: 1,
-    metadata
+    metadata: eventMetadata
   };
 }
 

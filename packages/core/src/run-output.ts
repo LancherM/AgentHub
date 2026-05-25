@@ -54,6 +54,9 @@ function isStructuredOutputEvent(
   if (event.metadata?.assistantOutput === false) {
     return false;
   }
+  if (event.metadata?.assistantOutput === true) {
+    return true;
+  }
 
   if (event.type === "message" || event.type === "error") {
     return true;

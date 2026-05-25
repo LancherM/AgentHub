@@ -5,6 +5,7 @@ import type {
   RunInspectorTab,
   ThreadMessage
 } from "../../lib/types";
+import { quietRunCardIds, visibleTranscriptMessages } from "../../lib/transcript";
 import { AgentRunCard } from "./AgentRunCard";
 import { AssistantMessageBubble } from "./AssistantMessageBubble";
 import { SystemMessage } from "./SystemMessage";
@@ -36,17 +37,19 @@ export function MessageList({
     );
   }
 
+  const visibleMessages = visibleTranscriptMessages(messages);
+  const quietRunIds = quietRunCardIds(messages, runDetails);
   const renderedMessages: JSX.Element[] = [];
-  for (let index = 0; index < messages.length; index += 1) {
-    const message = messages[index];
+  for (let index = 0; index < visibleMessages.length; index += 1) {
+    const message = visibleMessages[index];
     if (message?.type === "agent_run" && message.taskId) {
       const group: AgentRunMessage[] = [message];
       let nextIndex = index + 1;
       while (
-        messages[nextIndex]?.type === "agent_run" &&
-        (messages[nextIndex] as AgentRunMessage).taskId === message.taskId
+        visibleMessages[nextIndex]?.type === "agent_run" &&
+        (visibleMessages[nextIndex] as AgentRunMessage).taskId === message.taskId
       ) {
-        group.push(messages[nextIndex] as AgentRunMessage);
+        group.push(visibleMessages[nextIndex] as AgentRunMessage);
         nextIndex += 1;
       }
       renderedMessages.push(
@@ -96,6 +99,7 @@ export function MessageList({
         key={message.id}
         message={message}
         initialRun={runDetails[message.runId]}
+        compactCompleted={quietRunIds.has(message.runId)}
         onRunUpdated={onRunUpdated}
         onOpenInspector={onOpenInspector}
         onCancelRun={onCancelRun}

@@ -18,6 +18,7 @@ import { RunStatusBadge } from "../RunStatusBadge";
 interface AgentRunCardProps {
   message: AgentRunMessage;
   initialRun?: RunDetail;
+  compactCompleted?: boolean;
   onRunUpdated(run: RunDetail): void;
   onOpenInspector(runId: string, tab?: RunInspectorTab): void;
   onCancelRun(runId: string): Promise<void>;
@@ -27,6 +28,7 @@ interface AgentRunCardProps {
 export function AgentRunCard({
   message,
   initialRun,
+  compactCompleted = false,
   onRunUpdated,
   onOpenInspector,
   onCancelRun,
@@ -163,6 +165,7 @@ export function AgentRunCard({
     eventCount: events.length,
     status
   });
+  const quietCompleted = compactCompleted && isTerminalRunStatus(status);
 
   async function cancel(): Promise<void> {
     setCancelError(undefined);
@@ -175,8 +178,14 @@ export function AgentRunCard({
 
   return (
     <article
-      className={`agent-run-card timeline-event ${timelineEvent.tone} ${status} ${expanded ? "expanded" : ""}`}
-      onClick={() => setExpanded((current) => !current)}
+      className={`agent-run-card timeline-event ${timelineEvent.tone} ${status} ${expanded ? "expanded" : ""} ${quietCompleted ? "compact-completed" : ""}`}
+      onClick={() => {
+        if (quietCompleted) {
+          onOpenInspector(message.runId, "brief");
+          return;
+        }
+        setExpanded((current) => !current);
+      }}
     >
       <header className="run-card-header">
         <div className={`agent-mark ${message.agentId}`}>
@@ -216,21 +225,23 @@ export function AgentRunCard({
               Continue
             </button>
           ) : null}
-          <button
-            onClick={(event) => {
-              event.stopPropagation();
-              setExpanded((current) => !current);
-            }}
-          >
-            {expanded ? "Collapse" : "Expand"}
-          </button>
+          {!quietCompleted ? (
+            <button
+              onClick={(event) => {
+                event.stopPropagation();
+                setExpanded((current) => !current);
+              }}
+            >
+              {expanded ? "Collapse" : "Expand"}
+            </button>
+          ) : null}
           <button
             onClick={(event) => {
               event.stopPropagation();
               onOpenInspector(message.runId, "brief");
             }}
           >
-            View details
+            {quietCompleted ? "View review" : "View details"}
           </button>
         </div>
       </header>
@@ -239,6 +250,7 @@ export function AgentRunCard({
         <div className="inline-error">{streamError ?? cancelError}</div>
       ) : null}
 
+      {!quietCompleted ? (
       <div className="run-card-body">
         <p className="latest-line">
           {latestLine ?? "Waiting for the first streamed event..."}
@@ -247,19 +259,22 @@ export function AgentRunCard({
         {run?.parentRunId ? (
           <p className="fake-boundary">Continues code state from {run.parentRunId}.</p>
         ) : null}
-        <div className="run-event-strip">
-          {visibleEvents.length === 0 ? (
-            <span className="muted-copy">No stream events yet.</span>
-          ) : (
-            visibleEvents.map((event) => (
-              <div className="run-event-line" key={event.id}>
-                <span>{formatTime(event.timestamp)}</span>
-                <p>{eventText(event)}</p>
-              </div>
-            ))
-          )}
-        </div>
+        {expanded ? (
+          <div className="run-event-strip">
+            {visibleEvents.length === 0 ? (
+              <span className="muted-copy">No stream events yet.</span>
+            ) : (
+              visibleEvents.map((event) => (
+                <div className="run-event-line" key={event.id}>
+                  <span>{formatTime(event.timestamp)}</span>
+                  <p>{eventText(event)}</p>
+                </div>
+              ))
+            )}
+          </div>
+        ) : null}
       </div>
+      ) : null}
 
       <footer className="run-card-pills">
         {reviewPills(reviewSummary, events.length, status, reviewArtifacts).map((pill) => (

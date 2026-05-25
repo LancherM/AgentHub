@@ -238,12 +238,14 @@ room details reconcile only pending assistant-output placeholders, and
 finalized assistant messages are treated as stable transcript rows. When a run
 reaches `completed`, `failed`, or `cancelled`, reconciliation uses
 `RunService.getConversationRunSnapshot()`, which reads run rows and events only,
-to produce bounded agent-facing output or a concise terminal summary. Raw logs,
-diffs, verification output, and risk evidence remain on the run model and load
-through review IPC only when the user expands a card or opens the inspector. If
-an older database has runs but no conversation threads, the service performs a
-one-time compatibility import into conversation rows so existing desktop run
-records stay inspectable.
+to produce bounded agent-facing output or a concise empty/failure result when
+no agent-facing output exists. Adapter exit-code lines and TaskRunner terminal
+summaries carry `assistantOutput: false` or remain terminal event metadata, so
+they are audit evidence rather than assistant transcript text. Raw logs, diffs,
+verification output, and risk evidence remain on the run model and load through
+review IPC only when the user opens the inspector. If an older database has
+runs but no conversation threads, the service performs a one-time compatibility
+import into conversation rows so existing desktop run records stay inspectable.
 
 The multi-turn architecture has persisted thread/message repositories, thread
 summary storage, the desktop thread service separated from task runs, and a
@@ -259,9 +261,12 @@ thread before building the brief so pre-created empty threads do not inject
 stale `New Chat` titles. Project
 context, thread context, current-turn context, and run context remain distinct
 layers so thread-local decisions do not automatically promote into project
-approved memory. Follow-up turns prefer terminal assistant messages over
-run-card summaries for runs that have finished; run-card summaries remain
-available for pending runs and compatibility imports.
+approved memory. Follow-up turns prefer terminal assistant messages from the
+same selected agent over run-card summaries for runs that have finished;
+same-agent run-card summaries remain available for pending runs and
+compatibility imports. Other agents' prior assistant text is not injected as
+raw recent-message context; any cross-agent signal must come through the
+bounded thread summary or an explicit continuation path.
 
 The service maps desktop-facing agent IDs (`fake`, `codex`, `claude`) and run
 statuses (`queued`, `running`, `verifying`, `completed`, `failed`,
@@ -289,11 +294,11 @@ sibling runs are still queued or running. `@fake` executes through
 `FakeAgentAdapter` in an isolated worktree, while `@codex` and `@claude` use the
 process-backed Codex and Claude Code adapters, including local preflight. If a
 CLI is unavailable or unauthenticated, the run fails inspectably through
-persisted events and review evidence instead of crashing the service. Terminal
-run output is also promoted into bounded assistant transcript messages for
-future thread context, but that promotion does not change execution semantics or
-duplicate full evidence into message bodies. TaskRunner accepts a progress hook
-and abort signal for desktop execution. The hook lets `RunService` persist and
+persisted events and review evidence instead of crashing the service. Only
+agent-facing output is promoted into bounded assistant transcript messages for
+future thread context; terminal summaries, exit codes, and adapter diagnostics
+remain review evidence. TaskRunner accepts a progress hook and abort signal for
+desktop execution. The hook lets `RunService` persist and
 emit context, worktree, adapter, verification, and terminal lifecycle events
 while the run is active, then replay those same rows to late subscribers. The
 abort signal flows through adapters into `NodeProcessRunner` and verification
