@@ -829,6 +829,20 @@ Code adapters. Reserved `llm_api`, `workflow`, and `human` roles are stored and
 rendered as non-runnable assignment metadata until later runtime phases define
 explicit local executors.
 
+Phase 11 adds deterministic pack metadata in
+`packages/shared/src/workgroup-packs.ts`. Built-in packs cover Core Workgroup,
+Engineering, Research, Writing, Analysis, and Operations. A pack is a local
+metadata object with artifact type definitions, check types, risk categories,
+default role template handles, executor capability hints, context section
+provider metadata, and labels. The registry is read-only code, not a
+marketplace, plugin loader, or remote integration boundary. Pack metadata is
+exported through `packages/shared` and re-exported by `packages/core`, so CLI,
+desktop main-process services, and future local packages can share lookup and
+label mapping without giving the renderer authority to load code. Core label
+mapping returns Brief, Context, Artifacts, Checks, Risks, and Memory; terms
+such as Diff, Tests, Worktree, PR, and CI resolve to those general surfaces
+unless the Engineering pack is explicitly selected.
+
 Repository CI/CD lives in `.github/workflows/ci-cd.yml` and stays outside the
 Agent Hub runtime. The workflow installs the pinned pnpm and Node versions from
 the root package, runs the same local validation commands documented for

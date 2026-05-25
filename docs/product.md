@@ -343,6 +343,18 @@ configurable roles, executor backends, workflow templates, artifact and
 knowledge models, pack metadata, and optional sync/collaboration surfaces while
 preserving local-first operation as the default.
 
+Built-in workgroup pack metadata is now defined locally for Core Workgroup,
+Engineering, Research, Writing, Analysis, and Operations. Packs are
+deterministic product metadata, not a marketplace or third-party code loading
+surface. Each pack can contribute artifact type definitions, check types, risk
+categories, default role template handles, executor capability hints, context
+section provider metadata, and labels. Core labels stay general: Brief,
+Context, Artifacts, Checks, Risks, and Memory. Engineering-specific vocabulary
+such as Diff, Tests, Worktree, PR, and CI is available only through the
+Engineering pack label metadata and maps back to general core surfaces outside
+that context. Packs may seed preset roles, but they do not restrict custom
+roles.
+
 The first workgroup role foundation is now available in the local desktop
 conversation service. Shared role contracts describe a stable handle, display
 name, purpose, capability summary, persona, default instructions, permissions,
