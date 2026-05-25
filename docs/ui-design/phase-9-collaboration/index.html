@@ -1,0 +1,997 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Agent Hub - Phase 9 Collaboration Workflows</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #080b0a;
+        --panel: #0e1310;
+        --panel-2: #101814;
+        --line: rgba(206, 245, 177, 0.16);
+        --line-strong: rgba(206, 245, 177, 0.34);
+        --text: #f3f7ef;
+        --muted: #a7b2a6;
+        --dim: #6f7a70;
+        --lime: #d8ff5f;
+        --green: #54d36b;
+        --cyan: #4dc6c9;
+        --blue: #6ba6ff;
+        --amber: #ffb547;
+        --red: #ff716a;
+        --violet: #b792ff;
+        --shadow: 0 28px 90px rgba(0, 0, 0, 0.45);
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background:
+          linear-gradient(rgba(216, 255, 95, 0.035) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(216, 255, 95, 0.028) 1px, transparent 1px),
+          radial-gradient(circle at 70% 5%, rgba(77, 198, 201, 0.12), transparent 28rem),
+          #070908;
+        background-size: 42px 42px, 42px 42px, auto, auto;
+        color: var(--text);
+        font-family:
+          "SF Pro Display",
+          "SF Pro Text",
+          -apple-system,
+          BlinkMacSystemFont,
+          "Segoe UI",
+          sans-serif;
+        letter-spacing: 0;
+      }
+
+      button,
+      input,
+      select,
+      textarea {
+        font: inherit;
+      }
+
+      .shell {
+        width: 1680px;
+        height: 980px;
+        display: grid;
+        grid-template-columns: 278px minmax(0, 1fr) 520px;
+        overflow: hidden;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        background: rgba(7, 10, 8, 0.92);
+      }
+
+      .sidebar,
+      .main,
+      .inspector {
+        min-height: 0;
+      }
+
+      .sidebar {
+        border-right: 1px solid var(--line);
+        background: rgba(10, 13, 11, 0.92);
+        padding: 18px 14px;
+        display: flex;
+        flex-direction: column;
+        gap: 18px;
+      }
+
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+
+      .brand-mark {
+        width: 34px;
+        height: 34px;
+        display: grid;
+        place-items: center;
+        border-radius: 8px;
+        background: var(--lime);
+        color: #101407;
+        font-weight: 800;
+        box-shadow: 0 0 0 1px rgba(216, 255, 95, 0.55);
+      }
+
+      .brand strong,
+      .room strong,
+      .project-card strong,
+      .role-row strong {
+        display: block;
+      }
+
+      .brand span,
+      .project-card span,
+      .room span,
+      .role-row span,
+      .tiny {
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .section-label {
+        color: var(--muted);
+        font-size: 11px;
+        font-weight: 800;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        margin-bottom: 8px;
+      }
+
+      .project-card,
+      .room,
+      .role-row,
+      .utility-button {
+        border: 1px solid var(--line);
+        background: rgba(255, 255, 255, 0.025);
+        color: var(--text);
+      }
+
+      .project-card {
+        border-color: rgba(216, 255, 95, 0.28);
+        border-radius: 8px;
+        padding: 12px;
+      }
+
+      .project-card strong::before {
+        content: "";
+        width: 8px;
+        height: 8px;
+        display: inline-block;
+        margin-right: 8px;
+        border-radius: 999px;
+        background: var(--lime);
+      }
+
+      .room-list,
+      .role-list {
+        display: grid;
+        gap: 8px;
+      }
+
+      .room {
+        border-radius: 8px;
+        padding: 10px 11px;
+      }
+
+      .room.active {
+        border-color: rgba(216, 255, 95, 0.5);
+        background: rgba(216, 255, 95, 0.08);
+      }
+
+      .room-line {
+        display: flex;
+        justify-content: space-between;
+        gap: 10px;
+        align-items: center;
+      }
+
+      .role-list {
+        grid-template-columns: 1fr 1fr;
+      }
+
+      .role-row {
+        border-radius: 8px;
+        min-height: 38px;
+        padding: 6px 8px;
+        display: flex;
+        align-items: center;
+        gap: 7px;
+      }
+
+      .role-dot {
+        width: 21px;
+        height: 21px;
+        border-radius: 7px;
+        display: grid;
+        place-items: center;
+        font-size: 11px;
+        font-weight: 850;
+        color: #07110c;
+      }
+
+      .researcher { background: var(--blue); }
+      .analyst { background: var(--violet); }
+      .writer { background: var(--amber); }
+      .reviewer { background: var(--lime); }
+      .qa { background: var(--cyan); }
+      .operator { background: var(--green); }
+
+      .status-grid {
+        margin-top: auto;
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 8px;
+      }
+
+      .stat {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 9px;
+      }
+
+      .stat b {
+        display: block;
+        margin-top: 4px;
+        font-size: 19px;
+      }
+
+      .utilities {
+        display: grid;
+        gap: 8px;
+      }
+
+      .utility-button {
+        border-radius: 8px;
+        height: 34px;
+        color: var(--muted);
+      }
+
+      .utility-button.active {
+        color: var(--lime);
+        border-color: rgba(216, 255, 95, 0.42);
+      }
+
+      .main {
+        display: grid;
+        grid-template-rows: auto auto 1fr auto;
+        border-right: 1px solid var(--line);
+        background:
+          linear-gradient(90deg, rgba(84, 211, 107, 0.06), transparent 28%),
+          rgba(8, 11, 10, 0.74);
+      }
+
+      .room-header {
+        padding: 22px 24px 14px;
+        border-bottom: 1px solid var(--line);
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 24px;
+      }
+
+      .room-title {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+      }
+
+      .room-icon {
+        width: 58px;
+        height: 58px;
+        border-radius: 13px;
+        display: grid;
+        place-items: center;
+        border: 1px solid rgba(216, 255, 95, 0.45);
+        color: var(--lime);
+        font-size: 34px;
+        font-weight: 800;
+        background: rgba(216, 255, 95, 0.06);
+      }
+
+      h1,
+      h2,
+      h3,
+      p {
+        margin: 0;
+      }
+
+      h1 {
+        font-size: 30px;
+        line-height: 1.05;
+      }
+
+      h2 {
+        font-size: 20px;
+      }
+
+      h3 {
+        font-size: 16px;
+      }
+
+      .room-subtitle {
+        color: var(--muted);
+        margin-top: 7px;
+        max-width: 620px;
+      }
+
+      .header-tools {
+        display: flex;
+        gap: 8px;
+      }
+
+      .pill-button,
+      .primary-button,
+      .ghost-button {
+        height: 36px;
+        border-radius: 8px;
+        border: 1px solid var(--line);
+        color: var(--text);
+        background: rgba(255, 255, 255, 0.035);
+        padding: 0 13px;
+      }
+
+      .primary-button {
+        background: var(--lime);
+        color: #111507;
+        border-color: var(--lime);
+        font-weight: 800;
+      }
+
+      .workflow-strip {
+        padding: 14px 24px;
+        border-bottom: 1px solid var(--line);
+        display: grid;
+        grid-template-columns: 190px repeat(3, minmax(0, 1fr));
+        gap: 10px;
+        align-items: stretch;
+      }
+
+      .strip-label {
+        align-self: center;
+      }
+
+      .strip-label b {
+        display: block;
+      }
+
+      .mode-card {
+        border: 1px solid var(--line);
+        background: rgba(255, 255, 255, 0.03);
+        border-radius: 8px;
+        padding: 11px 12px;
+        min-height: 84px;
+        display: grid;
+        gap: 8px;
+      }
+
+      .mode-card.active {
+        border-color: rgba(216, 255, 95, 0.65);
+        background: rgba(216, 255, 95, 0.075);
+      }
+
+      .mode-card div {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+      }
+
+      .mode-card small,
+      .message-meta,
+      .event-time,
+      .field-label {
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .timeline {
+        min-height: 0;
+        overflow: hidden;
+        padding: 18px 24px;
+        display: grid;
+        align-content: start;
+        gap: 12px;
+      }
+
+      .day-label {
+        width: max-content;
+        color: var(--dim);
+        font-size: 12px;
+        margin: 2px auto 6px;
+        padding: 4px 10px;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+      }
+
+      .message-row {
+        display: grid;
+        grid-template-columns: 34px minmax(0, 1fr);
+        gap: 10px;
+        max-width: 750px;
+      }
+
+      .avatar {
+        width: 34px;
+        height: 34px;
+        border-radius: 9px;
+        display: grid;
+        place-items: center;
+        font-size: 12px;
+        font-weight: 850;
+        color: #07110c;
+        background: var(--lime);
+      }
+
+      .bubble,
+      .event-card {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: rgba(16, 22, 18, 0.86);
+        box-shadow: var(--shadow);
+      }
+
+      .bubble {
+        padding: 11px 13px;
+      }
+
+      .message-head {
+        display: flex;
+        gap: 10px;
+        align-items: center;
+        margin-bottom: 6px;
+      }
+
+      .tag {
+        display: inline-grid;
+        place-items: center;
+        width: max-content;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        min-height: 22px;
+        padding: 0 8px;
+        font-size: 12px;
+        color: var(--muted);
+        background: rgba(255, 255, 255, 0.035);
+      }
+
+      .tag.lime { color: var(--lime); border-color: rgba(216, 255, 95, 0.38); }
+      .tag.cyan { color: var(--cyan); border-color: rgba(77, 198, 201, 0.4); }
+      .tag.amber { color: var(--amber); border-color: rgba(255, 181, 71, 0.45); }
+      .tag.green { color: var(--green); border-color: rgba(84, 211, 107, 0.42); }
+      .tag.red { color: var(--red); border-color: rgba(255, 113, 106, 0.45); }
+
+      .event-card {
+        max-width: 840px;
+        padding: 13px 14px;
+        display: grid;
+        grid-template-columns: 80px minmax(0, 1fr) auto;
+        gap: 14px;
+        align-items: start;
+      }
+
+      .event-main {
+        display: grid;
+        gap: 8px;
+      }
+
+      .event-title {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+
+      .participant-line {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 7px;
+      }
+
+      .rounds {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+
+      .round-dot {
+        width: 22px;
+        height: 22px;
+        border-radius: 999px;
+        border: 1px solid var(--line-strong);
+        display: grid;
+        place-items: center;
+        font-size: 11px;
+        color: var(--muted);
+      }
+
+      .round-dot.done {
+        color: #07110c;
+        background: var(--green);
+        border-color: var(--green);
+      }
+
+      .round-dot.active {
+        color: #07110c;
+        background: var(--lime);
+        border-color: var(--lime);
+      }
+
+      .composer {
+        border-top: 1px solid var(--line);
+        padding: 14px 24px 18px;
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 12px;
+        background: rgba(7, 10, 8, 0.92);
+      }
+
+      .composer-box {
+        border: 1px solid rgba(216, 255, 95, 0.45);
+        border-radius: 8px;
+        min-height: 92px;
+        padding: 12px;
+        display: grid;
+        gap: 10px;
+        background: rgba(255, 255, 255, 0.02);
+      }
+
+      .mention-row {
+        display: flex;
+        gap: 8px;
+      }
+
+      .composer-text {
+        color: var(--muted);
+      }
+
+      .composer-actions {
+        display: grid;
+        align-content: end;
+        gap: 8px;
+      }
+
+      .inspector {
+        background: rgba(12, 15, 13, 0.94);
+        display: grid;
+        grid-template-rows: auto 1fr;
+      }
+
+      .tabs {
+        height: 52px;
+        padding: 0 16px;
+        display: flex;
+        align-items: end;
+        gap: 18px;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .tab {
+        padding: 0 0 12px;
+        color: var(--muted);
+        border-bottom: 3px solid transparent;
+        font-size: 14px;
+      }
+
+      .tab.active {
+        color: var(--text);
+        border-color: var(--lime);
+      }
+
+      .inspector-scroll {
+        overflow: hidden;
+        padding: 16px;
+        display: grid;
+        align-content: start;
+        gap: 12px;
+      }
+
+      .panel {
+        border: 1px solid var(--line);
+        background: rgba(255, 255, 255, 0.026);
+        border-radius: 8px;
+        padding: 14px;
+        display: grid;
+        gap: 12px;
+      }
+
+      .panel-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+      }
+
+      .mode-selector {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 8px;
+      }
+
+      .selector-button {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        min-height: 64px;
+        padding: 9px;
+        color: var(--muted);
+        background: rgba(255, 255, 255, 0.025);
+        text-align: left;
+      }
+
+      .selector-button.active {
+        color: var(--text);
+        border-color: rgba(216, 255, 95, 0.55);
+        background: rgba(216, 255, 95, 0.07);
+      }
+
+      .form-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 10px;
+      }
+
+      .field {
+        display: grid;
+        gap: 5px;
+      }
+
+      .field.wide {
+        grid-column: 1 / -1;
+      }
+
+      .input,
+      .textarea,
+      .select {
+        width: 100%;
+        border: 1px solid var(--line);
+        background: #080a09;
+        color: var(--text);
+        border-radius: 8px;
+        padding: 9px 10px;
+      }
+
+      .textarea {
+        min-height: 72px;
+        resize: none;
+      }
+
+      .participant-card {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 10px;
+        display: grid;
+        grid-template-columns: auto minmax(0, 1fr) auto;
+        gap: 9px;
+        align-items: center;
+      }
+
+      .progress-track {
+        height: 8px;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.08);
+        overflow: hidden;
+      }
+
+      .progress-fill {
+        height: 100%;
+        width: 66%;
+        background: linear-gradient(90deg, var(--green), var(--lime));
+      }
+
+      .checklist {
+        display: grid;
+        gap: 8px;
+      }
+
+      .check-row {
+        display: flex;
+        justify-content: space-between;
+        gap: 10px;
+        padding-bottom: 8px;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+      }
+
+      .check-row:last-child {
+        border-bottom: 0;
+        padding-bottom: 0;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <div class="brand-mark">AH</div>
+          <div>
+            <strong>Agent Hub</strong>
+            <span>Local workgroup</span>
+          </div>
+        </div>
+
+        <section>
+          <div class="section-label">Project</div>
+          <div class="project-card">
+            <strong>agent-hub</strong>
+            <span>/Users/lan/agent-hub</span>
+          </div>
+        </section>
+
+        <section>
+          <div class="section-label">Rooms</div>
+          <div class="room-list">
+            <div class="room">
+              <div class="room-line"><strong>#general</strong><span>12m</span></div>
+              <span>Project-wide coordination.</span>
+            </div>
+            <div class="room active">
+              <div class="room-line"><strong>#planning</strong><span>now</span></div>
+              <span>Priorities, handoffs, and review loops.</span>
+            </div>
+            <div class="room">
+              <div class="room-line"><strong>#review</strong><span>4m</span></div>
+              <span>Evidence, checks, and decisions.</span>
+            </div>
+            <div class="room">
+              <div class="room-line"><strong>#knowledge</strong><span>23m</span></div>
+              <span>Memory and reusable decisions.</span>
+            </div>
+          </div>
+        </section>
+
+        <section>
+          <div class="section-label">Team</div>
+          <div class="role-list">
+            <div class="role-row"><span class="role-dot researcher">R</span><strong>@researcher</strong></div>
+            <div class="role-row"><span class="role-dot analyst">A</span><strong>@analyst</strong></div>
+            <div class="role-row"><span class="role-dot writer">W</span><strong>@writer</strong></div>
+            <div class="role-row"><span class="role-dot reviewer">V</span><strong>@reviewer</strong></div>
+            <div class="role-row"><span class="role-dot qa">Q</span><strong>@qa</strong></div>
+            <div class="role-row"><span class="role-dot operator">O</span><strong>@operator</strong></div>
+          </div>
+        </section>
+
+        <div class="status-grid">
+          <div class="stat"><span class="tiny">Open</span><b>6</b></div>
+          <div class="stat"><span class="tiny">Active</span><b>2</b></div>
+          <div class="stat"><span class="tiny">Rounds</span><b>3</b></div>
+        </div>
+
+        <nav class="utilities">
+          <button class="utility-button">Knowledge</button>
+          <button class="utility-button">Team</button>
+          <button class="utility-button active">Workflows</button>
+        </nav>
+      </aside>
+
+      <main class="main">
+        <header class="room-header">
+          <div class="room-title">
+            <div class="room-icon">#</div>
+            <div>
+              <h1>#planning</h1>
+              <p class="room-subtitle">
+                Start bounded local collaboration workflows from a room. Every
+                participant, round limit, stop condition, and output remains visible.
+              </p>
+            </div>
+          </div>
+          <div class="header-tools">
+            <button class="pill-button">Brief</button>
+            <button class="pill-button">Context</button>
+            <button class="primary-button">Start Workflow</button>
+          </div>
+        </header>
+
+        <section class="workflow-strip">
+          <div class="strip-label">
+            <b>Workflow mode</b>
+            <span class="tiny">Bounded, local, inspectable</span>
+          </div>
+          <div class="mode-card active">
+            <div><strong>Handoff</strong><span class="tag cyan">1 round</span></div>
+            <small>Researcher passes context to writer with a required summary.</small>
+          </div>
+          <div class="mode-card">
+            <div><strong>Review loop</strong><span class="tag amber">max 2</span></div>
+            <small>Engineer run is reviewed, then optionally revised once.</small>
+          </div>
+          <div class="mode-card">
+            <div><strong>Panel discussion</strong><span class="tag lime">max 3</span></div>
+            <small>Roles provide independent findings before a final synthesis.</small>
+          </div>
+        </section>
+
+        <section class="timeline">
+          <div class="day-label">May 25, 2026</div>
+
+          <article class="message-row">
+            <div class="avatar">MK</div>
+            <div class="bubble">
+              <div class="message-head">
+                <strong>MK</strong>
+                <span class="message-meta">09:18</span>
+                <span class="tag lime">/workflow review_loop</span>
+              </div>
+              <p>Review the Phase 9 implementation plan. Use @engineer then @reviewer, stop after two rounds or when reviewer passes.</p>
+            </div>
+          </article>
+
+          <article class="event-card">
+            <div class="event-time">09:19</div>
+            <div class="event-main">
+              <div class="event-title">
+                <span class="tag cyan">review requested</span>
+                <strong>Review loop created</strong>
+              </div>
+              <p class="tiny">Task linked to conversation brief `brief_62e`. Output required: reviewer findings and final summary.</p>
+              <div class="participant-line">
+                <span class="tag">participant @engineer runnable</span>
+                <span class="tag amber">participant @reviewer waiting</span>
+                <span class="tag">stop: reviewer_passed OR max_rounds</span>
+              </div>
+            </div>
+            <div class="rounds">
+              <span class="round-dot active">1</span>
+              <span class="round-dot">2</span>
+            </div>
+          </article>
+
+          <article class="event-card">
+            <div class="event-time">09:27</div>
+            <div class="event-main">
+              <div class="event-title">
+                <span class="tag green">handoff</span>
+                <strong>@engineer completed run_412</strong>
+              </div>
+              <p class="tiny">Worktree retained for review. Diff, tests, risks, and artifacts are linked on the run card.</p>
+              <div class="participant-line">
+                <span class="tag lime">tests passed</span>
+                <span class="tag">risk medium</span>
+                <span class="tag cyan">handoff to @reviewer</span>
+              </div>
+            </div>
+            <button class="ghost-button">Open Run</button>
+          </article>
+
+          <article class="event-card">
+            <div class="event-time">09:33</div>
+            <div class="event-main">
+              <div class="event-title">
+                <span class="tag amber">review completed</span>
+                <strong>@reviewer requested one bounded revision</strong>
+              </div>
+              <p class="tiny">Reviewer found a missing max-round guard in metadata validation. Round 2 is allowed; no hidden work starts.</p>
+              <div class="participant-line">
+                <span class="tag amber">finding: missing guard</span>
+                <span class="tag">next: @engineer revision</span>
+                <span class="tag red">remaining rounds: 1</span>
+              </div>
+            </div>
+            <div class="rounds">
+              <span class="round-dot done">1</span>
+              <span class="round-dot active">2</span>
+            </div>
+          </article>
+
+          <article class="event-card">
+            <div class="event-time">09:45</div>
+            <div class="event-main">
+              <div class="event-title">
+                <span class="tag lime">workflow completed</span>
+                <strong>Stopped by reviewer_passed</strong>
+              </div>
+              <p class="tiny">Final summary recorded on the task. No apply, merge, push, or remote queue was triggered.</p>
+              <div class="participant-line">
+                <span class="tag green">rounds used 2/2</span>
+                <span class="tag cyan">outputs: findings, final summary</span>
+                <span class="tag">state persisted locally</span>
+              </div>
+            </div>
+            <button class="ghost-button">Review Summary</button>
+          </article>
+        </section>
+
+        <footer class="composer">
+          <div class="composer-box">
+            <div class="mention-row">
+              <span class="tag lime">@engineer</span>
+              <span class="tag amber">@reviewer</span>
+              <span class="tag cyan">review_loop</span>
+            </div>
+            <div class="composer-text">Type a scoped workflow request or use Start Workflow...</div>
+          </div>
+          <div class="composer-actions">
+            <button class="ghost-button">Attach Brief</button>
+            <button class="primary-button">Run Local</button>
+          </div>
+        </footer>
+      </main>
+
+      <aside class="inspector">
+        <nav class="tabs">
+          <div class="tab active">Workflow</div>
+          <div class="tab">Runs</div>
+          <div class="tab">Checks</div>
+          <div class="tab">Risks</div>
+          <div class="tab">Memory</div>
+        </nav>
+
+        <div class="inspector-scroll">
+          <section class="panel">
+            <div class="panel-head">
+              <div>
+                <div class="section-label">Start Workflow</div>
+                <h2>Bounded collaboration</h2>
+              </div>
+              <span class="tag lime">local only</span>
+            </div>
+            <div class="mode-selector">
+              <button class="selector-button">Handoff<br /><span class="tiny">single pass</span></button>
+              <button class="selector-button active">Review loop<br /><span class="tiny">bounded revise</span></button>
+              <button class="selector-button">Panel<br /><span class="tiny">parallel findings</span></button>
+            </div>
+            <div class="form-grid">
+              <label class="field">
+                <span class="field-label">Participants</span>
+                <input class="input" value="@engineer, @reviewer" />
+              </label>
+              <label class="field">
+                <span class="field-label">Max rounds</span>
+                <select class="select">
+                  <option>2 rounds</option>
+                </select>
+              </label>
+              <label class="field wide">
+                <span class="field-label">Stop condition</span>
+                <input class="input" value="reviewer_passed OR max_rounds_reached" />
+              </label>
+              <label class="field wide">
+                <span class="field-label">Expected outputs</span>
+                <textarea class="textarea">reviewer findings
+final summary
+linked run evidence</textarea>
+              </label>
+            </div>
+            <button class="primary-button">Start Review Loop</button>
+          </section>
+
+          <section class="panel">
+            <div class="panel-head">
+              <div>
+                <div class="section-label">Active Workflow</div>
+                <h2>Phase 9 review loop</h2>
+              </div>
+              <span class="tag amber">round 2 / 2</span>
+            </div>
+            <div class="progress-track"><div class="progress-fill"></div></div>
+            <div class="participant-card">
+              <span class="role-dot researcher">E</span>
+              <div>
+                <strong>@engineer</strong>
+                <span class="tiny">agent_adapter / codex - run_412 linked</span>
+              </div>
+              <span class="tag green">done</span>
+            </div>
+            <div class="participant-card">
+              <span class="role-dot reviewer">V</span>
+              <div>
+                <strong>@reviewer</strong>
+                <span class="tiny">agent_adapter / fake - finding recorded</span>
+              </div>
+              <span class="tag amber">review</span>
+            </div>
+            <div class="participant-card">
+              <span class="role-dot qa">Q</span>
+              <div>
+                <strong>@qa</strong>
+                <span class="tiny">human reserved - assigned only</span>
+              </div>
+              <span class="tag">waiting</span>
+            </div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-head">
+              <div>
+                <div class="section-label">Guardrails</div>
+                <h2>Stop rules</h2>
+              </div>
+              <span class="tag lime">enforced</span>
+            </div>
+            <div class="checklist">
+              <div class="check-row"><span>No autonomous chatter</span><span class="tag green">locked</span></div>
+              <div class="check-row"><span>No remote queue</span><span class="tag green">local</span></div>
+              <div class="check-row"><span>No apply, merge, or push</span><span class="tag green">manual</span></div>
+              <div class="check-row"><span>Max rounds</span><span class="tag amber">2</span></div>
+            </div>
+          </section>
+        </div>
+      </aside>
+    </div>
+  </body>
+</html>

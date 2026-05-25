@@ -1,5 +1,6 @@
 import {
   extractAgentFacingOutput,
+  validateTask,
   validateConversationMessage,
   validateConversationThread,
   validateConversationThreadSummary,
@@ -8,38 +9,98 @@ import {
   type ConversationThread,
   type ConversationThreadRepository,
   type ConversationThreadSummary,
-  type ConversationThreadSummaryRepository
+  type ConversationThreadSummaryRepository,
+  type Task,
+  type TaskRepository
 } from "@agent-hub/core";
 import {
   ConversationContextBuilder,
   ConversationThreadSummaryBuilder,
   type ConversationContextMessage
 } from "@agent-hub/context-compiler";
-import type { AgentKind, TaskRunStatus } from "@agent-hub/shared";
+import type {
+  AgentKind,
+  JsonObject,
+  TaskRunStatus,
+  WorkgroupRole,
+  WorkgroupRoleRunMetadata,
+  WorkgroupTaskAssignmentMetadata
+} from "@agent-hub/shared";
 import type {
   AgentId,
   AssistantMessage,
+  CollaborationWorkflowInput,
+  CollaborationWorkflowMode,
+  CollaborationWorkflowParticipant,
+  CollaborationWorkflowState,
   AgentRunMessage,
   ContextMode,
   CreateThreadInput,
   RunEvent,
   RunStatus,
   RunSummary,
+  RoomType,
   SendThreadMessageInput,
   SystemMessage,
   ThreadDetail,
   ThreadMessage,
   ThreadSummary,
+  TimelineEventKind,
+  TimelineEventMetadata,
   UserMessage
 } from "../../src/lib/types";
-import { parseAgentMentions } from "../../src/lib/mentions";
+import {
+  parseWorkgroupMentions,
+  type WorkgroupMentionParticipant
+} from "./workgroup-mentions";
 import type {
   DesktopServiceContext,
   ProjectService
 } from "./project-service";
 import type { ConversationRunSnapshot, RunService } from "./run-service";
+import type { TeamService } from "./team-service";
 
 const maxAssistantMessageCharacters = 2_000;
+const defaultRoomDefinitions = [
+  {
+    handle: "general",
+    title: "general",
+    description: "Project-wide coordination and agent prompts."
+  },
+  {
+    handle: "planning",
+    title: "planning",
+    description: "Plans, milestones, priorities, and scoped work."
+  },
+  {
+    handle: "research",
+    title: "research",
+    description: "Investigation notes, source gathering, and synthesis."
+  },
+  {
+    handle: "review",
+    title: "review",
+    description: "Run evidence, checks, risks, and review decisions."
+  },
+  {
+    handle: "knowledge",
+    title: "knowledge",
+    description: "Memory proposals, reusable decisions, and project knowledge."
+  }
+] as const;
+const defaultRoomOrder: Map<string, number> = new Map(
+  defaultRoomDefinitions.map((room, index) => [room.handle, index])
+);
+const workflowModeSet = new Set<CollaborationWorkflowMode>([
+  "handoff",
+  "review_loop",
+  "panel_discussion"
+]);
+const maxWorkflowRoundsByMode: Record<CollaborationWorkflowMode, number> = {
+  handoff: 1,
+  review_loop: 3,
+  panel_discussion: 3
+};
 
 export interface ThreadService {
   listThreads(): Promise<ThreadSummary[]>;
@@ -48,14 +109,21 @@ export interface ThreadService {
   appendUserMessage(
     threadId: string,
     text: string,
-    mentions: AgentId[]
+    mentions: AgentId[],
+    roleMentions?: WorkgroupRoleRunMetadata[]
   ): Promise<UserMessage>;
   appendAgentRunMessage(
     threadId: string,
     runId: string,
-    agentId: AgentId
+    agentId: AgentId,
+    role?: WorkgroupRoleRunMetadata,
+    metadata?: AgentRunTaskMetadata
   ): Promise<AgentRunMessage>;
-  appendSystemMessage(threadId: string, text: string): Promise<SystemMessage>;
+  appendSystemMessage(
+    threadId: string,
+    text: string,
+    metadata?: JsonObject
+  ): Promise<SystemMessage>;
   sendMessage(input: SendThreadMessageInput): Promise<ThreadDetail>;
 }
 
@@ -64,6 +132,15 @@ export interface ThreadServiceDependencies {
   projects: ProjectService;
   runs: RunService;
   conversationContextBuilder?: ConversationContextBuilder;
+  roles?: readonly WorkgroupRole[];
+  team?: Pick<TeamService, "rolesForProject">;
+}
+
+interface AgentRunTaskMetadata {
+  taskId: string;
+  taskTitle: string;
+  assignment: WorkgroupTaskAssignmentMetadata;
+  workflowState?: CollaborationWorkflowState;
 }
 
 export function createThreadService(
@@ -76,8 +153,11 @@ class RepositoryThreadService implements ThreadService {
   private readonly threads: ConversationThreadRepository;
   private readonly messages: ConversationMessageRepository;
   private readonly summaries: ConversationThreadSummaryRepository;
+  private readonly tasks: TaskRepository;
   private readonly conversationContextBuilder: ConversationContextBuilder;
   private readonly conversationThreadSummaryBuilder = new ConversationThreadSummaryBuilder();
+  private readonly threadReconciliationByThreadId = new Map<string, Promise<void>>();
+  private readonly workflowReconciliationByThreadId = new Map<string, Promise<void>>();
   private importedLegacyRuns = false;
 
   constructor(private readonly dependencies: ThreadServiceDependencies) {
@@ -85,12 +165,14 @@ class RepositoryThreadService implements ThreadService {
     this.messages = dependencies.context.repositories.conversationMessageRepository;
     this.summaries =
       dependencies.context.repositories.conversationThreadSummaryRepository;
+    this.tasks = dependencies.context.repositories.taskRepository;
     this.conversationContextBuilder =
       dependencies.conversationContextBuilder ?? new ConversationContextBuilder();
   }
 
   async listThreads(): Promise<ThreadSummary[]> {
     await this.ensureLegacyRunThreads();
+    await this.ensureDefaultRoomsForKnownProjects();
     const [threads, runStatusById] = await Promise.all([
       this.threads.list(),
       this.runStatusById()
@@ -101,9 +183,7 @@ class RepositoryThreadService implements ThreadService {
         return toThreadSummary(toThreadDetail(thread, messages, runStatusById));
       })
     );
-    return summaries.sort((left, right) =>
-      right.updatedAt.localeCompare(left.updatedAt)
-    );
+    return summaries.sort(compareThreadSummaries);
   }
 
   async getThread(threadId: string): Promise<ThreadDetail> {
@@ -128,11 +208,23 @@ class RepositoryThreadService implements ThreadService {
       throw new Error("projectId is required before creating a thread");
     }
     const now = this.dependencies.context.now();
+    const title = titleFromPrompt(input.title ?? "") || "New Chat";
+    const roomHandle = await this.uniqueRoomHandle({
+      projectId,
+      requestedHandle: input.roomHandle,
+      title
+    });
     const thread = await this.threads.create(
       validateConversationThread({
         id: this.dependencies.context.nextId("thread"),
-        title: titleFromPrompt(input.title ?? "") || "New Chat",
+        title,
         projectId,
+        metadata: roomMetadata({
+          roomType: input.roomType ?? "custom",
+          roomHandle,
+          description: input.description,
+          pinned: input.pinned
+        }),
         createdAt: now,
         updatedAt: now
       })
@@ -143,7 +235,8 @@ class RepositoryThreadService implements ThreadService {
   async appendUserMessage(
     threadId: string,
     text: string,
-    mentions: AgentId[]
+    mentions: AgentId[],
+    roleMentions: WorkgroupRoleRunMetadata[] = []
   ): Promise<UserMessage> {
     const thread = await this.requireThread(threadId);
     const now = this.dependencies.context.now();
@@ -155,13 +248,35 @@ class RepositoryThreadService implements ThreadService {
         role: "user",
         kind: "text",
         content: text,
-        metadata: { mentions: uniqueAgents(mentions) },
+        metadata: {
+          mentions: uniqueAgents(mentions),
+          roleMentions: roleMentions.length > 0 ? roleMentions : undefined,
+          timelineEvent: timelineEvent({
+            kind: "user_message",
+            actor: "user",
+            title: "User message",
+            summary: text,
+            chips: [
+              ...uniqueAgents(mentions).map((agentId) => ({
+                kind: "assignment_created" as const,
+                label: `@${agentId}`,
+                tone: "info" as const
+              })),
+              ...roleMentions.map((roleMention) => ({
+                kind: "assignment_created" as const,
+                label: `@${roleMention.roleHandle}`,
+                tone: "accent" as const
+              }))
+            ]
+          })
+        },
         createdAt: now
       })
     );
     await this.touchThread(thread, {
       title:
-        thread.title === "New Chat"
+        thread.title === "New Chat" &&
+        roomMetadataForThread(thread).roomType !== "default"
           ? titleFromPrompt(text) || thread.title
           : thread.title,
       updatedAt: now
@@ -172,7 +287,9 @@ class RepositoryThreadService implements ThreadService {
   async appendAgentRunMessage(
     threadId: string,
     runId: string,
-    agentId: AgentId
+    agentId: AgentId,
+    role?: WorkgroupRoleRunMetadata,
+    taskMetadata?: AgentRunTaskMetadata
   ): Promise<AgentRunMessage> {
     const thread = await this.requireThread(threadId);
     const run = await this.dependencies.runs.getRun(runId);
@@ -188,7 +305,40 @@ class RepositoryThreadService implements ThreadService {
         agentKind: toCoreAgentKind(agentId),
         runId,
         status: toCoreRunStatus(run.status),
-        metadata: { agentId },
+        metadata: {
+          agentId,
+          role,
+          executor: role
+            ? {
+                kind: role.executorKind,
+                adapterKind: role.adapterKind
+              }
+            : undefined,
+          taskId: taskMetadata?.taskId,
+          taskTitle: taskMetadata?.taskTitle,
+          assignment: taskMetadata?.assignment,
+          workflowState: taskMetadata?.workflowState,
+          timelineEvent: timelineEvent({
+            kind: "run_started",
+            actor: "agent",
+            title: taskMetadata?.assignment.roleHandle
+              ? `@${taskMetadata.assignment.roleHandle} run started`
+              : `@${agentId} run started`,
+            summary: `Local ${agentId} run is linked to this timeline event.`,
+            status: run.status,
+            taskId: taskMetadata?.taskId,
+            runId,
+            workflowId: taskMetadata?.workflowState?.workflowId,
+            assignmentId: taskMetadata?.assignment.assignmentId,
+            chips: [
+              {
+                kind: "run_started",
+                label: run.status,
+                tone: run.status === "queued" ? "neutral" : "warning"
+              }
+            ]
+          })
+        },
         createdAt: now
       })
     );
@@ -196,7 +346,11 @@ class RepositoryThreadService implements ThreadService {
     return toAgentRunMessage(message, new Map([[runId, run.status]]));
   }
 
-  async appendSystemMessage(threadId: string, text: string): Promise<SystemMessage> {
+  async appendSystemMessage(
+    threadId: string,
+    text: string,
+    metadata?: JsonObject
+  ): Promise<SystemMessage> {
     const thread = await this.requireThread(threadId);
     const now = this.dependencies.context.now();
     const message = await this.messages.create(
@@ -207,6 +361,7 @@ class RepositoryThreadService implements ThreadService {
         role: "system",
         kind: "text",
         content: text,
+        metadata,
         createdAt: now
       })
     );
@@ -214,67 +369,409 @@ class RepositoryThreadService implements ThreadService {
     return toSystemMessage(message);
   }
 
+  private async appendWorkflowStartMessages(
+    threadId: string,
+    workflowState: CollaborationWorkflowState
+  ): Promise<void> {
+    const startKind = workflowStartKind(workflowState.mode);
+    const startTitle = workflowStartTitle(workflowState.mode);
+    await this.appendSystemMessage(
+      threadId,
+      workflowStartSummary(workflowState),
+      {
+        taskEvent: startKind,
+        workflowEvent: startKind,
+        taskId: workflowState.taskId,
+        workflowState,
+        timelineEvent: timelineEvent({
+          kind: startKind,
+          actor: "system",
+          title: startTitle,
+          summary: workflowStartSummary(workflowState),
+          status: workflowState.status,
+          tone: "accent",
+          taskId: workflowState.taskId,
+          workflowId: workflowState.workflowId,
+          assignmentIds: workflowState.participants.map(
+            (participant) => participant.assignmentId
+          ),
+          chips: workflowChips(workflowState)
+        })
+      }
+    );
+
+    if (!workflowHasExecutableParticipants(workflowState)) {
+      await this.appendWorkflowCompletionMessage(threadId, workflowState);
+    }
+  }
+
+  private async appendWorkflowCompletionMessage(
+    threadId: string,
+    workflowState: CollaborationWorkflowState
+  ): Promise<void> {
+    const completed = completeWorkflowState(
+      workflowState,
+      this.dependencies.context.now()
+    );
+    await this.appendSystemMessage(
+      threadId,
+      workflowCompletionSummary(completed),
+      {
+        taskEvent: "workflow_completed",
+        workflowEvent: "workflow_completed",
+        taskId: completed.taskId,
+        workflowState: completed,
+        timelineEvent: timelineEvent({
+          kind: "workflow_completed",
+          actor: "system",
+          title: "Workflow completed",
+          summary: workflowCompletionSummary(completed),
+          status: "completed",
+          tone: "success",
+          taskId: completed.taskId,
+          workflowId: completed.workflowId,
+          assignmentIds: completed.participants.map(
+            (participant) => participant.assignmentId
+          ),
+          chips: workflowChips(completed)
+        })
+      }
+    );
+  }
+
   async sendMessage(input: SendThreadMessageInput): Promise<ThreadDetail> {
     await this.ensureLegacyRunThreads();
-    const parsed = parseAgentMentions(input.text);
+    const contextMode = parseContextMode(input.contextMode ?? "auto");
+    const workflowRequest = resolveWorkflowRequest(input.text, input.workflow);
+    const thread = input.threadId
+      ? await this.requireThread(input.threadId)
+      : await this.defaultRoomThread(
+          input.projectId ?? (await this.defaultProjectId()),
+          "general"
+        );
+    const roles =
+      this.dependencies.roles ??
+      (await this.dependencies.team?.rolesForProject(thread.projectId));
+    const parsed = parseWorkgroupMentions(workflowRequest.text, roles);
     const cleanedPrompt = parsed.cleanedPrompt.trim();
     if (!cleanedPrompt) {
       throw new Error("message text is required");
     }
-    const agents: AgentId[] =
+    const participants: WorkgroupMentionParticipant[] =
       input.agents && input.agents.length > 0
-        ? uniqueAgents(input.agents.map(parseAgentId))
-        : parsed.agents.length > 0
-          ? parsed.agents
-          : ["fake"];
-    const contextMode = parseContextMode(input.contextMode ?? "auto");
-    const thread = input.threadId
-      ? await this.requireThread(input.threadId)
-      : await this.createThreadRecord({
-          projectId: input.projectId ?? (await this.defaultProjectId()),
-          title: titleFromPrompt(cleanedPrompt)
-        });
+        ? uniqueAgents(input.agents.map(parseAgentId)).map((agentId) => ({
+            agentId,
+            source: "adapter_mention" as const
+          }))
+        : parsed.participants.length > 0
+          ? parsed.participants
+          : parsed.roleMentions.length > 0
+            ? []
+            : [{ agentId: "fake", source: "adapter_mention" }];
+    const agents = uniqueAgents(participants.map((participant) => participant.agentId));
     await this.reconcileAssistantMessages(thread.id);
     await this.refreshThreadSummary(thread.id);
 
     const continueFrom = await this.resolveContinuationInput(input);
-    const userMessage = await this.appendUserMessage(thread.id, cleanedPrompt, agents);
+    const userMessage = await this.appendUserMessage(
+      thread.id,
+      cleanedPrompt,
+      agents,
+      parsed.roleMentions
+    );
     const currentThread = await this.requireThread(thread.id);
     const priorMessages = (await this.messages.listByThreadId(currentThread.id))
       .filter((message) => message.id !== userMessage.id);
 
-    for (const agentId of agents) {
+    const taskId = this.dependencies.context.nextId("task");
+    const title = titleFromPrompt(cleanedPrompt);
+    let assignments = createTaskAssignments({
+      taskId,
+      threadId: currentThread.id,
+      sourceMessageId: userMessage.id,
+      participants,
+      roleMentions: parsed.roleMentions,
+      nextId: (prefix) => this.dependencies.context.nextId(prefix)
+    });
+    let workflowState = workflowRequest.workflow
+      ? createWorkflowState({
+          workflowId: this.dependencies.context.nextId("workflow"),
+          workflow: workflowRequest.workflow,
+          taskId,
+          threadId: currentThread.id,
+          sourceMessageId: userMessage.id,
+          assignments,
+          createdAt: userMessage.createdAt,
+          updatedAt: userMessage.createdAt
+        })
+      : undefined;
+    const task = await this.tasks.create(
+      validateTask({
+        id: taskId,
+        projectId: currentThread.projectId,
+        title,
+        description: cleanedPrompt,
+        metadata: taskMetadata({
+          thread: currentThread,
+          sourceMessageId: userMessage.id,
+          assignments,
+          workflowState
+        }),
+        status: "open",
+        createdAt: userMessage.createdAt,
+        updatedAt: userMessage.createdAt
+      })
+    );
+    await this.linkUserMessageToTask(userMessage.id, {
+      taskId: task.id,
+      taskTitle: task.title,
+      workflowState
+    });
+    await this.appendSystemMessage(
+      currentThread.id,
+      `Task created: ${task.title}`,
+      {
+        taskEvent: "task_created",
+        taskId: task.id,
+        taskTitle: task.title,
+        timelineEvent: timelineEvent({
+          kind: "task_created",
+          actor: "system",
+          title: "Task created",
+          summary: task.title,
+          taskId: task.id,
+          chips: [
+            {
+              kind: "task_created",
+              label: "task created",
+              tone: "accent"
+            }
+          ]
+        })
+      }
+    );
+    await this.appendSystemMessage(
+      currentThread.id,
+      assignmentSummary(assignments),
+      {
+        taskEvent: "participants_assigned",
+        taskId: task.id,
+        assignments,
+        timelineEvent: timelineEvent({
+          kind: "assignment_created",
+          actor: "system",
+          title: "Assignments created",
+          summary: assignmentSummary(assignments),
+          taskId: task.id,
+          assignmentIds: assignments.map((assignment) => assignment.assignmentId),
+          chips: assignmentChips(assignments)
+        })
+      }
+    );
+
+    const createdRuns: Array<{
+      run: RunSummary;
+      participant: WorkgroupMentionParticipant;
+      assignment: WorkgroupTaskAssignmentMetadata;
+    }> = [];
+    for (const participant of participants) {
+      const assignment = assignmentForParticipant(assignments, participant);
+      if (!assignment?.executable) {
+        continue;
+      }
       try {
         const conversationBrief = await this.buildConversationBrief({
           thread: currentThread,
           currentTurn: cleanedPrompt,
           currentMessageCreatedAt: userMessage.createdAt,
-          agentId,
+          agentId: participant.agentId,
+          role: participant.role,
           contextMode,
           priorMessages
         });
         const run = await this.dependencies.runs.createRun({
+          taskId: task.id,
           projectId: currentThread.projectId,
           prompt: cleanedPrompt,
-          title: titleFromPrompt(cleanedPrompt),
-          agentId,
+          title,
+          agentId: participant.agentId,
+          role: participant.role,
+          assignment,
           contextMode,
           deliveryMode: "runtime_injection",
           conversationBrief,
+          startImmediately: false,
           continueFromRunId: continueFrom?.parentRunId,
           continueFromMessageId: continueFrom?.parentMessageId
         });
-        await this.appendAgentRunMessage(currentThread.id, run.id, agentId);
-        await this.appendAssistantOutputPlaceholder(currentThread.id, run.id, agentId);
+        const linkedAssignment = {
+          ...assignment,
+          runId: run.id,
+          status: "queued" as const
+        };
+        assignments = assignments.map((entry) =>
+          entry.assignmentId === assignment.assignmentId ? linkedAssignment : entry
+        );
+        createdRuns.push({
+          run,
+          participant,
+          assignment: linkedAssignment
+        });
+      } catch (error) {
+        const skippedAssignment = {
+          ...assignment,
+          status: "skipped" as const
+        };
+        assignments = assignments.map((entry) =>
+          entry.assignmentId === assignment.assignmentId ? skippedAssignment : entry
+        );
+        await this.appendSystemMessage(
+          currentThread.id,
+          `@${participant.role?.roleHandle ?? participant.agentId} could not start: ${errorMessage(error)}`,
+          {
+            taskEvent: "assignment_start_failed",
+            taskId: task.id,
+            assignment: skippedAssignment,
+            timelineEvent: timelineEvent({
+              kind: "assignment_start_failed",
+              actor: "system",
+              title: "Assignment start failed",
+              summary: errorMessage(error),
+              status: "skipped",
+              taskId: task.id,
+              assignmentId: skippedAssignment.assignmentId,
+              chips: [
+                {
+                  kind: "assignment_start_failed",
+                  label: "start failed",
+                  tone: "warning"
+                }
+              ]
+            })
+          }
+        );
+      }
+    }
+
+    if (workflowState) {
+      workflowState = refreshWorkflowState(
+        workflowState,
+        assignments,
+        this.dependencies.context.now()
+      );
+    }
+
+    await this.tasks.create(
+      validateTask({
+        ...task,
+        metadata: taskMetadata({
+          thread: currentThread,
+          sourceMessageId: userMessage.id,
+          assignments,
+          workflowState
+        }),
+        updatedAt: this.dependencies.context.now()
+      })
+    );
+
+    if (workflowState) {
+      await this.linkUserMessageToTask(userMessage.id, {
+        taskId: task.id,
+        taskTitle: task.title,
+        workflowState
+      });
+      await this.appendWorkflowStartMessages(currentThread.id, workflowState);
+    }
+
+    for (const { run, participant, assignment } of createdRuns) {
+      await this.appendAgentRunMessage(
+        currentThread.id,
+        run.id,
+        participant.agentId,
+        participant.role,
+        {
+          taskId: task.id,
+          taskTitle: task.title,
+          assignment,
+          workflowState
+        }
+      );
+    }
+    for (const { run, participant, assignment } of createdRuns) {
+      await this.appendAssistantOutputPlaceholder(
+        currentThread.id,
+        run.id,
+        participant.agentId,
+        participant.role,
+        assignment
+      );
+    }
+    for (const { run, participant } of createdRuns) {
+      try {
+        await this.dependencies.runs.startRun(run.id);
       } catch (error) {
         await this.appendSystemMessage(
           currentThread.id,
-          `@${agentId} could not start: ${errorMessage(error)}`
+          `@${participant.role?.roleHandle ?? participant.agentId} could not start: ${errorMessage(error)}`,
+          {
+            taskEvent: "assignment_start_failed",
+            taskId: task.id,
+            runId: run.id,
+            timelineEvent: timelineEvent({
+              kind: "assignment_start_failed",
+              actor: "system",
+              title: "Run start failed",
+              summary: errorMessage(error),
+              status: "failed",
+              taskId: task.id,
+              runId: run.id,
+              chips: [
+                {
+                  kind: "assignment_start_failed",
+                  label: "start failed",
+                  tone: "warning"
+                }
+              ]
+            })
+          }
         );
       }
     }
 
     return this.getThread(currentThread.id);
+  }
+
+  private async linkUserMessageToTask(
+    messageId: string,
+    task: {
+      taskId: string;
+      taskTitle: string;
+      workflowState?: CollaborationWorkflowState;
+    }
+  ): Promise<void> {
+    const message = await this.messages.get(messageId);
+    if (!message) {
+      return;
+    }
+    const existingEvent = metadataTimelineEvent(message.metadata);
+    await this.messages.update(
+      validateConversationMessage({
+        ...message,
+        metadata: {
+          ...(message.metadata ?? {}),
+          timelineEvent: timelineEvent({
+            kind: existingEvent?.kind ?? "user_message",
+            actor: existingEvent?.actor ?? "user",
+            title: existingEvent?.title ?? "User message",
+            summary: existingEvent?.summary ?? message.content,
+            taskId: task.taskId,
+            workflowId: task.workflowState?.workflowId,
+            chips: existingEvent?.chips
+          }),
+          workflowState: task.workflowState
+        }
+      })
+    );
   }
 
   private async resolveContinuationInput(
@@ -313,6 +810,7 @@ class RepositoryThreadService implements ThreadService {
     currentTurn: string;
     currentMessageCreatedAt: string;
     agentId: AgentId;
+    role?: WorkgroupRoleRunMetadata;
     contextMode: ContextMode;
     priorMessages: ConversationMessage[];
   }) {
@@ -352,7 +850,8 @@ class RepositoryThreadService implements ThreadService {
       projectContextReferences: [
         `project:${input.thread.projectId}`,
         "Agent Hub-owned project context store",
-        "Approved memory only; thread context is not promoted automatically"
+        "Approved memory only; thread context is not promoted automatically",
+        ...roleContextReferences(input.role)
       ]
     });
   }
@@ -463,7 +962,9 @@ class RepositoryThreadService implements ThreadService {
   private async appendAssistantOutputPlaceholder(
     threadId: string,
     runId: string,
-    agentId: AgentId
+    agentId: AgentId,
+    role?: WorkgroupRoleRunMetadata,
+    assignment?: WorkgroupTaskAssignmentMetadata
   ): Promise<void> {
     const thread = await this.requireThread(threadId);
     const now = this.dependencies.context.now();
@@ -480,6 +981,9 @@ class RepositoryThreadService implements ThreadService {
         status: "queued",
         metadata: {
           agentId,
+          role,
+          taskId: assignment?.taskId,
+          assignment,
           assistantOutput: true,
           pending: true
         },
@@ -490,6 +994,19 @@ class RepositoryThreadService implements ThreadService {
   }
 
   private async reconcileAssistantMessages(threadId: string): Promise<void> {
+    const existing = this.threadReconciliationByThreadId.get(threadId);
+    if (existing) {
+      await existing;
+      return;
+    }
+    const pending = this.reconcileAssistantMessagesUnlocked(threadId).finally(() => {
+      this.threadReconciliationByThreadId.delete(threadId);
+    });
+    this.threadReconciliationByThreadId.set(threadId, pending);
+    await pending;
+  }
+
+  private async reconcileAssistantMessagesUnlocked(threadId: string): Promise<void> {
     const thread = await this.threads.get(threadId);
     if (!thread) {
       return;
@@ -515,13 +1032,22 @@ class RepositoryThreadService implements ThreadService {
       if (
         message.kind !== "run_card" ||
         !message.runId ||
-        !message.agentKind ||
-        refreshedAssistantRunIds.has(message.runId)
+        !message.agentKind
+      ) {
+        continue;
+      }
+      if (
+        refreshedAssistantRunIds.has(message.runId) &&
+        isTerminalRunTimelineKind(metadataTimelineEvent(message.metadata)?.kind)
       ) {
         continue;
       }
       const snapshot = await this.conversationRunSnapshot(message.runId);
       if (!snapshot || !isTerminalRunStatus(snapshot.status)) {
+        continue;
+      }
+      await this.markRunCardTerminalEvent(message, snapshot.status);
+      if (refreshedAssistantRunIds.has(message.runId)) {
         continue;
       }
       const now = this.dependencies.context.now();
@@ -540,7 +1066,23 @@ class RepositoryThreadService implements ThreadService {
             agentId: toAgentId(message.agentKind),
             assistantOutput: true,
             pending: false,
-            terminalStatus: snapshot.status
+            terminalStatus: snapshot.status,
+            timelineEvent: timelineEvent({
+              kind: "participant_message",
+              actor: "assistant",
+              title: `${toAgentId(message.agentKind)} response`,
+              summary: terminalAssistantContent(snapshot),
+              status: snapshot.status,
+              runId: message.runId,
+              taskId: metadataString(message.metadata, "taskId"),
+              chips: [
+                {
+                  kind: "participant_message",
+                  label: snapshot.status,
+                  tone: terminalStatusTone(snapshot.status)
+                }
+              ]
+            })
           },
           createdAt: now
         })
@@ -548,6 +1090,130 @@ class RepositoryThreadService implements ThreadService {
       await this.touchThread(thread, { updatedAt: now });
       refreshedAssistantRunIds.add(message.runId);
     }
+    await this.reconcileWorkflowEvents(thread);
+  }
+
+  private async reconcileWorkflowEvents(thread: ConversationThread): Promise<void> {
+    const existing = this.workflowReconciliationByThreadId.get(thread.id);
+    if (existing) {
+      await existing;
+      return;
+    }
+    const pending = this.reconcileWorkflowEventsUnlocked(thread).finally(() => {
+      this.workflowReconciliationByThreadId.delete(thread.id);
+    });
+    this.workflowReconciliationByThreadId.set(thread.id, pending);
+    await pending;
+  }
+
+  private async reconcileWorkflowEventsUnlocked(
+    thread: ConversationThread
+  ): Promise<void> {
+    const tasks = await this.tasks.listByProjectId(thread.projectId);
+    for (const task of tasks) {
+      if (task.metadata?.threadId !== thread.id) {
+        continue;
+      }
+      const workflowState = metadataWorkflowState(task.metadata);
+      if (!workflowState || workflowState.status === "completed") {
+        continue;
+      }
+      const participants = await this.refreshedWorkflowParticipants(workflowState);
+      if (!participants.every((participant) => workflowParticipantIsTerminal(participant))) {
+        continue;
+      }
+      const completed = completeWorkflowState(
+        {
+          ...workflowState,
+          participants
+        },
+        this.dependencies.context.now()
+      );
+      await this.tasks.create(
+        validateTask({
+          ...task,
+          metadata: {
+            ...(task.metadata ?? {}),
+            workflowState: completed
+          },
+          updatedAt: completed.updatedAt
+        })
+      );
+      if (
+        completed.mode === "review_loop" &&
+        !(await this.hasWorkflowEvent(
+          thread.id,
+          completed.workflowId,
+          "workflow_review_completed"
+        ))
+      ) {
+        await this.appendSystemMessage(
+          thread.id,
+          `Review completed for ${completed.summary}.`,
+          {
+            taskEvent: "workflow_review_completed",
+            workflowEvent: "workflow_review_completed",
+            taskId: completed.taskId,
+            workflowState: completed,
+            timelineEvent: timelineEvent({
+              kind: "workflow_review_completed",
+              actor: "system",
+              title: "Review completed",
+              summary: `Review completed for ${completed.summary}.`,
+              status: "completed",
+              tone: "success",
+              taskId: completed.taskId,
+              workflowId: completed.workflowId,
+              assignmentIds: completed.participants.map(
+                (participant) => participant.assignmentId
+              ),
+              chips: workflowChips(completed)
+            })
+          }
+        );
+      }
+      if (
+        !(await this.hasWorkflowEvent(
+          thread.id,
+          completed.workflowId,
+          "workflow_completed"
+        ))
+      ) {
+        await this.appendWorkflowCompletionMessage(thread.id, completed);
+      }
+    }
+  }
+
+  private async hasWorkflowEvent(
+    threadId: string,
+    workflowId: string,
+    workflowEvent: string
+  ): Promise<boolean> {
+    const messages = await this.messages.listByThreadId(threadId);
+    return messages.some(
+      (message) =>
+        message.metadata?.workflowEvent === workflowEvent &&
+        metadataWorkflowState(message.metadata)?.workflowId === workflowId
+    );
+  }
+
+  private async refreshedWorkflowParticipants(
+    workflowState: CollaborationWorkflowState
+  ): Promise<CollaborationWorkflowParticipant[]> {
+    return Promise.all(
+      workflowState.participants.map(async (participant) => {
+        if (!participant.runId) {
+          return participant;
+        }
+        const snapshot = await this.conversationRunSnapshot(participant.runId);
+        return snapshot
+          ? {
+              ...participant,
+              status: snapshot.status
+            }
+          : participant;
+      })
+    );
   }
 
   private async finalizeAssistantMessage(
@@ -580,11 +1246,75 @@ class RepositoryThreadService implements ThreadService {
           agentId,
           assistantOutput: true,
           pending: false,
-          terminalStatus: snapshot.status
+          terminalStatus: snapshot.status,
+          timelineEvent: timelineEvent({
+            kind: "participant_message",
+            actor: "assistant",
+            title: `${agentId} response`,
+            summary: terminalAssistantContent(snapshot),
+            status: snapshot.status,
+            runId: message.runId,
+            taskId: metadataString(message.metadata, "taskId"),
+            chips: [
+              {
+                kind: "participant_message",
+                label: snapshot.status,
+                tone: terminalStatusTone(snapshot.status)
+              }
+            ]
+          })
         }
       })
     );
     await this.touchThread(thread, { updatedAt: this.dependencies.context.now() });
+  }
+
+  private async markRunCardTerminalEvent(
+    message: ConversationMessage,
+    status: RunStatus
+  ): Promise<void> {
+    if (!message.runId) {
+      return;
+    }
+    const nextKind = terminalRunTimelineKind(status);
+    const existingEvent = metadataTimelineEvent(message.metadata);
+    if (
+      existingEvent?.kind === nextKind &&
+      existingEvent.status === status &&
+      message.status === toCoreRunStatus(status)
+    ) {
+      return;
+    }
+    await this.messages.update(
+      validateConversationMessage({
+        ...message,
+        status: toCoreRunStatus(status),
+        metadata: {
+          ...(message.metadata ?? {}),
+          timelineEvent: timelineEvent({
+            kind: nextKind,
+            actor: existingEvent?.actor ?? "agent",
+            title: terminalRunTitle(message, status),
+            summary: existingEvent?.summary,
+            status,
+            taskId:
+              existingEvent?.linkedIds?.taskId ??
+              metadataString(message.metadata, "taskId"),
+            runId: message.runId,
+            assignmentId:
+              existingEvent?.linkedIds?.assignmentId ??
+              metadataAssignment(message.metadata)?.assignmentId,
+            chips: [
+              {
+                kind: nextKind,
+                label: status,
+                tone: terminalStatusTone(status)
+              }
+            ]
+          })
+        }
+      })
+    );
   }
 
   private async conversationRunSnapshot(
@@ -615,15 +1345,93 @@ class RepositoryThreadService implements ThreadService {
       throw new Error("projectId is required before sending a message");
     }
     const now = this.dependencies.context.now();
+    const title = titleFromPrompt(input.title) || "New Chat";
+    const roomHandle = await this.uniqueRoomHandle({ projectId, title });
     return this.threads.create(
       validateConversationThread({
         id: this.dependencies.context.nextId("thread"),
         projectId,
-        title: titleFromPrompt(input.title) || "New Chat",
+        title,
+        metadata: roomMetadata({
+          roomType: "custom",
+          roomHandle,
+          description: "Imported conversation room."
+        }),
         createdAt: now,
         updatedAt: now
       })
     );
+  }
+
+  private async defaultRoomThread(
+    projectId: string | undefined,
+    handle: string
+  ): Promise<ConversationThread> {
+    if (!projectId) {
+      throw new Error("projectId is required before sending a message");
+    }
+    await this.ensureDefaultRooms(projectId);
+    const rooms = await this.threads.list(projectId);
+    const existing = rooms.find((thread) => isDefaultRoom(thread, handle));
+    if (!existing) {
+      throw new Error(`default room #${handle} was not created`);
+    }
+    return existing;
+  }
+
+  private async ensureDefaultRoomsForKnownProjects(): Promise<void> {
+    const projects = await this.dependencies.projects.list();
+    await Promise.all(projects.map((project) => this.ensureDefaultRooms(project.id)));
+  }
+
+  private async ensureDefaultRooms(projectId: string): Promise<void> {
+    const existingThreads = await this.threads.list(projectId);
+    for (const definition of defaultRoomDefinitions) {
+      if (existingThreads.some((thread) => isDefaultRoom(thread, definition.handle))) {
+        continue;
+      }
+      const now = this.dependencies.context.now();
+      const thread = await this.threads.create(
+        validateConversationThread({
+          id: this.dependencies.context.nextId("thread"),
+          projectId,
+          title: definition.title,
+          metadata: roomMetadata({
+            roomType: "default",
+            roomHandle: definition.handle,
+            description: definition.description,
+            pinned: true
+          }),
+          createdAt: now,
+          updatedAt: now
+        })
+      );
+      existingThreads.push(thread);
+    }
+  }
+
+  private async uniqueRoomHandle(input: {
+    projectId: string;
+    requestedHandle?: string;
+    title: string;
+  }): Promise<string> {
+    const base =
+      normalizeRoomHandle(input.requestedHandle ?? input.title) ?? "room";
+    const existing = new Set(
+      (await this.threads.list(input.projectId)).map(
+        (thread) => roomMetadataForThread(thread).roomHandle
+      )
+    );
+    if (!existing.has(base)) {
+      return base;
+    }
+    for (let index = 2; index < 1000; index += 1) {
+      const candidate = `${base}-${index}`;
+      if (!existing.has(candidate)) {
+        return candidate;
+      }
+    }
+    throw new Error(`could not create a unique room handle for ${base}`);
   }
 
   private async defaultProjectId(): Promise<string | undefined> {
@@ -720,6 +1528,635 @@ class RepositoryThreadService implements ThreadService {
   }
 }
 
+interface RoomMetadata {
+  roomType: RoomType;
+  roomHandle: string;
+  description?: string;
+  pinned?: boolean;
+}
+
+function roomMetadata(input: RoomMetadata): ConversationThread["metadata"] {
+  return {
+    roomType: input.roomType,
+    roomHandle: input.roomHandle,
+    description: input.description,
+    pinned: input.pinned
+  };
+}
+
+function taskMetadata(input: {
+  thread: ConversationThread;
+  sourceMessageId: string;
+  assignments: WorkgroupTaskAssignmentMetadata[];
+  workflowState?: CollaborationWorkflowState;
+}): JsonObject {
+  const room = roomMetadataForThread(input.thread);
+  return {
+    source: "desktop_thread",
+    threadId: input.thread.id,
+    roomType: room.roomType,
+    roomHandle: room.roomHandle,
+    sourceMessageId: input.sourceMessageId,
+    assignmentCount: input.assignments.length,
+    executableAssignmentCount: input.assignments.filter(
+      (assignment) => assignment.executable
+    ).length,
+    assignments: input.assignments,
+    workflowState: input.workflowState
+  };
+}
+
+function createTaskAssignments(input: {
+  taskId: string;
+  threadId: string;
+  sourceMessageId: string;
+  participants: WorkgroupMentionParticipant[];
+  roleMentions: WorkgroupRoleRunMetadata[];
+  nextId(prefix: string): string;
+}): WorkgroupTaskAssignmentMetadata[] {
+  const assignments: WorkgroupTaskAssignmentMetadata[] = [];
+  const roleHandles = new Set<string>();
+
+  for (const role of input.roleMentions) {
+    if (roleHandles.has(role.roleHandle)) {
+      continue;
+    }
+    roleHandles.add(role.roleHandle);
+    const agentId = role.adapterKind ? toAgentId(role.adapterKind) : undefined;
+    assignments.push({
+      assignmentId: input.nextId("assignment"),
+      taskId: input.taskId,
+      threadId: input.threadId,
+      sourceMessageId: input.sourceMessageId,
+      assignmentRole: "role",
+      agentId,
+      roleHandle: role.roleHandle,
+      displayName: role.displayName,
+      executorKind: role.executorKind,
+      adapterKind: role.adapterKind,
+      executable: Boolean(agentId),
+      status: agentId ? "queued" : "assigned"
+    });
+  }
+
+  const agentIds = new Set<string>();
+  for (const participant of input.participants) {
+    if (participant.role) {
+      continue;
+    }
+    if (agentIds.has(participant.agentId)) {
+      continue;
+    }
+    agentIds.add(participant.agentId);
+    assignments.push({
+      assignmentId: input.nextId("assignment"),
+      taskId: input.taskId,
+      threadId: input.threadId,
+      sourceMessageId: input.sourceMessageId,
+      assignmentRole: "agent",
+      agentId: participant.agentId,
+      displayName: `@${participant.agentId}`,
+      executorKind: "agent_adapter",
+      adapterKind: toCoreAgentKind(participant.agentId),
+      executable: true,
+      status: "queued"
+    });
+  }
+
+  return assignments;
+}
+
+function assignmentForParticipant(
+  assignments: WorkgroupTaskAssignmentMetadata[],
+  participant: WorkgroupMentionParticipant
+): WorkgroupTaskAssignmentMetadata | undefined {
+  if (participant.role) {
+    return assignments.find(
+      (assignment) =>
+        assignment.assignmentRole === "role" &&
+        assignment.roleHandle === participant.role?.roleHandle
+    );
+  }
+  return assignments.find(
+    (assignment) =>
+      assignment.assignmentRole === "agent" &&
+      assignment.agentId === participant.agentId
+  );
+}
+
+function assignmentSummary(
+  assignments: WorkgroupTaskAssignmentMetadata[]
+): string {
+  if (assignments.length === 0) {
+    return "No participants were assigned.";
+  }
+  const labels = assignments.map((assignment) =>
+    assignment.roleHandle ? `@${assignment.roleHandle}` : assignment.displayName
+  );
+  const executableCount = assignments.filter((assignment) => assignment.executable).length;
+  if (executableCount === 0) {
+    return `Assigned ${labels.join(", ")}; no executable runs are available yet.`;
+  }
+  return `Assigned ${labels.join(", ")} to this task.`;
+}
+
+function assignmentChips(
+  assignments: WorkgroupTaskAssignmentMetadata[]
+): TimelineEventMetadata["chips"] {
+  return assignments.slice(0, 8).map((assignment) => ({
+    kind: "assignment_created",
+    label: assignment.roleHandle ? `@${assignment.roleHandle}` : assignment.displayName,
+    tone: assignment.executable ? "accent" : "neutral"
+  }));
+}
+
+function resolveWorkflowRequest(
+  text: string,
+  workflowInput?: CollaborationWorkflowInput
+): { text: string; workflow?: CollaborationWorkflowInput } {
+  const command = parseWorkflowCommand(text);
+  const workflow = workflowInput
+    ? normalizeWorkflowInput(workflowInput)
+    : command.workflow;
+  return {
+    text: command.text,
+    workflow
+  };
+}
+
+function parseWorkflowCommand(text: string): {
+  text: string;
+  workflow?: CollaborationWorkflowInput;
+} {
+  const trimmed = text.trim();
+  if (!trimmed.toLowerCase().startsWith("/workflow")) {
+    return { text };
+  }
+  const tokens = trimmed.split(/\s+/);
+  const mode = tokens[1];
+  if (!isCollaborationWorkflowMode(mode)) {
+    throw new Error("workflow mode must be handoff, review_loop, or panel_discussion");
+  }
+  const rest: string[] = [];
+  const input: CollaborationWorkflowInput = defaultWorkflowInput(mode);
+  for (const token of tokens.slice(2)) {
+    const [key, rawValue] = token.split("=", 2);
+    if (rawValue !== undefined && (key === "max" || key === "max_rounds")) {
+      input.maxRounds = Number(rawValue);
+      continue;
+    }
+    if (rawValue !== undefined && key === "stop") {
+      input.stopCondition = rawValue.replace(/_/g, " ");
+      continue;
+    }
+    if (rawValue !== undefined && key === "outputs") {
+      input.expectedOutputs = rawValue.split(",").map((entry) => entry.trim());
+      continue;
+    }
+    rest.push(token);
+  }
+  return {
+    text: rest.join(" "),
+    workflow: normalizeWorkflowInput(input)
+  };
+}
+
+function defaultWorkflowInput(
+  mode: CollaborationWorkflowMode
+): CollaborationWorkflowInput {
+  if (mode === "handoff") {
+    return {
+      mode,
+      maxRounds: 1,
+      stopCondition: "handoff_summary_recorded",
+      expectedOutputs: ["handoff_summary", "linked_run_evidence"],
+      summary: "Handoff workflow"
+    };
+  }
+  if (mode === "panel_discussion") {
+    return {
+      mode,
+      maxRounds: 3,
+      stopCondition: "all_participants_reported OR max_rounds_reached",
+      expectedOutputs: ["participant_findings", "final_synthesis"],
+      summary: "Panel discussion"
+    };
+  }
+  return {
+    mode,
+    maxRounds: 2,
+    stopCondition: "reviewer_passed OR max_rounds_reached",
+    expectedOutputs: ["reviewer_findings", "final_summary", "linked_run_evidence"],
+    summary: "Review loop"
+  };
+}
+
+function normalizeWorkflowInput(
+  input: CollaborationWorkflowInput
+): CollaborationWorkflowInput {
+  if (!isCollaborationWorkflowMode(input.mode)) {
+    throw new Error("workflow mode must be handoff, review_loop, or panel_discussion");
+  }
+  const maxRounds = input.maxRounds;
+  const allowedMax = maxWorkflowRoundsByMode[input.mode];
+  if (!Number.isInteger(maxRounds) || maxRounds < 1 || maxRounds > allowedMax) {
+    throw new Error(
+      `workflow maxRounds must be between 1 and ${allowedMax} for ${input.mode}`
+    );
+  }
+  return {
+    mode: input.mode,
+    maxRounds,
+    stopCondition: boundedRequiredText(input.stopCondition, "workflow stopCondition", 160),
+    expectedOutputs: normalizeExpectedOutputs(input.expectedOutputs),
+    summary:
+      input.summary === undefined
+        ? defaultWorkflowInput(input.mode).summary
+        : boundedRequiredText(input.summary, "workflow summary", 160)
+  };
+}
+
+function normalizeExpectedOutputs(input: unknown): string[] {
+  if (!Array.isArray(input) || input.length === 0 || input.length > 8) {
+    throw new Error("workflow expectedOutputs must contain 1 to 8 entries");
+  }
+  return input.map((entry) =>
+    boundedRequiredText(entry, "workflow expectedOutputs", 80)
+  );
+}
+
+function boundedRequiredText(
+  input: unknown,
+  label: string,
+  maxLength: number
+): string {
+  if (typeof input !== "string" || input.trim().length === 0) {
+    throw new Error(`${label} is required`);
+  }
+  const trimmed = input.trim();
+  if (trimmed.length > maxLength) {
+    throw new Error(`${label} must be ${maxLength} characters or fewer`);
+  }
+  return trimmed;
+}
+
+function isCollaborationWorkflowMode(
+  value: unknown
+): value is CollaborationWorkflowMode {
+  return (
+    typeof value === "string" &&
+    workflowModeSet.has(value as CollaborationWorkflowMode)
+  );
+}
+
+function createWorkflowState(input: {
+  workflowId: string;
+  workflow: CollaborationWorkflowInput;
+  taskId: string;
+  threadId: string;
+  sourceMessageId: string;
+  assignments: WorkgroupTaskAssignmentMetadata[];
+  createdAt: string;
+  updatedAt: string;
+}): CollaborationWorkflowState {
+  const participants = workflowParticipants(input.assignments);
+  const hasExecutableParticipants = participants.some(
+    (participant) => participant.executable
+  );
+  return {
+    workflowId: input.workflowId,
+    mode: input.workflow.mode,
+    status: hasExecutableParticipants ? "active" : "completed",
+    taskId: input.taskId,
+    threadId: input.threadId,
+    sourceMessageId: input.sourceMessageId,
+    maxRounds: input.workflow.maxRounds,
+    currentRound: 1,
+    stopCondition: input.workflow.stopCondition,
+    expectedOutputs: input.workflow.expectedOutputs,
+    summary: input.workflow.summary ?? defaultWorkflowInput(input.workflow.mode).summary ?? input.workflow.mode,
+    participants,
+    createdAt: input.createdAt,
+    updatedAt: input.updatedAt,
+    completedAt: hasExecutableParticipants ? undefined : input.updatedAt
+  };
+}
+
+function refreshWorkflowState(
+  state: CollaborationWorkflowState,
+  assignments: WorkgroupTaskAssignmentMetadata[],
+  updatedAt: string
+): CollaborationWorkflowState {
+  const participants = workflowParticipants(assignments);
+  const completed = participants.every((participant) =>
+    workflowParticipantIsTerminal(participant)
+  );
+  return {
+    ...state,
+    status: completed ? "completed" : "active",
+    participants,
+    updatedAt,
+    completedAt: completed ? updatedAt : undefined
+  };
+}
+
+function completeWorkflowState(
+  state: CollaborationWorkflowState,
+  updatedAt: string
+): CollaborationWorkflowState {
+  return {
+    ...state,
+    status: "completed",
+    currentRound: Math.min(state.maxRounds, Math.max(1, state.currentRound)),
+    updatedAt,
+    completedAt: state.completedAt ?? updatedAt
+  };
+}
+
+function workflowParticipants(
+  assignments: WorkgroupTaskAssignmentMetadata[]
+): CollaborationWorkflowParticipant[] {
+  return assignments.map((assignment) => ({
+    assignmentId: assignment.assignmentId,
+    label: assignment.roleHandle ? `@${assignment.roleHandle}` : assignment.displayName,
+    assignmentRole: assignment.assignmentRole,
+    agentId: assignment.agentId,
+    roleHandle: assignment.roleHandle,
+    executorKind: assignment.executorKind,
+    executable: assignment.executable,
+    runId: assignment.runId,
+    status: assignment.status
+  }));
+}
+
+function workflowHasExecutableParticipants(
+  state: Pick<CollaborationWorkflowState, "participants">
+): boolean {
+  return state.participants.some((participant) => participant.executable);
+}
+
+function workflowParticipantIsTerminal(
+  participant: CollaborationWorkflowParticipant
+): boolean {
+  if (!participant.executable) {
+    return true;
+  }
+  return (
+    participant.status === "completed" ||
+    participant.status === "failed" ||
+    participant.status === "cancelled" ||
+    participant.status === "skipped"
+  );
+}
+
+function workflowStartKind(
+  mode: CollaborationWorkflowMode
+): Extract<
+  TimelineEventKind,
+  "workflow_handoff" | "workflow_review_requested"
+> {
+  return mode === "handoff" ? "workflow_handoff" : "workflow_review_requested";
+}
+
+function workflowStartTitle(mode: CollaborationWorkflowMode): string {
+  if (mode === "handoff") {
+    return "Handoff started";
+  }
+  if (mode === "panel_discussion") {
+    return "Panel discussion started";
+  }
+  return "Review requested";
+}
+
+function workflowStartSummary(state: CollaborationWorkflowState): string {
+  return `${workflowModeLabel(state.mode)} started with ${state.participants.length} participant(s), max ${state.maxRounds} round(s), stop: ${state.stopCondition}.`;
+}
+
+function workflowCompletionSummary(state: CollaborationWorkflowState): string {
+  return `${workflowModeLabel(state.mode)} completed after ${state.currentRound}/${state.maxRounds} round(s).`;
+}
+
+function workflowModeLabel(mode: CollaborationWorkflowMode): string {
+  if (mode === "handoff") {
+    return "Handoff";
+  }
+  if (mode === "panel_discussion") {
+    return "Panel discussion";
+  }
+  return "Review loop";
+}
+
+function workflowChips(
+  state: CollaborationWorkflowState
+): TimelineEventMetadata["chips"] {
+  return [
+    {
+      kind: workflowStartKind(state.mode),
+      label: workflowModeLabel(state.mode),
+      tone: "accent"
+    },
+    {
+      kind: "system_event",
+      label: `rounds ${state.currentRound}/${state.maxRounds}`,
+      tone: state.status === "completed" ? "success" : "warning"
+    },
+    {
+      kind: "system_event",
+      label: state.stopCondition,
+      tone: "neutral"
+    },
+    ...state.expectedOutputs.slice(0, 3).map((output) => ({
+      kind: "artifact_created" as const,
+      label: output,
+      tone: "neutral" as const
+    }))
+  ];
+}
+
+function timelineEvent(input: {
+  kind: TimelineEventKind;
+  actor: TimelineEventMetadata["actor"];
+  title?: string;
+  summary?: string;
+  status?: string;
+  tone?: TimelineEventMetadata["tone"];
+  taskId?: string;
+  runId?: string;
+  workflowId?: string;
+  assignmentId?: string;
+  assignmentIds?: string[];
+  chips?: TimelineEventMetadata["chips"];
+}): TimelineEventMetadata {
+  return {
+    kind: input.kind,
+    actor: input.actor,
+    title: boundedTimelineText(input.title, 120),
+    summary: boundedTimelineText(input.summary, 240),
+    status: boundedTimelineText(input.status, 48),
+    tone: input.tone,
+    linkedIds: {
+      taskId: boundedTimelineText(input.taskId, 120),
+      runId: boundedTimelineText(input.runId, 120),
+      workflowId: boundedTimelineText(input.workflowId, 120),
+      assignmentId: boundedTimelineText(input.assignmentId, 120),
+      assignmentIds: input.assignmentIds?.slice(0, 12).map((id) => id.slice(0, 120))
+    },
+    chips: input.chips?.slice(0, 10).map((chip) => ({
+      kind: chip.kind,
+      label: boundedTimelineText(chip.label, 80) ?? "",
+      tone: chip.tone,
+      tab: chip.tab
+    }))
+  };
+}
+
+function metadataTimelineEvent(
+  metadata: ConversationMessage["metadata"]
+): TimelineEventMetadata | undefined {
+  const value = metadata?.timelineEvent;
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+  const event = value as TimelineEventMetadata;
+  if (
+    typeof event.kind !== "string" ||
+    typeof event.actor !== "string"
+  ) {
+    return undefined;
+  }
+  return event;
+}
+
+function terminalRunTimelineKind(status: RunStatus): TimelineEventKind {
+  if (status === "failed") {
+    return "run_failed";
+  }
+  if (status === "cancelled") {
+    return "run_cancelled";
+  }
+  return "run_completed";
+}
+
+function terminalRunTitle(
+  message: ConversationMessage,
+  status: RunStatus
+): string {
+  const assignment = metadataAssignment(message.metadata);
+  const actor = assignment?.roleHandle
+    ? `@${assignment.roleHandle}`
+    : message.agentKind
+      ? `@${toAgentId(message.agentKind)}`
+      : "Run";
+  if (status === "failed") {
+    return `${actor} run failed`;
+  }
+  if (status === "cancelled") {
+    return `${actor} run cancelled`;
+  }
+  return `${actor} run completed`;
+}
+
+function isTerminalRunTimelineKind(
+  kind: TimelineEventKind | undefined
+): boolean {
+  return (
+    kind === "run_completed" ||
+    kind === "run_failed" ||
+    kind === "run_cancelled"
+  );
+}
+
+function terminalStatusTone(
+  status: RunStatus
+): NonNullable<TimelineEventMetadata["tone"]> {
+  if (status === "completed") {
+    return "success";
+  }
+  if (status === "failed" || status === "cancelled") {
+    return "danger";
+  }
+  return "warning";
+}
+
+function boundedTimelineText(
+  value: string | undefined,
+  maxLength: number
+): string | undefined {
+  const trimmed = value?.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+  return trimmed.length > maxLength
+    ? `${trimmed.slice(0, Math.max(0, maxLength - 1))}...`
+    : trimmed;
+}
+
+function roomMetadataForThread(thread: ConversationThread): RoomMetadata {
+  const metadata = thread.metadata ?? {};
+  const roomType =
+    parseRoomType(metadata.roomType) ??
+    (metadata.legacyRunImport === true ? "legacy" : "custom");
+  return {
+    roomType,
+    roomHandle:
+      normalizeRoomHandle(
+        typeof metadata.roomHandle === "string" ? metadata.roomHandle : thread.title
+      ) ??
+      normalizeRoomHandle(thread.id) ??
+      "room",
+    description:
+      typeof metadata.description === "string" && metadata.description.trim()
+        ? metadata.description.trim()
+        : undefined,
+    pinned: metadata.pinned === true
+  };
+}
+
+function parseRoomType(value: unknown): RoomType | undefined {
+  if (value === "default" || value === "custom" || value === "legacy") {
+    return value;
+  }
+  return undefined;
+}
+
+function normalizeRoomHandle(value: string): string | undefined {
+  const normalized = value
+    .trim()
+    .replace(/^#+/, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 48);
+  return normalized.length > 0 ? normalized : undefined;
+}
+
+function isDefaultRoom(thread: ConversationThread, handle: string): boolean {
+  const metadata = thread.metadata ?? {};
+  return metadata.roomType === "default" && metadata.roomHandle === handle;
+}
+
+function compareThreadSummaries(
+  left: ThreadSummary,
+  right: ThreadSummary
+): number {
+  const leftProject = left.projectId ?? "";
+  const rightProject = right.projectId ?? "";
+  if (leftProject !== rightProject) {
+    return leftProject.localeCompare(rightProject);
+  }
+  const leftPinned = left.pinned === true ? 0 : 1;
+  const rightPinned = right.pinned === true ? 0 : 1;
+  if (leftPinned !== rightPinned) {
+    return leftPinned - rightPinned;
+  }
+  const leftOrder = defaultRoomOrder.get(left.roomHandle ?? "") ?? 1000;
+  const rightOrder = defaultRoomOrder.get(right.roomHandle ?? "") ?? 1000;
+  if (leftOrder !== rightOrder) {
+    return leftOrder - rightOrder;
+  }
+  return right.updatedAt.localeCompare(left.updatedAt);
+}
+
 function toThreadDetail(
   thread: ConversationThread,
   messages: ConversationMessage[],
@@ -728,14 +2165,36 @@ function toThreadDetail(
   const threadMessages = messages
     .map((message) => toThreadMessage(message, runStatusById))
     .filter((message): message is ThreadMessage => message !== undefined);
+  const room = roomMetadataForThread(thread);
   return {
     id: thread.id,
     title: thread.title,
     projectId: thread.projectId,
+    roomType: room.roomType,
+    roomHandle: room.roomHandle,
+    description: room.description,
+    pinned: room.pinned,
     createdAt: thread.createdAt,
     updatedAt: latestUpdatedAt(thread, messages),
     messages: threadMessages
   };
+}
+
+function roleContextReferences(role?: WorkgroupRoleRunMetadata): string[] {
+  if (!role) {
+    return [];
+  }
+  return [
+    `workgroup_role: @${role.roleHandle} (${role.displayName})`,
+    `role_executor: ${role.executorKind}${role.adapterKind ? `/${role.adapterKind}` : ""}`,
+    `role_persona: ${role.persona}`,
+    `role_instructions: ${role.defaultInstructions}`,
+    `role_permissions: ${role.permissions.join(", ") || "none"}`,
+    `role_context_policy: ${role.contextPolicy.scope}; approved_memory=${String(
+      role.contextPolicy.includeApprovedMemory
+    )}; thread_summary=${String(role.contextPolicy.includeThreadSummary)}`,
+    `role_approval_policy: ${role.approvalPolicy.summary}`
+  ];
 }
 
 function toThreadSummary(thread: ThreadDetail): ThreadSummary {
@@ -747,6 +2206,10 @@ function toThreadSummary(thread: ThreadDetail): ThreadSummary {
     id: thread.id,
     title: thread.title,
     projectId: thread.projectId,
+    roomType: thread.roomType,
+    roomHandle: thread.roomHandle,
+    description: thread.description,
+    pinned: thread.pinned,
     createdAt: thread.createdAt,
     updatedAt: thread.updatedAt,
     lastMessagePreview: lastMessage
@@ -785,6 +2248,8 @@ function toUserMessage(message: ConversationMessage): UserMessage {
     type: "user",
     text: message.content,
     mentions: metadataAgents(message.metadata),
+    roleMentions: metadataRoleMentions(message.metadata),
+    timelineEvent: metadataTimelineEvent(message.metadata),
     createdAt: message.createdAt
   };
 }
@@ -805,6 +2270,10 @@ function toAgentRunMessage(
     status:
       runStatusById.get(message.runId) ??
       toDesktopRunStatus(message.status ?? "queued"),
+    taskId: metadataString(message.metadata, "taskId"),
+    taskTitle: metadataString(message.metadata, "taskTitle"),
+    assignment: metadataAssignment(message.metadata),
+    timelineEvent: metadataTimelineEvent(message.metadata),
     createdAt: message.createdAt
   };
 }
@@ -818,6 +2287,7 @@ function toAssistantMessage(message: ConversationMessage): AssistantMessage {
     agentId: message.agentKind ? toAgentId(message.agentKind) : undefined,
     runId: message.runId,
     status: message.status ? toDesktopRunStatus(message.status) : undefined,
+    timelineEvent: metadataTimelineEvent(message.metadata),
     createdAt: message.createdAt
   };
 }
@@ -828,8 +2298,56 @@ function toSystemMessage(message: ConversationMessage): SystemMessage {
     threadId: message.threadId,
     type: "system",
     text: message.content,
+    metadata: message.metadata,
+    timelineEvent: metadataTimelineEvent(message.metadata),
     createdAt: message.createdAt
   };
+}
+
+function metadataString(
+  metadata: ConversationMessage["metadata"],
+  key: string
+): string | undefined {
+  const value = metadata?.[key];
+  return typeof value === "string" && value.trim().length > 0 ? value : undefined;
+}
+
+function metadataAssignment(
+  metadata: ConversationMessage["metadata"]
+): WorkgroupTaskAssignmentMetadata | undefined {
+  const value = metadata?.assignment;
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+  const assignment = value as WorkgroupTaskAssignmentMetadata;
+  if (
+    typeof assignment.assignmentId !== "string" ||
+    typeof assignment.taskId !== "string" ||
+    typeof assignment.displayName !== "string" ||
+    typeof assignment.executorKind !== "string"
+  ) {
+    return undefined;
+  }
+  return assignment;
+}
+
+function metadataWorkflowState(metadata: JsonObject | undefined): CollaborationWorkflowState | undefined {
+  const value = metadata?.workflowState;
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+  const state = value as CollaborationWorkflowState;
+  if (
+    typeof state.workflowId !== "string" ||
+    !isCollaborationWorkflowMode(state.mode) ||
+    typeof state.taskId !== "string" ||
+    typeof state.threadId !== "string" ||
+    typeof state.maxRounds !== "number" ||
+    !Array.isArray(state.participants)
+  ) {
+    return undefined;
+  }
+  return state;
 }
 
 function latestUpdatedAt(
@@ -862,6 +2380,23 @@ function metadataAgents(metadata: ConversationMessage["metadata"]): AgentId[] {
   return uniqueAgents(
     mentions.filter((mention): mention is AgentId => isAgentId(mention))
   );
+}
+
+function metadataRoleMentions(
+  metadata: ConversationMessage["metadata"]
+): WorkgroupRoleRunMetadata[] | undefined {
+  const roleMentions = metadata?.roleMentions;
+  if (!Array.isArray(roleMentions)) {
+    return undefined;
+  }
+  const parsed = roleMentions.filter(
+    (mention): mention is WorkgroupRoleRunMetadata =>
+      typeof mention === "object" &&
+      mention !== null &&
+      typeof (mention as WorkgroupRoleRunMetadata).roleHandle === "string" &&
+      typeof (mention as WorkgroupRoleRunMetadata).executorKind === "string"
+  );
+  return parsed.length > 0 ? parsed : undefined;
 }
 
 function isAgentId(value: unknown): value is AgentId {

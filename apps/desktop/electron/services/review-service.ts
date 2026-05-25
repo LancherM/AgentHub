@@ -3,6 +3,7 @@ import path from "node:path";
 import {
   validateRunArtifact,
   type MemoryItemRepository,
+  type RunArtifact,
   type RunArtifactRepository,
   type RunEvent as CoreRunEvent,
   type RiskReport as CoreRiskReport,
@@ -22,6 +23,8 @@ import type {
   AgentId,
   DiffSummary,
   HandoffCopyKind,
+  ReviewArtifact,
+  ReviewContext,
   ReviewHandoff,
   ReviewHandoffActionResult,
   ReviewStatus,
@@ -40,11 +43,15 @@ import type { MemoryService } from "./memory-service";
 import type { DesktopServiceContext } from "./project-service";
 
 const REVIEW_DECISION_ARTIFACT_KIND = "review_decision";
+const CONVERSATION_BRIEF_ARTIFACT_KIND = "conversation_brief";
+const MAX_ARTIFACT_PREVIEW_CHARS = 4_000;
 const MAX_LOG_ROWS = 1_000;
 const MAX_LOG_MESSAGE_CHARS = 12_000;
 
 export interface ReviewService {
   getSummary(runId: string): Promise<ReviewSummary>;
+  getContext(runId: string): Promise<ReviewContext>;
+  getArtifacts(runId: string): Promise<ReviewArtifact[]>;
   getDiff(runId: string): Promise<DiffSummary>;
   getRisk(runId: string): Promise<RiskReport>;
   getVerification(runId: string): Promise<VerificationReport>;
@@ -152,6 +159,45 @@ class RepositoryReviewService implements ReviewService {
   async getDiff(runId: string): Promise<DiffSummary> {
     await this.requireRunAndTask(runId);
     return this.dependencies.diffService.getDiff(runId);
+  }
+
+  async getContext(runId: string): Promise<ReviewContext> {
+    await this.requireRunAndTask(runId);
+    const artifact = await this.artifacts.getLatestByRunIdAndKind(
+      runId,
+      CONVERSATION_BRIEF_ARTIFACT_KIND
+    );
+    if (!artifact) {
+      return {
+        runId,
+        available: false,
+        message: "No persisted conversation brief is available for this run."
+      };
+    }
+    return {
+      runId,
+      available: true,
+      content: artifact.content,
+      artifactId: artifact.id,
+      createdAt: artifact.createdAt,
+      message: "Conversation brief captured for runtime injection."
+    };
+  }
+
+  async getArtifacts(runId: string): Promise<ReviewArtifact[]> {
+    const { run, task } = await this.requireRunAndTask(runId);
+    const [artifacts, metadata] = await Promise.all([
+      this.artifacts.listByRunId(runId),
+      this.metadata.get(runId)
+    ]);
+    return artifacts.map((artifact) =>
+      toReviewArtifact({
+        artifact,
+        run,
+        task,
+        metadata
+      })
+    );
   }
 
   async getRisk(runId: string): Promise<RiskReport> {
@@ -420,6 +466,235 @@ class RepositoryReviewService implements ReviewService {
     }
     return { reviewStatus: "pending" };
   }
+}
+
+function toReviewArtifact(input: {
+  artifact: RunArtifact;
+  run: TaskRun;
+  task: Task;
+  metadata: RunMetadata | undefined;
+}): ReviewArtifact {
+  const artifactMetadata = input.artifact.metadata as JsonObject;
+  const preview = reviewArtifactPreview(input.artifact);
+  const threadId =
+    stringMetadata(artifactMetadata, "threadId") ??
+    stringMetadata(artifactMetadata, "thread_id") ??
+    parseArtifactLine(input.artifact.content, "thread_id");
+  const createdBy =
+    stringMetadata(artifactMetadata, "createdBy") ??
+    roleHandle(input.metadata) ??
+    `@${toAgentId(input.run.agentKind)}`;
+  return {
+    id: input.artifact.id,
+    runId: input.run.id,
+    taskId: input.task.id,
+    kind: input.artifact.kind,
+    artifactType: artifactType(input.artifact.kind),
+    title: artifactTitle(input.artifact, input.task),
+    sourceRunId: input.run.id,
+    sourceTaskId: input.task.id,
+    threadId,
+    createdBy,
+    summary: artifactSummary(input.artifact),
+    createdAt: input.artifact.createdAt,
+    availability: preview.truncated ? "bounded" : "local",
+    contentPreview: preview.content,
+    contentCharacters: input.artifact.content.length,
+    previewCharacters: preview.content.length,
+    truncated: preview.truncated
+  };
+}
+
+function reviewArtifactPreview(artifact: RunArtifact): {
+  content: string;
+  truncated: boolean;
+} {
+  if (artifact.kind !== "git_diff") {
+    return boundedArtifactPreview(artifact.content);
+  }
+  const sensitivePaths = sensitivePatchPaths(
+    artifact.content,
+    artifactChangedPaths(artifact.metadata as JsonObject)
+  );
+  if (sensitivePaths.length > 0) {
+    return {
+      content: `Patch redacted because sensitive file path changed: ${sensitivePaths.join(", ")}`,
+      truncated: false
+    };
+  }
+  return boundedArtifactPreview(artifact.content);
+}
+
+function boundedArtifactPreview(content: string): {
+  content: string;
+  truncated: boolean;
+} {
+  if (content.length <= MAX_ARTIFACT_PREVIEW_CHARS) {
+    return { content, truncated: false };
+  }
+  return {
+    content: `${content.slice(0, MAX_ARTIFACT_PREVIEW_CHARS)}\n[Artifact preview truncated after ${MAX_ARTIFACT_PREVIEW_CHARS} characters.]`,
+    truncated: true
+  };
+}
+
+function artifactChangedPaths(metadata: JsonObject): string[] {
+  const changedFiles = metadata.changedFiles;
+  if (!Array.isArray(changedFiles)) {
+    return [];
+  }
+  return changedFiles.flatMap((entry) => {
+    if (typeof entry === "string") {
+      return [entry];
+    }
+    if (!entry || typeof entry !== "object") {
+      return [];
+    }
+    const filePath = (entry as Record<string, unknown>).path;
+    return typeof filePath === "string" ? [filePath] : [];
+  });
+}
+
+function sensitivePatchPaths(patch: string, changedPaths: string[]): string[] {
+  const paths = new Set<string>();
+  for (const filePath of changedPaths) {
+    if (isSensitiveFilePath(filePath)) {
+      paths.add(filePath);
+    }
+  }
+  for (const line of patch.split(/\r?\n/)) {
+    const filePath = diffPathFromHeader(line);
+    if (filePath && isSensitiveFilePath(filePath)) {
+      paths.add(filePath);
+    }
+  }
+  return [...paths].sort();
+}
+
+function diffPathFromHeader(line: string): string | undefined {
+  const gitMatch = line.match(/^diff --git a\/(.+?) b\/(.+)$/);
+  if (gitMatch) {
+    return gitMatch[2];
+  }
+  const markerMatch = line.match(/^(?:---|\+\+\+) [ab]\/(.+)$/);
+  return markerMatch?.[1];
+}
+
+function isSensitiveFilePath(filePath: string): boolean {
+  return /(^|\/)\.env(?:\.|$)/i.test(filePath) ||
+    /\.pem$/i.test(filePath) ||
+    /\.key$/i.test(filePath) ||
+    /(^|\/)id_rsa$/i.test(filePath) ||
+    /(^|\/)id_ed25519$/i.test(filePath) ||
+    /(^|\/)secrets?\./i.test(filePath) ||
+    /(^|\/)credentials?\./i.test(filePath) ||
+    /(^|\/)tokens?\./i.test(filePath);
+}
+
+function artifactType(kind: string): string {
+  switch (kind) {
+    case CONVERSATION_BRIEF_ARTIFACT_KIND:
+      return "context";
+    case "git_diff":
+      return "diff";
+    case REVIEW_DECISION_ARTIFACT_KIND:
+      return "review";
+    case "task_brief":
+      return "brief";
+    case "code_state_provenance":
+      return "provenance";
+    default:
+      return "artifact";
+  }
+}
+
+function artifactTitle(artifact: RunArtifact, task: Task): string {
+  const metadataTitle = stringMetadata(artifact.metadata as JsonObject, "title");
+  if (metadataTitle) {
+    return metadataTitle;
+  }
+  switch (artifact.kind) {
+    case CONVERSATION_BRIEF_ARTIFACT_KIND:
+      return `Conversation brief for ${task.title}`;
+    case "git_diff":
+      return `Bounded diff for ${task.title}`;
+    case REVIEW_DECISION_ARTIFACT_KIND:
+      return "Review decision record";
+    case "task_brief":
+      return `Task brief for ${task.title}`;
+    case "code_state_provenance":
+      return "Continuation provenance";
+    default:
+      return readableArtifactKind(artifact.kind);
+  }
+}
+
+function artifactSummary(artifact: RunArtifact): string {
+  const metadata = artifact.metadata as JsonObject;
+  const metadataSummary = stringMetadata(metadata, "summary");
+  if (metadataSummary) {
+    return metadataSummary;
+  }
+  if (artifact.kind === "git_diff") {
+    const changedFiles = Array.isArray(metadata.changedFiles)
+      ? metadata.changedFiles.length
+      : undefined;
+    const stat = stringMetadata(metadata, "stat");
+    if (changedFiles !== undefined) {
+      return stat
+        ? `${changedFiles} changed file(s). ${stat}`
+        : `${changedFiles} changed file(s).`;
+    }
+    return "Bounded diff artifact for this run.";
+  }
+  if (artifact.kind === CONVERSATION_BRIEF_ARTIFACT_KIND) {
+    return "Runtime context snapshot injected into the agent.";
+  }
+  if (artifact.kind === REVIEW_DECISION_ARTIFACT_KIND) {
+    return firstContentLine(artifact.content) ?? "Audit-only review decision.";
+  }
+  if (artifact.kind === "task_brief") {
+    return "Generated task brief for this run.";
+  }
+  if (artifact.kind === "code_state_provenance") {
+    return "Continuation source and parent run metadata.";
+  }
+  return firstContentLine(artifact.content) ?? "Local run artifact.";
+}
+
+function readableArtifactKind(kind: string): string {
+  return kind
+    .split("_")
+    .filter((part) => part.length > 0)
+    .map((part) => `${part[0]?.toUpperCase() ?? ""}${part.slice(1)}`)
+    .join(" ");
+}
+
+function firstContentLine(content: string): string | undefined {
+  return content
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .find((line) => line.length > 0);
+}
+
+function stringMetadata(metadata: JsonObject, key: string): string | undefined {
+  const value = metadata[key];
+  return typeof value === "string" && value.trim().length > 0
+    ? value.trim()
+    : undefined;
+}
+
+function parseArtifactLine(content: string, key: string): string | undefined {
+  const prefix = `${key}:`;
+  const line = content
+    .split(/\r?\n/)
+    .find((entry) => entry.trim().startsWith(prefix));
+  const value = line?.trim().slice(prefix.length).trim();
+  return value && value.length > 0 ? value : undefined;
+}
+
+function roleHandle(metadata: RunMetadata | undefined): string | undefined {
+  return metadata?.role?.roleHandle ? `@${metadata.role.roleHandle}` : undefined;
 }
 
 function isMissingVerificationConfigResult(result: {

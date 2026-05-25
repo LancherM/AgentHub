@@ -1,7 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { agentHubApi } from "../../lib/agentHubApi";
+import {
+  runEvidenceTimelineChips,
+  timelinePresentationForMessage
+} from "../../lib/timelineEvents";
 import type {
   AgentRunMessage,
+  ReviewArtifact,
   ReviewSummary,
   RunDetail,
   RunEvent,
@@ -31,6 +36,7 @@ export function AgentRunCard({
   const [events, setEvents] = useState<RunEvent[]>(initialRun?.events ?? []);
   const [status, setStatus] = useState<RunStatus>(initialRun?.status ?? message.status);
   const [reviewSummary, setReviewSummary] = useState<ReviewSummary | undefined>();
+  const [reviewArtifacts, setReviewArtifacts] = useState<ReviewArtifact[]>([]);
   const [expanded, setExpanded] = useState(false);
   const [streamError, setStreamError] = useState<string | undefined>();
   const [cancelError, setCancelError] = useState<string | undefined>();
@@ -40,14 +46,20 @@ export function AgentRunCard({
     setEvents(initialRun?.events ?? []);
     setStatus(initialRun?.status ?? message.status);
     setReviewSummary(undefined);
+    setReviewArtifacts([]);
   }, [initialRun, message.runId, message.status]);
 
-  const loadReviewSummary = useCallback(async (): Promise<void> => {
+  const loadReviewData = useCallback(async (): Promise<void> => {
     try {
-      const summary = await agentHubApi.review.getSummary(message.runId);
+      const [summary, artifacts] = await Promise.all([
+        agentHubApi.review.getSummary(message.runId),
+        agentHubApi.review.getArtifacts(message.runId)
+      ]);
       setReviewSummary(summary);
+      setReviewArtifacts(artifacts);
     } catch {
       setReviewSummary(undefined);
+      setReviewArtifacts([]);
     }
   }, [message.runId]);
 
@@ -60,13 +72,13 @@ export function AgentRunCard({
         setStatus(detail.status);
         onRunUpdated(detail);
         if (options.includeReview) {
-          await loadReviewSummary();
+          await loadReviewData();
         }
       } catch (error) {
         setStreamError(`Failed to load run: ${errorMessage(error)}`);
       }
     },
-    [loadReviewSummary, message.runId, onRunUpdated]
+    [loadReviewData, message.runId, onRunUpdated]
   );
 
   useEffect(() => {
@@ -139,6 +151,18 @@ export function AgentRunCard({
     message.agentId === "fake"
       ? "Local TaskRunner fake run in an isolated worktree. The project root is not modified."
       : `Local TaskRunner run for @${message.agentId} in an isolated worktree. Unavailable CLIs fail with persisted evidence.`;
+  const displayHandle = message.assignment?.roleHandle
+    ? `@${message.assignment.roleHandle}`
+    : `@${message.agentId}`;
+  const executorLabel = message.assignment?.roleHandle
+    ? `via @${message.agentId}`
+    : undefined;
+  const timelineEvent = timelinePresentationForMessage(message, {
+    reviewSummary,
+    reviewArtifacts,
+    eventCount: events.length,
+    status
+  });
 
   async function cancel(): Promise<void> {
     setCancelError(undefined);
@@ -151,7 +175,7 @@ export function AgentRunCard({
 
   return (
     <article
-      className={`agent-run-card ${status} ${expanded ? "expanded" : ""}`}
+      className={`agent-run-card timeline-event ${timelineEvent.tone} ${status} ${expanded ? "expanded" : ""}`}
       onClick={() => setExpanded((current) => !current)}
     >
       <header className="run-card-header">
@@ -160,10 +184,11 @@ export function AgentRunCard({
         </div>
         <div className="run-card-title">
           <div>
-            <strong>@{message.agentId}</strong>
+            <strong>{displayHandle}</strong>
+            <span className="timeline-event-kind">{timelineEvent.title}</span>
             <RunStatusBadge status={status} compact />
           </div>
-          <span>{headerMeta}</span>
+          <span>{executorLabel ? `${executorLabel} · ${headerMeta}` : headerMeta}</span>
         </div>
         <div className="run-card-actions">
           {canCancel ? (
@@ -202,7 +227,7 @@ export function AgentRunCard({
           <button
             onClick={(event) => {
               event.stopPropagation();
-              onOpenInspector(message.runId, "summary");
+              onOpenInspector(message.runId, "brief");
             }}
           >
             View details
@@ -237,9 +262,10 @@ export function AgentRunCard({
       </div>
 
       <footer className="run-card-pills">
-        {reviewPills(reviewSummary, events.length, status).map((pill) => (
+        {reviewPills(reviewSummary, events.length, status, reviewArtifacts).map((pill) => (
           <button
             key={pill.label}
+            className={`timeline-chip-button ${pill.tone ?? "neutral"}`}
             onClick={(event) => {
               event.stopPropagation();
               onOpenInspector(message.runId, pill.tab);
@@ -267,22 +293,10 @@ function latestEventText(events: RunEvent[]): string | undefined {
 function reviewPills(
   summary: ReviewSummary | undefined,
   eventCount: number,
-  status: RunStatus
-): Array<{ label: string; tab: RunInspectorTab }> {
-  const pending = isTerminalRunStatus(status) ? "unknown" : "pending";
-  const diffLabel = summary
-    ? summary.changedFileCount > 0
-      ? `${summary.changedFileCount} files +${summary.additions}/-${summary.deletions}`
-      : "0 files"
-    : "diff pending";
-  return [
-    { label: `Tests ${summary?.verificationStatus ?? pending}`, tab: "tests" },
-    { label: `Risk ${summary?.riskLevel ?? pending}`, tab: "risk" },
-    { label: `Diff ${diffLabel}`, tab: "diff" },
-    { label: "Compare", tab: "compare" },
-    { label: `Memory ${summary?.memoryProposalCount ?? 0}`, tab: "memory" },
-    { label: `${eventCount} logs`, tab: "logs" }
-  ];
+  status: RunStatus,
+  artifacts: ReviewArtifact[]
+): ReturnType<typeof runEvidenceTimelineChips> {
+  return runEvidenceTimelineChips(summary, eventCount, status, artifacts);
 }
 
 function isTerminalRunStatus(status: RunStatus): boolean {

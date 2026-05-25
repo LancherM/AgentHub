@@ -7,11 +7,13 @@ import {
   contextDeliveryModes,
   memoryCategories,
   memoryStatuses,
+  normalizeWorkgroupRoleHandle,
   riskLevels,
   runEventTypes,
   taskRunStatuses,
   taskStatuses,
   verificationStatuses,
+  workgroupExecutorKinds,
   type AgentProfile,
   type ComparisonReport,
   type ConversationMessage,
@@ -31,7 +33,8 @@ import {
   type TaskRun,
   type TaskRunStatus,
   type TaskStatus,
-  type VerificationResult
+  type VerificationResult,
+  type WorkgroupRole
 } from "@agent-hub/shared";
 
 export * from "@agent-hub/shared";
@@ -97,6 +100,7 @@ export function validateTask(input: Task): Task {
   required(input.projectId, "task.projectId", issues);
   required(input.title, "task.title", issues);
   optionalString(input.description, "task.description", issues);
+  optionalObject(input.metadata, "task.metadata", issues);
   enumValue(input.status, taskStatuses, "task.status", issues);
   timestamp(input.createdAt, "task.createdAt", issues);
   timestamp(input.updatedAt, "task.updatedAt", issues);
@@ -306,6 +310,82 @@ export function validateSetting(input: Setting): Setting {
     secretFreeSettingValue(input.value, "setting.value", issues, new WeakSet<object>());
   }
   timestamp(input.updatedAt, "setting.updatedAt", issues);
+  return finish(input, issues);
+}
+
+export function validateWorkgroupRole(input: WorkgroupRole): WorkgroupRole {
+  const issues: string[] = [];
+  required(input.id, "workgroupRole.id", issues);
+  required(input.handle, "workgroupRole.handle", issues);
+  if (input.handle && normalizeWorkgroupRoleHandle(input.handle) !== input.handle) {
+    issues.push("workgroupRole.handle must be lowercase without @");
+  }
+  required(input.displayName, "workgroupRole.displayName", issues);
+  required(input.purpose, "workgroupRole.purpose", issues);
+  required(input.capabilitySummary, "workgroupRole.capabilitySummary", issues);
+  required(input.persona, "workgroupRole.persona", issues);
+  required(input.defaultInstructions, "workgroupRole.defaultInstructions", issues);
+  stringArray(input.permissions, "workgroupRole.permissions", issues);
+  if (typeof input.enabled !== "boolean") {
+    issues.push("workgroupRole.enabled must be a boolean");
+  }
+  optionalString(input.defaultRoom, "workgroupRole.defaultRoom", issues);
+  if (
+    input.tags !== undefined &&
+    (!Array.isArray(input.tags) ||
+      input.tags.some((entry) => typeof entry !== "string"))
+  ) {
+    issues.push("workgroupRole.tags must be an array of strings when provided");
+  }
+  optionalObject(input.metadata, "workgroupRole.metadata", issues);
+  objectValue(input.contextPolicy, "workgroupRole.contextPolicy", issues);
+  if (input.contextPolicy) {
+    required(input.contextPolicy.scope, "workgroupRole.contextPolicy.scope", issues);
+    if (typeof input.contextPolicy.includeApprovedMemory !== "boolean") {
+      issues.push(
+        "workgroupRole.contextPolicy.includeApprovedMemory must be a boolean"
+      );
+    }
+    if (typeof input.contextPolicy.includeThreadSummary !== "boolean") {
+      issues.push(
+        "workgroupRole.contextPolicy.includeThreadSummary must be a boolean"
+      );
+    }
+    stringArray(
+      input.contextPolicy.instructions,
+      "workgroupRole.contextPolicy.instructions",
+      issues
+    );
+  }
+  objectValue(input.approvalPolicy, "workgroupRole.approvalPolicy", issues);
+  if (input.approvalPolicy) {
+    stringArray(
+      input.approvalPolicy.requiredFor,
+      "workgroupRole.approvalPolicy.requiredFor",
+      issues
+    );
+    required(input.approvalPolicy.summary, "workgroupRole.approvalPolicy.summary", issues);
+  }
+  objectValue(input.executor, "workgroupRole.executor", issues);
+  if (input.executor) {
+    enumValue(input.executor.kind, workgroupExecutorKinds, "workgroupRole.executor.kind", issues);
+    if (input.executor.kind === "agent_adapter") {
+      enumValue(
+        input.executor.adapterKind,
+        agentKinds,
+        "workgroupRole.executor.adapterKind",
+        issues
+      );
+      optionalString(input.executor.configRef, "workgroupRole.executor.configRef", issues);
+    } else {
+      optionalString(input.executor.configRef, "workgroupRole.executor.configRef", issues);
+      optionalString(
+        input.executor.unavailableReason,
+        "workgroupRole.executor.unavailableReason",
+        issues
+      );
+    }
+  }
   return finish(input, issues);
 }
 

@@ -1,0 +1,795 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Agent Hub Phase 3 Task Grouping Mockup</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #0f100d;
+        --panel: #151612;
+        --raised: #1c1d18;
+        --soft: #24261f;
+        --line: #34372c;
+        --line-strong: #515940;
+        --text: #f4f0e7;
+        --muted: #aaa48f;
+        --dim: #807b6d;
+        --accent: #d8ff57;
+        --accent-ink: #1d2602;
+        --cyan: #67d8c4;
+        --blue: #6ba6ff;
+        --green: #8be977;
+        --amber: #f5bd5a;
+        --red: #ff7d6b;
+        --plum: #c59bff;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background: var(--bg);
+        color: var(--text);
+        font-family: "Aptos", "SF Pro Text", "Segoe UI", system-ui, sans-serif;
+      }
+
+      .frame {
+        width: 1600px;
+        height: 960px;
+        margin: 0 auto;
+        display: grid;
+        grid-template-rows: 38px 1fr;
+        overflow: hidden;
+        border: 1px solid #22251d;
+        background:
+          linear-gradient(rgba(255, 255, 255, 0.018) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(255, 255, 255, 0.014) 1px, transparent 1px),
+          radial-gradient(circle at 74% 18%, rgba(103, 216, 196, 0.08), transparent 34%),
+          var(--bg);
+        background-size: 32px 32px, 32px 32px, 100% 100%, 100% 100%;
+      }
+
+      .titlebar {
+        display: grid;
+        grid-template-columns: 150px 1fr 210px;
+        align-items: center;
+        border-bottom: 1px solid var(--line);
+        background: #11130f;
+      }
+
+      .traffic {
+        display: flex;
+        gap: 8px;
+        padding-left: 18px;
+      }
+
+      .dot {
+        width: 12px;
+        height: 12px;
+        border-radius: 50%;
+      }
+
+      .dot.red { background: #ff6157; }
+      .dot.yellow { background: #ffbd2e; }
+      .dot.green { background: #28c840; }
+
+      .app-title {
+        text-align: center;
+        color: #d9d7cf;
+        font-size: 15px;
+      }
+
+      .toolbar {
+        display: flex;
+        justify-content: flex-end;
+        gap: 14px;
+        padding-right: 18px;
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      .workspace {
+        min-height: 0;
+        display: grid;
+        grid-template-columns: 320px minmax(0, 1fr);
+      }
+
+      .sidebar {
+        min-height: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+        padding: 18px 14px;
+        border-right: 1px solid var(--line);
+        background: rgba(18, 19, 16, 0.94);
+      }
+
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding-bottom: 8px;
+      }
+
+      .brand-mark {
+        width: 36px;
+        height: 36px;
+        display: grid;
+        place-items: center;
+        border-radius: 8px;
+        background: var(--accent);
+        color: var(--accent-ink);
+        font-size: 12px;
+        font-weight: 900;
+      }
+
+      .brand-title {
+        font-weight: 850;
+      }
+
+      .brand-subtitle,
+      .row-subtitle,
+      .section-label,
+      .task-meta,
+      .small {
+        color: var(--muted);
+      }
+
+      .brand-subtitle,
+      .row-subtitle {
+        overflow: hidden;
+        font-size: 12px;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .section-label {
+        margin-bottom: 8px;
+        font-size: 11px;
+        font-weight: 850;
+        text-transform: uppercase;
+        letter-spacing: 0;
+      }
+
+      .project-card,
+      .room-row,
+      .task-stat,
+      .task-group,
+      .system-event,
+      .message-bubble,
+      .run-row,
+      .composer {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: rgba(255, 255, 255, 0.028);
+      }
+
+      .project-card {
+        display: grid;
+        grid-template-columns: 10px minmax(0, 1fr);
+        gap: 10px;
+        align-items: center;
+        min-height: 52px;
+        padding: 10px;
+        border-color: rgba(216, 255, 87, 0.24);
+        background: rgba(216, 255, 87, 0.055);
+      }
+
+      .project-dot,
+      .room-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: var(--accent);
+      }
+
+      .rooms {
+        min-height: 0;
+        flex: 1;
+        overflow: hidden;
+      }
+
+      .room-list {
+        display: grid;
+        gap: 7px;
+        max-height: 355px;
+        overflow: hidden;
+      }
+
+      .room-row {
+        display: grid;
+        grid-template-columns: 9px minmax(0, 1fr) auto;
+        gap: 9px;
+        padding: 10px;
+        min-height: 58px;
+      }
+
+      .room-row.active {
+        border-color: rgba(216, 255, 87, 0.48);
+        background: rgba(216, 255, 87, 0.08);
+      }
+
+      .room-title,
+      .row-title {
+        overflow: hidden;
+        min-width: 0;
+        font-size: 13px;
+        font-weight: 850;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .room-time {
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .team-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 6px;
+      }
+
+      .role-row {
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        min-width: 0;
+        min-height: 28px;
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .role-mark,
+      .avatar {
+        display: grid;
+        place-items: center;
+        flex: 0 0 auto;
+        border-radius: 8px;
+        color: #0b0c09;
+        font-weight: 900;
+      }
+
+      .role-mark {
+        width: 22px;
+        height: 22px;
+        font-size: 10px;
+      }
+
+      .avatar {
+        width: 34px;
+        height: 34px;
+        font-size: 11px;
+      }
+
+      .blue { background: var(--blue); }
+      .orange { background: #ff9a4c; }
+      .plum { background: var(--plum); }
+      .green { background: var(--green); }
+      .amber { background: var(--amber); }
+      .cyan { background: var(--cyan); }
+
+      .status-grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 6px;
+      }
+
+      .task-stat {
+        padding: 8px;
+      }
+
+      .task-stat span,
+      .task-stat strong {
+        display: block;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .task-stat span {
+        color: var(--dim);
+        font-size: 11px;
+      }
+
+      .task-stat strong {
+        margin-top: 3px;
+        font-size: 15px;
+      }
+
+      .local-status {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        min-height: 28px;
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .settings {
+        width: 100%;
+        min-height: 34px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: rgba(255, 255, 255, 0.028);
+        color: var(--muted);
+      }
+
+      .main {
+        min-width: 0;
+        min-height: 0;
+        display: grid;
+        grid-template-rows: auto minmax(0, 1fr) auto;
+      }
+
+      .room-header {
+        padding: 22px 28px 14px;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+      }
+
+      h1 {
+        margin: 0 0 8px;
+        font-size: 26px;
+        line-height: 1.16;
+      }
+
+      .room-description {
+        margin: 0 0 8px;
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      .context-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .timeline {
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+        width: min(100% - 56px, 1060px);
+        margin: 0 auto;
+        padding: 20px 0 18px;
+        overflow: hidden;
+      }
+
+      .message {
+        display: grid;
+        grid-template-columns: 36px minmax(0, 1fr);
+        gap: 11px;
+        align-items: start;
+      }
+
+      .message-bubble {
+        width: fit-content;
+        max-width: min(760px, 100%);
+        padding: 12px 14px;
+      }
+
+      .message-meta,
+      .task-head,
+      .assignment-row,
+      .run-title,
+      .composer-toolbar,
+      .composer-footer {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+      }
+
+      .message-meta {
+        justify-content: flex-start;
+        margin-bottom: 8px;
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .message-text {
+        margin: 0;
+        color: #e6dfcf;
+        line-height: 1.5;
+      }
+
+      .mention-chip {
+        display: inline-flex;
+        align-items: center;
+        min-height: 24px;
+        padding: 2px 8px;
+        border: 1px solid rgba(216, 255, 87, 0.28);
+        border-radius: 999px;
+        background: rgba(216, 255, 87, 0.11);
+        color: var(--accent);
+        font-size: 12px;
+        font-weight: 850;
+      }
+
+      .system-event {
+        display: grid;
+        gap: 5px;
+        padding: 10px 12px;
+        border-color: rgba(245, 189, 90, 0.42);
+        background: rgba(75, 49, 12, 0.32);
+        color: #ffe2a8;
+        font-size: 13px;
+      }
+
+      .system-event span {
+        color: var(--dim);
+        font-size: 11px;
+      }
+
+      .task-group {
+        overflow: hidden;
+        background:
+          linear-gradient(90deg, rgba(216, 255, 87, 0.08), transparent 30%),
+          rgba(22, 23, 19, 0.94);
+        box-shadow: 0 16px 42px rgba(0, 0, 0, 0.2);
+      }
+
+      .task-head {
+        align-items: flex-start;
+        padding: 14px;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.055);
+      }
+
+      .task-title {
+        display: grid;
+        gap: 5px;
+        min-width: 0;
+      }
+
+      .task-title strong {
+        overflow-wrap: anywhere;
+        font-size: 15px;
+      }
+
+      .task-meta {
+        font-size: 12px;
+      }
+
+      .pill {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 24px;
+        padding: 3px 9px;
+        border-radius: 999px;
+        font-size: 11px;
+        font-weight: 850;
+        text-transform: uppercase;
+      }
+
+      .pill.open {
+        background: rgba(245, 189, 90, 0.16);
+        color: var(--amber);
+      }
+
+      .pill.completed {
+        background: rgba(103, 216, 196, 0.16);
+        color: var(--cyan);
+      }
+
+      .assignments {
+        display: grid;
+        gap: 1px;
+        background: rgba(255, 255, 255, 0.035);
+      }
+
+      .assignment-row,
+      .run-row {
+        background: rgba(16, 17, 13, 0.72);
+        padding: 10px 14px;
+      }
+
+      .assignment-left {
+        display: inline-flex;
+        align-items: center;
+        gap: 9px;
+        min-width: 0;
+      }
+
+      .run-stack {
+        display: grid;
+        gap: 10px;
+        padding: 12px 14px 14px;
+      }
+
+      .run-row {
+        display: grid;
+        gap: 9px;
+        border-color: rgba(103, 216, 196, 0.22);
+        background:
+          linear-gradient(90deg, rgba(103, 216, 196, 0.07), transparent 34%),
+          rgba(17, 25, 24, 0.75);
+      }
+
+      .run-line {
+        margin: 0;
+        color: #eee7d8;
+        font-size: 13px;
+        line-height: 1.45;
+      }
+
+      .run-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 7px;
+      }
+
+      .run-chip {
+        min-height: 24px;
+        padding: 3px 8px;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.02);
+        color: var(--muted);
+        font-size: 11px;
+      }
+
+      .composer {
+        display: grid;
+        gap: 10px;
+        width: min(100% - 56px, 1060px);
+        min-height: 158px;
+        margin: 0 auto 18px;
+        padding: 12px;
+        border-color: rgba(216, 255, 87, 0.62);
+        background: rgba(13, 14, 11, 0.96);
+      }
+
+      .composer-input {
+        min-height: 82px;
+        padding: 13px 0;
+        border-top: 1px solid rgba(255, 255, 255, 0.06);
+        border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+        color: #e6dfcf;
+      }
+
+      .send-button {
+        min-width: 92px;
+        min-height: 36px;
+        border: 0;
+        border-radius: 8px;
+        background: var(--accent);
+        color: var(--accent-ink);
+        font-weight: 900;
+      }
+    </style>
+  </head>
+  <body>
+    <main class="frame">
+      <div class="titlebar">
+        <div class="traffic">
+          <span class="dot red"></span>
+          <span class="dot yellow"></span>
+          <span class="dot green"></span>
+        </div>
+        <div class="app-title">Agent Hub Desktop</div>
+        <div class="toolbar">
+          <span>Search</span>
+          <span>Settings</span>
+          <span>MK</span>
+        </div>
+      </div>
+
+      <section class="workspace">
+        <aside class="sidebar">
+          <div class="brand">
+            <div class="brand-mark">AH</div>
+            <div>
+              <div class="brand-title">Agent Hub</div>
+              <div class="brand-subtitle">Local workgroup</div>
+            </div>
+          </div>
+
+          <section>
+            <div class="section-label">Project</div>
+            <div class="project-card">
+              <span class="project-dot"></span>
+              <div>
+                <div class="row-title">agenthub-core</div>
+                <div class="row-subtitle">/Users/lan/agent-hub</div>
+              </div>
+            </div>
+          </section>
+
+          <section class="rooms">
+            <div class="section-label">Rooms</div>
+            <div class="room-list">
+              <div class="room-row active">
+                <span class="room-dot"></span>
+                <div>
+                  <div class="room-title">#planning</div>
+                  <div class="row-subtitle">Tasks and grouped agent work</div>
+                </div>
+                <span class="room-time">now</span>
+              </div>
+              <div class="room-row">
+                <span class="room-dot" style="background: var(--dim)"></span>
+                <div>
+                  <div class="room-title">#general</div>
+                  <div class="row-subtitle">Project-wide coordination</div>
+                </div>
+                <span class="room-time">12m</span>
+              </div>
+              <div class="room-row">
+                <span class="room-dot" style="background: var(--dim)"></span>
+                <div>
+                  <div class="room-title">#research</div>
+                  <div class="row-subtitle">Source gathering and notes</div>
+                </div>
+                <span class="room-time">1h</span>
+              </div>
+              <div class="room-row">
+                <span class="room-dot" style="background: var(--dim)"></span>
+                <div>
+                  <div class="room-title">#review</div>
+                  <div class="row-subtitle">Checks, risks, and decisions</div>
+                </div>
+                <span class="room-time">2h</span>
+              </div>
+            </div>
+          </section>
+
+          <section>
+            <div class="section-label">Team</div>
+            <div class="team-grid">
+              <div class="role-row"><span class="role-mark blue">R</span><span>@researcher</span></div>
+              <div class="role-row"><span class="role-mark orange">W</span><span>@writer</span></div>
+              <div class="role-row"><span class="role-mark plum">A</span><span>@analyst</span></div>
+              <div class="role-row"><span class="role-mark green">O</span><span>@operator</span></div>
+              <div class="role-row"><span class="role-mark amber">V</span><span>@reviewer</span></div>
+              <div class="role-row"><span class="role-mark blue">E</span><span>@engineer</span></div>
+            </div>
+          </section>
+
+          <section>
+            <div class="section-label">Task status</div>
+            <div class="status-grid">
+              <div class="task-stat"><span>Open</span><strong>4</strong></div>
+              <div class="task-stat"><span>Running</span><strong>2</strong></div>
+              <div class="task-stat"><span>Runs</span><strong>11</strong></div>
+            </div>
+          </section>
+
+          <div class="local-status">
+            <span class="project-dot"></span>
+            <span>Local-first</span>
+          </div>
+          <button class="settings">Settings</button>
+        </aside>
+
+        <section class="main">
+          <header class="room-header">
+            <h1>#planning</h1>
+            <p class="room-description">Plans, milestones, priorities, and scoped work.</p>
+            <div class="context-row">
+              <span>Project: agenthub-core</span>
+              <span>Room: default</span>
+              <span>Context: runtime injection by default</span>
+            </div>
+          </header>
+
+          <div class="timeline">
+            <article class="message">
+              <div class="avatar blue">MK</div>
+              <div class="message-bubble">
+                <div class="message-meta">
+                  <strong>You</strong>
+                  <span>09:00</span>
+                  <span class="mention-chip">@researcher</span>
+                  <span class="mention-chip">@analyst</span>
+                  <span class="mention-chip">@writer</span>
+                </div>
+                <p class="message-text">Build a Q3 launch brief from recent notes, risks, and accepted memory.</p>
+              </div>
+            </article>
+
+            <div class="system-event">
+              <span>Task created</span>
+              <strong>task_42 Q3 launch brief</strong>
+            </div>
+
+            <section class="task-group">
+              <header class="task-head">
+                <div class="task-title">
+                  <strong>Q3 launch brief</strong>
+                  <span class="task-meta">task_42 · #planning · created from one room instruction</span>
+                </div>
+                <span class="pill open">running</span>
+              </header>
+
+              <div class="assignments">
+                <div class="assignment-row">
+                  <div class="assignment-left">
+                    <span class="avatar blue">R</span>
+                    <strong>@researcher</strong>
+                    <span class="small">agent_adapter/fake</span>
+                  </div>
+                  <span class="pill completed">completed</span>
+                </div>
+                <div class="assignment-row">
+                  <div class="assignment-left">
+                    <span class="avatar plum">A</span>
+                    <strong>@analyst</strong>
+                    <span class="small">agent_adapter/fake</span>
+                  </div>
+                  <span class="pill open">running</span>
+                </div>
+                <div class="assignment-row">
+                  <div class="assignment-left">
+                    <span class="avatar orange">W</span>
+                    <strong>@writer</strong>
+                    <span class="small">agent_adapter/fake</span>
+                  </div>
+                  <span class="pill open">queued</span>
+                </div>
+              </div>
+
+              <div class="run-stack">
+                <div class="run-row">
+                  <div class="run-title">
+                    <strong>@researcher run</strong>
+                    <span class="pill completed">completed</span>
+                  </div>
+                  <p class="run-line">Source review completed. Market notes and interview summaries are linked.</p>
+                  <div class="run-actions">
+                    <span class="run-chip">Tests unknown</span>
+                    <span class="run-chip">Risk low</span>
+                    <span class="run-chip">9 logs</span>
+                  </div>
+                </div>
+                <div class="run-row">
+                  <div class="run-title">
+                    <strong>@analyst run</strong>
+                    <span class="pill open">running</span>
+                  </div>
+                  <p class="run-line">Comparing Q3 priorities against recent risk notes and accepted memory.</p>
+                  <div class="run-actions">
+                    <span class="run-chip">Continue</span>
+                    <span class="run-chip">View details</span>
+                    <span class="run-chip">Compare</span>
+                  </div>
+                </div>
+                <div class="run-row">
+                  <div class="run-title">
+                    <strong>@writer run</strong>
+                    <span class="pill open">queued</span>
+                  </div>
+                  <p class="run-line">Waiting for shared task context and prior assignment outputs.</p>
+                </div>
+              </div>
+            </section>
+
+            <div class="system-event">
+              <span>Participants assigned</span>
+              <strong>@researcher, @analyst, and @writer linked to task_42</strong>
+            </div>
+          </div>
+
+          <form class="composer">
+            <div class="composer-toolbar">
+              <span class="mention-chip">@fake</span>
+              <span class="small">Context: auto</span>
+            </div>
+            <div class="composer-input">@researcher @analyst @writer summarize launch risks</div>
+            <div class="composer-footer">
+              <span>Creates one shared task with grouped assignments</span>
+              <button class="send-button">Run</button>
+            </div>
+          </form>
+        </section>
+      </section>
+    </main>
+  </body>
+</html>

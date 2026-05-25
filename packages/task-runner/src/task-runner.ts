@@ -106,6 +106,7 @@ export interface RunTaskInput {
   taskId?: string;
   projectId?: string;
   title?: string;
+  taskStatusMode?: "single_run" | "shared_task";
   deliveryMode?: RunContextDeliveryMode;
   contextStoreRoot?: string;
   runRoot?: string;
@@ -328,10 +329,10 @@ export class TaskRunner {
     });
     let currentTask = await this.taskRepository.get(task.id);
     currentTask ??= await this.taskRepository.create(task);
-    currentTask = await this.taskRepository.updateStatus(
-      currentTask.id,
-      "running",
-      this.clock.now()
+    currentTask = await this.markTaskRunning(
+      currentTask,
+      this.clock.now(),
+      input.taskStatusMode ?? "single_run"
     );
 
     const contextBundle = await this.contextCompiler.compile({
@@ -403,14 +404,15 @@ export class TaskRunner {
         "cancelled",
         cancelledAt
       );
-      const reopenedTask = await this.taskRepository.updateStatus(
+      const updatedTask = await this.updateTaskStatusAfterRun(
         currentTask.id,
-        "open",
-        cancelledAt
+        "cancelled",
+        cancelledAt,
+        input.taskStatusMode ?? "single_run"
       );
       return this.result({
         ok: false,
-        task: reopenedTask,
+        task: updatedTask,
         run: cancelledRun,
         events,
         status: "cancelled",
@@ -443,14 +445,15 @@ export class TaskRunner {
         "failed",
         failedAt
       );
-      const reopenedTask = await this.taskRepository.updateStatus(
+      const updatedTask = await this.updateTaskStatusAfterRun(
         currentTask.id,
-        "open",
-        failedAt
+        "failed",
+        failedAt,
+        input.taskStatusMode ?? "single_run"
       );
       return this.result({
         ok: false,
-        task: reopenedTask,
+        task: updatedTask,
         run: failedRun,
         events,
         status: "failed",
@@ -474,6 +477,8 @@ export class TaskRunner {
         agentKind: parsed.agentKind,
         branchName: continuation
           ? continuationBranchName(task.id, parsed.agentKind, continuation.parentRunId, run.id)
+          : input.taskStatusMode === "shared_task"
+            ? sharedTaskBranchName(task.id, parsed.agentKind, run.id)
           : undefined,
         startPoint: continuation?.sourceHead,
         cleanupPolicy: input.workspaceCleanupPolicy ?? "never",
@@ -500,14 +505,15 @@ export class TaskRunner {
         "failed",
         failedAt
       );
-      const reopenedTask = await this.taskRepository.updateStatus(
+      const updatedTask = await this.updateTaskStatusAfterRun(
         currentTask.id,
-        "open",
-        failedAt
+        "failed",
+        failedAt,
+        input.taskStatusMode ?? "single_run"
       );
       return this.result({
         ok: false,
-        task: reopenedTask,
+        task: updatedTask,
         run: failedRun,
         events,
         status: "failed",
@@ -908,10 +914,11 @@ export class TaskRunner {
       status,
       completedAt
     );
-    const updatedTask = await this.taskRepository.updateStatus(
+    const updatedTask = await this.updateTaskStatusAfterRun(
       currentTask.id,
-      status === "succeeded" ? "completed" : "open",
-      completedAt
+      status,
+      completedAt,
+      input.taskStatusMode ?? "single_run"
     );
     if (status === "succeeded") {
       try {
@@ -956,8 +963,70 @@ export class TaskRunner {
       error:
         status === "failed"
           ? finalizationError ?? failureMessage ?? "run failed"
-          : undefined
+      : undefined
     });
+  }
+
+  private async markTaskRunning(
+    task: Task,
+    updatedAt: string,
+    mode: NonNullable<RunTaskInput["taskStatusMode"]>
+  ): Promise<Task> {
+    if (mode === "shared_task" && task.status === "running") {
+      return task;
+    }
+    return this.taskRepository.updateStatus(task.id, "running", updatedAt);
+  }
+
+  private async updateTaskStatusAfterRun(
+    taskId: string,
+    runStatus: RunStatus,
+    updatedAt: string,
+    mode: NonNullable<RunTaskInput["taskStatusMode"]>
+  ): Promise<Task> {
+    const task = await this.taskRepository.get(taskId);
+    if (!task) {
+      throw new TaskRunnerError(`task ${taskId} not found`);
+    }
+    const nextStatus =
+      mode === "shared_task"
+        ? await this.sharedTaskStatus(taskId)
+        : runStatus === "succeeded"
+          ? "completed"
+          : "open";
+    if (task.status === nextStatus) {
+      return task;
+    }
+    return this.taskRepository.updateStatus(task.id, nextStatus, updatedAt);
+  }
+
+  private async sharedTaskStatus(taskId: string): Promise<Task["status"]> {
+    const task = await this.taskRepository.get(taskId);
+    const runs = await this.taskRunRepository.listByTaskId(taskId);
+    if (runs.some((run) => run.status === "queued" || run.status === "running")) {
+      return "running";
+    }
+    const expectedRunCount = metadataNumber(
+      task?.metadata,
+      "executableAssignmentCount"
+    );
+    if (expectedRunCount !== undefined && runs.length < expectedRunCount) {
+      const assignments = executableAssignmentStatuses(task?.metadata);
+      if (
+        assignments.length === expectedRunCount &&
+        assignments.every(isTerminalAssignmentStatus)
+      ) {
+        return runs.length === expectedRunCount &&
+          runs.every((run) => run.status === "succeeded")
+          ? "completed"
+          : "open";
+      }
+      return "running";
+    }
+    if (runs.length > 0 && runs.every((run) => run.status === "succeeded")) {
+      return "completed";
+    }
+    return "open";
   }
 
   private async resolveContinuation(
@@ -1177,6 +1246,41 @@ function compactMetadata(metadata: JsonObject): JsonObject {
   return Object.fromEntries(
     Object.entries(metadata).filter(([, value]) => value !== undefined)
   ) as JsonObject;
+}
+
+function metadataNumber(
+  metadata: JsonObject | undefined,
+  key: string
+): number | undefined {
+  const value = metadata?.[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function executableAssignmentStatuses(
+  metadata: JsonObject | undefined
+): string[] {
+  const assignments = metadata?.assignments;
+  if (!Array.isArray(assignments)) {
+    return [];
+  }
+  return assignments.flatMap((entry) => {
+    if (!entry || typeof entry !== "object") {
+      return [];
+    }
+    const assignment = entry as Record<string, unknown>;
+    return assignment.executable === true && typeof assignment.status === "string"
+      ? [assignment.status]
+      : [];
+  });
+}
+
+function isTerminalAssignmentStatus(status: string): boolean {
+  return (
+    status === "completed" ||
+    status === "failed" ||
+    status === "cancelled" ||
+    status === "skipped"
+  );
 }
 
 function finalRunStatus(status: RunStatus, finalizationFailed: boolean): RunStatus {
@@ -1452,6 +1556,19 @@ function continuationBranchName(
     sanitizeSegment(taskId),
     sanitizeSegment(agentKind),
     `continue-${shortSegment(parentRunId)}-${shortSegment(runId)}`
+  ].join("/");
+}
+
+function sharedTaskBranchName(
+  taskId: string,
+  agentKind: AgentKind,
+  runId: string
+): string {
+  return [
+    "agent-hub",
+    sanitizeSegment(taskId),
+    sanitizeSegment(agentKind),
+    shortSegment(runId)
   ].join("/");
 }
 
