@@ -47,6 +47,23 @@ describe("desktop composer controls", () => {
       });
   });
 
+  it("preserves prompt spacing outside the applied suggestion", () => {
+    const input = "ask @co to edit:\n    const value  = 1;";
+    const trigger = activeComposerTrigger(input, "ask @co".length);
+    if (!trigger) {
+      throw new Error("expected trigger");
+    }
+    const [suggestion] = buildComposerSuggestions({ roles: [], trigger });
+    if (!suggestion) {
+      throw new Error("expected suggestion");
+    }
+
+    expect(applyComposerSuggestion(input, trigger, suggestion)).toMatchObject({
+      value: "ask @codex to edit:\n    const value  = 1;",
+      cursor: "ask @codex ".length
+    });
+  });
+
   it("keeps unknown mentions as prompt text while resolving fallback agents", () => {
     const resolved = resolveComposerTargets({
       value: "@unknown inspect logs",
@@ -103,6 +120,26 @@ describe("desktop composer controls", () => {
     const pinned = insertComposerTarget("summarize", target);
     expect(pinned).toBe("@claude summarize");
     expect(removeComposerTarget(pinned, target)).toBe("summarize");
+  });
+
+  it("removes every matching explicit mention without rewriting prompt formatting", () => {
+    const target = {
+      id: "agent:fake",
+      kind: "agent" as const,
+      handle: "fake",
+      label: "@fake",
+      detail: "Use fake",
+      runCount: 1,
+      removable: true,
+      source: "explicit" as const
+    };
+
+    expect(
+      removeComposerTarget(
+        "@fake compare @fake output\n    keep  aligned",
+        target
+      )
+    ).toBe("compare output\n    keep  aligned");
   });
 });
 

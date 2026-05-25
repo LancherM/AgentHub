@@ -13,6 +13,7 @@ interface SidebarProps {
   selectedThreadId?: string;
   selectedProjectId?: string;
   activeWorkspace: "chat" | "knowledge" | "team";
+  sidebarDensity: "comfortable" | "compact";
   onNewThread(input: CreateThreadInput): Promise<void> | void;
   onSelectThread(threadId: string): void;
   onSelectProject(projectId: string): void;
@@ -20,6 +21,7 @@ interface SidebarProps {
   onOpenKnowledge(): void;
   onOpenTeam(): void;
   onOpenSettings(): void;
+  onToggleSidebarDensity(): void;
   isBusy: boolean;
 }
 
@@ -29,6 +31,7 @@ export function Sidebar({
   selectedThreadId,
   selectedProjectId,
   activeWorkspace,
+  sidebarDensity,
   onNewThread,
   onSelectThread,
   onSelectProject,
@@ -36,6 +39,7 @@ export function Sidebar({
   onOpenKnowledge,
   onOpenTeam,
   onOpenSettings,
+  onToggleSidebarDensity,
   isBusy
 }: SidebarProps): JSX.Element {
   const [roomFormOpen, setRoomFormOpen] = useState(false);
@@ -90,7 +94,7 @@ export function Sidebar({
   }
 
   return (
-    <aside className="sidebar">
+    <aside className={`sidebar ${sidebarDensity}`}>
       <div className="brand-block">
         <div className="brand-mark">AH</div>
         <div>
@@ -140,7 +144,10 @@ export function Sidebar({
           />
         </details>
         {projects.length === 0 ? (
-          <div className="muted-row">No projects registered</div>
+          <div className="sidebar-empty-action">
+            <strong>No projects registered</strong>
+            <span>Add a local repository path to start a room.</span>
+          </div>
         ) : null}
       </section>
 
@@ -211,7 +218,17 @@ export function Sidebar({
         ) : null}
         <div className="thread-list">
           {projectRooms.length === 0 ? (
-            <div className="muted-row">No rooms yet</div>
+            <div className="sidebar-empty-action">
+              <strong>No rooms yet</strong>
+              <span>Create a room for repeated local work.</span>
+              <button
+                className="ghost-button compact"
+                disabled={!selectedProjectId}
+                onClick={() => setRoomFormOpen(true)}
+              >
+                New Room
+              </button>
+            </div>
           ) : (
             projectRooms.map((thread) => (
               <button
@@ -304,6 +321,9 @@ export function Sidebar({
           Team
         </button>
         <button onClick={onOpenSettings}>Settings</button>
+        <button onClick={onToggleSidebarDensity}>
+          {sidebarDensity === "compact" ? "Comfortable Sidebar" : "Compact Sidebar"}
+        </button>
       </nav>
     </aside>
   );

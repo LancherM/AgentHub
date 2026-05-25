@@ -82,6 +82,9 @@ export type RunContextDeliveryMode = (typeof runContextDeliveryModes)[number];
 export const contextStoreModes = ["external", "repo_local"] as const;
 export type ContextStoreMode = (typeof contextStoreModes)[number];
 
+export const skillScopes = ["task", "role", "project", "global"] as const;
+export type SkillScope = (typeof skillScopes)[number];
+
 export const taskStatuses = ["open", "running", "completed", "cancelled"] as const;
 export type TaskStatus = (typeof taskStatuses)[number];
 
@@ -321,6 +324,7 @@ export interface ContextPack {
   contextSections: string[];
   approvedMemorySections: string[];
   skillReferences: string[];
+  injectedSkills?: InjectedSkillEvidence[];
   createdAt: string;
 }
 
@@ -547,6 +551,23 @@ export interface SkillContextItem {
   name: string;
   description: string;
   content?: string;
+  scope?: SkillScope;
+  contentHash?: string;
+  sourcePath?: string;
+}
+
+export interface SkillReference {
+  id: string;
+  scope?: SkillScope;
+}
+
+export interface InjectedSkillEvidence {
+  id: string;
+  scope: SkillScope;
+  name: string;
+  description: string;
+  contentHash: string;
+  sourcePath?: string;
 }
 
 export interface ProjectContext {

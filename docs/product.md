@@ -127,6 +127,19 @@ instead of being silently injected as generic text. Skill display names are
 used in rendered context, while export and overlay file paths stay anchored to
 the context-store skill directory name.
 
+Reusable global skills can also live in Agent Hub-owned app data under
+`<agent-hub-app-data>/skills/<skill-name>/SKILL.md`. Global skills are created
+and listed with `agent-hub skills global create/list`; they are considered for
+runtime injection only through explicit task/run selections or role default
+skill references. Project context-store skills still load from the project
+context store and override same-id global skills unless a task or role
+explicitly selects a scoped global skill. Injected skill ids, scopes, display
+names, and content hashes are recorded in run evidence as a `skill_inventory`
+artifact. `project:<id>` and `global:<id>` are the currently resolvable skill
+scopes; reserved `task:<id>` and `role:<id>` references are rejected with a
+clear error instead of falling back to another same-id skill. Skills remain
+separate from approved memory.
+
 `context export --target repo --dry-run` previews repository writes.
 `context export --target repo --write` uses Agent Hub managed blocks in
 `AGENTS.md` and optionally `CLAUDE.md`, preserves user-authored content
@@ -420,6 +433,18 @@ local repositories can be registered without returning to onboarding. The
 selected project also has an inline custom-room creation flow for title,
 optional handle, and optional description; newly created rooms are selected
 immediately and start with room shared context enabled.
+Empty desktop states are action-oriented rather than explanatory dead ends:
+project setup, empty room lists, filtered Team and Knowledge results, empty
+artifact inventory, and missing inspector details each show the next local
+action such as adding a project, creating a room or role, clearing a filter, or
+opening settings. The desktop also includes a renderer-only command palette
+opened with Cmd/Ctrl+K for primary local actions such as creating a room,
+opening Knowledge or Team workspaces, opening verification settings, and
+toggling sidebar density. Harmless local preferences persist in browser
+storage for the selected project and room, active workspace, context mode,
+inspector tab, sidebar density, and recent agent or role targets. These
+preferences do not store prompts, logs, diffs, secrets, repository paths, or
+approved memory.
 
 The composer accepts mention-based prompts such as `@fake ...` or multi-agent
 mentions, and it now also accepts enabled role handles such as `@researcher`
@@ -431,14 +456,16 @@ review, memory, comparison, continuation, and workflow prompt patterns without
 adding a new command backend. Unknown mentions stay in the prompt text and do
 not block submission. Target chips show the expected selected agents/roles,
 can pin fallback targets as explicit mentions, and can remove explicit
-mentions before the turn is submitted. Context mode uses segmented controls,
-and the submit button reports the expected local run fan-out. Role mentions
-are resolved in the Electron main process, persisted on the user message and
-run-card metadata, and copied to run metadata so review surfaces can show which
-role and executor produced a run. The renderer sends prompt text through the safe
-`window.agentHub.threads.sendMessage` preload API; the Electron main-process
-thread service resolves project-level Team workspace roles, strips known agent
-or role mentions from the task body, persists
+mentions before the turn is submitted. Applying autocomplete and removing
+target chips preserve prompt formatting outside the affected mention token so
+indented code, YAML, and aligned text are not rewritten. Context mode uses
+segmented controls, and the submit button reports the expected local run
+fan-out. Role mentions are resolved in the Electron main process, persisted on
+the user message and run-card metadata, and copied to run metadata so review
+surfaces can show which role and executor produced a run. The renderer sends
+prompt text through the safe `window.agentHub.threads.sendMessage` preload API;
+the Electron main-process thread service resolves project-level Team workspace
+roles, strips known agent or role mentions from the task body, persists
 one ordered user message in the selected SQLite-backed room thread, creates one
 shared task for the instruction, records task-created and participants-assigned
 system timeline events, then creates one run per executable assignment through
@@ -471,10 +498,10 @@ to a small review affordance. Terminal cards lead with View review, Compare,
 Continue, Handoff, and Audit actions; disabled actions explain why they are not
 available. Compare becomes available only when another terminal run from the
 same task or the same multi-agent turn is present. Terminal cards do not load
-full run review evidence when a thread is merely selected; artifacts, checks,
-risks, memory proposals, brief data, context previews, comparison reports, and
-audit logs load lazily when the user opens the on-demand workgroup inspector
-drawer.
+full run review evidence when a thread is merely selected, but they refresh the
+summary and artifact metadata needed for compact review chips. Checks, risks,
+memory proposals, brief data, context previews, comparison reports, and audit
+logs load lazily when the user opens the on-demand workgroup inspector drawer.
 Existing persisted run records are
 synthesized into thread-shaped conversations only as a compatibility import
 when no durable conversation threads exist yet, so old desktop run data remains
@@ -485,6 +512,12 @@ assistant output only for the selected room. Older conversation threads without
 room metadata remain readable as custom rooms. Run records, events, skipped or
 configured verification rows, collected diffs, and risk review rows remain
 SQLite-backed.
+
+Verification setup failures in the desktop point back to the Settings panel
+instead of leaving a generic room error. Empty verification settings include
+the expected executable-plus-args shape, while validation errors explain that
+commands should be split into executable and argument fields and that
+secret-like option names are rejected before persistence.
 
 Agent Hub keeps project context, thread context, current-turn context, and
 per-run context snapshots as separate layers. Desktop follow-up turns build a
@@ -500,11 +533,11 @@ prompt, approved project context, role instructions, selected skills, and any
 explicit continuation, but prior room messages and the room summary are left
 out of the generated conversation brief. Role-targeted desktop turns add the
 resolved role handle, display name, executor, persona, default instructions,
-permissions,
-context policy, and approval policy to that same brief and to TaskRunner
-constraints/hints before execution. A zero recent-message budget includes no
-prior messages, and the first message in an empty thread uses the retitled
-thread name in the injected brief. Agent Hub persists that exact brief as a
+permissions, default skill references, context policy, and approval policy to
+that same brief and to TaskRunner constraints/hints before execution. A zero
+recent-message budget includes no prior messages, and the first message in an
+empty thread uses the retitled thread name in the injected brief. Agent Hub
+persists that exact brief as a
 `conversation_brief` run artifact so review can inspect what was injected. The
 brief excludes raw lifecycle/debug events, logs,
 diffs, verification output, risk evidence, and other review artifacts. Full
@@ -628,7 +661,11 @@ memory evidence. Mentioned `@codex` and `@claude` runs invoke the local
 process-backed adapter preflight through TaskRunner; unavailable CLIs fail as
 inspectable persisted run events instead of service crashes. Desktop runs do
 not write Agent Hub context files into the target repository root, merge, push,
-export repository context, apply code, or approve memory automatically. Explicit
+export repository context, apply code, or approve memory automatically. Failed
+Codex or Claude preflight events include the adapter's detection reason,
+executable name, verification command, worktree cwd, and PATH entries when
+available; inline run cards surface that evidence so the user can fix the local
+CLI installation or authentication without opening raw logs first. Explicit
 desktop memory approval writes only to Agent Hub's context store and confirms
 the local approved-memory path in the inspector. Current
 desktop paths accept run-linked or message-linked continuation requests,

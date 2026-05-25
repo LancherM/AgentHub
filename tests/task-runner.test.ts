@@ -13,6 +13,7 @@ import {
 } from "@agent-hub/agent-adapters";
 import {
   DefaultContextCompiler,
+  createGlobalSkill,
   InMemoryMemoryProvider,
   initContextStore,
   MarkdownContextFormatter
@@ -1491,6 +1492,70 @@ describe("task runner", () => {
       ]));
     expect(diffCollector.inputs[0].generatedFileBaselines?.map((entry) => entry.path))
       .not.toContain(".claude/skills/review/SKILL.md");
+  });
+
+  it("persists injected scoped skill identities and content hashes as run evidence", async () => {
+    const projectRoot = await createTestDirectory("agent-hub-skill-project");
+    const runRoot = await createTestDirectory("agent-hub-skill-runs");
+    const agentHubHome = await createTestDirectory("agent-hub-skill-home");
+    const initialized = await initContextStore({
+      projectRoot,
+      projectId: "project_1",
+      agentHubHome
+    });
+    await fs.mkdir(path.join(initialized.storeRoot, "skills", "review"), {
+      recursive: true
+    });
+    await fs.writeFile(
+      path.join(initialized.storeRoot, "skills", "review", "SKILL.md"),
+      skillMarkdown({
+        name: "project-review",
+        description: "Review generated output.",
+        body: "Generated project skill."
+      }),
+      "utf8"
+    );
+    const globalSkill = await createGlobalSkill({
+      id: "triage",
+      name: "global-triage",
+      description: "Triage generated output.",
+      body: "Generated global skill.",
+      agentHubHome
+    });
+    const runner = createTestRunner(runRoot);
+
+    const result = await runner.run({
+      projectRoot,
+      projectId: "project_1",
+      rawPrompt: "@fake use scoped skills",
+      agentHubHome,
+      roleSkillReferences: [{ id: "triage", scope: "global" }]
+    });
+
+    expect(result.contextBundle.sections
+      .filter((section) => section.source.kind === "skill")
+      .map((section) => section.source.id)).toEqual([
+        "global:triage",
+        "project:review"
+      ]);
+    const artifact = (
+      await runner.runArtifactRepository.listByRunId(result.run.id)
+    ).find((entry) => entry.kind === "skill_inventory");
+    expect(artifact?.content).toContain("## global:triage");
+    expect(artifact?.metadata).toMatchObject({
+      skillReferences: ["global:triage", "project:review"],
+      skills: [
+        expect.objectContaining({
+          id: "triage",
+          scope: "global",
+          contentHash: globalSkill.contentHash
+        }),
+        expect.objectContaining({
+          id: "review",
+          scope: "project"
+        })
+      ]
+    });
   });
 });
 

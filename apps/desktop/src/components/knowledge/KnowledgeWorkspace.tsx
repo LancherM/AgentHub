@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { agentHubApi } from "../../lib/agentHubApi";
+import { EmptyState } from "../EmptyState";
 import type {
   KnowledgeItem,
   KnowledgeItemStatus,
@@ -130,11 +131,12 @@ export function KnowledgeWorkspace({
   if (!project) {
     return (
       <section className="knowledge-empty">
-        <div>
-          <div className="eyebrow">Knowledge / Memory</div>
-          <h1>Register a project to browse memory</h1>
-          <p className="muted-copy">Knowledge records are scoped to one local project.</p>
-        </div>
+        <EmptyState
+          eyebrow="Knowledge / Memory"
+          title="Register a project to browse memory"
+          body="Knowledge records are scoped to one local project."
+          note="Open or register a project from the sidebar to inspect local proposals, summaries, and decisions."
+        />
       </section>
     );
   }
@@ -178,9 +180,18 @@ export function KnowledgeWorkspace({
               <KnowledgeMetrics workspace={workspace.data} />
               <div className="knowledge-list">
                 {filteredItems.length === 0 ? (
-                  <div className="knowledge-empty-state">
-                    No knowledge records match this filter.
-                  </div>
+                  <EmptyState
+                    eyebrow="Knowledge"
+                    title="No records match this filter"
+                    body="Clear the filter or run an agent to generate review evidence and memory proposals."
+                    actions={[
+                      {
+                        label: "Show All",
+                        onClick: () => setActiveFilter("all"),
+                        variant: "primary"
+                      }
+                    ]}
+                  />
                 ) : (
                   filteredItems.map((item) => (
                     <button
@@ -243,7 +254,18 @@ export function KnowledgeWorkspace({
             }}
           />
         ) : (
-          <div className="knowledge-empty-state">No knowledge record selected.</div>
+          <EmptyState
+            eyebrow="Knowledge Detail"
+            title="No knowledge record selected"
+            body="Select a record from the list or clear the active filter."
+            actions={[
+              {
+                label: "Show All",
+                onClick: () => setActiveFilter("all"),
+                variant: "primary"
+              }
+            ]}
+          />
         )}
       </aside>
     </section>

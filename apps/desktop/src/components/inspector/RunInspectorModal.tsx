@@ -30,6 +30,7 @@ import { DiffViewer } from "../DiffViewer";
 import { MemoryProposals } from "../MemoryProposals";
 import { RiskReport } from "../RiskReport";
 import { RunStatusBadge } from "../RunStatusBadge";
+import { EmptyState } from "../EmptyState";
 import { VerificationPanel } from "../VerificationPanel";
 
 interface RunInspectorModalProps {
@@ -137,12 +138,15 @@ export function RunInspectorModal({
     }
   }
 
-  async function loadTab(tab: WorkgroupInspectorTab): Promise<void> {
+  async function loadTab(
+    tab: WorkgroupInspectorTab,
+    options: { refresh?: boolean } = {}
+  ): Promise<void> {
     if (tab === "brief") {
-      if (!summary.data && !summary.loading) {
+      if (options.refresh || (!summary.data && !summary.loading)) {
         await loadSummary();
       }
-      if (!risk.data && !risk.loading) {
+      if (options.refresh || (!risk.data && !risk.loading)) {
         await loadState(setRisk, () => agentHubApi.review.getRisk(runId));
       }
       return;
@@ -174,8 +178,12 @@ export function RunInspectorModal({
 
   async function refresh(): Promise<void> {
     setDecisionMessage(undefined);
+    if (activeTab === "brief") {
+      await loadTab(activeTab, { refresh: true });
+      return;
+    }
     await loadSummary();
-    await loadTab(activeTab);
+    await loadTab(activeTab, { refresh: true });
   }
 
   async function loadComparison(): Promise<void> {
@@ -685,10 +693,11 @@ function ArtifactInventory({
 
   if (artifacts.length === 0) {
     return (
-      <section>
-        <div className="panel-label">Artifact Inventory</div>
-        <p className="muted-copy">No local artifacts were recorded for this run.</p>
-      </section>
+      <EmptyState
+        eyebrow="Artifact Inventory"
+        title="No artifact evidence recorded"
+        body="Open Audit for raw run events, or run a task that produces diff, brief, lifecycle, or skill artifacts."
+      />
     );
   }
 
