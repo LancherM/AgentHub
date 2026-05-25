@@ -390,6 +390,8 @@ automatic apply, merge, or push behavior. Timeline events show handoff or
 review start, review completion when linked runs finish, and workflow
 completion once all executable participants reach terminal state or the
 workflow contains only non-runnable participants.
+If a runnable assignment fails before its run row can be created, the shared
+task can still leave `running` once all executable assignments are terminal.
 
 Agent Hub Desktop is now available as a local conversation console under
 `apps/desktop`. It starts with `pnpm --filter desktop dev` and presents a
@@ -481,6 +483,9 @@ otherwise shows a clear unavailable state. Artifacts now begins with a local art
 inventory derived from persisted `run_artifacts`. Each artifact has bounded
 metadata for title, artifact type, source run, source task, thread id when
 known, creator, summary, local availability, and a capped content preview.
+`git_diff` artifact previews use the same sensitive-path redaction boundary as
+the Diff review so secret-bearing patches are not copied into artifact chips or
+the sandboxed renderer.
 Important run outputs can also appear as named artifact chips on timeline run
 cards, linking back to the Artifacts inspector tab without copying raw evidence
 into the room transcript. The same tab still contains engineering-specific
@@ -510,8 +515,10 @@ mark keep records user intent, cleanup requires the exact `cleanup <run-id>`
 confirmation phrase before removing a retained local worktree, and apply first
 previews the bounded patch, checks the latest risk report, blocks `blocking`
 risk, requires `apply <run-id>`, and then runs local `git apply --check` plus
-`git apply` only against the local project checkout. It does not commit, push,
-merge, create pull requests, approve memory, or export repository context.
+`git apply` only against the local project checkout. Apply execution reads the
+raw persisted patch in the Electron main process rather than the bounded,
+redacted inspector preview. It does not commit, push, merge, create pull
+requests, approve memory, or export repository context.
 Each lifecycle decision writes a `lifecycle_audit` run artifact, a lifecycle
 run event, and a linked room timeline event when the run belongs to a thread.
 Desktop memory proposal generation is idempotent for each run:

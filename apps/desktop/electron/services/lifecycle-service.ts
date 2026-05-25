@@ -365,9 +365,7 @@ class RepositoryLifecycleService implements LifecycleService {
       };
     }
     await assertSafeLocalGitConfig(sourceRepositoryPath);
-    const patch = preview.patchPreview && !preview.truncated
-      ? preview.patchPreview
-      : (await this.dependencies.reviewService.getDiff(run.id)).patch;
+    const patch = await this.rawApplyPatch(run, metadata);
     if (!patch || patch.trim().length === 0) {
       const message = "No patch content is available to apply.";
       await this.recordLifecycleDecision({
@@ -455,6 +453,20 @@ class RepositoryLifecycleService implements LifecycleService {
       message,
       lifecycle: await this.get(input.runId)
     };
+  }
+
+  private async rawApplyPatch(
+    run: TaskRun,
+    metadata: RunMetadata | undefined
+  ): Promise<string | undefined> {
+    if (metadata?.diff?.diff && metadata.diff.diff.trim().length > 0) {
+      return metadata.diff.diff;
+    }
+    const artifact = await this.artifacts.getLatestByRunIdAndKind(
+      run.id,
+      "git_diff"
+    );
+    return artifact?.metadata.placeholder === true ? undefined : artifact?.content;
   }
 
   private async buildApplyPreview(

@@ -1,4 +1,5 @@
 import fs from "node:fs/promises";
+import { readFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { execFile } from "node:child_process";
@@ -708,6 +709,63 @@ describe("desktop services", () => {
     ]);
   });
 
+  it("redacts sensitive git diff artifact previews", async () => {
+    const fixture = await createFixture();
+    const context = createDesktopServiceContext(fixture.repositories);
+    const projects = createProjectService(context);
+    const review = createReviewService(context);
+    const project = await projects.open(fixture.projectRoot);
+    const now = context.now();
+    const task = await fixture.repositories.taskRepository.create(
+      validateTask({
+        id: "task_sensitive_artifact_preview",
+        projectId: project.id,
+        title: "Inspect sensitive artifact preview",
+        status: "completed",
+        createdAt: now,
+        updatedAt: now
+      })
+    );
+    const run = await fixture.repositories.taskRunRepository.create(
+      validateTaskRun({
+        id: "run_sensitive_artifact_preview",
+        taskId: task.id,
+        agentKind: "codex",
+        status: "succeeded",
+        createdAt: now,
+        updatedAt: now
+      })
+    );
+    await fixture.repositories.runArtifactRepository.create(
+      validateRunArtifact({
+        id: "artifact_sensitive_artifact_preview",
+        taskRunId: run.id,
+        kind: "git_diff",
+        content: [
+          "diff --git a/.env.local b/.env.local",
+          "--- a/.env.local",
+          "+++ b/.env.local",
+          "@@ -1 +1 @@",
+          "-TOKEN=old",
+          "+TOKEN=secret-value"
+        ].join("\n"),
+        metadata: {
+          changedFiles: [{ path: ".env.local", status: "modified" }]
+        },
+        createdAt: now
+      })
+    );
+
+    const artifacts = await review.getArtifacts(run.id);
+
+    expect(artifacts[0]).toMatchObject({
+      kind: "git_diff",
+      contentPreview: "Patch redacted because sensitive file path changed: .env.local",
+      truncated: false
+    });
+    expect(artifacts[0]?.contentPreview).not.toContain("secret-value");
+  });
+
   it("lists knowledge workspace memory, thread summaries, and review decisions", async () => {
     const fixture = await createFixture();
     const context = createDesktopServiceContext(fixture.repositories);
@@ -1284,6 +1342,111 @@ describe("desktop services", () => {
         status: "completed"
       })
     });
+  });
+
+  it("applies raw persisted patch content when the preview is truncated", async () => {
+    const fixture = await createFixture();
+    const context = createDesktopServiceContext(fixture.repositories);
+    const projects = createProjectService(context);
+    const review = createReviewService(context);
+    const observedPatches: string[] = [];
+    const shell = new MockShellExecutor([
+      (command) => {
+        observedPatches.push(readFileSync(command.args?.at(-1) ?? "", "utf8"));
+        return {};
+      },
+      (command) => {
+        observedPatches.push(readFileSync(command.args?.at(-1) ?? "", "utf8"));
+        return {};
+      }
+    ]);
+    const lifecycle = createLifecycleService(context, {
+      reviewService: review,
+      shellExecutor: shell
+    });
+    const project = await projects.open(fixture.projectRoot);
+    const now = context.now();
+    const task = await fixture.repositories.taskRepository.create(
+      validateTask({
+        id: "task_raw_apply_patch",
+        projectId: project.id,
+        title: "Apply raw patch",
+        status: "completed",
+        createdAt: now,
+        updatedAt: now
+      })
+    );
+    const run = await fixture.repositories.taskRunRepository.create(
+      validateTaskRun({
+        id: "run_raw_apply_patch",
+        taskId: task.id,
+        agentKind: "codex",
+        status: "succeeded",
+        createdAt: now,
+        updatedAt: now
+      })
+    );
+    const rawPatch = [
+      "diff --git a/large.txt b/large.txt",
+      "--- a/large.txt",
+      "+++ b/large.txt",
+      "@@ -1 +1 @@",
+      "-old",
+      `+${"new-value-".repeat(14_000)}`
+    ].join("\n");
+    await fixture.repositories.runMetadataRepository.save({
+      runId: run.id,
+      workspace: {
+        path: path.join(fixture.workspaceBasePath, "raw-apply"),
+        branchName: "agent-hub/raw-apply/codex",
+        sourceRepositoryPath: fixture.projectRoot,
+        workspaceBasePath: fixture.workspaceBasePath,
+        taskId: task.id,
+        runId: run.id,
+        agentKind: "codex",
+        dryRun: false,
+        sourceRepositoryDirty: false,
+        cleanupPolicy: "never"
+      },
+      diff: {
+        ok: true,
+        workspacePath: fixture.projectRoot,
+        isClean: false,
+        changedFiles: [{ path: "large.txt", status: "modified" }],
+        stat: { filesChanged: 1, insertions: 1, deletions: 1, text: "1 file changed" },
+        diff: rawPatch,
+        fileSummaries: ["large.txt: +1/-1"],
+        commands: []
+      }
+    });
+    await fixture.repositories.runArtifactRepository.create(
+      validateRunArtifact({
+        id: "artifact_raw_apply_patch",
+        taskRunId: run.id,
+        kind: "git_diff",
+        content: rawPatch,
+        metadata: {
+          changedFiles: [{ path: "large.txt", status: "modified" }],
+          fileSummaries: ["large.txt: +1/-1"]
+        },
+        createdAt: now
+      })
+    );
+
+    await expect(lifecycle.previewApply(run.id)).resolves.toMatchObject({
+      truncated: true,
+      patchPreview: expect.stringContaining("Apply preview truncated")
+    });
+    await expect(
+      lifecycle.confirmApply({
+        runId: run.id,
+        confirmation: `apply ${run.id}`
+      })
+    ).resolves.toMatchObject({
+      ok: true
+    });
+
+    expect(observedPatches).toEqual([rawPatch, rawPatch]);
   });
 
   it("keeps unsafe or unavailable handoff worktrees unavailable", async () => {

@@ -75,12 +75,15 @@ local metadata model with title, type, source run/task ids, optional thread id,
 creator, summary, availability, and a capped content preview. This Phase 6
 model intentionally reuses `run_artifacts` instead of adding an artifact table,
 so existing task briefs, conversation briefs, diffs, review decisions, and
-provenance records remain readable. Handoff, comparison, and diff data remain
-inside the Artifacts tab as engineering evidence. Persisted non-placeholder
-risk reports take precedence over the deterministic desktop fallback, including
-`blocking` levels and mapped finding/risk-factor evidence, so desktop review
-does not downgrade scanner output from sensitive path changes or dangerous
-instructions. `DiffService`
+provenance records remain readable. `git_diff` artifact previews apply
+sensitive-path patch redaction before content crosses IPC, matching the diff
+review boundary while preserving raw run evidence in local persistence.
+Handoff, comparison, and diff data remain inside the Artifacts tab as
+engineering evidence. Persisted non-placeholder risk reports take precedence
+over the deterministic desktop fallback, including `blocking` levels and
+mapped finding/risk-factor evidence, so desktop review does not downgrade
+scanner output from sensitive path changes or dangerous instructions.
+`DiffService`
 uses persisted diff artifacts when available and can read retained worktrees
 with read-only Git commands through
 `DiffCollector`, `NodeShellExecutor`, and safe Git configuration. It redacts
@@ -104,12 +107,13 @@ preview, blocked apply, failed apply, and completed apply decision as a
 `lifecycle_audit` run artifact plus a lifecycle run event; and appends a linked
 room timeline event when a conversation message is associated with the run.
 Cleanup invokes hardened `git worktree remove --force` only for a retained
-Agent Hub-owned worktree. Apply writes the bounded patch to a temporary
-Agent Hub process path, runs safe `git apply --check`, then safe `git apply`
-against the local project checkout only when the latest risk level is not
-`blocking` and the confirmation phrase matches. The service does not commit,
-merge, push, delete branches, create pull requests, approve memory, or export
-repository context. `MemoryService` lists and generates a small number
+Agent Hub-owned worktree. Apply writes raw persisted diff content, not the
+bounded or redacted inspector preview, to a temporary Agent Hub process path,
+runs safe `git apply --check`, then safe `git apply` against the local project
+checkout only when the latest risk level is not `blocking` and the
+confirmation phrase matches. The service does not commit, merge, push, delete
+branches, create pull requests, approve memory, or export repository context.
+`MemoryService` lists and generates a small number
 of conservative pending proposals, serializes generation per run, deduplicates
 proposal content, and caps generated proposals for a run before mapping
 ignore to the rejected memory item state. Its explicit approve path moves items
@@ -169,6 +173,9 @@ resolve through the CLI role store, create one shared task with assignment
 metadata, and execute each runnable `agent_adapter` participant through
 TaskRunner with `taskStatusMode: "shared_task"`. Non-runnable `human`,
 `llm_api`, and `workflow` role executors stay as assignment metadata only.
+Shared-task aggregation consults executable assignment metadata as well as run
+rows, so an assignment that fails before creating a run can still let the task
+leave `running` once no executable assignment is pending.
 The chat slash commands include room and role controls: `/thread new`,
 `/thread use <id>`, `/threads`, `/rooms`, `/room use <handle>`,
 `/room create <handle> [title]`, `/room timeline`, `/roles`, `/role <handle>`,
