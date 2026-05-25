@@ -1,6 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import { agentHubApi } from "../../lib/agentHubApi";
+import {
+  buildReviewConclusion,
+  normalizeReviewInspectorTab
+} from "../../lib/inspector-conclusion";
 import type {
   ComparisonCandidate,
   ComparisonReport,
@@ -26,6 +30,7 @@ import { DiffViewer } from "../DiffViewer";
 import { MemoryProposals } from "../MemoryProposals";
 import { RiskReport } from "../RiskReport";
 import { RunStatusBadge } from "../RunStatusBadge";
+import { EmptyState } from "../EmptyState";
 import { VerificationPanel } from "../VerificationPanel";
 
 interface RunInspectorModalProps {
@@ -64,7 +69,7 @@ export function RunInspectorModal({
   onClose
 }: RunInspectorModalProps): JSX.Element {
   const [activeTab, setActiveTab] = useState<WorkgroupInspectorTab>(
-    normalizeInspectorTab(initialTab)
+    normalizeReviewInspectorTab(initialTab)
   );
   const [summary, setSummary] = useState<LoadState<ReviewSummary>>({
     loading: true
@@ -97,7 +102,7 @@ export function RunInspectorModal({
   const [decisionMessage, setDecisionMessage] = useState<string | undefined>();
 
   useEffect(() => {
-    const normalizedInitialTab = normalizeInspectorTab(initialTab);
+    const normalizedInitialTab = normalizeReviewInspectorTab(initialTab);
     setActiveTab(normalizedInitialTab);
     setDecisionMessage(undefined);
     setSummary({ loading: true });
@@ -133,10 +138,16 @@ export function RunInspectorModal({
     }
   }
 
-  async function loadTab(tab: WorkgroupInspectorTab): Promise<void> {
+  async function loadTab(
+    tab: WorkgroupInspectorTab,
+    options: { refresh?: boolean } = {}
+  ): Promise<void> {
     if (tab === "brief") {
-      if (!summary.data && !summary.loading) {
+      if (options.refresh || (!summary.data && !summary.loading)) {
         await loadSummary();
+      }
+      if (options.refresh || (!risk.data && !risk.loading)) {
+        await loadState(setRisk, () => agentHubApi.review.getRisk(runId));
       }
       return;
     }
@@ -167,8 +178,12 @@ export function RunInspectorModal({
 
   async function refresh(): Promise<void> {
     setDecisionMessage(undefined);
+    if (activeTab === "brief") {
+      await loadTab(activeTab, { refresh: true });
+      return;
+    }
     await loadSummary();
-    await loadTab(activeTab);
+    await loadTab(activeTab, { refresh: true });
   }
 
   async function loadComparison(): Promise<void> {
@@ -354,7 +369,14 @@ export function RunInspectorModal({
           ) : null}
           {activeTab === "brief" ? (
             <LoadSlot state={summary}>
-              {(data) => <Brief summary={data} fallbackRun={initialRun} />}
+              {(data) => (
+                <Brief
+                  summary={data}
+                  risk={risk}
+                  fallbackRun={initialRun}
+                  onSelectTab={setActiveTab}
+                />
+              )}
             </LoadSlot>
           ) : activeTab === "context" ? (
             <LoadSlot state={context}>{(data) => <ContextPanel context={data} />}</LoadSlot>
@@ -428,34 +450,108 @@ export function RunInspectorModal({
 
 function Brief({
   summary,
+  risk,
+  onSelectTab,
   fallbackRun
 }: {
   summary: ReviewSummary;
+  risk: LoadState<RiskReportModel>;
+  onSelectTab(tab: WorkgroupInspectorTab): void;
   fallbackRun?: RunDetail;
 }): JSX.Element {
+  const conclusion = buildReviewConclusion(summary, risk.data);
+  const riskDetailsPending = risk.loading && !risk.data;
+  const showBlockingRisk =
+    conclusion.riskSummary === "blocking" ||
+    conclusion.blockingFindings.length > 0;
+  const primaryBlockingFinding = conclusion.blockingFindings[0];
+
   return (
-    <div className="summary-stack">
-      <section>
+    <div className="summary-stack conclusion-brief">
+      {showBlockingRisk ? (
+        <section className="blocking-risk-banner">
+          <div>
+            <div className="panel-label">Blocking Risk</div>
+            <h3>{primaryBlockingFinding?.title ?? "Blocking risk reported"}</h3>
+            <p>
+              {primaryBlockingFinding?.description ??
+                (riskDetailsPending
+                  ? "Risk details are loading. Review the Risks tab before accepting this run."
+                  : "Review the Risks tab before accepting this run.")}
+            </p>
+            {primaryBlockingFinding?.evidence ? (
+              <p className="muted-copy">{primaryBlockingFinding.evidence}</p>
+            ) : null}
+          </div>
+          <button
+            className="ghost-button danger"
+            onClick={() => onSelectTab("risks")}
+          >
+            Open Risks
+          </button>
+        </section>
+      ) : null}
+
+      <section className={`review-conclusion-card ${conclusion.tone}`}>
         <div className="summary-heading">
           <div>
-            <div className="panel-label">Brief</div>
-            <p>{summary.summary}</p>
-            {summary.message ? <p className="muted-copy">{summary.message}</p> : null}
+            <div className="panel-label">Conclusion</div>
+            <h3>{conclusion.headline}</h3>
+            <p>{conclusion.rationale}</p>
+            {summary.summary ? <p className="muted-copy">{summary.summary}</p> : null}
           </div>
-          <RunStatusBadge status={summary.status} />
+          <span className={`decision-recommendation ${conclusion.tone}`}>
+            {conclusion.suggestedDecision}
+          </span>
         </div>
       </section>
-      <section className="summary-metrics wide handoff-metrics">
+
+      <section className="summary-metrics wide handoff-metrics conclusion-metrics">
+        <Metric label="Changed Output" value={conclusion.changedOutput} />
+        <Metric label="Checks" value={conclusion.checkSummary} />
+        <Metric label="Risks" value={conclusion.riskSummary} />
+        <Metric label="Suggested" value={conclusion.suggestedDecision} />
         <Metric label="Agent" value={`@${summary.agentId}`} />
         <Metric label="Review" value={summary.reviewStatus} />
         <Metric label="Duration" value={formatDuration(summary.durationMs)} />
-        <Metric label="Artifacts" value={`${summary.changedFileCount} files`} />
-        <Metric label="Lines" value={`+${summary.additions}/-${summary.deletions}`} />
-        <Metric label="Checks" value={summary.verificationStatus} />
-        <Metric label="Risks" value={summary.riskLevel} />
-        <Metric label="Memory" value={`${summary.memoryProposalCount}`} />
+        <Metric label="Memory" value={conclusion.memorySummary} />
         <Metric label="Parent" value={summary.parentRunId ?? "none"} />
       </section>
+
+      <section>
+        <div className="review-section-head">
+          <div>
+            <div className="panel-label">Manual Next Actions</div>
+            <p className="muted-copy">
+              These actions open review evidence only. They do not merge, push,
+              apply code, clean worktrees, or export repository context.
+            </p>
+          </div>
+        </div>
+        <div className="review-next-action-list">
+          {conclusion.nextActions.map((action) => (
+            <article key={`${action.label}-${action.tab}`}>
+              <div>
+                <strong>{action.label}</strong>
+                <p>{action.detail}</p>
+              </div>
+              <button
+                className="ghost-button"
+                onClick={() => onSelectTab(action.tab)}
+              >
+                {action.tab === "brief" ? "Stay Here" : `Open ${tabLabel(action.tab)}`}
+              </button>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      {risk.error ? (
+        <section className="inline-error">
+          Failed to load pinned risk details: {risk.error}
+        </section>
+      ) : null}
+
       <section>
         <div className="panel-label">Goal</div>
         <p>{summary.task || fallbackRun?.taskPrompt || "No task text recorded."}</p>
@@ -472,7 +568,8 @@ function Brief({
         <div className="panel-label">Decision Boundary</div>
         <p>
           Accepting or rejecting records review state only. It does not merge,
-          push, delete worktrees, revert files, or write repository context files.
+          push, delete worktrees, apply patches, revert files, or write
+          repository context files.
         </p>
       </section>
     </div>
@@ -596,10 +693,11 @@ function ArtifactInventory({
 
   if (artifacts.length === 0) {
     return (
-      <section>
-        <div className="panel-label">Artifact Inventory</div>
-        <p className="muted-copy">No local artifacts were recorded for this run.</p>
-      </section>
+      <EmptyState
+        eyebrow="Artifact Inventory"
+        title="No artifact evidence recorded"
+        body="Open Audit for raw run events, or run a task that produces diff, brief, lifecycle, or skill artifacts."
+      />
     );
   }
 
@@ -1335,23 +1433,8 @@ async function loadState<T>(
   }
 }
 
-function normalizeInspectorTab(tab: RunInspectorTab): WorkgroupInspectorTab {
-  switch (tab) {
-    case "summary":
-      return "brief";
-    case "diff":
-    case "handoff":
-    case "compare":
-      return "artifacts";
-    case "tests":
-      return "checks";
-    case "risk":
-      return "risks";
-    case "logs":
-      return "audit";
-    default:
-      return tab;
-  }
+function tabLabel(tab: WorkgroupInspectorTab): string {
+  return tabs.find((entry) => entry.id === tab)?.label ?? tab;
 }
 
 function formatTime(value: string): string {

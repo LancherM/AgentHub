@@ -276,6 +276,13 @@ function normalizeRoleInput(input: WorkgroupRole): WorkgroupRole {
     },
     executor: normalizeExecutor(value.executor),
     enabled: parseBoolean(value.enabled, "role enabled"),
+    defaultSkillReferences:
+      value.defaultSkillReferences === undefined
+        ? undefined
+        : parseSkillReferenceList(
+            value.defaultSkillReferences,
+            "role defaultSkillReferences"
+          ),
     defaultRoom:
       value.defaultRoom === undefined || value.defaultRoom === ""
         ? undefined
@@ -529,6 +536,37 @@ function parseStringList(input: unknown, label: string): string[] {
   return input.map((entry, index) =>
     parseNonEmptyString(entry, `${label} ${index + 1}`, maxShortTextLength)
   );
+}
+
+function parseSkillReferenceList(
+  input: unknown,
+  label: string
+): Array<{ id: string; scope?: "task" | "role" | "project" | "global" }> {
+  if (!Array.isArray(input)) {
+    throw new Error(`${label} must be an array`);
+  }
+  if (input.length > maxArrayEntries) {
+    throw new Error(`${label} must contain ${maxArrayEntries} or fewer entries`);
+  }
+  return input.map((entry, index) => {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+      throw new Error(`${label} ${index + 1} must be an object`);
+    }
+    const value = entry as { id?: unknown; scope?: unknown };
+    const id = parseNonEmptyString(value.id, `${label} ${index + 1} id`, 120);
+    if (value.scope === undefined) {
+      return { id };
+    }
+    if (
+      value.scope !== "task" &&
+      value.scope !== "role" &&
+      value.scope !== "project" &&
+      value.scope !== "global"
+    ) {
+      throw new Error(`${label} ${index + 1} scope must be task, role, project, or global`);
+    }
+    return { id, scope: value.scope };
+  });
 }
 
 function parseBoolean(input: unknown, label: string): boolean {

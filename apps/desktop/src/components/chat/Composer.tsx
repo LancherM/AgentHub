@@ -29,9 +29,11 @@ interface ComposerProps {
   lastUsedAgents: AgentId[];
   lastUsedRoleHandles: string[];
   roleTargets: TeamRoleSummary[];
+  initialContextMode: ContextMode;
   pendingContinueFrom?: RunContinuationTarget;
   disabledReason?: string;
   onSubmit(input: string, contextMode: ContextMode): Promise<void>;
+  onContextModeChange(contextMode: ContextMode): void;
   onClearContinueFrom(): void;
 }
 
@@ -40,13 +42,15 @@ export function Composer({
   lastUsedAgents,
   lastUsedRoleHandles,
   roleTargets,
+  initialContextMode,
   pendingContinueFrom,
   disabledReason,
   onSubmit,
+  onContextModeChange,
   onClearContinueFrom
 }: ComposerProps): JSX.Element {
   const [input, setInput] = useState("");
-  const [contextMode, setContextMode] = useState<ContextMode>("auto");
+  const [contextMode, setContextMode] = useState<ContextMode>(initialContextMode);
   const [localError, setLocalError] = useState<string | undefined>();
   const [cursor, setCursor] = useState(0);
   const [dismissedTriggerKey, setDismissedTriggerKey] = useState<string | undefined>();
@@ -103,6 +107,10 @@ export function Composer({
   useEffect(() => {
     setActiveSuggestionIndex(0);
   }, [triggerKey]);
+
+  useEffect(() => {
+    setContextMode(initialContextMode);
+  }, [initialContextMode]);
 
   async function submit(): Promise<void> {
     if (!canSubmit) {
@@ -240,7 +248,10 @@ export function Composer({
               key={mode}
               role="radio"
               aria-checked={contextMode === mode}
-              onClick={() => setContextMode(mode)}
+              onClick={() => {
+                setContextMode(mode);
+                onContextModeChange(mode);
+              }}
             >
               {mode}
             </button>
