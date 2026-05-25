@@ -15,10 +15,13 @@ import type {
   ContextSection,
   ContextStoreMode,
   ContextSourceKind,
+  InjectedSkillEvidence,
   JsonObject,
   MemoryContextItem,
   ProjectContext,
   SkillContextItem,
+  SkillReference,
+  SkillScope,
   TargetRepositoryMetadata,
   TaskBrief
 } from "@agent-hub/shared";
@@ -27,9 +30,12 @@ export type {
   ContextBundle,
   ContextSection,
   ContextSourceKind,
+  InjectedSkillEvidence,
   MemoryContextItem,
   ProjectContext,
   SkillContextItem,
+  SkillReference,
+  SkillScope,
   TargetRepositoryMetadata
 } from "@agent-hub/shared";
 
@@ -58,6 +64,8 @@ export interface ContextBuildInput extends ContextStoreInitInput {
   selectedAgentId: AgentKind;
   deliveryMode?: ContextDeliveryMode;
   outputRoot?: string;
+  selectedSkillReferences?: SkillReference[];
+  roleSkillReferences?: SkillReference[];
 }
 
 export interface ContextBuildResult {
@@ -126,6 +134,41 @@ interface StoredSkill {
   name: string;
   description: string;
   content: string;
+  scope: SkillScope;
+  path?: string;
+  contentHash: string;
+}
+
+export interface SkillLibraryCreateInput {
+  id?: string;
+  name: string;
+  description: string;
+  body?: string;
+  content?: string;
+  agentHubHome?: string;
+  overwrite?: boolean;
+}
+
+export interface SkillLibraryListInput {
+  agentHubHome?: string;
+}
+
+export interface SkillLibraryItem {
+  id: string;
+  scope: "global";
+  name: string;
+  description: string;
+  path: string;
+  contentHash: string;
+}
+
+export interface ScopedSkillProviderOptions {
+  projectStoreRoot?: string;
+  globalStoreRoot?: string;
+  selectedSkillReferences?: SkillReference[];
+  roleSkillReferences?: SkillReference[];
+  includeProjectSkills?: boolean;
+  includeGlobalSkillsWithoutReference?: boolean;
 }
 
 export interface ContextProviderResult<T> {
@@ -140,6 +183,8 @@ export interface ContextCompilerInput {
   conversationBrief?: string | ConversationContextBrief;
   userConstraints?: string[];
   executionHints?: string[];
+  selectedSkillReferences?: SkillReference[];
+  roleSkillReferences?: SkillReference[];
 }
 
 export interface ConversationContextBudget {
@@ -780,9 +825,7 @@ export class DefaultContextCompiler implements ContextCompiler {
         skill.description,
         skill.content ? `\n${skill.content}` : undefined
       ].filter(Boolean).join("\n");
-      sections.push(
-        section(200, "skill", skill.id, `Skill: ${skill.name}`, body)
-      );
+      sections.push(skillSection(200, skill, body));
     }
 
     for (const [index, constraint] of (input.userConstraints ?? []).entries()) {
@@ -920,7 +963,12 @@ export async function buildContextArtifacts(
   const compiler = new DefaultContextCompiler({
     projectContextProvider: new FileProjectContextProvider(config.storeRoot),
     memoryProvider: new FileMemoryProvider(config.storeRoot),
-    skillProvider: new FileSkillProvider(config.storeRoot)
+    skillProvider: new ScopedSkillProvider({
+      projectStoreRoot: config.storeRoot,
+      globalStoreRoot: resolveGlobalSkillStoreRoot({ agentHubHome: input.agentHubHome }),
+      selectedSkillReferences: input.selectedSkillReferences,
+      roleSkillReferences: input.roleSkillReferences
+    })
   });
   const bundle = await compiler.compile({
     taskPrompt: input.prompt,
@@ -929,7 +977,9 @@ export async function buildContextArtifacts(
       id: input.projectId,
       name: path.basename(path.resolve(input.projectRoot)),
       rootPath: path.resolve(input.projectRoot)
-    }
+    },
+    selectedSkillReferences: input.selectedSkillReferences,
+    roleSkillReferences: input.roleSkillReferences
   });
   const contextPack = toContextPack(bundle, input);
   const taskBrief = createTaskBrief({
@@ -1186,6 +1236,30 @@ function section(
   };
 }
 
+function skillSection(
+  order: number,
+  skill: SkillContextItem,
+  body: string
+): ContextSection {
+  const title = `Skill: ${skill.name}`;
+  return {
+    id: `skill:${skillContextReferenceId(skill)}`,
+    title,
+    body,
+    source: {
+      kind: "skill",
+      id: skillContextReferenceId(skill),
+      label: title,
+      ...(skill.scope ? { scope: skill.scope } : {}),
+      ...(skill.contentHash ? { contentHash: skill.contentHash } : {}),
+      ...(skill.sourcePath ? { sourcePath: skill.sourcePath } : {}),
+      skillName: skill.name,
+      skillDescription: skill.description
+    } as ContextSection["source"],
+    order
+  };
+}
+
 class FileProjectContextProvider implements ProjectContextProvider {
   constructor(private readonly storeRoot: string) {}
 
@@ -1232,20 +1306,131 @@ class FileMemoryProvider implements MemoryProvider {
 }
 
 class FileSkillProvider implements SkillProvider {
-  constructor(private readonly storeRoot: string) {}
+  constructor(
+    private readonly storeRoot: string,
+    private readonly scope: SkillScope = "project"
+  ) {}
 
   async getRelevantSkills(): Promise<ContextProviderResult<SkillContextItem>> {
-    const skills = await readSkillsFromStore(this.storeRoot);
+    const skills = await readSkillsFromStore(this.storeRoot, this.scope);
     return {
       items: skills.items.map((skill) => ({
         id: skill.id,
         name: skill.name,
         description: skill.description,
-        content: stripSkillMetadata(skill.content)
+        content: stripSkillMetadata(skill.content),
+        scope: skill.scope,
+        contentHash: skill.contentHash,
+        sourcePath: skill.path
       })),
       warnings: skills.warnings
     };
   }
+}
+
+export class ScopedSkillProvider implements SkillProvider {
+  constructor(private readonly options: ScopedSkillProviderOptions) {}
+
+  async getRelevantSkills(): Promise<ContextProviderResult<SkillContextItem>> {
+    const warnings: string[] = [];
+    const projectSkills = this.options.projectStoreRoot
+      ? await readSkillsFromStore(this.options.projectStoreRoot, "project")
+      : { items: [] };
+    pushWarnings(warnings, projectSkills.warnings);
+    const globalSkills = this.options.globalStoreRoot
+      ? await readSkillsFromStore(this.options.globalStoreRoot, "global")
+      : { items: [] };
+    pushWarnings(warnings, globalSkills.warnings);
+
+    const resolved = resolveScopedSkills({
+      projectSkills: projectSkills.items,
+      globalSkills: globalSkills.items,
+      selectedSkillReferences: this.options.selectedSkillReferences,
+      roleSkillReferences: this.options.roleSkillReferences,
+      includeProjectSkills: this.options.includeProjectSkills ?? true,
+      includeGlobalSkillsWithoutReference:
+        this.options.includeGlobalSkillsWithoutReference ?? false
+    });
+
+    return {
+      items: resolved.map((skill) => ({
+        id: skill.id,
+        name: skill.name,
+        description: skill.description,
+        content: stripSkillMetadata(skill.content),
+        scope: skill.scope,
+        contentHash: skill.contentHash,
+        sourcePath: skill.path
+      })),
+      ...(warnings.length === 0 ? {} : { warnings })
+    };
+  }
+}
+
+export function resolveGlobalSkillStoreRoot(input: {
+  agentHubHome?: string;
+} = {}): string {
+  return resolveAgentHubHome(input.agentHubHome);
+}
+
+export function resolveProjectContextStoreRoot(
+  input: ContextStoreInitInput
+): string {
+  return resolveContextStoreConfig(input).storeRoot;
+}
+
+export async function createGlobalSkill(
+  input: SkillLibraryCreateInput
+): Promise<SkillLibraryItem> {
+  const id = sanitizePathSegment(input.id ?? input.name);
+  if (!id) {
+    throw new Error("skill id is required");
+  }
+  const storeRoot = resolveGlobalSkillStoreRoot({ agentHubHome: input.agentHubHome });
+  const skillPath = path.join(storeRoot, "skills", id, "SKILL.md");
+  const existing = await readFileIfExists(skillPath);
+  if (existing !== undefined && input.overwrite !== true) {
+    throw new Error(`global skill ${id} already exists`);
+  }
+  const content = input.content ?? renderSkillFileContent(input);
+  const parsed = parseStoredSkill(id, content, "global", skillPath);
+  if (parsed.skill === undefined) {
+    throw new Error(parsed.warning);
+  }
+  await safeWriteFile(skillPath, content, storeRoot);
+  return skillLibraryItem(parsed.skill);
+}
+
+export async function listGlobalSkills(
+  input: SkillLibraryListInput = {}
+): Promise<SkillLibraryItem[]> {
+  const skills = await readSkillsFromStore(
+    resolveGlobalSkillStoreRoot({ agentHubHome: input.agentHubHome }),
+    "global"
+  );
+  return skills.items.map(skillLibraryItem);
+}
+
+export function createStoreContextCompiler(input: {
+  projectStoreRoot?: string;
+  globalSkillStoreRoot?: string;
+  selectedSkillReferences?: SkillReference[];
+  roleSkillReferences?: SkillReference[];
+}): DefaultContextCompiler {
+  return new DefaultContextCompiler({
+    projectContextProvider: input.projectStoreRoot
+      ? new FileProjectContextProvider(input.projectStoreRoot)
+      : undefined,
+    memoryProvider: input.projectStoreRoot
+      ? new FileMemoryProvider(input.projectStoreRoot)
+      : undefined,
+    skillProvider: new ScopedSkillProvider({
+      projectStoreRoot: input.projectStoreRoot,
+      globalStoreRoot: input.globalSkillStoreRoot,
+      selectedSkillReferences: input.selectedSkillReferences,
+      roleSkillReferences: input.roleSkillReferences
+    })
+  });
 }
 
 function resolveContextStoreConfig(input: ContextStoreInitInput): ContextStoreConfig {
@@ -1301,6 +1486,7 @@ function toContextPack(bundle: ContextBundle, input: ContextBuildInput): Context
     skillReferences: bundle.sections
       .filter((entry) => entry.source.kind === "skill")
       .map((entry) => entry.source.id),
+    injectedSkills: injectedSkillEvidence(bundle),
     createdAt: nowIso()
   });
 }
@@ -1341,7 +1527,10 @@ async function ensureFile(filePath: string, content: string): Promise<void> {
   }
 }
 
-async function readSkillsFromStore(storeRoot: string): Promise<ContextProviderResult<StoredSkill>> {
+async function readSkillsFromStore(
+  storeRoot: string,
+  scope: SkillScope = "project"
+): Promise<ContextProviderResult<StoredSkill>> {
   const skillsRoot = path.join(storeRoot, "skills");
   let entries: Array<import("node:fs").Dirent>;
   try {
@@ -1367,7 +1556,7 @@ async function readSkillsFromStore(storeRoot: string): Promise<ContextProviderRe
       warnings.push(`skill skipped: skills/${entry.name}/SKILL.md is missing`);
       continue;
     }
-    const parsed = parseStoredSkill(entry.name, content);
+    const parsed = parseStoredSkill(entry.name, content, scope, skillPath);
     if (parsed.skill === undefined) {
       warnings.push(parsed.warning);
       continue;
@@ -1544,7 +1733,9 @@ function normalizeApprovedMemoryEntry(content: string): string {
 
 function parseStoredSkill(
   directoryName: string,
-  content: string
+  content: string,
+  scope: SkillScope = "project",
+  filePath?: string
 ): { skill: StoredSkill; warning?: undefined } | { skill?: undefined; warning: string } {
   if (content.trim().length === 0) {
     return { warning: `skill skipped: skills/${directoryName}/SKILL.md is empty` };
@@ -1566,7 +1757,10 @@ function parseStoredSkill(
       id: directoryName,
       name,
       description,
-      content
+      content,
+      scope,
+      path: filePath,
+      contentHash: sha256(content)
     }
   };
 }
@@ -1593,6 +1787,135 @@ function parseSkillMetadata(content: string): Partial<Record<"name" | "descripti
     }
   }
   return metadata;
+}
+
+function resolveScopedSkills(input: {
+  projectSkills: StoredSkill[];
+  globalSkills: StoredSkill[];
+  selectedSkillReferences?: SkillReference[];
+  roleSkillReferences?: SkillReference[];
+  includeProjectSkills: boolean;
+  includeGlobalSkillsWithoutReference: boolean;
+}): StoredSkill[] {
+  const selected = new Map<string, StoredSkill>();
+  const projectById = new Map(input.projectSkills.map((skill) => [skill.id, skill]));
+  const globalById = new Map(input.globalSkills.map((skill) => [skill.id, skill]));
+
+  const add = (skill: StoredSkill | undefined): void => {
+    if (!skill) {
+      return;
+    }
+    selected.set(skill.id, skill);
+  };
+  const resolveReference = (reference: SkillReference): StoredSkill | undefined => {
+    if (reference.scope === "project") {
+      return projectById.get(reference.id);
+    }
+    if (reference.scope === "global") {
+      return globalById.get(reference.id);
+    }
+    return projectById.get(reference.id) ?? globalById.get(reference.id);
+  };
+
+  if (input.includeGlobalSkillsWithoutReference) {
+    for (const skill of input.globalSkills) {
+      add(skill);
+    }
+  }
+  if (input.includeProjectSkills) {
+    for (const skill of input.projectSkills) {
+      add(skill);
+    }
+  }
+  for (const reference of input.roleSkillReferences ?? []) {
+    add(resolveReference(reference));
+  }
+  for (const reference of input.selectedSkillReferences ?? []) {
+    add(resolveReference(reference));
+  }
+
+  return [...selected.values()].sort((left, right) =>
+    left.name === right.name
+      ? skillContextReferenceId(left).localeCompare(skillContextReferenceId(right))
+      : left.name.localeCompare(right.name)
+  );
+}
+
+export function injectedSkillEvidence(
+  bundle: ContextBundle
+): InjectedSkillEvidence[] {
+  return bundle.sections
+    .filter((entry) => entry.source.kind === "skill")
+    .map((entry) => skillEvidenceFromSection(entry))
+    .filter((entry): entry is InjectedSkillEvidence => entry !== undefined);
+}
+
+function skillEvidenceFromSection(
+  section: ContextSection
+): InjectedSkillEvidence | undefined {
+  const metadata = section.source as ContextSection["source"] & {
+    scope?: unknown;
+    contentHash?: unknown;
+    sourcePath?: unknown;
+    skillName?: unknown;
+    skillDescription?: unknown;
+  };
+  if (
+    metadata.scope !== "task" &&
+    metadata.scope !== "role" &&
+    metadata.scope !== "project" &&
+    metadata.scope !== "global"
+  ) {
+    return undefined;
+  }
+  if (
+    typeof metadata.contentHash !== "string" ||
+    typeof metadata.skillName !== "string" ||
+    typeof metadata.skillDescription !== "string"
+  ) {
+    return undefined;
+  }
+  return {
+    id: unscopedSkillId(section.source.id),
+    scope: metadata.scope,
+    name: metadata.skillName,
+    description: metadata.skillDescription,
+    contentHash: metadata.contentHash,
+    sourcePath:
+      typeof metadata.sourcePath === "string" ? metadata.sourcePath : undefined
+  };
+}
+
+function skillContextReferenceId(skill: SkillContextItem | StoredSkill): string {
+  return skill.scope ? `${skill.scope}:${skill.id}` : skill.id;
+}
+
+function unscopedSkillId(value: string): string {
+  const match = /^(task|role|project|global):(.+)$/.exec(value);
+  return match ? match[2] : value;
+}
+
+function renderSkillFileContent(input: SkillLibraryCreateInput): string {
+  return [
+    "---",
+    `name: ${input.name.trim()}`,
+    `description: ${input.description.trim()}`,
+    "---",
+    "",
+    (input.body ?? "").trim(),
+    ""
+  ].join("\n");
+}
+
+function skillLibraryItem(skill: StoredSkill): SkillLibraryItem {
+  return {
+    id: skill.id,
+    scope: "global",
+    name: skill.name,
+    description: skill.description,
+    path: skill.path ?? "",
+    contentHash: skill.contentHash
+  };
 }
 
 function stripSkillMetadata(content: string): string | undefined {
@@ -1673,7 +1996,9 @@ function sortById<T extends { id: string }>(items: T[]): T[] {
 function sortSkills(skills: SkillContextItem[]): SkillContextItem[] {
   return [...skills].sort((left, right) => {
     const byName = left.name.localeCompare(right.name);
-    return byName === 0 ? left.id.localeCompare(right.id) : byName;
+    return byName === 0
+      ? skillContextReferenceId(left).localeCompare(skillContextReferenceId(right))
+      : byName;
   });
 }
 

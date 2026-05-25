@@ -2221,6 +2221,13 @@ function roleContextReferences(role?: WorkgroupRoleRunMetadata): string[] {
     `role_persona: ${role.persona}`,
     `role_instructions: ${role.defaultInstructions}`,
     `role_permissions: ${role.permissions.join(", ") || "none"}`,
+    `role_skills: ${
+      role.defaultSkillReferences
+        ?.map((reference) =>
+          reference.scope ? `${reference.scope}:${reference.id}` : reference.id
+        )
+        .join(", ") ?? "none"
+    }`,
     `role_context_policy: ${role.contextPolicy.scope}; approved_memory=${String(
       role.contextPolicy.includeApprovedMemory
     )}; thread_summary=${String(role.contextPolicy.includeThreadSummary)}`,

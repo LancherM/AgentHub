@@ -11,8 +11,10 @@ import {
   StaticProjectContextProvider,
   appendApprovedMemory,
   buildContextArtifacts,
+  createGlobalSkill,
   exportContextToRepository,
   initContextStore,
+  listGlobalSkills,
   materializeWorktreeOverlay,
   replaceManagedBlock,
   safeWriteFile,
@@ -440,7 +442,14 @@ describe("ContextCompiler", () => {
     await expect(fs.readFile(built.taskBriefPath, "utf8")).resolves.toContain(
       "Compile task context"
     );
-    expect(built.contextPack.skillReferences).toEqual(["review"]);
+    expect(built.contextPack.skillReferences).toEqual(["project:review"]);
+    expect(built.contextPack.injectedSkills).toEqual([
+      expect.objectContaining({
+        id: "review",
+        scope: "project",
+        name: "review"
+      })
+    ]);
   });
 
   it("uses repo-local context storage only when explicitly requested", async () => {
@@ -499,8 +508,88 @@ describe("ContextCompiler", () => {
     expect(skillSection?.body).toContain("Use the declared review flow.");
     expect(skillSection?.body).toContain("Check the diff and tests.");
     expect(skillSection?.body).not.toContain("---");
-    expect(built.contextPack.skillReferences).toEqual(["review"]);
+    expect(built.contextPack.skillReferences).toEqual(["project:review"]);
     expect(built.warnings).toEqual([]);
+  });
+
+  it("resolves project and global skills with deterministic scoped precedence", async () => {
+    const projectRoot = await createTestDirectory("context-scoped-skill-project");
+    const agentHubHome = await createTestDirectory("context-scoped-skill-home");
+    const initialized = await initContextStore({
+      projectRoot,
+      projectId: "project_scoped_skill",
+      agentHubHome
+    });
+    await createGlobalSkill({
+      id: "review",
+      name: "global-review",
+      description: "Global review method.",
+      body: "Use the global review flow.",
+      agentHubHome
+    });
+    const globalTriage = await createGlobalSkill({
+      id: "triage",
+      name: "global-triage",
+      description: "Global triage method.",
+      body: "Use the global triage flow.",
+      agentHubHome
+    });
+    await fs.mkdir(path.join(initialized.storeRoot, "skills", "review"), {
+      recursive: true
+    });
+    await fs.writeFile(
+      path.join(initialized.storeRoot, "skills", "review", "SKILL.md"),
+      skillMarkdown({
+        name: "project-review",
+        description: "Project review method.",
+        body: "Use the project review flow."
+      }),
+      "utf8"
+    );
+
+    const built = await buildContextArtifacts({
+      projectRoot,
+      projectId: "project_scoped_skill",
+      taskId: "task_scoped_skill",
+      title: "Build scoped skill context",
+      prompt: "Compile task context",
+      selectedAgentId: "fake",
+      roleSkillReferences: [{ id: "triage", scope: "global" }],
+      agentHubHome
+    });
+
+    const skillSections = built.bundle.sections.filter(
+      (section) => section.source.kind === "skill"
+    );
+    expect(skillSections.map((section) => section.source.id)).toEqual([
+      "global:triage",
+      "project:review"
+    ]);
+    expect(skillSections.map((section) => section.title)).toEqual([
+      "Skill: global-triage",
+      "Skill: project-review"
+    ]);
+    expect(built.contextPack.skillReferences).toEqual([
+      "global:triage",
+      "project:review"
+    ]);
+    expect(built.contextPack.injectedSkills).toEqual([
+      expect.objectContaining({
+        id: "triage",
+        scope: "global",
+        contentHash: globalTriage.contentHash
+      }),
+      expect.objectContaining({
+        id: "review",
+        scope: "project"
+      })
+    ]);
+    expect(await listGlobalSkills({ agentHubHome })).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "review", scope: "global" }),
+        expect.objectContaining({ id: "triage", scope: "global" })
+      ])
+    );
   });
 
   it("warns and skips malformed file skills", async () => {
@@ -900,6 +989,13 @@ describe("ContextCompiler", () => {
       "Generated skill without metadata.\n",
       "utf8"
     );
+    await createGlobalSkill({
+      id: "global-only",
+      name: "global-only",
+      description: "Global skills are runtime-only unless explicitly selected.",
+      body: "Do not export by project repo export.",
+      agentHubHome
+    });
 
     const preview = await exportContextToRepository({
       projectRoot,
@@ -916,6 +1012,8 @@ describe("ContextCompiler", () => {
     expect(preview.changedFiles).toContain(".agents/skills/review/SKILL.md");
     expect(preview.changedFiles).not.toContain(".claude/skills/legacy/SKILL.md");
     expect(preview.changedFiles).not.toContain(".agents/skills/legacy/SKILL.md");
+    expect(preview.changedFiles).not.toContain(".claude/skills/global-only/SKILL.md");
+    expect(preview.changedFiles).not.toContain(".agents/skills/global-only/SKILL.md");
   });
 
   it("uses context-store skill directory names for export paths", async () => {

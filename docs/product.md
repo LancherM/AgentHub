@@ -127,6 +127,16 @@ instead of being silently injected as generic text. Skill display names are
 used in rendered context, while export and overlay file paths stay anchored to
 the context-store skill directory name.
 
+Reusable global skills can also live in Agent Hub-owned app data under
+`<agent-hub-app-data>/skills/<skill-name>/SKILL.md`. Global skills are created
+and listed with `agent-hub skills global create/list`; they are considered for
+runtime injection only through explicit task/run selections or role default
+skill references. Project context-store skills still load from the project
+context store and override same-id global skills unless a task or role
+explicitly selects a scoped global skill. Injected skill ids, scopes, display
+names, and content hashes are recorded in run evidence as a `skill_inventory`
+artifact. Skills remain separate from approved memory.
+
 `context export --target repo --dry-run` previews repository writes.
 `context export --target repo --write` uses Agent Hub managed blocks in
 `AGENTS.md` and optionally `CLAUDE.md`, preserves user-authored content
@@ -500,11 +510,11 @@ prompt, approved project context, role instructions, selected skills, and any
 explicit continuation, but prior room messages and the room summary are left
 out of the generated conversation brief. Role-targeted desktop turns add the
 resolved role handle, display name, executor, persona, default instructions,
-permissions,
-context policy, and approval policy to that same brief and to TaskRunner
-constraints/hints before execution. A zero recent-message budget includes no
-prior messages, and the first message in an empty thread uses the retitled
-thread name in the injected brief. Agent Hub persists that exact brief as a
+permissions, default skill references, context policy, and approval policy to
+that same brief and to TaskRunner constraints/hints before execution. A zero
+recent-message budget includes no prior messages, and the first message in an
+empty thread uses the retitled thread name in the injected brief. Agent Hub
+persists that exact brief as a
 `conversation_brief` run artifact so review can inspect what was injected. The
 brief excludes raw lifecycle/debug events, logs,
 diffs, verification output, risk evidence, and other review artifacts. Full

@@ -520,6 +520,21 @@ parser, so malformed skills are not copied into `.claude/skills` or
 not the frontmatter display name, so a malformed-looking display name cannot
 collapse paths outside the intended skill folder.
 
+Global skills use the same `SKILL.md` parser but are stored outside project
+context stores at `<agent-hub-app-data>/skills/<skill-id>/SKILL.md`. The
+scoped skill resolver combines project-store skills, global skills, role
+default skill references, and task/run selected skill references with
+deterministic precedence: task/run selected references, then role references,
+then project skills, then global skills. Project skills are included for
+backward-compatible project context builds, while global skills require an
+explicit task or role reference unless a caller opts into global default
+inclusion. A same-id project skill overrides the global skill by default; an
+explicit `global:<id>` reference can intentionally select the global version.
+Resolved skill evidence is copied into the context pack as `injectedSkills`
+and persisted by the task runner as a `skill_inventory` run artifact with the
+skill id, source scope, display metadata, source path when local, and
+content SHA-256 hash.
+
 Repo-local context stores remain opt-in through `--mode repo_local`. Repository
 export remains opt-in through `context export --target repo --dry-run` or
 `context export --target repo --write`; dry-run produces previews without
