@@ -39,7 +39,16 @@ agent-hub run [--repo <path>] [--workspace-base <path>] [--retain-on-failure] [-
 agent-hub [--db <path>] run event add --run-id <run-id> --type <type> --message <message>
 agent-hub [--db <path>] threads list
 agent-hub [--db <path>] threads show <thread-id>
-agent-hub [--db <path>] chat [--thread <thread-id>]
+agent-hub [--db <path>] rooms list --project-id <project-id>
+agent-hub [--db <path>] rooms create --project-id <project-id> --handle <handle> --title <title> [--description <text>]
+agent-hub [--db <path>] rooms use --project-id <project-id> --room <handle-or-thread-id>
+agent-hub [--db <path>] rooms send --project-id <project-id> --room <handle-or-thread-id> --message <text>
+agent-hub [--db <path>] rooms timeline --project-id <project-id> --room <handle-or-thread-id>
+agent-hub [--db <path>] chat [--thread <thread-id>|--room <handle-or-thread-id>]
+agent-hub [--db <path>] team roles list --project-id <project-id>
+agent-hub [--db <path>] team roles show --project-id <project-id> --role <handle>
+agent-hub [--db <path>] team roles save --project-id <project-id> --handle <handle> [--display-name <name>] [--executor fake|codex|claude-code|human|llm_api|workflow]
+agent-hub [--db <path>] team roles executor --project-id <project-id> --role <handle>
 agent-hub tasks list
 agent-hub runs list
 agent-hub runs events <run-id>
@@ -62,13 +71,28 @@ This bare interactive shell remains stateless: each prompt is dispatched as a
 single run and no conversation thread rows are created.
 
 `agent-hub chat` is the explicit persistent conversation mode. It creates or
-resumes a local SQLite-backed conversation thread, persists ordered user,
-run-card, and bounded assistant-output messages, and accepts `/thread new`,
-`/thread use <id>`, `/threads`, `/history`, `/continue run <id>`, `/continue
-message <id>`, `/continue clear`, and `/exit`. Natural-language chat
-turns use the selected default agent, while leading `@fake`, `@codex`, or
-`@claude-code` prefixes route that turn to a specific adapter. Each chat turn
-builds a bounded conversation brief from prior thread messages with the shared
+resumes a local SQLite-backed conversation thread, can enter a room with
+`--room <handle-or-thread-id>`, persists ordered user, run-card, and bounded
+assistant-output messages, and accepts `/thread new`, `/thread use <id>`,
+`/threads`, `/rooms`, `/room use <handle>`, `/room create <handle> [title]`,
+`/room timeline`, `/roles`, `/role <handle>`, `/history`,
+`/continue run <id>`, `/continue message <id>`, `/continue clear`, and
+`/exit`. Natural-language chat turns use the selected default agent, while
+leading `@fake`, `@codex`, or `@claude-code` prefixes route that turn to a
+specific adapter. Chat and `rooms send` also resolve enabled role handles such
+as `@researcher`, `@writer`, or custom saved roles, create one shared local
+task with assignment metadata, and run each executable `agent_adapter`
+participant through the same local `TaskRunner` and isolated worktree path as
+command-mode runs. Reserved `human`, `llm_api`, and `workflow` role executors
+remain visible assignment metadata and do not start hidden work.
+
+The CLI exposes the same room and team-role concepts used by desktop:
+`rooms list`, `rooms create`, `rooms use`, `rooms send`, and `rooms timeline`
+operate metadata-backed conversation rooms, while `team roles list`,
+`team roles show`, `team roles save`, and `team roles executor` inspect and
+persist preset overrides or custom local roles in the same SQLite settings
+namespace as the desktop Team workspace. Each chat turn builds a bounded
+conversation brief from prior thread messages with the shared
 `ConversationContextBuilder`, injects it through `runtime_injection`, and
 persists the exact brief as a `conversation_brief` run artifact. Chat also
 maintains a conservative thread-local summary with decisions, open items,
@@ -319,6 +343,18 @@ configurable roles, executor backends, workflow templates, artifact and
 knowledge models, pack metadata, and optional sync/collaboration surfaces while
 preserving local-first operation as the default.
 
+Built-in workgroup pack metadata is now defined locally for Core Workgroup,
+Engineering, Research, Writing, Analysis, and Operations. Packs are
+deterministic product metadata, not a marketplace or third-party code loading
+surface. Each pack can contribute artifact type definitions, check types, risk
+categories, default role template handles, executor capability hints, context
+section provider metadata, and labels. Core labels stay general: Brief,
+Context, Artifacts, Checks, Risks, and Memory. Engineering-specific vocabulary
+such as Diff, Tests, Worktree, PR, and CI is available only through the
+Engineering pack label metadata and maps back to general core surfaces outside
+that context. Packs may seed preset roles, but they do not restrict custom
+roles.
+
 The first workgroup role foundation is now available in the local desktop
 conversation service. Shared role contracts describe a stable handle, display
 name, purpose, capability summary, persona, default instructions, permissions,
@@ -329,6 +365,33 @@ roles include `@researcher`, `@writer`, `@analyst`, `@operator`, `@reviewer`,
 runnable executor kind is `agent_adapter`, which maps role turns to existing
 local fake, Codex, or Claude Code adapters. Reserved executor kinds for
 `llm_api`, `workflow`, and `human` are representable but not executed yet.
+
+The desktop Team workspace now exposes that role contract as local project
+configuration. Users can inspect preset roles, save safe preset overrides, and
+create custom roles with a handle, display name, purpose, capability summary,
+persona, default instructions, permissions, context policy, approval policy,
+executor binding, enabled state, default room, and tags. Role configuration is
+stored in Agent Hub's local SQLite settings for the selected project; it does
+not write to the target repository or export `AGENTS.md`, `CLAUDE.md`, or skill
+folders. The UI clearly marks `agent_adapter` roles as runnable through the
+existing local adapters and keeps `llm_api`, `workflow`, and `human` roles as
+reserved non-runnable metadata in this phase.
+
+Desktop rooms now support the first bounded collaboration workflow metadata.
+Users can start `handoff`, `review_loop`, or `panel_discussion` workflows from
+the room workflow launcher, and power users can also start one with a
+`/workflow <mode>` room command. A workflow records participants, executor
+availability, max rounds, stop condition, expected outputs, and a visible
+summary on the shared task/message metadata. Runnable participants still create
+normal TaskRunner-backed local runs with conversation briefs and isolated
+worktrees; non-runnable participants remain assigned or waiting. The workflow
+does not create autonomous agent chatter, remote queues, hidden follow-up runs,
+automatic apply, merge, or push behavior. Timeline events show handoff or
+review start, review completion when linked runs finish, and workflow
+completion once all executable participants reach terminal state or the
+workflow contains only non-runnable participants.
+If a runnable assignment fails before its run row can be created, the shared
+task can still leave `running` once all executable assignments are terminal.
 
 Agent Hub Desktop is now available as a local conversation console under
 `apps/desktop`. It starts with `pnpm --filter desktop dev` and presents a
@@ -351,7 +414,8 @@ message and run-card metadata, and copied to run metadata so review surfaces
 can show which role and executor produced a run. The renderer sends prompt text
 through the safe
 `window.agentHub.threads.sendMessage` preload API; the Electron main-process
-thread service strips known agent or role mentions from the task body, persists
+thread service resolves project-level Team workspace roles, strips known agent
+or role mentions from the task body, persists
 one ordered user message in the selected SQLite-backed room thread, creates one
 shared task for the instruction, records task-created and participants-assigned
 system timeline events, then creates one run per executable assignment through
@@ -412,10 +476,10 @@ transcript text only and are never written to approved memory automatically.
 
 The workgroup inspector is the desktop drill-down surface for review evidence.
 Its top-level tabs use product vocabulary: Brief, Context, Artifacts, Checks,
-Risks, Memory, and Audit. Brief shows the goal, status, assignee, review state,
-acceptance-criteria placeholder, and decision boundary. Context loads the
-persisted `conversation_brief` run artifact through review IPC and otherwise
-shows a clear unavailable state. Artifacts now begins with a local artifact
+Risks, Lifecycle, Memory, and Audit. Brief shows the goal, status, assignee,
+review state, acceptance-criteria placeholder, and decision boundary. Context
+loads the persisted `conversation_brief` run artifact through review IPC and
+otherwise shows a clear unavailable state. Artifacts now begins with a local artifact
 inventory derived from persisted `run_artifacts`. Each artifact has bounded
 metadata for title, artifact type, source run, source task, thread id when
 known, creator, summary, local availability, and a capped content preview.
@@ -428,10 +492,13 @@ into the room transcript. The same tab still contains engineering-specific
 evidence such as changed-file stats, bounded unified diffs, retained-worktree
 handoff, and local comparison reports, keeping those labels out of the
 top-level navigation. Checks shows captured verification rows, Risks shows
-persisted TaskRunner safety reports or deterministic fallback findings, Memory
-shows conservative proposals, and Audit shows bounded raw logs. All of this
+persisted TaskRunner safety reports or deterministic fallback findings,
+Lifecycle shows retained-worktree state plus explicit cleanup and local apply
+controls, Memory shows conservative proposals, and Audit shows bounded raw logs.
+All of this
 loads through `window.agentHub.review.*`, `window.agentHub.comparison.*`, and
-`window.agentHub.memory.*` IPC methods. Blocking persisted safety reports keep
+`window.agentHub.lifecycle.*`, and `window.agentHub.memory.*` IPC methods.
+Blocking persisted safety reports keep
 their `blocking` level and mapped evidence in the inspector so sensitive-path
 or dangerous-instruction findings are not downgraded by the desktop fallback
 risk classifier. Fake desktop runs explicitly show that no real repository
@@ -443,13 +510,37 @@ refs, cleanup status, changed files, and exact local review commands inside
 Artifacts. Open/copy actions are validated IPC calls handled by the main
 process, and the copied commands are review-only commands such as `git status`
 and `git diff`; Agent Hub does not generate merge, push, apply, or cleanup
-commands. Desktop memory proposal generation is idempotent for each run:
+commands from manual handoff. Lifecycle actions are separate explicit IPC calls:
+mark keep records user intent, cleanup requires the exact `cleanup <run-id>`
+confirmation phrase before removing a retained local worktree, and apply first
+previews the bounded patch, checks the latest risk report, blocks `blocking`
+risk, requires `apply <run-id>`, and then runs local `git apply --check` plus
+`git apply` only against the local project checkout. Apply execution reads the
+raw persisted patch in the Electron main process rather than the bounded,
+redacted inspector preview. It does not commit, push, merge, create pull
+requests, approve memory, or export repository context.
+Each lifecycle decision writes a `lifecycle_audit` run artifact, a lifecycle
+run event, and a linked room timeline event when the run belongs to a thread.
+Desktop memory proposal generation is idempotent for each run:
 summary cards, run-detail loading, and the memory tab can refresh in parallel
 without duplicating the same proposal content or growing beyond the bounded
 proposal set for that run. Verification-command memory proposals use the same
 secret-like command filter in desktop and task runner paths, so commands
 containing token, API key, password, credential, or similar terms are skipped
 instead of being persisted as proposed memory.
+
+The desktop Knowledge workspace is the project-level memory and decision
+browser. It is opened from the local sidebar and lists approved, proposed, and
+rejected memory items alongside thread-local summaries, decisions captured from
+thread summaries, and audit review decisions stored as `review_decision`
+artifacts. Filters cover all records, decisions, summaries, proposed memory,
+approved memory, and rejected memory. Each record keeps source links to a
+thread/message, task, run, or artifact when that metadata exists. Run links
+open the existing workgroup inspector; thread and message links return to the
+source room. Approval and rejection remain explicit user actions for proposed
+memory only. Thread summaries stay visible as thread-local context and are not
+treated as approved project memory unless a user explicitly promotes equivalent
+content through the memory approval workflow.
 
 Inspector accept/reject actions are audit decisions only. Accepting a run
 records `accepted` review state and shows "Accepted for record. No merge was
@@ -502,8 +593,10 @@ per-project; they are edited through validated IPC and then run by TaskRunner in
 the isolated worktree. The run inspector can also compare terminal same-task or
 same-turn runs and show persisted status, risk, verification, diff footprint,
 score, and winner signals. Explicit desktop memory approval writes only to Agent
-Hub's approved-memory context store. Worktree lifecycle management and explicit
-merge/apply workflows remain follow-up desktop wiring tasks.
+Hub's approved-memory context store. Worktree lifecycle management is now
+explicit in the inspector, and local apply is a human-gated review workflow;
+merge, push, pull request creation, and branch deletion remain outside the
+desktop apply flow.
 
 SQLite is stored in Agent Hub-owned application data by default, not in the
 target project repository. `AGENT_HUB_HOME` can point Agent Hub at an alternate
@@ -538,7 +631,7 @@ Structured run data is now also persisted in first-class SQLite tables:
 - adapter event streams in `run_events`
 - manually recorded run events in `run_events`
 - task briefs, conversation briefs, git diffs, review decisions, provenance,
-  and other local run evidence in `run_artifacts`
+  lifecycle audit decisions, and other local run evidence in `run_artifacts`
 - verification command rows in `verification_results`
 - risk reports in `risk_reports`
 - thread-local conversation summaries in `conversation_thread_summaries`

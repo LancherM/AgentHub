@@ -5,7 +5,9 @@ import type {
   CreateThreadInput,
   CreateRunInput,
   HandoffCopyKind,
+  LifecycleActionInput,
   RunEvent,
+  SaveTeamRoleInput,
   SendThreadMessageInput,
   VerificationSettings,
   Unsubscribe
@@ -76,6 +78,17 @@ const api: AgentHubApi = {
     refresh: (runId: string) =>
       ipcRenderer.invoke(IPC_CHANNELS.reviewRefresh, runId)
   },
+  lifecycle: {
+    get: (runId: string) => ipcRenderer.invoke(IPC_CHANNELS.lifecycleGet, runId),
+    markKeep: (input: LifecycleActionInput) =>
+      ipcRenderer.invoke(IPC_CHANNELS.lifecycleMarkKeep, input),
+    cleanupWorktree: (input: LifecycleActionInput) =>
+      ipcRenderer.invoke(IPC_CHANNELS.lifecycleCleanupWorktree, input),
+    previewApply: (runId: string) =>
+      ipcRenderer.invoke(IPC_CHANNELS.lifecyclePreviewApply, runId),
+    confirmApply: (input: LifecycleActionInput) =>
+      ipcRenderer.invoke(IPC_CHANNELS.lifecycleConfirmApply, input)
+  },
   comparison: {
     listCandidates: (runId: string) =>
       ipcRenderer.invoke(IPC_CHANNELS.comparisonListCandidates, runId),
@@ -93,6 +106,16 @@ const api: AgentHubApi = {
       ipcRenderer.invoke(IPC_CHANNELS.memoryApprove, ids),
     ignore: (ids: string[]) =>
       ipcRenderer.invoke(IPC_CHANNELS.memoryIgnore, ids)
+  },
+  knowledge: {
+    getWorkspace: (projectId: string) =>
+      ipcRenderer.invoke(IPC_CHANNELS.knowledgeWorkspace, projectId)
+  },
+  team: {
+    getWorkspace: (projectId: string) =>
+      ipcRenderer.invoke(IPC_CHANNELS.teamWorkspace, projectId),
+    saveRole: (input: SaveTeamRoleInput) =>
+      ipcRenderer.invoke(IPC_CHANNELS.teamSaveRole, input)
   },
   settings: {
     getVerification: (projectId: string) =>
