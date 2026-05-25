@@ -55,6 +55,7 @@ export type WorkgroupInspectorTab =
   | "artifacts"
   | "checks"
   | "risks"
+  | "lifecycle"
   | "memory"
   | "audit";
 export type LegacyRunInspectorTab =
@@ -86,7 +87,12 @@ export type TimelineEventKind =
   | "check_completed"
   | "risk_detected"
   | "memory_proposed"
-  | "review_decision";
+  | "review_decision"
+  | "lifecycle_marked_keep"
+  | "lifecycle_cleaned"
+  | "apply_previewed"
+  | "apply_applied"
+  | "apply_blocked";
 export type TimelineEventActor = "user" | "system" | "agent" | "assistant";
 export type TimelineEventTone =
   | "neutral"
@@ -449,6 +455,47 @@ export interface ReviewHandoffActionResult {
   message: string;
 }
 
+export interface LifecycleAuditEntry {
+  id: string;
+  action: string;
+  status: "recorded" | "blocked" | "failed" | "completed";
+  createdAt: string;
+  message: string;
+  artifactId?: string;
+}
+
+export interface ApplyPreview {
+  runId: string;
+  available: boolean;
+  confirmationPhrase: string;
+  blocked: boolean;
+  riskLevel: ReviewRiskLevel;
+  changedFiles: ChangedFile[];
+  patchPreview?: string;
+  truncated?: boolean;
+  message: string;
+}
+
+export interface RunLifecycle {
+  runId: string;
+  handoff: ReviewHandoff;
+  applyPreview: ApplyPreview;
+  audit: LifecycleAuditEntry[];
+  message: string;
+}
+
+export interface LifecycleActionInput {
+  runId: string;
+  confirmation?: string;
+  reason?: string;
+}
+
+export interface LifecycleActionResult {
+  ok: boolean;
+  message: string;
+  lifecycle: RunLifecycle;
+}
+
 export type ComparisonScopeKind = "task" | "conversation_turn";
 
 export interface ComparisonCreateInput {
@@ -793,6 +840,13 @@ export interface AgentHubApi {
       runId: string,
       kind: HandoffCopyKind
     ): Promise<ReviewHandoffActionResult>;
+  };
+  lifecycle: {
+    get(runId: string): Promise<RunLifecycle>;
+    markKeep(input: LifecycleActionInput): Promise<LifecycleActionResult>;
+    cleanupWorktree(input: LifecycleActionInput): Promise<LifecycleActionResult>;
+    previewApply(runId: string): Promise<ApplyPreview>;
+    confirmApply(input: LifecycleActionInput): Promise<LifecycleActionResult>;
   };
   comparison: {
     listCandidates(runId: string): Promise<ComparisonCandidate[]>;
