@@ -144,22 +144,39 @@ mapped as readable custom rooms so the room navigation does not invalidate
 existing transcript data.
 
 `agent-hub chat` is the CLI path over the same durable conversation boundary.
-It resolves the local project, creates or resumes a conversation thread, writes
-one user message per natural-language line, runs the selected agent through the
-existing `TaskRunner`, writes a run-card message plus a bounded assistant
-message, and persists the generated conversation brief as run evidence.
-Leading `@fake`, `@codex`, and `@claude-code` prefixes choose the agent for one
-turn; otherwise chat uses the selected default agent. The chat slash commands
-are local thread controls only: `/thread new`, `/thread use <id>`, `/threads`,
+It resolves the local project, creates or resumes a conversation thread or
+metadata-backed room, writes one user message per natural-language line, runs
+the selected agent through the existing `TaskRunner`, writes a run-card message
+plus a bounded assistant message, and persists the generated conversation
+brief as run evidence. Leading `@fake`, `@codex`, and `@claude-code` prefixes
+choose the agent for one turn; otherwise chat uses the selected default agent.
+Enabled workgroup role mentions such as `@researcher` or custom saved roles
+resolve through the CLI role store, create one shared task with assignment
+metadata, and execute each runnable `agent_adapter` participant through
+TaskRunner with `taskStatusMode: "shared_task"`. Non-runnable `human`,
+`llm_api`, and `workflow` role executors stay as assignment metadata only.
+The chat slash commands include room and role controls: `/thread new`,
+`/thread use <id>`, `/threads`, `/rooms`, `/room use <handle>`,
+`/room create <handle> [title]`, `/room timeline`, `/roles`, `/role <handle>`,
 `/history`, and `/exit`. After each completed chat turn, the CLI refreshes the
 thread-local summary deterministically from bounded transcript messages.
-`threads show <thread-id>` renders that summary beside the ordered transcript.
+`threads show <thread-id>` and `rooms timeline` render the ordered transcript.
 The existing `agent-hub run` command and bare interactive shell remain
 stateless and do not read or write conversation threads.
 CLI chat adds one-shot code-state continuation controls with `/continue run
 <id>`, `/continue message <id>`, and `/continue clear`; these controls only
 populate the next `TaskRunner` input and do not promote thread context or
 accept any parent branch.
+
+The CLI room and role commands are thin repository operations over the same
+local SQLite model. `rooms list`, `rooms create`, `rooms use`, `rooms send`,
+and `rooms timeline` seed or read `conversation_threads.metadata` room records
+without adding a separate room table. `team roles list`, `team roles show`,
+`team roles save`, and `team roles executor` read and write preset overrides
+or custom roles in the same project settings key used by the desktop Team
+workspace. This keeps role handles, executor bindings, and reserved executor
+states consistent across CLI and desktop without moving orchestration into the
+renderer or adding a terminal UI dependency.
 
 `apps/desktop/electron/services/thread-service.ts` is the desktop conversation
 facade over those repositories. It parses safe debug adapter mentions

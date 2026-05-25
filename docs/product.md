@@ -39,7 +39,16 @@ agent-hub run [--repo <path>] [--workspace-base <path>] [--retain-on-failure] [-
 agent-hub [--db <path>] run event add --run-id <run-id> --type <type> --message <message>
 agent-hub [--db <path>] threads list
 agent-hub [--db <path>] threads show <thread-id>
-agent-hub [--db <path>] chat [--thread <thread-id>]
+agent-hub [--db <path>] rooms list --project-id <project-id>
+agent-hub [--db <path>] rooms create --project-id <project-id> --handle <handle> --title <title> [--description <text>]
+agent-hub [--db <path>] rooms use --project-id <project-id> --room <handle-or-thread-id>
+agent-hub [--db <path>] rooms send --project-id <project-id> --room <handle-or-thread-id> --message <text>
+agent-hub [--db <path>] rooms timeline --project-id <project-id> --room <handle-or-thread-id>
+agent-hub [--db <path>] chat [--thread <thread-id>|--room <handle-or-thread-id>]
+agent-hub [--db <path>] team roles list --project-id <project-id>
+agent-hub [--db <path>] team roles show --project-id <project-id> --role <handle>
+agent-hub [--db <path>] team roles save --project-id <project-id> --handle <handle> [--display-name <name>] [--executor fake|codex|claude-code|human|llm_api|workflow]
+agent-hub [--db <path>] team roles executor --project-id <project-id> --role <handle>
 agent-hub tasks list
 agent-hub runs list
 agent-hub runs events <run-id>
@@ -62,13 +71,28 @@ This bare interactive shell remains stateless: each prompt is dispatched as a
 single run and no conversation thread rows are created.
 
 `agent-hub chat` is the explicit persistent conversation mode. It creates or
-resumes a local SQLite-backed conversation thread, persists ordered user,
-run-card, and bounded assistant-output messages, and accepts `/thread new`,
-`/thread use <id>`, `/threads`, `/history`, `/continue run <id>`, `/continue
-message <id>`, `/continue clear`, and `/exit`. Natural-language chat
-turns use the selected default agent, while leading `@fake`, `@codex`, or
-`@claude-code` prefixes route that turn to a specific adapter. Each chat turn
-builds a bounded conversation brief from prior thread messages with the shared
+resumes a local SQLite-backed conversation thread, can enter a room with
+`--room <handle-or-thread-id>`, persists ordered user, run-card, and bounded
+assistant-output messages, and accepts `/thread new`, `/thread use <id>`,
+`/threads`, `/rooms`, `/room use <handle>`, `/room create <handle> [title]`,
+`/room timeline`, `/roles`, `/role <handle>`, `/history`,
+`/continue run <id>`, `/continue message <id>`, `/continue clear`, and
+`/exit`. Natural-language chat turns use the selected default agent, while
+leading `@fake`, `@codex`, or `@claude-code` prefixes route that turn to a
+specific adapter. Chat and `rooms send` also resolve enabled role handles such
+as `@researcher`, `@writer`, or custom saved roles, create one shared local
+task with assignment metadata, and run each executable `agent_adapter`
+participant through the same local `TaskRunner` and isolated worktree path as
+command-mode runs. Reserved `human`, `llm_api`, and `workflow` role executors
+remain visible assignment metadata and do not start hidden work.
+
+The CLI exposes the same room and team-role concepts used by desktop:
+`rooms list`, `rooms create`, `rooms use`, `rooms send`, and `rooms timeline`
+operate metadata-backed conversation rooms, while `team roles list`,
+`team roles show`, `team roles save`, and `team roles executor` inspect and
+persist preset overrides or custom local roles in the same SQLite settings
+namespace as the desktop Team workspace. Each chat turn builds a bounded
+conversation brief from prior thread messages with the shared
 `ConversationContextBuilder`, injects it through `runtime_injection`, and
 persists the exact brief as a `conversation_brief` run artifact. Chat also
 maintains a conservative thread-local summary with decisions, open items,

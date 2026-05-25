@@ -1001,7 +1001,15 @@ export class TaskRunner {
   }
 
   private async sharedTaskStatus(taskId: string): Promise<Task["status"]> {
+    const task = await this.taskRepository.get(taskId);
     const runs = await this.taskRunRepository.listByTaskId(taskId);
+    const expectedRunCount = metadataNumber(
+      task?.metadata,
+      "executableAssignmentCount"
+    );
+    if (expectedRunCount !== undefined && runs.length < expectedRunCount) {
+      return "running";
+    }
     if (runs.some((run) => run.status === "queued" || run.status === "running")) {
       return "running";
     }
@@ -1228,6 +1236,14 @@ function compactMetadata(metadata: JsonObject): JsonObject {
   return Object.fromEntries(
     Object.entries(metadata).filter(([, value]) => value !== undefined)
   ) as JsonObject;
+}
+
+function metadataNumber(
+  metadata: JsonObject | undefined,
+  key: string
+): number | undefined {
+  const value = metadata?.[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
 function finalRunStatus(status: RunStatus, finalizationFailed: boolean): RunStatus {
