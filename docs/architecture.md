@@ -759,19 +759,19 @@ main-process services instead of duplicating orchestration. Future
 restructuring should preserve that direction and keep desktop orchestration
 logic outside the renderer.
 
-The planned local AI workgroup transformation is documented in
-`docs/local-ai-workgroup-roadmap.md`. Architecturally, the first phases should
-layer room, configurable role/participant, executor, timeline, artifact,
-decision, and knowledge semantics on top of the existing local conversation and
-run evidence boundaries instead of starting with a broad schema rewrite.
-`ConversationThread` can initially serve as the room timeline record. Role
-records should not be a closed enum: preset roles can seed defaults, while
+The local AI workgroup transformation is documented in
+`docs/local-ai-workgroup-roadmap.md`. The current implementation layers room,
+configurable role/participant, executor, timeline, artifact, decision,
+knowledge, pack, workflow, and lifecycle semantics on top of the existing local
+conversation and run evidence boundaries instead of starting with a broad
+schema rewrite. `ConversationThread` currently serves as the room timeline
+record. Role records are not a closed enum: preset roles seed defaults, while
 user-defined roles carry capability, persona, permission, context, approval,
 and executor metadata. The first runnable executor maps to existing adapter
-kinds, and the role model should leave space for future LLM API, local
-workflow, and human executors. Run artifacts/review evidence can back the first
-artifact, check, risk, and memory inspector panels. New first-class tables such
-as `rooms`, `roles`, `participants`, `role_executors`, `task_assignments`,
+kinds, and the role model leaves space for future LLM API, local workflow, and
+human executors. Run artifacts/review evidence back the first artifact, check,
+risk, lifecycle, and memory inspector panels. New first-class tables such as
+`rooms`, `roles`, `participants`, `role_executors`, `task_assignments`,
 `timeline_events`, `artifacts`, `decisions`, or `packs` should be added only
 when the metadata-backed model no longer satisfies a specific query, lifecycle,
 or governance need. The roadmap also defines longer-term extension horizons:
@@ -850,6 +850,22 @@ Code adapters. Reserved `llm_api`, `workflow`, and `human` roles are stored and
 rendered as non-runnable assignment metadata until later runtime phases define
 explicit local executors.
 
+Phase 9 adds bounded collaboration workflow metadata without autonomous agent
+chatter or remote queues. `ThreadService` stores `handoff`, `review_loop`, and
+`panel_discussion` workflow state on conversation messages and shared task
+metadata, enforces local round bounds before run creation, and appends
+workflow timeline events as executable participants reach terminal state.
+Runnable participants still use normal TaskRunner runs; reserved non-runnable
+participants stay as visible assignment metadata.
+
+Phase 10 adds CLI parity for rooms and roles. `rooms list`, `rooms create`,
+`rooms use`, `rooms send`, and `rooms timeline` operate on metadata-backed
+conversation rooms, while `team roles list`, `team roles show`, `team roles
+save`, and `team roles executor` read and write the same project-scoped role
+settings used by the desktop Team workspace. CLI chat and `rooms send` route
+role mentions through the shared role resolution and shared-task fan-out path
+while leaving command-mode `agent-hub run` stateless.
+
 Phase 11 adds deterministic pack metadata in
 `packages/shared/src/workgroup-packs.ts`. Built-in packs cover Core Workgroup,
 Engineering, Research, Writing, Analysis, and Operations. A pack is a local
@@ -863,6 +879,14 @@ label mapping without giving the renderer authority to load code. Core label
 mapping returns Brief, Context, Artifacts, Checks, Risks, and Memory; terms
 such as Diff, Tests, Worktree, PR, and CI resolve to those general surfaces
 unless the Engineering pack is explicitly selected.
+
+Phase 12 adds explicit lifecycle controls around retained worktrees and local
+apply. `LifecycleService` validates retained-worktree ownership, requires
+exact confirmation phrases for cleanup and apply, records lifecycle audit
+artifacts/events, blocks apply on `blocking` risk, and runs local `git apply
+--check` plus `git apply` against the selected project checkout only after the
+human confirmation. It does not commit, merge, push, create pull requests,
+delete branches, approve memory, or export repository context.
 
 Repository CI/CD lives in `.github/workflows/ci-cd.yml` and stays outside the
 Agent Hub runtime. The workflow installs the pinned pnpm and Node versions from
@@ -883,7 +907,8 @@ proposal data from local SQLite repositories. It does not add an API server.
 Desktop run creation now reuses TaskRunner and the shared fake/Codex/Claude
 adapter layer from the Electron main process. The inspector accept/reject flow
 records review decisions only, while retained-worktree handoff exposes local
-paths, branches, changed files, and review commands through validated IPC;
-merge, push, PR creation, worktree cleanup, repository context export, and code
-application remain explicit future workflows. Desktop memory approval is an
+paths, branches, changed files, and review commands through validated IPC.
+Lifecycle cleanup and local apply are now separate, audited, confirmation-gated
+IPC workflows. Merge, push, PR creation, branch deletion, and repository
+context export remain outside desktop apply. Desktop memory approval is an
 explicit context-store writeback, not a run acceptance side effect.

@@ -683,8 +683,8 @@ assignments keep the task `running`, all-succeeded runs complete it, and any
 failed or cancelled final state returns it to `open` for review.
 
 The product remains local-only. This rebuild does not add cloud sync, accounts,
-team features, hosted dashboards, automatic pull requests, automatic merges, or
-automatic pushes.
+multi-user team collaboration, hosted dashboards, automatic pull requests,
+automatic merges, or automatic pushes.
 
 GitHub CI/CD is available for repository maintenance. Pull requests to `main`
 run the validation suite (`pnpm typecheck`, `pnpm lint`, `pnpm test`,
@@ -700,4 +700,6 @@ assets only; it does not deploy a hosted service, notarize the desktop app, or
 change Agent Hub's local-first product model.
 
 Deferred product capabilities include richer Codex/Claude structured event
-mapping and explicit desktop apply/merge workflows.
+mapping, additional local executor backends, first-class schema splits when the
+metadata-backed workgroup model no longer fits, and explicit merge, push, pull
+request, or branch-deletion workflows outside desktop local apply.
