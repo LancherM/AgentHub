@@ -1,5 +1,6 @@
 import type {
   AgentRunMessage,
+  ReviewArtifact,
   ReviewSummary,
   RunInspectorTab,
   RunStatus,
@@ -27,6 +28,7 @@ export function timelinePresentationForMessage(
   message: ThreadMessage,
   options: {
     reviewSummary?: ReviewSummary;
+    reviewArtifacts?: ReviewArtifact[];
     eventCount?: number;
     status?: RunStatus;
   } = {}
@@ -55,7 +57,7 @@ export function timelinePresentationForMessage(
       actorLabel: message.agentId ? `@${message.agentId}` : "Assistant",
       linkedRunId: message.runId ?? event?.linkedIds?.runId,
       linkedTaskId: event?.linkedIds?.taskId,
-      defaultTab: "summary",
+      defaultTab: "brief",
       chips: event?.chips ?? []
     };
   }
@@ -65,7 +67,8 @@ export function timelinePresentationForMessage(
 export function runEvidenceTimelineChips(
   summary: ReviewSummary | undefined,
   eventCount: number,
-  status: RunStatus
+  status: RunStatus,
+  artifacts: ReviewArtifact[] = []
 ): Array<TimelineEventChip & { tab: RunInspectorTab }> {
   const pending = isTerminalRunStatus(status) ? "unknown" : "pending";
   const verificationStatus = summary?.verificationStatus ?? pending;
@@ -74,33 +77,42 @@ export function runEvidenceTimelineChips(
   const memoryCount = summary?.memoryProposalCount ?? 0;
   const diffLabel = summary
     ? summary.changedFileCount > 0
-      ? `Diff ${summary.changedFileCount} files +${summary.additions}/-${summary.deletions}`
-      : "Diff 0 files"
-    : "Diff pending";
+      ? `Artifacts ${summary.changedFileCount} files +${summary.additions}/-${summary.deletions}`
+      : "Artifacts 0 files"
+    : "Artifacts pending";
+  const artifactSummaryLabel =
+    artifacts.length > 0 ? `Artifacts ${artifacts.length}` : diffLabel;
+  const artifactChips = artifacts.slice(0, 3).map((artifact) => ({
+    kind: "artifact_created" as const,
+    label: artifact.kind,
+    tone: artifactTone(artifact),
+    tab: "artifacts" as const
+  }));
   return [
     {
       kind: "check_completed",
-      label: `Tests ${verificationStatus}`,
+      label: `Checks ${verificationStatus}`,
       tone: verificationTone(verificationStatus),
-      tab: "tests"
+      tab: "checks"
     },
     {
       kind: "risk_detected",
-      label: `Risk ${riskLevel}`,
+      label: `Risks ${riskLevel}`,
       tone: riskTone(riskLevel),
-      tab: "risk"
+      tab: "risks"
     },
     {
       kind: "artifact_created",
-      label: diffLabel,
-      tone: summary?.changedFileCount ? "accent" : "neutral",
-      tab: "diff"
+      label: artifactSummaryLabel,
+      tone: artifacts.length > 0 || summary?.changedFileCount ? "accent" : "neutral",
+      tab: "artifacts"
     },
+    ...artifactChips,
     {
       kind: "review_decision",
       label: "Compare",
       tone: "neutral",
-      tab: "compare"
+      tab: "artifacts"
     },
     {
       kind: "review_decision",
@@ -111,7 +123,13 @@ export function runEvidenceTimelineChips(
           : reviewStatus === "rejected"
             ? "danger"
             : "neutral",
-      tab: "summary"
+      tab: "brief"
+    },
+    {
+      kind: "lifecycle_marked_keep",
+      label: "Lifecycle",
+      tone: "neutral",
+      tab: "lifecycle"
     },
     {
       kind: "memory_proposed",
@@ -121,9 +139,9 @@ export function runEvidenceTimelineChips(
     },
     {
       kind: "system_event",
-      label: `${eventCount} logs`,
+      label: `Audit ${eventCount}`,
       tone: "neutral",
-      tab: "logs"
+      tab: "audit"
     }
   ];
 }
@@ -133,6 +151,7 @@ function runPresentation(
   event: TimelineEventMetadata | undefined,
   options: {
     reviewSummary?: ReviewSummary;
+    reviewArtifacts?: ReviewArtifact[];
     eventCount?: number;
     status?: RunStatus;
   }
@@ -150,13 +169,14 @@ function runPresentation(
     actorLabel: displayHandle,
     linkedRunId: message.runId,
     linkedTaskId: message.taskId ?? event?.linkedIds?.taskId,
-    defaultTab: "summary",
+    defaultTab: "brief",
     chips: [
       ...(event?.chips ?? []),
       ...runEvidenceTimelineChips(
         options.reviewSummary,
         options.eventCount ?? 0,
-        status
+        status,
+        options.reviewArtifacts ?? []
       )
     ]
   };
@@ -175,7 +195,7 @@ function systemPresentation(
     actorLabel: "Agent Hub",
     linkedRunId: event?.linkedIds?.runId,
     linkedTaskId: event?.linkedIds?.taskId,
-    defaultTab: event?.linkedIds?.runId ? "summary" : undefined,
+    defaultTab: event?.linkedIds?.runId ? "brief" : undefined,
     chips: event?.chips ?? []
   };
 }
@@ -201,6 +221,14 @@ function titleForEventKind(kind: TimelineEventKind): string {
       return "Assignments created";
     case "assignment_start_failed":
       return "Assignment start failed";
+    case "workflow_handoff":
+      return "Workflow handoff";
+    case "workflow_review_requested":
+      return "Review requested";
+    case "workflow_review_completed":
+      return "Review completed";
+    case "workflow_completed":
+      return "Workflow completed";
     case "risk_detected":
       return "Risk detected";
     case "check_completed":
@@ -209,6 +237,16 @@ function titleForEventKind(kind: TimelineEventKind): string {
       return "Memory proposed";
     case "review_decision":
       return "Review decision";
+    case "lifecycle_marked_keep":
+      return "Worktree marked keep";
+    case "lifecycle_cleaned":
+      return "Worktree cleaned up";
+    case "apply_previewed":
+      return "Apply preview";
+    case "apply_applied":
+      return "Patch applied locally";
+    case "apply_blocked":
+      return "Apply blocked";
     default:
       return "System event";
   }
@@ -218,8 +256,23 @@ function toneForEventKind(kind: TimelineEventKind): TimelineEventTone {
   if (kind === "task_created" || kind === "assignment_created") {
     return "accent";
   }
+  if (kind === "workflow_completed" || kind === "workflow_review_completed") {
+    return "success";
+  }
+  if (kind === "workflow_review_requested" || kind === "workflow_handoff") {
+    return "accent";
+  }
   if (kind === "assignment_start_failed" || kind === "risk_detected") {
     return "warning";
+  }
+  if (kind === "lifecycle_cleaned" || kind === "apply_applied") {
+    return "success";
+  }
+  if (kind === "apply_blocked") {
+    return "danger";
+  }
+  if (kind === "lifecycle_marked_keep" || kind === "apply_previewed") {
+    return "accent";
   }
   return "neutral";
 }
@@ -274,6 +327,19 @@ function riskTone(level: string): TimelineEventTone {
     return "accent";
   }
   return "neutral";
+}
+
+function artifactTone(artifact: ReviewArtifact): TimelineEventTone {
+  if (artifact.artifactType === "diff") {
+    return "warning";
+  }
+  if (artifact.artifactType === "context") {
+    return "info";
+  }
+  if (artifact.artifactType === "review") {
+    return "success";
+  }
+  return "accent";
 }
 
 function participantTitle(agentId: string | undefined): string {

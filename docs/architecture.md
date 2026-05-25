@@ -64,13 +64,28 @@ thread through the thread service.
 
 Desktop review inspection is split across narrow Electron main-process
 services. `ReviewService` aggregates run summary, verification, logs, memory
-proposal counts, local accept/reject decision artifacts, and the latest
-persisted TaskRunner safety report when one exists. Persisted non-placeholder
-risk reports take precedence over the deterministic desktop fallback, including
-`blocking` levels and mapped finding/risk-factor evidence, so desktop review
-does not downgrade scanner output from sensitive path changes or dangerous
-instructions. `DiffService` uses persisted diff artifacts when available and
-can read retained worktrees with read-only Git commands through
+proposal counts, local accept/reject decision artifacts, the latest persisted
+conversation brief artifact, bounded artifact metadata derived from existing
+`run_artifacts`, and the latest persisted TaskRunner safety report when one
+exists. The desktop-facing inspector maps that evidence to workgroup tabs named
+Brief, Context, Artifacts, Checks, Risks, Lifecycle, Memory, and Audit. Context is a
+review IPC read of the `conversation_brief` artifact. Artifacts are exposed by
+`ReviewService.getArtifacts(runId)`, which maps persisted run artifacts into a
+local metadata model with title, type, source run/task ids, optional thread id,
+creator, summary, availability, and a capped content preview. This Phase 6
+model intentionally reuses `run_artifacts` instead of adding an artifact table,
+so existing task briefs, conversation briefs, diffs, review decisions, and
+provenance records remain readable. `git_diff` artifact previews apply
+sensitive-path patch redaction before content crosses IPC, matching the diff
+review boundary while preserving raw run evidence in local persistence.
+Handoff, comparison, and diff data remain inside the Artifacts tab as
+engineering evidence. Persisted non-placeholder risk reports take precedence
+over the deterministic desktop fallback, including `blocking` levels and
+mapped finding/risk-factor evidence, so desktop review does not downgrade
+scanner output from sensitive path changes or dangerous instructions.
+`DiffService`
+uses persisted diff artifacts when available and can read retained worktrees
+with read-only Git commands through
 `DiffCollector`, `NodeShellExecutor`, and safe Git configuration. It redacts
 patch text before returning desktop review data when changed-file metadata or
 diff headers identify sensitive paths. `ReviewService` also owns the retained
@@ -84,22 +99,46 @@ chooses arbitrary clipboard content or opens filesystem paths directly.
 is deterministic and evidence based; it classifies changed paths, verification
 failures, large diffs, dependency/config changes, generated files, and
 source-without-tests conditions without calling an LLM when no persisted
-safety report is available. `MemoryService` lists and generates a small number
+safety report is available. `LifecycleService` owns explicit post-run local
+actions. It reuses `ReviewService` for retained-worktree, diff, and risk
+evidence; validates workspace ownership before cleanup; requires exact
+confirmation phrases for cleanup and apply; records every keep, cleanup,
+preview, blocked apply, failed apply, and completed apply decision as a
+`lifecycle_audit` run artifact plus a lifecycle run event; and appends a linked
+room timeline event when a conversation message is associated with the run.
+Cleanup invokes hardened `git worktree remove --force` only for a retained
+Agent Hub-owned worktree. Apply writes raw persisted diff content, not the
+bounded or redacted inspector preview, to a temporary Agent Hub process path,
+runs safe `git apply --check`, then safe `git apply` against the local project
+checkout only when the latest risk level is not `blocking` and the
+confirmation phrase matches. The service does not commit, merge, push, delete
+branches, create pull requests, approve memory, or export repository context.
+`MemoryService` lists and generates a small number
 of conservative pending proposals, serializes generation per run, deduplicates
 proposal content, and caps generated proposals for a run before mapping
 ignore to the rejected memory item state. Its explicit approve path moves items
 to `approved`, appends them to the Agent Hub-owned approved-memory context file
 through the shared context-compiler helper, and returns the local writeback path
-for inspector confirmation. All of these services sit behind preload IPC
-methods, so the renderer still has no Node.js, filesystem, SQLite, shell,
-child-process, or Git access.
+for inspector confirmation. `KnowledgeService` is a read model over existing
+repositories: `memory_items`, `conversation_thread_summaries`,
+conversation threads/messages, task runs, tasks, and `review_decision`
+`run_artifacts`. It returns project-scoped knowledge rows with bounded
+previews, source links, audit entries, and counts for proposed, approved,
+rejected, summary, and decision records. It does not add a decisions table,
+promote thread summaries, approve memory, or read files. The renderer opens the
+workspace through `window.agentHub.knowledge.getWorkspace(projectId)` and still
+uses the existing explicit memory approve/reject IPC methods for proposed
+memory actions. All of these services sit behind preload IPC methods, so the
+renderer still has no Node.js, filesystem, SQLite, shell, child-process, or Git
+access.
 
 Run review decisions are stored as local `run_artifacts` entries of kind
 `review_decision`. They are not execution status transitions and they do not
 mutate branches, merge output, push code, apply patches, clean worktrees,
 delete files, or write repository-side context files. Retained-worktree handoff
-is manual review assistance only, leaving any explicit apply/merge workflow for
-a later phase.
+is manual review assistance only. The separate `LifecycleService` provides the
+only desktop cleanup and local apply paths, and both remain explicit,
+audited, confirmation-gated IPC operations.
 
 `packages/core` and `packages/db` now include durable conversation thread and
 message repositories backed by local SQLite tables. They store thread metadata,
@@ -123,16 +162,26 @@ mapped as readable custom rooms so the room navigation does not invalidate
 existing transcript data.
 
 `agent-hub chat` is the CLI path over the same durable conversation boundary.
-It resolves the local project, creates or resumes a conversation thread, writes
-one user message per natural-language line, runs the selected agent through the
-existing `TaskRunner`, writes a run-card message plus a bounded assistant
-message, and persists the generated conversation brief as run evidence.
-Leading `@fake`, `@codex`, and `@claude-code` prefixes choose the agent for one
-turn; otherwise chat uses the selected default agent. The chat slash commands
-are local thread controls only: `/thread new`, `/thread use <id>`, `/threads`,
+It resolves the local project, creates or resumes a conversation thread or
+metadata-backed room, writes one user message per natural-language line, runs
+the selected agent through the existing `TaskRunner`, writes a run-card message
+plus a bounded assistant message, and persists the generated conversation
+brief as run evidence. Leading `@fake`, `@codex`, and `@claude-code` prefixes
+choose the agent for one turn; otherwise chat uses the selected default agent.
+Enabled workgroup role mentions such as `@researcher` or custom saved roles
+resolve through the CLI role store, create one shared task with assignment
+metadata, and execute each runnable `agent_adapter` participant through
+TaskRunner with `taskStatusMode: "shared_task"`. Non-runnable `human`,
+`llm_api`, and `workflow` role executors stay as assignment metadata only.
+Shared-task aggregation consults executable assignment metadata as well as run
+rows, so an assignment that fails before creating a run can still let the task
+leave `running` once no executable assignment is pending.
+The chat slash commands include room and role controls: `/thread new`,
+`/thread use <id>`, `/threads`, `/rooms`, `/room use <handle>`,
+`/room create <handle> [title]`, `/room timeline`, `/roles`, `/role <handle>`,
 `/history`, and `/exit`. After each completed chat turn, the CLI refreshes the
 thread-local summary deterministically from bounded transcript messages.
-`threads show <thread-id>` renders that summary beside the ordered transcript.
+`threads show <thread-id>` and `rooms timeline` render the ordered transcript.
 The existing `agent-hub run` command and bare interactive shell remain
 stateless and do not read or write conversation threads.
 CLI chat adds one-shot code-state continuation controls with `/continue run
@@ -140,14 +189,40 @@ CLI chat adds one-shot code-state continuation controls with `/continue run
 populate the next `TaskRunner` input and do not promote thread context or
 accept any parent branch.
 
+The CLI room and role commands are thin repository operations over the same
+local SQLite model. `rooms list`, `rooms create`, `rooms use`, `rooms send`,
+and `rooms timeline` seed or read `conversation_threads.metadata` room records
+without adding a separate room table. `team roles list`, `team roles show`,
+`team roles save`, and `team roles executor` read and write preset overrides
+or custom roles in the same project settings key used by the desktop Team
+workspace. This keeps role handles, executor bindings, and reserved executor
+states consistent across CLI and desktop without moving orchestration into the
+renderer or adding a terminal UI dependency.
+
 `apps/desktop/electron/services/thread-service.ts` is the desktop conversation
 facade over those repositories. It parses safe debug adapter mentions
 (`@fake`, `@codex`, `@claude`, and `@claude-code`) plus enabled workgroup role
-mentions from the shared preset/custom role contract. `sendMessage` appends one
+mentions from the shared preset/custom role contract. Project-level custom
+roles and preset overrides are resolved through `TeamService` before mention
+parsing, so renderer code never performs role lookup or executor decisions.
+`sendMessage` appends one
 durable user message, stores resolved role metadata on that message when
 present, creates one shared task for the turn, stores local task assignment
 metadata, appends task-created and participants-assigned system messages, and
 creates one run per executable adapter or role participant through `RunService`.
+It also accepts bounded collaboration workflow input, either as structured IPC
+metadata from the room launcher or as a `/workflow <mode>` room command.
+Workflow state is stored first as JSON metadata on the user message, shared
+task, and workflow timeline messages. Supported modes are `handoff`,
+`review_loop`, and `panel_discussion`; each persists participants, max rounds,
+stop condition, expected outputs, executor availability, and local status. The
+service enforces the per-mode round bounds before any run is created and never
+starts hidden follow-up work. Workflow timeline events reuse conversation
+messages with explicit kinds for handoff, review requested, review completed,
+and workflow completed. When linked executable runs reach terminal state,
+selected-room reconciliation reads run snapshots through `RunService`, updates
+the workflow state, and appends review/completion events without mutating
+worktrees, applying changes, merging, pushing, or creating remote jobs.
 Reserved non-executable role executors remain assignment metadata only until a
 future executor exists. When the caller does not provide a thread id, the
 service resolves the project's seeded `#general` room instead of creating a
@@ -733,11 +808,61 @@ store. `conversation_messages.metadata_json` may include a bounded
 and small display chips. The Electron thread service writes these semantics for
 user rows, task-created rows, assignment rows, run cards, run terminal updates,
 and assistant participant output. The renderer maps that metadata plus lazy
-review summaries into audit-stream cards and chips for checks, risks, diff
-artifacts, review decisions, and memory proposals. Raw logs, diffs,
-verification rows, risk reports, memory details, and comparison data remain on
-run evidence repositories and continue to load through review IPC only when the
-user opens the relevant inspector context.
+review summaries into audit-stream cards and chips for checks, risks,
+artifacts, review decisions, memory proposals, and audit logs. Raw logs,
+diffs, verification rows, risk reports, memory details, context previews, and
+comparison data remain on run evidence repositories and continue to load
+through review IPC only when the user opens the relevant inspector context.
+
+Phase 5 keeps the inspector as a renderer-only shell over those IPC services
+but changes its visible vocabulary from run-centric tabs to the workgroup
+structure. Existing links that still request legacy tabs such as Summary, Diff,
+Tests, Risk, Compare, Handoff, or Logs are normalized in the renderer to Brief,
+Artifacts, Checks, Risks, Artifacts, Artifacts, or Audit so older timeline
+metadata remains openable while new UI chips use the workgroup names.
+
+Phase 6 adds an artifact model v0 without changing storage ownership. The
+Electron main process reads existing `run_artifacts`, derives desktop-facing
+artifact metadata in `ReviewService`, and serves it through preload IPC. The
+renderer displays named artifact chips on run-card timelines and a local
+artifact inventory in the Artifacts inspector tab, while full artifact content
+stays local and bounded before crossing into the sandboxed renderer.
+
+Phase 7 adds a Knowledge workspace as a desktop read model over the existing
+local evidence tables. `KnowledgeService` composes memory items, thread
+summaries, summary decisions, and review-decision artifacts into one bounded
+project workspace served over Electron IPC. The renderer filters those rows,
+shows source links back to rooms and runs, and delegates proposed-memory
+approval/rejection to the existing explicit `MemoryService` methods. Proposed
+and rejected memory are never injected as approved memory, and thread summaries
+remain thread-local records.
+
+Phase 8 adds project-level Team role configuration without introducing a new
+runtime executor or repository export path. `TeamService` stores safe preset
+overrides and custom `WorkgroupRole` records in the existing local `settings`
+table under a project-scoped key, validates them with the core role validator,
+and returns a bounded Team workspace read model over roles, recent assignment
+metadata, and linked memory references. Electron exposes this through
+`window.agentHub.team.*` preload IPC. The renderer can edit role profile fields,
+policy metadata, enabled state, and executor bindings, but only
+`agent_adapter` roles become runnable through existing fake, Codex, or Claude
+Code adapters. Reserved `llm_api`, `workflow`, and `human` roles are stored and
+rendered as non-runnable assignment metadata until later runtime phases define
+explicit local executors.
+
+Phase 11 adds deterministic pack metadata in
+`packages/shared/src/workgroup-packs.ts`. Built-in packs cover Core Workgroup,
+Engineering, Research, Writing, Analysis, and Operations. A pack is a local
+metadata object with artifact type definitions, check types, risk categories,
+default role template handles, executor capability hints, context section
+provider metadata, and labels. The registry is read-only code, not a
+marketplace, plugin loader, or remote integration boundary. Pack metadata is
+exported through `packages/shared` and re-exported by `packages/core`, so CLI,
+desktop main-process services, and future local packages can share lookup and
+label mapping without giving the renderer authority to load code. Core label
+mapping returns Brief, Context, Artifacts, Checks, Risks, and Memory; terms
+such as Diff, Tests, Worktree, PR, and CI resolve to those general surfaces
+unless the Engineering pack is explicitly selected.
 
 Repository CI/CD lives in `.github/workflows/ci-cd.yml` and stays outside the
 Agent Hub runtime. The workflow installs the pinned pnpm and Node versions from

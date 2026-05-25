@@ -5,6 +5,7 @@ import {
 } from "../apps/desktop/src/lib/timelineEvents";
 import type {
   AgentRunMessage,
+  ReviewArtifact,
   ReviewSummary,
   SystemMessage
 } from "../apps/desktop/src/lib/types";
@@ -75,19 +76,20 @@ describe("desktop timeline event presentation", () => {
       "artifact_created",
       "review_decision",
       "review_decision",
+      "lifecycle_marked_keep",
       "memory_proposed",
       "system_event"
     ]);
     expect(presentation.chips).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          label: "Tests passed",
-          tab: "tests",
+          label: "Checks passed",
+          tab: "checks",
           tone: "success"
         }),
         expect.objectContaining({
-          label: "Risk medium",
-          tab: "risk",
+          label: "Risks medium",
+          tab: "risks",
           tone: "warning"
         }),
         expect.objectContaining({
@@ -101,13 +103,68 @@ describe("desktop timeline event presentation", () => {
 
   it("keeps pending run evidence bounded to compact inspector chips", () => {
     expect(runEvidenceTimelineChips(undefined, 4, "running")).toEqual([
-      expect.objectContaining({ label: "Tests pending", tab: "tests" }),
-      expect.objectContaining({ label: "Risk pending", tab: "risk" }),
-      expect.objectContaining({ label: "Diff pending", tab: "diff" }),
-      expect.objectContaining({ label: "Compare", tab: "compare" }),
-      expect.objectContaining({ label: "Review pending", tab: "summary" }),
+      expect.objectContaining({ label: "Checks pending", tab: "checks" }),
+      expect.objectContaining({ label: "Risks pending", tab: "risks" }),
+      expect.objectContaining({ label: "Artifacts pending", tab: "artifacts" }),
+      expect.objectContaining({ label: "Compare", tab: "artifacts" }),
+      expect.objectContaining({ label: "Review pending", tab: "brief" }),
+      expect.objectContaining({ label: "Lifecycle", tab: "lifecycle" }),
       expect.objectContaining({ label: "Memory 0", tab: "memory" }),
-      expect.objectContaining({ label: "4 logs", tab: "logs" })
+      expect.objectContaining({ label: "Audit 4", tab: "audit" })
     ]);
   });
+
+  it("adds named artifact chips when review artifacts are available", () => {
+    const artifacts: ReviewArtifact[] = [
+      reviewArtifact("artifact_context", "conversation_brief", "context"),
+      reviewArtifact("artifact_diff", "git_diff", "diff"),
+      reviewArtifact("artifact_decision", "review_decision", "review")
+    ];
+
+    expect(
+      runEvidenceTimelineChips(undefined, 4, "completed", artifacts)
+    ).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ label: "Artifacts 3", tab: "artifacts" }),
+        expect.objectContaining({
+          label: "conversation_brief",
+          tab: "artifacts",
+          tone: "info"
+        }),
+        expect.objectContaining({
+          label: "git_diff",
+          tab: "artifacts",
+          tone: "warning"
+        }),
+        expect.objectContaining({
+          label: "review_decision",
+          tab: "artifacts",
+          tone: "success"
+        })
+      ])
+    );
+  });
 });
+
+function reviewArtifact(
+  id: string,
+  kind: string,
+  artifactType: string
+): ReviewArtifact {
+  return {
+    id,
+    runId: "run_1",
+    taskId: "task_1",
+    kind,
+    artifactType,
+    title: kind,
+    sourceRunId: "run_1",
+    sourceTaskId: "task_1",
+    summary: "Artifact summary",
+    createdAt: "2026-05-25T00:00:00.000Z",
+    availability: "local",
+    contentCharacters: 10,
+    previewCharacters: 10,
+    truncated: false
+  };
+}
