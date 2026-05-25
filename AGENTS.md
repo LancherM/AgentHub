@@ -133,8 +133,8 @@ The MVP must support:
 
 The current implementation is a CLI-first pnpm workspace with `apps/cli`,
 `apps/desktop`, and local core packages under `packages/`. The physical
-CLI/core package split is present, and the first Electron + React desktop
-conversation console exists as a thin local UI over main-process IPC.
+CLI/core package split is present, and the Electron + React desktop shell has
+evolved into a room-based local workgroup UI over main-process IPC.
 
 Implemented:
 
@@ -146,7 +146,8 @@ Implemented:
   adapters, safety scanning, risk report generation, and shared types.
 - CLI commands for project registration/listing, context store init/show,
   context pack build, optional repo export, task creation/listing/history, task
-  runs, manual run-event recording, memory workflows, and run comparison.
+  runs, manual run-event recording, threaded chat, metadata-backed rooms, team
+  role management, memory workflows, and run comparison.
 - Interactive CLI with `@agent` prompts, `/agents`, `/use`, `/context`,
   `/context init`, `/clear`, `/exit`, and `/quit`.
 - Git worktree creation for task runs.
@@ -170,23 +171,30 @@ Implemented:
   generation from completed task-runner evidence.
 - Persisted comparison report generation for two runs of a task, including
   structured comparison details and deterministic review scoring.
-- `apps/desktop` Electron + React shell with a thread-first conversation layout,
-  safe `window.agentHub` preload API, Electron main-process IPC handlers,
-  SQLite-backed project/thread/message/run/review/memory service facades,
-  inline run cards, bounded assistant output messages, conversation brief
-  artifacts, TaskRunner-backed fake/Codex/Claude desktop runs in isolated
-  worktrees, live run event replay, desktop cancellation, retained-worktree
-  handoff, local run comparison, explicit memory writeback, and an inspector
-  drawer for logs, diffs, verification, risks, and memory proposals.
+- Local AI workgroup metadata for preset/custom roles, built-in workgroup
+  packs, metadata-backed rooms, shared-task role fan-out, bounded workflows,
+  timeline events, artifact review, knowledge browsing, and lifecycle audit
+  records without adding a cloud service or broad schema split.
+- `apps/desktop` Electron + React shell with a room-based project layout, safe
+  `window.agentHub` preload API, Electron main-process IPC handlers,
+  SQLite-backed project/thread/message/run/review/memory/team/knowledge
+  service facades, inline run cards, bounded assistant output messages,
+  conversation brief artifacts, TaskRunner-backed fake/Codex/Claude desktop
+  runs in isolated worktrees, live run event replay, desktop cancellation,
+  retained-worktree handoff, local run comparison, explicit memory writeback,
+  lifecycle cleanup controls, human-gated local apply, and a workgroup
+  inspector for brief, context, artifacts, checks, risks, lifecycle, memory,
+  and audit evidence.
 - Per-project desktop verification command configuration through validated IPC
   and local SQLite settings, with configured commands passed to TaskRunner for
   isolated-worktree execution.
 
 Not yet implemented:
 
-- Approved-memory context-store writeback confirmation, multi-agent comparison
-  review, explicit worktree lifecycle controls, and explicit merge/apply
-  workflows.
+- Richer Codex/Claude structured event mapping, additional local executor
+  backends for reserved `llm_api`/`workflow`/`human` roles, first-class
+  room/role/artifact/decision tables when metadata-backed storage no longer
+  fits, and explicit merge, push, pull request, or branch-deletion workflows.
 
 ## Explicit Non-goals for MVP
 
@@ -260,6 +268,15 @@ Implemented commands:
 - `agent-hub chat`
 - `agent-hub threads list`
 - `agent-hub threads show`
+- `agent-hub rooms list`
+- `agent-hub rooms create`
+- `agent-hub rooms use`
+- `agent-hub rooms send`
+- `agent-hub rooms timeline`
+- `agent-hub team roles list`
+- `agent-hub team roles show`
+- `agent-hub team roles save`
+- `agent-hub team roles executor`
 - `agent-hub tasks list`
 - `agent-hub runs list`
 - `agent-hub runs events`
@@ -280,17 +297,21 @@ The first desktop app is implemented as an Electron + React + Vite workspace
 package. It provides UI for:
 
 - Projects
-- Conversation threads
+- Rooms and conversation threads
+- Team role configuration
+- Knowledge workspace
 - Inline run cards
 - Assistant output messages
 - Logs
 - Diff review
 - Verification
 - Risk reports
+- Artifact inventory
 - Memory proposals
 - Per-project verification settings
 - Manual retained-worktree handoff
 - Local multi-agent comparison review
+- Explicit retained-worktree cleanup and human-gated local apply
 
 The desktop app must call the local core through Electron main-process IPC. The
 renderer must not directly access Node.js, shell, filesystem, SQLite, or git.
@@ -305,8 +326,10 @@ files to target repository roots, export context, merge, push, create pull
 requests, approve memory, or apply code automatically. Explicit desktop memory
 approval writes to the Agent Hub-owned context store, comparison review remains
 read-only, and retained-worktree handoff only exposes local review evidence
-behind the same IPC boundary. Worktree lifecycle controls and explicit
-merge/apply workflows remain follow-up work.
+behind the same IPC boundary. Worktree lifecycle cleanup and local apply are
+explicit, audited, confirmation-gated IPC workflows; merge, push, pull request
+creation, branch deletion, repository context export, and automatic acceptance
+remain outside desktop apply.
 
 ### packages/core
 

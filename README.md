@@ -54,16 +54,19 @@ tests                     Cross-package test coverage
 - Adapter-based execution for Fake, Codex, and Claude Code in isolated worktrees
 - Run artifacts including logs, verification results, git diffs, and risk reports
 - Memory workflow: propose, approve/reject, and approved-memory writeback
-- Desktop shell with thread view, TaskRunner-backed run cards, cancellation,
-  inspector panels, retained-worktree handoff, comparison review, and explicit
-  memory approval writeback
+- Desktop shell with room navigation, TaskRunner-backed run cards,
+  cancellation, inspector panels, retained-worktree handoff, comparison review,
+  lifecycle controls, human-gated local apply, Team and Knowledge workspaces,
+  and explicit memory approval writeback
 - Per-project desktop verification command settings stored locally and executed
   through the shared TaskRunner path
 
 ## Areas still in progress
 
-- Explicit desktop apply/merge workflows after review
-- Worktree lifecycle controls from the desktop shell
+- Richer Codex/Claude structured event mapping
+- Additional local executor backends and first-class schema splits when the
+  metadata-backed model no longer fits
+- Explicit merge, push, and pull-request workflows outside desktop local apply
 - Dedicated desktop skills management UI
 
 ## Quick start
