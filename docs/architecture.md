@@ -865,6 +865,12 @@ structure. Existing links that still request legacy tabs such as Summary, Diff,
 Tests, Risk, Compare, Handoff, or Logs are normalized in the renderer to Brief,
 Artifacts, Checks, Risks, Artifacts, Artifacts, or Audit so older timeline
 metadata remains openable while new UI chips use the workgroup names.
+The Brief tab is the default conclusion surface. It derives a renderer-only
+review conclusion from the loaded review summary and the existing risk IPC
+payload, pins blocking findings above the summary when present, and exposes
+manual next-action buttons that only switch inspector tabs. It does not create
+new review scores or write decisions; accept/reject continue to call the
+existing review IPC and record audit-only review state.
 
 Phase 6 adds an artifact model v0 without changing storage ownership. The
 Electron main process reads existing `run_artifacts`, derives desktop-facing

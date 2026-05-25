@@ -518,13 +518,17 @@ and a review affordance instead of a fabricated answer.
 
 The workgroup inspector is the desktop drill-down surface for review evidence.
 Its top-level tabs use product vocabulary: Brief, Context, Artifacts, Checks,
-Risks, Lifecycle, Memory, and Audit. Brief shows the goal, status, assignee,
-review state, acceptance-criteria placeholder, and decision boundary. Context
-loads the persisted `conversation_brief` run artifact through review IPC and
-otherwise shows a clear unavailable state. Artifacts now begins with a local artifact
-inventory derived from persisted `run_artifacts`. Each artifact has bounded
-metadata for title, artifact type, source run, source task, thread id when
-known, creator, summary, local availability, and a capped content preview.
+Risks, Lifecycle, Memory, and Audit. Brief is conclusion-first: it shows any
+blocking risk at the top, then the review conclusion, suggested audit-only
+decision, changed-output count, check state, risk state, memory proposal count,
+and manual next actions that route to secondary tabs. It still shows the goal,
+status, assignee, acceptance-criteria placeholder, and decision boundary below
+the conclusion. Context loads the persisted `conversation_brief` run artifact
+through review IPC and otherwise shows a clear unavailable state. Artifacts now
+begins with a local artifact inventory derived from persisted `run_artifacts`.
+Each artifact has bounded metadata for title, artifact type, source run, source
+task, thread id when known, creator, summary, local availability, and a capped
+content preview.
 `git_diff` artifact previews use the same sensitive-path redaction boundary as
 the Diff review so secret-bearing patches are not copied into artifact chips or
 the sandboxed renderer.
