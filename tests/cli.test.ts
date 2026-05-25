@@ -942,6 +942,57 @@ describe("CLI", () => {
     expect(errors.join("")).toContain("--target must be repo");
   });
 
+  it("creates and lists global skills from Agent Hub-owned app data", async () => {
+    const projectRoot = await createTestDirectory("cli-global-skill-project");
+    const agentHubHome = await createTestDirectory("cli-global-skill-home");
+    const output: string[] = [];
+    const errors: string[] = [];
+    const io = {
+      stdout: { write: (chunk: string) => { output.push(chunk); return true; } },
+      stderr: { write: (chunk: string) => { errors.push(chunk); return true; } }
+    };
+
+    await expect(
+      main([
+        "skills",
+        "global",
+        "create",
+        "--id",
+        "review",
+        "--name",
+        "review",
+        "--description",
+        "Review generated output.",
+        "--body",
+        "Check risks and tests.",
+        "--agent-hub-home",
+        agentHubHome
+      ], io, projectRoot)
+    ).resolves.toBe(0);
+    await expect(
+      main([
+        "skills",
+        "global",
+        "list",
+        "--agent-hub-home",
+        agentHubHome
+      ], io, projectRoot)
+    ).resolves.toBe(0);
+
+    const rendered = output.join("");
+    expect(errors.join("")).toBe("");
+    expect(rendered).toContain("Created global skill");
+    expect(rendered).toContain("scope: global");
+    expect(rendered).toContain("Global skills");
+    expect(rendered).toContain("review (review)");
+    await expect(
+      fs.readFile(
+        path.join(agentHubHome, "skills", "review", "SKILL.md"),
+        "utf8"
+      )
+    ).resolves.toContain("Check risks and tests.");
+  });
+
   it("rejects context export target without a value", async () => {
     const projectRoot = await createTestDirectory("cli-context-export-missing-target-project");
     const output: string[] = [];
@@ -1196,7 +1247,9 @@ describe("CLI", () => {
         "--executor",
         "fake",
         "--default-room",
-        "release"
+        "release",
+        "--skill",
+        "global:review"
       ], io, projectRoot, runtime)
     ).resolves.toBe(0);
     await expect(
@@ -1232,6 +1285,18 @@ describe("CLI", () => {
     expect(rendered).toContain("Saved role");
     expect(rendered).toContain("Role @qa");
     expect(rendered).toContain("executor: agent_adapter / fake");
+    expect(
+      (await runtime.settingsRepository.get(
+        "desktop.project.project_workgroup.workgroupRoles"
+      ))?.value
+    ).toMatchObject({
+      roles: [
+        expect.objectContaining({
+          handle: "qa",
+          defaultSkillReferences: [{ scope: "global", id: "review" }]
+        })
+      ]
+    });
   });
 
   it("sends room messages with role mentions as shared task assignments", async () => {

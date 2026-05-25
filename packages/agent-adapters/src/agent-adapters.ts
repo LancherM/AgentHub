@@ -7,6 +7,15 @@ export interface AgentDetectionResult {
   available: boolean;
   version?: string;
   reason?: string;
+  diagnostics?: AgentCliDiagnostics;
+}
+
+export interface AgentCliDiagnostics {
+  executable: string;
+  detectCommand: string;
+  verifyCommand: string;
+  cwd: string;
+  pathEntries: string[];
 }
 
 export interface AgentRunInput {
@@ -401,21 +410,40 @@ async function detectProcessAgent(input: {
     if (result.available) {
       return {
         available: true,
-        version: result.version
+        version: result.version,
+        diagnostics: processAgentDiagnostics(input)
       };
     }
     return {
       available: false,
-      reason: `${input.displayName} CLI unavailable: ${result.reason ?? "not found or not authenticated"}`
+      reason: `${input.displayName} CLI unavailable: ${result.reason ?? "not found or not authenticated"}`,
+      diagnostics: processAgentDiagnostics(input)
     };
   } catch (error) {
     return {
       available: false,
       reason: `${input.displayName} CLI detection failed: ${
         error instanceof Error ? error.message : String(error)
-      }`
+      }`,
+      diagnostics: processAgentDiagnostics(input)
     };
   }
+}
+
+function processAgentDiagnostics(input: {
+  executable: string;
+  args: string[];
+  cwd?: string;
+  env?: Record<string, string | undefined>;
+}): AgentCliDiagnostics {
+  const pathValue = input.env?.PATH ?? process.env.PATH ?? "";
+  return {
+    executable: input.executable,
+    detectCommand: [input.executable, ...input.args].join(" "),
+    verifyCommand: `${input.executable} --version`,
+    cwd: path.resolve(input.cwd ?? process.cwd()),
+    pathEntries: pathValue.split(path.delimiter).filter(Boolean).slice(0, 12)
+  };
 }
 
 async function* runProcessAgentWithPreflight(input: {
@@ -457,7 +485,8 @@ async function* runProcessAgentWithPreflight(input: {
       }`,
       {
         adapter: input.adapterKind,
-        detection
+        detection,
+        cliDiagnostics: detection.diagnostics
       }
     );
     return;

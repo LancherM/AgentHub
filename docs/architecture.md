@@ -61,6 +61,12 @@ validate inputs and manage per-window subscriptions, but do not own run
 lifecycle logic. If the project list is empty, renderer onboarding forms submit
 a local path through the same project-open IPC service before creating a starter
 thread through the thread service.
+The renderer composer remains a local control surface: it reads enabled role
+summaries through `window.agentHub.team.getWorkspace(projectId)`, builds
+autocomplete suggestions and target chips in React, and still submits only the
+prompt text plus context mode through `window.agentHub.threads.sendMessage`.
+Role authority stays in the Electron main-process thread service, which
+re-resolves all role handles before task/run creation.
 
 Desktop review inspection is split across narrow Electron main-process
 services. `ReviewService` aggregates run summary, verification, logs, memory
@@ -248,6 +254,30 @@ verification output, and risk evidence remain on the run model and load through
 review IPC only when the user opens the inspector. If an older database has
 runs but no conversation threads, the service performs a one-time compatibility
 import into conversation rows so existing desktop run records stay inspectable.
+
+Composer autocomplete is implemented as renderer-only input assistance. The
+helper in `apps/desktop/src/lib/composer-controls.ts` derives active `@` and
+`/` trigger ranges, filters adapter/role/command suggestions, applies selected
+suggestions into the textarea value, resolves visible target chips, and counts
+expected run fan-out from known adapter mentions plus executable role mentions.
+Unknown mentions are intentionally ignored by the helper and remain ordinary
+prompt text, matching the main-process mention parser. Slash suggestions insert
+prompt text only; they do not create a new command execution backend.
+The Cmd/Ctrl+K command palette is also renderer-only. It receives a bounded
+list of local UI actions from `App`, filters and navigates them in React, and
+invokes existing component callbacks such as opening the room form, switching
+workspaces, opening settings, or toggling sidebar density. It does not execute
+shell commands, call adapters, read files, or bypass the existing preload IPC
+surface.
+
+Desktop UI preferences are stored only in renderer browser storage through the
+sanitizing helper in `apps/desktop/src/lib/local-preferences.ts`. The persisted
+shape is limited to harmless IDs and enums: selected project/thread ids,
+active workspace, context mode, inspector tab, sidebar density, and recent
+agent or role handles. The helper rejects arbitrary object shapes, unsafe id
+characters, unknown agents, and invalid role handles, and it never stores
+prompts, transcripts, logs, diffs, repository paths, command text, secrets, or
+approved memory.
 
 The multi-turn architecture has persisted thread/message repositories, thread
 summary storage, the desktop thread service separated from task runs, and a
@@ -477,6 +507,12 @@ malformed structured output remains preserved as raw stdout, and exit events
 record both exit code and signal metadata. A non-zero exit marks the run failed,
 and the failed run is still persisted through the same repositories as
 successful runs.
+Process adapter detection results also carry bounded CLI diagnostics:
+executable name, detect command, user-facing verify command, cwd, and inherited
+PATH entries. Failed preflight run events persist those diagnostics in metadata
+for desktop review. The renderer extracts them with a pure helper and renders
+an actionable preflight panel on the run card, but it never reruns detection,
+reads the environment, or shells out from the sandboxed renderer.
 
 The context compiler owns the boundary for generated context artifacts. It can
 initialize and inspect context stores, read external context from Agent
@@ -504,6 +540,24 @@ parser, so malformed skills are not copied into `.claude/skills` or
 `.agents/skills`. Export and overlay paths use the context-store directory id,
 not the frontmatter display name, so a malformed-looking display name cannot
 collapse paths outside the intended skill folder.
+
+Global skills use the same `SKILL.md` parser but are stored outside project
+context stores at `<agent-hub-app-data>/skills/<skill-id>/SKILL.md`. The
+scoped skill resolver combines project-store skills, global skills, role
+default skill references, and task/run selected skill references with
+deterministic precedence: task/run selected references, then role references,
+then project skills, then global skills. Project skills are included for
+backward-compatible project context builds, while global skills require an
+explicit task or role reference unless a caller opts into global default
+inclusion. A same-id project skill overrides the global skill by default; an
+explicit `global:<id>` reference can intentionally select the global version.
+The shared type model reserves `task` and `role` skill scopes for future scoped
+stores, but the current resolver rejects those scopes explicitly instead of
+silently resolving a same-id project or global skill.
+Resolved skill evidence is copied into the context pack as `injectedSkills`
+and persisted by the task runner as a `skill_inventory` run artifact with the
+skill id, source scope, display metadata, source path when local, and
+content SHA-256 hash.
 
 Repo-local context stores remain opt-in through `--mode repo_local`. Repository
 export remains opt-in through `context export --target repo --dry-run` or
@@ -681,6 +735,11 @@ is proven, then persist a `desktopScope` marker in `comparison_reports.details`
 for later reads. Renderer components call only `window.agentHub.comparison.*`
 through preload IPC; they do not calculate scores, read SQLite, inspect
 conversation tables, or mutate agent output.
+The renderer may derive a lightweight compare affordance from the already
+loaded room transcript and run status map so terminal same-task or same-turn
+peers are visible from compact run cards. That affordance only opens the
+inspector Artifacts context; the main-process comparison service remains the
+authority for candidate validation and report creation.
 
 The first desktop runtime integration is deliberately narrow. `apps/desktop`
 uses SQLite-backed services for project registration, run listing/detail,
@@ -704,6 +763,9 @@ private-key, and client-secret option names inside args, and loaded by
 `RunService` immediately before invoking TaskRunner. TaskRunner remains the
 execution boundary and continues to run verification in the isolated worktree
 with dangerous-command validation.
+Renderer verification-setting empty and error states only explain this existing
+settings boundary and route the user back to the Settings panel; they do not
+parse prompts into shell commands or create alternate execution paths.
 
 All adapters run against an isolated worktree and refuse to run when that
 directory is the original project root or when the generated task brief is
@@ -833,6 +895,14 @@ artifacts, review decisions, memory proposals, and audit logs. Raw logs,
 diffs, verification rows, risk reports, memory details, context previews, and
 comparison data remain on run evidence repositories and continue to load
 through review IPC only when the user opens the relevant inspector context.
+Inline run cards compute a renderer-only Prepare/Run/Verify/Review stage model
+from persisted run status and event types. The model controls compact progress,
+last-activity, wait-state, disabled-action, and compare-entry display only; it
+does not create new persistence, duplicate raw event streams into the
+transcript, or bypass inspector IPC for review data. Terminal cards use review
+IPC only for the compact summary/artifact metadata needed by their chips; deeper
+checks, risks, logs, context, memory, and comparison payloads remain
+inspector-loaded.
 
 Phase 5 keeps the inspector as a renderer-only shell over those IPC services
 but changes its visible vocabulary from run-centric tabs to the workgroup
@@ -840,6 +910,14 @@ structure. Existing links that still request legacy tabs such as Summary, Diff,
 Tests, Risk, Compare, Handoff, or Logs are normalized in the renderer to Brief,
 Artifacts, Checks, Risks, Artifacts, Artifacts, or Audit so older timeline
 metadata remains openable while new UI chips use the workgroup names.
+The Brief tab is the default conclusion surface. It derives a renderer-only
+review conclusion from the loaded review summary and the existing risk IPC
+payload, pins blocking findings above the summary when present, and exposes
+manual next-action buttons that only switch inspector tabs. It does not create
+new review scores or write decisions; refreshing the Brief tab reloads both
+summary and risk payloads so the conclusion cannot remain pinned to stale risk
+state while a run is still settling. Accept/reject continue to call the existing
+review IPC and record audit-only review state.
 
 Phase 6 adds an artifact model v0 without changing storage ownership. The
 Electron main process reads existing `run_artifacts`, derives desktop-facing

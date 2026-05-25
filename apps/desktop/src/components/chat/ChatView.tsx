@@ -1,4 +1,5 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
+import { agentHubApi } from "../../lib/agentHubApi";
 import type {
   AgentId,
   CollaborationWorkflowInput,
@@ -7,10 +8,12 @@ import type {
   RunDetail,
   RunInspectorTab,
   RunContinuationTarget,
+  TeamRoleSummary,
   ThreadDetail,
   ThreadMessage
 } from "../../lib/types";
 import { ProjectRegistrationForm } from "../projects/ProjectRegistrationForm";
+import { EmptyState } from "../EmptyState";
 import { Composer } from "./Composer";
 import { MessageList } from "./MessageList";
 import { WorkflowLauncher } from "./WorkflowLauncher";
@@ -22,6 +25,8 @@ interface ChatViewProps {
   runDetails: Record<string, RunDetail>;
   isBusy: boolean;
   lastUsedAgents: AgentId[];
+  lastUsedRoleHandles: string[];
+  initialContextMode: ContextMode;
   pendingContinueFrom?: RunContinuationTarget;
   error?: string;
   onSubmit(
@@ -29,6 +34,7 @@ interface ChatViewProps {
     contextMode: ContextMode,
     workflow?: CollaborationWorkflowInput
   ): Promise<void>;
+  onContextModeChange(contextMode: ContextMode): void;
   onContinueFromRun(target: RunContinuationTarget): void;
   onClearContinueFrom(): void;
   onRunUpdated(run: RunDetail): void;
@@ -36,6 +42,7 @@ interface ChatViewProps {
   onCancelRun(runId: string): Promise<void>;
   onSetSharedContext(enabled: boolean): void;
   onRegisterProject(projectPath: string): Promise<void>;
+  onOpenSettings(): void;
 }
 
 export function ChatView({
@@ -45,21 +52,53 @@ export function ChatView({
   runDetails,
   isBusy,
   lastUsedAgents,
+  lastUsedRoleHandles,
+  initialContextMode,
   pendingContinueFrom,
   error,
   onSubmit,
+  onContextModeChange,
   onContinueFromRun,
   onClearContinueFrom,
   onRunUpdated,
   onOpenInspector,
   onCancelRun,
   onSetSharedContext,
-  onRegisterProject
+  onRegisterProject,
+  onOpenSettings
 }: ChatViewProps): JSX.Element {
   const scrollRef = useRef<HTMLDivElement>(null);
+  const [roleTargets, setRoleTargets] = useState<TeamRoleSummary[]>([]);
   const disabledReason = project
     ? undefined
     : "Select or register a local project before running agents.";
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!project?.id) {
+      setRoleTargets([]);
+      return;
+    }
+    agentHubApi.team
+      .getWorkspace(project.id)
+      .then((workspace) => {
+        if (!cancelled) {
+          setRoleTargets(
+            workspace.roles.filter(
+              (summary) => summary.status === "enabled" && summary.role.enabled
+            )
+          );
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setRoleTargets([]);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [project?.id]);
 
   useEffect(() => {
     const element = scrollRef.current;
@@ -100,7 +139,16 @@ export function ChatView({
         ) : null}
       </header>
 
-      {error ? <div className="error-strip inline">{error}</div> : null}
+      {error ? (
+        <div className="error-strip inline actionable">
+          <span>{error}</span>
+          {error.toLowerCase().includes("verification") ? (
+            <button className="ghost-button compact" onClick={onOpenSettings}>
+              Open Settings
+            </button>
+          ) : null}
+        </div>
+      ) : null}
 
       <div className="chat-scroll" ref={scrollRef}>
         {project ? (
@@ -114,19 +162,17 @@ export function ChatView({
           />
         ) : (
           <div className="empty-chat project-onboarding">
-            <div>
-              <p className="eyebrow">First run setup</p>
-              <h2>Register a local project to start chatting</h2>
-              <p>
-                Agent Hub Desktop stays local-first. Enter a repository path to
-                add it through the existing project IPC flow, then start a new
-                agent conversation.
-              </p>
+            <EmptyState
+              eyebrow="First Run Setup"
+              title="Register a local project to start chatting"
+              body="Agent Hub Desktop stays local-first. Enter a repository path to add it through the existing project IPC flow, then start a new agent conversation."
+              note="No Agent Hub context files are written to the repository by default."
+            >
               <ProjectRegistrationForm
                 isBusy={isBusy}
                 onRegister={onRegisterProject}
               />
-            </div>
+            </EmptyState>
           </div>
         )}
       </div>
@@ -141,9 +187,13 @@ export function ChatView({
       <Composer
         isBusy={isBusy}
         lastUsedAgents={lastUsedAgents}
+        lastUsedRoleHandles={lastUsedRoleHandles}
+        roleTargets={roleTargets}
+        initialContextMode={initialContextMode}
         pendingContinueFrom={pendingContinueFrom}
         disabledReason={disabledReason}
         onSubmit={onSubmit}
+        onContextModeChange={onContextModeChange}
         onClearContinueFrom={onClearContinueFrom}
       />
     </section>

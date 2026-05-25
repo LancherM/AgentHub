@@ -1,0 +1,564 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>UX4 Run Progress And Actions</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #0d100d;
+        --panel: #151812;
+        --panel-2: #1d2219;
+        --line: rgba(238, 231, 216, 0.12);
+        --text: #f3eddd;
+        --muted: #aaa28d;
+        --muted-2: #7d765f;
+        --accent: #d8ff57;
+        --cyan: #67d8c4;
+        --amber: #f5bd5a;
+        --danger: #ff7d6b;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background:
+          linear-gradient(135deg, rgba(216, 255, 87, 0.08), transparent 36%),
+          radial-gradient(circle at 80% 10%, rgba(103, 216, 196, 0.11), transparent 34%),
+          var(--bg);
+        color: var(--text);
+        font-family:
+          ui-sans-serif,
+          system-ui,
+          -apple-system,
+          BlinkMacSystemFont,
+          "Segoe UI",
+          sans-serif;
+      }
+
+      main {
+        width: min(1180px, calc(100vw - 48px));
+        margin: 0 auto;
+        padding: 36px 0;
+      }
+
+      header.page {
+        display: flex;
+        align-items: end;
+        justify-content: space-between;
+        gap: 24px;
+        margin-bottom: 24px;
+      }
+
+      .eyebrow {
+        color: var(--accent);
+        font-size: 11px;
+        font-weight: 850;
+        letter-spacing: 0;
+        text-transform: uppercase;
+      }
+
+      h1 {
+        margin: 6px 0 0;
+        font-size: 30px;
+        letter-spacing: 0;
+      }
+
+      .page p {
+        max-width: 520px;
+        margin: 0;
+        color: var(--muted);
+        font-size: 13px;
+        line-height: 1.5;
+      }
+
+      .workspace {
+        display: grid;
+        grid-template-columns: minmax(0, 1.55fr) minmax(320px, 0.85fr);
+        gap: 18px;
+      }
+
+      .chat,
+      .inspector {
+        min-width: 0;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: rgba(17, 20, 14, 0.86);
+        box-shadow: 0 28px 76px rgba(0, 0, 0, 0.25);
+      }
+
+      .chat {
+        display: grid;
+        gap: 14px;
+        padding: 18px;
+      }
+
+      .message {
+        max-width: 70%;
+        padding: 11px 13px;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: 8px;
+        background: rgba(255, 255, 255, 0.035);
+        color: #ded6c5;
+        font-size: 13px;
+        line-height: 1.45;
+      }
+
+      .task-group {
+        display: grid;
+        gap: 10px;
+        padding: 12px;
+        border: 1px solid rgba(216, 255, 87, 0.18);
+        border-radius: 8px;
+        background:
+          linear-gradient(90deg, rgba(216, 255, 87, 0.06), rgba(103, 216, 196, 0.035)),
+          rgba(14, 17, 14, 0.82);
+      }
+
+      .task-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 14px;
+      }
+
+      .task-head strong {
+        display: block;
+        max-width: 520px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        font-size: 14px;
+      }
+
+      .task-head span,
+      .task-head p {
+        margin: 0;
+        color: var(--muted-2);
+        font-size: 11px;
+        text-transform: uppercase;
+      }
+
+      .run-card {
+        overflow: hidden;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background:
+          linear-gradient(90deg, rgba(216, 255, 87, 0.06), transparent 38%),
+          rgba(22, 24, 18, 0.94);
+      }
+
+      .run-head {
+        display: grid;
+        grid-template-columns: 34px minmax(0, 1fr) auto;
+        gap: 12px;
+        align-items: center;
+        padding: 13px;
+      }
+
+      .mark {
+        display: grid;
+        width: 34px;
+        height: 34px;
+        place-items: center;
+        border-radius: 50%;
+        background: rgba(216, 255, 87, 0.15);
+        color: var(--accent);
+        font-size: 12px;
+        font-weight: 850;
+      }
+
+      .mark.fake {
+        background: rgba(103, 216, 196, 0.15);
+        color: var(--cyan);
+      }
+
+      .title-row {
+        display: flex;
+        min-width: 0;
+        align-items: center;
+        gap: 8px;
+      }
+
+      .title-row strong {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .badge {
+        flex: 0 0 auto;
+        min-height: 22px;
+        border: 1px solid rgba(216, 255, 87, 0.24);
+        border-radius: 999px;
+        padding: 3px 8px;
+        color: var(--accent);
+        font-size: 11px;
+      }
+
+      .run-title > span {
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .run-title {
+        min-width: 0;
+      }
+
+      .actions {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+        gap: 7px;
+      }
+
+      button {
+        min-height: 32px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: rgba(255, 255, 255, 0.035);
+        color: var(--muted);
+        padding: 0 10px;
+        font: inherit;
+        font-size: 12px;
+      }
+
+      button.primary {
+        border-color: rgba(216, 255, 87, 0.44);
+        color: var(--text);
+      }
+
+      button[disabled] {
+        opacity: 0.48;
+      }
+
+      .progress {
+        display: grid;
+        gap: 9px;
+        padding: 0 13px 13px 59px;
+      }
+
+      .stage-rail {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 5px;
+      }
+
+      .stage {
+        display: grid;
+        min-width: 0;
+        gap: 4px;
+      }
+
+      .bar {
+        height: 4px;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.08);
+      }
+
+      .stage.done .bar,
+      .stage.current .bar {
+        background: var(--accent);
+      }
+
+      .stage span {
+        overflow: hidden;
+        color: var(--muted-2);
+        font-size: 10px;
+        text-overflow: ellipsis;
+        text-transform: uppercase;
+        white-space: nowrap;
+      }
+
+      .stage.current span {
+        color: var(--text);
+      }
+
+      .activity {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 10px;
+        align-items: center;
+        color: #e8dfcf;
+        font-size: 13px;
+      }
+
+      .wait {
+        min-height: 24px;
+        border-radius: 999px;
+        background: rgba(103, 216, 196, 0.09);
+        color: var(--cyan);
+        padding: 4px 8px;
+        font-size: 11px;
+        white-space: nowrap;
+      }
+
+      .completed {
+        background: rgba(15, 18, 13, 0.92);
+        box-shadow: none;
+      }
+
+      .completed .run-head {
+        grid-template-columns: 28px minmax(0, 1fr);
+        padding: 10px 12px;
+      }
+
+      .completed .mark {
+        width: 28px;
+        height: 28px;
+        font-size: 10px;
+      }
+
+      .completed .actions {
+        grid-column: 2;
+        justify-content: flex-start;
+      }
+
+      .pills {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 7px;
+        padding: 0 12px 11px 52px;
+      }
+
+      .pill {
+        min-height: 24px;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        padding: 4px 8px;
+        color: var(--muted);
+        font-size: 11px;
+      }
+
+      .pill.good {
+        border-color: rgba(103, 216, 196, 0.25);
+        color: var(--cyan);
+      }
+
+      .pill.warn {
+        border-color: rgba(245, 189, 90, 0.25);
+        color: var(--amber);
+      }
+
+      .inspector {
+        display: grid;
+        align-content: start;
+        gap: 14px;
+        padding: 16px;
+      }
+
+      .tabs {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 7px;
+      }
+
+      .tabs button.active {
+        border-color: rgba(216, 255, 87, 0.44);
+        color: var(--text);
+      }
+
+      .panel {
+        display: grid;
+        gap: 10px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 12px;
+        background: rgba(255, 255, 255, 0.025);
+      }
+
+      .compare-row {
+        display: grid;
+        grid-template-columns: 1fr auto;
+        gap: 10px;
+        align-items: center;
+      }
+
+      .select {
+        min-height: 34px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        color: var(--text);
+        padding: 8px 10px;
+        background: rgba(8, 9, 7, 0.64);
+        font-size: 12px;
+      }
+
+      .signal-grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 8px;
+      }
+
+      .signal {
+        min-width: 0;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 10px;
+        background: rgba(0, 0, 0, 0.14);
+      }
+
+      .signal span {
+        color: var(--muted-2);
+        font-size: 10px;
+        text-transform: uppercase;
+      }
+
+      .signal strong {
+        display: block;
+        margin-top: 4px;
+        overflow: hidden;
+        color: var(--text);
+        font-size: 15px;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      @media (max-width: 860px) {
+        main {
+          width: min(100vw - 28px, 1180px);
+        }
+
+        .workspace,
+        .run-head,
+        .activity,
+        .compare-row {
+          grid-template-columns: 1fr;
+        }
+
+        .progress,
+        .pills {
+          padding-left: 13px;
+        }
+
+        .actions {
+          justify-content: flex-start;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header class="page">
+        <div>
+          <div class="eyebrow">Agent Hub Desktop / UX-4</div>
+          <h1>Run progress that stays out of the transcript</h1>
+        </div>
+        <p>
+          Active cards show stage and wait state. Terminal cards lead with review
+          and comparison affordances while detailed logs remain in audit.
+        </p>
+      </header>
+
+      <section class="workspace">
+        <div class="chat">
+          <div class="message">Compare @fake and @codex on the workspace export fix.</div>
+
+          <section class="task-group">
+            <header class="task-head">
+              <div>
+                <span>Task</span>
+                <strong>Workspace export fix</strong>
+              </div>
+              <p>2 runs · @fake, @codex</p>
+            </header>
+
+            <article class="run-card">
+              <div class="run-head">
+                <div class="mark">C</div>
+                <div class="run-title">
+                  <div class="title-row">
+                    <strong>@codex</strong>
+                    <span class="badge">Verifying</span>
+                  </div>
+                  <span>Started 10:42:12 AM · 2m 14s</span>
+                </div>
+                <div class="actions">
+                  <button class="primary">View review</button>
+                  <button>Cancel</button>
+                  <button disabled>Compare</button>
+                  <button>Audit</button>
+                </div>
+              </div>
+              <div class="progress">
+                <div class="stage-rail" aria-label="Run stage">
+                  <div class="stage done"><div class="bar"></div><span>Prepare</span></div>
+                  <div class="stage done"><div class="bar"></div><span>Run</span></div>
+                  <div class="stage current"><div class="bar"></div><span>Verify</span></div>
+                  <div class="stage"><div class="bar"></div><span>Review</span></div>
+                </div>
+                <div class="activity">
+                  <span>Last activity: verification started for pnpm test</span>
+                  <span class="wait">Waiting for checks</span>
+                </div>
+              </div>
+            </article>
+
+            <article class="run-card completed">
+              <div class="run-head">
+                <div class="mark fake">F</div>
+                <div class="run-title">
+                  <div class="title-row">
+                    <strong>@fake</strong>
+                    <span class="badge">Completed</span>
+                  </div>
+                  <span>Review ready · terminal peer available</span>
+                </div>
+                <div class="actions">
+                  <button class="primary">View review</button>
+                  <button class="primary">Compare</button>
+                  <button>Continue</button>
+                  <button>Handoff</button>
+                  <button>Audit</button>
+                </div>
+              </div>
+              <div class="pills">
+                <span class="pill good">Checks 2</span>
+                <span class="pill">Diff 4</span>
+                <span class="pill warn">Risks medium</span>
+                <span class="pill">Audit 18</span>
+              </div>
+            </article>
+          </section>
+        </div>
+
+        <aside class="inspector">
+          <div>
+            <div class="eyebrow">Inspector</div>
+            <h2>Artifacts</h2>
+          </div>
+          <div class="tabs">
+            <button>Brief</button>
+            <button class="active">Artifacts</button>
+            <button>Checks</button>
+            <button>Audit</button>
+          </div>
+          <section class="panel">
+            <div class="eyebrow">Comparison Review</div>
+            <div class="compare-row">
+              <div class="select">Candidate: @codex · completed · same task</div>
+              <button class="primary">Create Comparison</button>
+            </div>
+            <div class="signal-grid">
+              <div class="signal"><span>Winner</span><strong>candidate</strong></div>
+              <div class="signal"><span>Diff Risk</span><strong>low</strong></div>
+              <div class="signal"><span>Checks</span><strong>passed</strong></div>
+            </div>
+          </section>
+          <section class="panel">
+            <div class="eyebrow">Audit</div>
+            <p class="page-copy">
+              Raw event lines load here by default, preserving evidence without
+              flooding the room transcript.
+            </p>
+          </section>
+        </aside>
+      </section>
+    </main>
+  </body>
+</html>

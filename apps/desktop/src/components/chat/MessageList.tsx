@@ -5,6 +5,7 @@ import type {
   RunInspectorTab,
   ThreadMessage
 } from "../../lib/types";
+import { compareAffordanceForRun } from "../../lib/run-progress";
 import { quietRunCardIds, visibleTranscriptMessages } from "../../lib/transcript";
 import { AgentRunCard } from "./AgentRunCard";
 import { AssistantMessageBubble } from "./AssistantMessageBubble";
@@ -100,6 +101,11 @@ export function MessageList({
         message={message}
         initialRun={runDetails[message.runId]}
         compactCompleted={quietRunIds.has(message.runId)}
+        compareAffordance={compareAffordanceForRun(
+          message.runId,
+          messages,
+          runDetails
+        )}
         onRunUpdated={onRunUpdated}
         onOpenInspector={onOpenInspector}
         onCancelRun={onCancelRun}

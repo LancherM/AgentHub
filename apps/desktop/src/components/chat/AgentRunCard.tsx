@@ -1,5 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { agentHubApi } from "../../lib/agentHubApi";
+import { findCliUnavailableDiagnostic } from "../../lib/cli-diagnostics";
+import {
+  buildRunProgress,
+  isActiveRunStatus,
+  isTerminalRunStatus,
+  runStatusFromTerminalEvent,
+  type CompareAffordance
+} from "../../lib/run-progress";
 import {
   runEvidenceTimelineChips,
   timelinePresentationForMessage
@@ -19,6 +27,7 @@ interface AgentRunCardProps {
   message: AgentRunMessage;
   initialRun?: RunDetail;
   compactCompleted?: boolean;
+  compareAffordance: CompareAffordance;
   onRunUpdated(run: RunDetail): void;
   onOpenInspector(runId: string, tab?: RunInspectorTab): void;
   onCancelRun(runId: string): Promise<void>;
@@ -29,6 +38,7 @@ export function AgentRunCard({
   message,
   initialRun,
   compactCompleted = false,
+  compareAffordance,
   onRunUpdated,
   onOpenInspector,
   onCancelRun,
@@ -39,7 +49,6 @@ export function AgentRunCard({
   const [status, setStatus] = useState<RunStatus>(initialRun?.status ?? message.status);
   const [reviewSummary, setReviewSummary] = useState<ReviewSummary | undefined>();
   const [reviewArtifacts, setReviewArtifacts] = useState<ReviewArtifact[]>([]);
-  const [expanded, setExpanded] = useState(false);
   const [streamError, setStreamError] = useState<string | undefined>();
   const [cancelError, setCancelError] = useState<string | undefined>();
 
@@ -98,10 +107,13 @@ export function AgentRunCard({
           return;
         }
         setEvents((current) => appendEvent(current, event));
-        if (event.payload.status) {
+        const terminalStatus = runStatusFromTerminalEvent(event.type);
+        if (terminalStatus) {
+          setStatus(terminalStatus);
+        } else if (event.payload.status) {
           setStatus(event.payload.status);
         }
-        if (isTerminalRunEvent(event.type)) {
+        if (terminalStatus) {
           void loadRun({ includeReview: true });
         }
       });
@@ -118,37 +130,46 @@ export function AgentRunCard({
   }, [loadRun, message.runId, message.status]);
 
   useEffect(() => {
-    if (!expanded) {
+    if (!isTerminalRunStatus(status)) {
+      return;
+    }
+    if (run) {
+      void loadReviewData();
       return;
     }
     void loadRun({ includeReview: true });
-  }, [expanded, loadRun]);
+  }, [loadReviewData, loadRun, run, status]);
 
-  useEffect(() => {
-    if (!isTerminalRunStatus(message.status) || run) {
-      return;
-    }
-    void loadRun();
-  }, [loadRun, message.status, run]);
-
-  const latestLine = useMemo(() => latestEventText(events) ?? run?.summary ?? statusLine(status), [
-    events,
-    run?.summary,
-    status
-  ]);
+  const progress = useMemo(
+    () =>
+      buildRunProgress({
+        status,
+        events,
+        summary: run?.summary,
+        createdAt: run?.createdAt,
+        updatedAt: run?.updatedAt
+      }),
+    [events, run?.createdAt, run?.summary, run?.updatedAt, status]
+  );
   const canCancel = isActiveRunStatus(status);
   const canContinueCodeState =
     isTerminalRunStatus(status) && run?.canContinueCodeState === true;
   const continueDisabledTitle = run
     ? "Continue requires a retained parent worktree"
     : "Loading run provenance";
-  const visibleEvents = expanded ? events : events.slice(-4);
   const elapsed = run
     ? elapsedLabel(run.createdAt, events.at(-1)?.timestamp ?? new Date().toISOString())
     : "0s";
-  const headerMeta = run
-    ? `Started ${formatTime(run.createdAt)} · ${elapsed}`
-    : statusHeader(status);
+  const terminalMeta = compareAffordance.enabled
+    ? `${progress.waitState} · ${compareAffordance.candidateCount} peer${
+        compareAffordance.candidateCount === 1 ? "" : "s"
+      } available`
+    : progress.waitState;
+  const headerMeta = isTerminalRunStatus(status)
+    ? terminalMeta
+    : run
+      ? `Started ${formatTime(run.createdAt)} · ${elapsed}`
+      : progress.waitState;
   const simulationCopy =
     message.agentId === "fake"
       ? "Local TaskRunner fake run in an isolated worktree. The project root is not modified."
@@ -165,7 +186,11 @@ export function AgentRunCard({
     eventCount: events.length,
     status
   });
-  const quietCompleted = compactCompleted && isTerminalRunStatus(status);
+  const cliDiagnostic = useMemo(
+    () => findCliUnavailableDiagnostic(events),
+    [events]
+  );
+  const quietCompleted = compactCompleted && isTerminalRunStatus(status) && !cliDiagnostic;
 
   async function cancel(): Promise<void> {
     setCancelError(undefined);
@@ -178,13 +203,9 @@ export function AgentRunCard({
 
   return (
     <article
-      className={`agent-run-card timeline-event ${timelineEvent.tone} ${status} ${expanded ? "expanded" : ""} ${quietCompleted ? "compact-completed" : ""}`}
+      className={`agent-run-card timeline-event ${timelineEvent.tone} ${status} ${quietCompleted ? "compact-completed" : ""}`}
       onClick={() => {
-        if (quietCompleted) {
-          onOpenInspector(message.runId, "brief");
-          return;
-        }
-        setExpanded((current) => !current);
+        onOpenInspector(message.runId, "brief");
       }}
     >
       <header className="run-card-header">
@@ -200,8 +221,18 @@ export function AgentRunCard({
           <span>{executorLabel ? `${executorLabel} · ${headerMeta}` : headerMeta}</span>
         </div>
         <div className="run-card-actions">
+          <button
+            className="primary-action"
+            onClick={(event) => {
+              event.stopPropagation();
+              onOpenInspector(message.runId, "brief");
+            }}
+          >
+            View review
+          </button>
           {canCancel ? (
             <button
+              title="Cancel this active local run"
               onClick={(event) => {
                 event.stopPropagation();
                 void cancel();
@@ -210,38 +241,54 @@ export function AgentRunCard({
               Cancel
             </button>
           ) : null}
-          {isTerminalRunStatus(status) ? (
-            <button
-              disabled={!canContinueCodeState}
-              title={canContinueCodeState ? "Continue from this run" : continueDisabledTitle}
-              onClick={(event) => {
-                event.stopPropagation();
-                if (!canContinueCodeState) {
-                  return;
-                }
-                onContinueFromRun();
-              }}
-            >
-              Continue
-            </button>
-          ) : null}
-          {!quietCompleted ? (
-            <button
-              onClick={(event) => {
-                event.stopPropagation();
-                setExpanded((current) => !current);
-              }}
-            >
-              {expanded ? "Collapse" : "Expand"}
-            </button>
-          ) : null}
           <button
+            disabled={!compareAffordance.enabled}
+            title={compareAffordance.title}
+            aria-label={compareAffordance.title}
             onClick={(event) => {
               event.stopPropagation();
-              onOpenInspector(message.runId, "brief");
+              if (!compareAffordance.enabled) {
+                return;
+              }
+              onOpenInspector(message.runId, "compare");
             }}
           >
-            {quietCompleted ? "View review" : "View details"}
+            Compare
+          </button>
+          {isTerminalRunStatus(status) ? (
+            <>
+              <button
+                disabled={!canContinueCodeState}
+                title={canContinueCodeState ? "Continue from this run" : continueDisabledTitle}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  if (!canContinueCodeState) {
+                    return;
+                  }
+                  onContinueFromRun();
+                }}
+              >
+                Continue
+              </button>
+              <button
+                title="Open retained-worktree handoff evidence"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onOpenInspector(message.runId, "handoff");
+                }}
+              >
+                Handoff
+              </button>
+            </>
+          ) : null}
+          <button
+            title="Open persisted run events in audit"
+            onClick={(event) => {
+              event.stopPropagation();
+              onOpenInspector(message.runId, "audit");
+            }}
+          >
+            Audit
           </button>
         </div>
       </header>
@@ -251,29 +298,54 @@ export function AgentRunCard({
       ) : null}
 
       {!quietCompleted ? (
-      <div className="run-card-body">
-        <p className="latest-line">
-          {latestLine ?? "Waiting for the first streamed event..."}
-        </p>
-        <p className="fake-boundary">{simulationCopy}</p>
-        {run?.parentRunId ? (
-          <p className="fake-boundary">Continues code state from {run.parentRunId}.</p>
-        ) : null}
-        {expanded ? (
-          <div className="run-event-strip">
-            {visibleEvents.length === 0 ? (
-              <span className="muted-copy">No stream events yet.</span>
-            ) : (
-              visibleEvents.map((event) => (
-                <div className="run-event-line" key={event.id}>
-                  <span>{formatTime(event.timestamp)}</span>
-                  <p>{eventText(event)}</p>
-                </div>
-              ))
-            )}
+        <div className="run-card-body">
+          <div className="run-progress-rail" aria-label="Run progress">
+            {progress.stages.map((stage) => (
+              <div className={`run-progress-stage ${stage.state}`} key={stage.id}>
+                <div className="run-progress-bar" />
+                <span>{stage.label}</span>
+              </div>
+            ))}
           </div>
-        ) : null}
-      </div>
+
+          <div className="run-activity-row">
+            <div>
+              <span>Last activity</span>
+              <p>{progress.activityText}</p>
+            </div>
+            <span className={`run-wait-state ${progress.tone}`}>
+              {progress.waitState}
+            </span>
+          </div>
+
+          <p className="fake-boundary">{simulationCopy}</p>
+          {run?.parentRunId ? (
+            <p className="fake-boundary">Continues code state from {run.parentRunId}.</p>
+          ) : null}
+          {progress.activityTimestamp ? (
+            <p className="fake-boundary">
+              Last event at {formatTime(progress.activityTimestamp)}.
+            </p>
+          ) : null}
+          {cliDiagnostic ? (
+            <div className="cli-diagnostic-panel">
+              <div>
+                <div className="panel-label">CLI Diagnostic</div>
+                <strong>{cliDiagnostic.reason}</strong>
+                {cliDiagnostic.cwd ? <p>cwd: {cliDiagnostic.cwd}</p> : null}
+              </div>
+              {cliDiagnostic.verifyCommand ? (
+                <code>{cliDiagnostic.verifyCommand}</code>
+              ) : null}
+              <p>
+                PATH checked:{" "}
+                {cliDiagnostic.pathEntries.length > 0
+                  ? cliDiagnostic.pathEntries.join(", ")
+                  : "No PATH entries were available."}
+              </p>
+            </div>
+          ) : null}
+        </div>
       ) : null}
 
       <footer className="run-card-pills">
@@ -301,10 +373,6 @@ function appendEvent(events: RunEvent[], event: RunEvent): RunEvent[] {
   return [...events, event].sort((left, right) => left.sequence - right.sequence);
 }
 
-function latestEventText(events: RunEvent[]): string | undefined {
-  return [...events].reverse().map(eventText).find(Boolean);
-}
-
 function reviewPills(
   summary: ReviewSummary | undefined,
   eventCount: number,
@@ -312,60 +380,6 @@ function reviewPills(
   artifacts: ReviewArtifact[]
 ): ReturnType<typeof runEvidenceTimelineChips> {
   return runEvidenceTimelineChips(summary, eventCount, status, artifacts);
-}
-
-function isTerminalRunStatus(status: RunStatus): boolean {
-  return status === "completed" || status === "failed" || status === "cancelled";
-}
-
-function isActiveRunStatus(status: RunStatus): boolean {
-  return status === "queued" || status === "running" || status === "verifying";
-}
-
-function isTerminalRunEvent(type: RunEvent["type"]): boolean {
-  return type === "run_completed" || type === "run_failed" || type === "run_cancelled";
-}
-
-function statusLine(status: RunStatus): string {
-  if (status === "queued") {
-    return "Run is queued.";
-  }
-  if (status === "running") {
-    return "Run is in progress.";
-  }
-  if (status === "verifying") {
-    return "Run is being verified.";
-  }
-  if (status === "completed") {
-    return "Run completed. Expand to load review details.";
-  }
-  if (status === "cancelled") {
-    return "Run was cancelled. Expand to load review details.";
-  }
-  return "Run failed. Expand to load review details.";
-}
-
-function statusHeader(status: RunStatus): string {
-  if (status === "queued") {
-    return "Queued";
-  }
-  if (status === "running") {
-    return "Running";
-  }
-  if (status === "verifying") {
-    return "Verifying";
-  }
-  if (status === "completed") {
-    return "Completed · review loads on demand";
-  }
-  if (status === "cancelled") {
-    return "Cancelled · review loads on demand";
-  }
-  return "Failed · review loads on demand";
-}
-
-function eventText(event: RunEvent): string {
-  return event.payload.message ?? event.payload.summary ?? event.type.replaceAll("_", " ");
 }
 
 function formatTime(value: string): string {

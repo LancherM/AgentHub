@@ -6,6 +6,12 @@ export const workgroupExecutorKinds = [
 ] as const;
 export type WorkgroupExecutorKind = (typeof workgroupExecutorKinds)[number];
 export type WorkgroupAgentAdapterKind = "fake" | "codex" | "claude-code";
+export type WorkgroupSkillScope = "task" | "role" | "project" | "global";
+
+export interface WorkgroupSkillReference {
+  id: string;
+  scope?: WorkgroupSkillScope;
+}
 
 export interface WorkgroupAgentAdapterExecutor {
   kind: "agent_adapter";
@@ -48,6 +54,7 @@ export interface WorkgroupRole {
   approvalPolicy: WorkgroupApprovalPolicy;
   executor: WorkgroupExecutor;
   enabled: boolean;
+  defaultSkillReferences?: WorkgroupSkillReference[];
   defaultRoom?: string;
   tags?: string[];
   metadata?: Record<string, unknown>;
@@ -62,6 +69,7 @@ export interface WorkgroupRoleRunMetadata {
   persona: string;
   defaultInstructions: string;
   permissions: string[];
+  defaultSkillReferences?: WorkgroupSkillReference[];
   contextPolicy: WorkgroupContextPolicy;
   approvalPolicy: WorkgroupApprovalPolicy;
 }
@@ -227,6 +235,9 @@ export function toWorkgroupRoleRunMetadata(
     persona: role.persona,
     defaultInstructions: role.defaultInstructions,
     permissions: [...role.permissions],
+    defaultSkillReferences: role.defaultSkillReferences?.map((reference) => ({
+      ...reference
+    })),
     contextPolicy: {
       ...role.contextPolicy,
       instructions: [...role.contextPolicy.instructions]

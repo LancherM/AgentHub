@@ -15,9 +15,13 @@ describe("process-backed agent adapters", () => {
     ]);
     await expect(
       new CodexAdapter({ processRunner: availableRunner }).detect()
-    ).resolves.toEqual({
+    ).resolves.toMatchObject({
       available: true,
-      version: "codex-cli 0.130.0"
+      version: "codex-cli 0.130.0",
+      diagnostics: expect.objectContaining({
+        executable: "codex",
+        verifyCommand: "codex --version"
+      })
     });
     expect(availableRunner.detectCalls[0]).toMatchObject({
       executable: "codex",
@@ -29,9 +33,13 @@ describe("process-backed agent adapters", () => {
     ]);
     await expect(
       new CodexAdapter({ processRunner: unavailableRunner }).detect()
-    ).resolves.toEqual({
+    ).resolves.toMatchObject({
       available: false,
-      reason: "Codex CLI unavailable: not authenticated"
+      reason: "Codex CLI unavailable: not authenticated",
+      diagnostics: expect.objectContaining({
+        executable: "codex",
+        detectCommand: "codex --version"
+      })
     });
   });
 
@@ -202,7 +210,19 @@ describe("process-backed agent adapters", () => {
     expect(events).toEqual([
       expect.objectContaining({
         type: "error",
-        message: "Codex preflight failed: Codex CLI unavailable: not authenticated"
+        message: "Codex preflight failed: Codex CLI unavailable: not authenticated",
+        metadata: expect.objectContaining({
+          cliDiagnostics: expect.objectContaining({
+            executable: "codex",
+            verifyCommand: "codex --version",
+            pathEntries: expect.any(Array)
+          }),
+          detection: expect.objectContaining({
+            diagnostics: expect.objectContaining({
+              detectCommand: "codex --version"
+            })
+          })
+        })
       }),
       expect.objectContaining({ type: "exit", exitCode: 1 })
     ]);
