@@ -37,6 +37,7 @@ export function App(): JSX.Element {
   const [activeWorkspace, setActiveWorkspace] =
     useState<DesktopWorkspace>("chat");
   const [lastUsedAgents, setLastUsedAgents] = useState<AgentId[]>(["fake"]);
+  const [lastUsedRoleHandles, setLastUsedRoleHandles] = useState<string[]>([]);
   const [pendingContinueFrom, setPendingContinueFrom] =
     useState<RunContinuationTarget | undefined>();
   const [isBusy, setIsBusy] = useState(true);
@@ -257,6 +258,10 @@ export function App(): JSX.Element {
       if (mentions) {
         setLastUsedAgents(mentions);
       }
+      const roleMentions = lastUserRoleMentions(detail.messages);
+      if (roleMentions) {
+        setLastUsedRoleHandles(roleMentions);
+      }
       setThreads((current) => upsertThreadSummary(current, threadSummaryFromDetail(detail)));
     } catch (err) {
       setError(errorMessage(err));
@@ -307,6 +312,7 @@ export function App(): JSX.Element {
             runDetails={runDetails}
             isBusy={isBusy}
             lastUsedAgents={lastUsedAgents}
+            lastUsedRoleHandles={lastUsedRoleHandles}
             pendingContinueFrom={pendingContinueFrom}
             error={error}
             onSubmit={submitMessage}
@@ -369,6 +375,19 @@ function lastUserMentions(messages: ThreadMessage[]): AgentId[] | undefined {
     return userMessage.mentions;
   }
   return undefined;
+}
+
+function lastUserRoleMentions(messages: ThreadMessage[]): string[] | undefined {
+  const userMessage = [...messages]
+    .reverse()
+    .find((message) => message.type === "user");
+  if (userMessage?.type !== "user" || !userMessage.roleMentions?.length) {
+    return undefined;
+  }
+  const handles = userMessage.roleMentions
+    .map((role) => role.roleHandle)
+    .filter((handle, index, all) => all.indexOf(handle) === index);
+  return handles.length > 0 ? handles : undefined;
 }
 
 function upsertProjectSummary(

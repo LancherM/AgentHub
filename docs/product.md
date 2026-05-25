@@ -424,11 +424,18 @@ immediately and start with room shared context enabled.
 The composer accepts mention-based prompts such as `@fake ...` or multi-agent
 mentions, and it now also accepts enabled role handles such as `@researcher`
 or `@engineer` through the same text path. Debug adapter mentions
-(`@fake`, `@codex`, `@claude`, and `@claude-code`) remain supported. Role
-mentions are resolved in the Electron main process, persisted on the user
-message and run-card metadata, and copied to run metadata so review surfaces
-can show which role and executor produced a run. The renderer sends prompt text
-through the safe
+(`@fake`, `@codex`, `@claude`, and `@claude-code`) remain supported. The
+desktop composer provides `@` autocomplete for adapters, enabled preset roles,
+enabled custom roles, and recent targets; `/` suggestions surface common room,
+review, memory, comparison, continuation, and workflow prompt patterns without
+adding a new command backend. Unknown mentions stay in the prompt text and do
+not block submission. Target chips show the expected selected agents/roles,
+can pin fallback targets as explicit mentions, and can remove explicit
+mentions before the turn is submitted. Context mode uses segmented controls,
+and the submit button reports the expected local run fan-out. Role mentions
+are resolved in the Electron main process, persisted on the user message and
+run-card metadata, and copied to run metadata so review surfaces can show which
+role and executor produced a run. The renderer sends prompt text through the safe
 `window.agentHub.threads.sendMessage` preload API; the Electron main-process
 thread service resolves project-level Team workspace roles, strips known agent
 or role mentions from the task body, persists

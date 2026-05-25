@@ -61,6 +61,12 @@ validate inputs and manage per-window subscriptions, but do not own run
 lifecycle logic. If the project list is empty, renderer onboarding forms submit
 a local path through the same project-open IPC service before creating a starter
 thread through the thread service.
+The renderer composer remains a local control surface: it reads enabled role
+summaries through `window.agentHub.team.getWorkspace(projectId)`, builds
+autocomplete suggestions and target chips in React, and still submits only the
+prompt text plus context mode through `window.agentHub.threads.sendMessage`.
+Role authority stays in the Electron main-process thread service, which
+re-resolves all role handles before task/run creation.
 
 Desktop review inspection is split across narrow Electron main-process
 services. `ReviewService` aggregates run summary, verification, logs, memory
@@ -248,6 +254,15 @@ verification output, and risk evidence remain on the run model and load through
 review IPC only when the user opens the inspector. If an older database has
 runs but no conversation threads, the service performs a one-time compatibility
 import into conversation rows so existing desktop run records stay inspectable.
+
+Composer autocomplete is implemented as renderer-only input assistance. The
+helper in `apps/desktop/src/lib/composer-controls.ts` derives active `@` and
+`/` trigger ranges, filters adapter/role/command suggestions, applies selected
+suggestions into the textarea value, resolves visible target chips, and counts
+expected run fan-out from known adapter mentions plus executable role mentions.
+Unknown mentions are intentionally ignored by the helper and remain ordinary
+prompt text, matching the main-process mention parser. Slash suggestions insert
+prompt text only; they do not create a new command execution backend.
 
 The multi-turn architecture has persisted thread/message repositories, thread
 summary storage, the desktop thread service separated from task runs, and a

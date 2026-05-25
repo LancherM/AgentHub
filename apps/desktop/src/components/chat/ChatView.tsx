@@ -1,4 +1,5 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
+import { agentHubApi } from "../../lib/agentHubApi";
 import type {
   AgentId,
   CollaborationWorkflowInput,
@@ -7,6 +8,7 @@ import type {
   RunDetail,
   RunInspectorTab,
   RunContinuationTarget,
+  TeamRoleSummary,
   ThreadDetail,
   ThreadMessage
 } from "../../lib/types";
@@ -22,6 +24,7 @@ interface ChatViewProps {
   runDetails: Record<string, RunDetail>;
   isBusy: boolean;
   lastUsedAgents: AgentId[];
+  lastUsedRoleHandles: string[];
   pendingContinueFrom?: RunContinuationTarget;
   error?: string;
   onSubmit(
@@ -45,6 +48,7 @@ export function ChatView({
   runDetails,
   isBusy,
   lastUsedAgents,
+  lastUsedRoleHandles,
   pendingContinueFrom,
   error,
   onSubmit,
@@ -57,9 +61,37 @@ export function ChatView({
   onRegisterProject
 }: ChatViewProps): JSX.Element {
   const scrollRef = useRef<HTMLDivElement>(null);
+  const [roleTargets, setRoleTargets] = useState<TeamRoleSummary[]>([]);
   const disabledReason = project
     ? undefined
     : "Select or register a local project before running agents.";
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!project?.id) {
+      setRoleTargets([]);
+      return;
+    }
+    agentHubApi.team
+      .getWorkspace(project.id)
+      .then((workspace) => {
+        if (!cancelled) {
+          setRoleTargets(
+            workspace.roles.filter(
+              (summary) => summary.status === "enabled" && summary.role.enabled
+            )
+          );
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setRoleTargets([]);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [project?.id]);
 
   useEffect(() => {
     const element = scrollRef.current;
@@ -141,6 +173,8 @@ export function ChatView({
       <Composer
         isBusy={isBusy}
         lastUsedAgents={lastUsedAgents}
+        lastUsedRoleHandles={lastUsedRoleHandles}
+        roleTargets={roleTargets}
         pendingContinueFrom={pendingContinueFrom}
         disabledReason={disabledReason}
         onSubmit={onSubmit}
