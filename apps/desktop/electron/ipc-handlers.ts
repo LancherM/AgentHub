@@ -6,6 +6,7 @@ import type {
   CreateRunInput,
   HandoffCopyKind,
   RunEvent,
+  SaveTeamRoleInput,
   SendThreadMessageInput,
   VerificationSettings
 } from "../src/lib/types";
@@ -45,6 +46,10 @@ import {
   createKnowledgeService,
   type KnowledgeService
 } from "./services/knowledge-service";
+import {
+  createTeamService,
+  type TeamService
+} from "./services/team-service";
 
 export { IPC_CHANNELS, runEventChannel } from "./ipc-channels";
 
@@ -56,6 +61,7 @@ export interface DesktopServices {
   comparison: ComparisonService;
   memory: MemoryService;
   knowledge: KnowledgeService;
+  team: TeamService;
   settings: SettingsService;
 }
 
@@ -90,14 +96,16 @@ export function createDesktopServices(
   });
   const comparison = createComparisonService(context);
   const knowledge = createKnowledgeService(context);
+  const team = createTeamService(context);
   return {
     projects,
     runs,
-    threads: createThreadService({ context, projects, runs }),
+    threads: createThreadService({ context, projects, runs, team }),
     review,
     comparison,
     memory,
     knowledge,
+    team,
     settings
   };
 }
@@ -193,6 +201,10 @@ export function createIpcHandlers(
       services.memory.ignore(parseIdList(input, "memory ids")),
     [IPC_CHANNELS.knowledgeWorkspace]: async (_event, input) =>
       services.knowledge.getWorkspace(parseId(input, "projectId")),
+    [IPC_CHANNELS.teamWorkspace]: async (_event, input) =>
+      services.team.getWorkspace(parseId(input, "projectId")),
+    [IPC_CHANNELS.teamSaveRole]: async (_event, input) =>
+      services.team.saveRole(parseSaveTeamRoleInput(input)),
     [IPC_CHANNELS.settingsGetVerification]: async (_event, input) =>
       services.settings.getVerification(parseId(input, "projectId")),
     [IPC_CHANNELS.settingsSaveVerification]: async (_event, input) =>
@@ -456,6 +468,17 @@ function parseSendThreadMessageInput(input: unknown): SendThreadMessageInput {
   };
 }
 
+function parseSaveTeamRoleInput(input: unknown): SaveTeamRoleInput {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    throw new Error("team role input is required");
+  }
+  const value = input as Partial<SaveTeamRoleInput>;
+  return {
+    projectId: parseId(value.projectId, "projectId"),
+    role: value.role as SaveTeamRoleInput["role"]
+  };
+}
+
 function parseAgentList(input: unknown): AgentId[] {
   if (!Array.isArray(input)) {
     throw new Error("agents must be an array");
@@ -476,7 +499,7 @@ const GENERIC_IPC_ERROR = "Agent Hub could not complete that local desktop reque
 
 function safeErrorMessage(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
-  if (/not found|required|must be|cannot be|already|deliveryMode|agentId|contextMode|reason|projectId|runId|threadId|prompt|text|settings|verification|command|executable|args|timeout|handoff|comparison|baseline|candidate|same task|multi-agent/i.test(message)) {
+  if (/not found|required|must be|cannot be|already|deliveryMode|agentId|contextMode|reason|projectId|runId|threadId|prompt|text|settings|verification|command|executable|args|timeout|handoff|comparison|baseline|candidate|same task|multi-agent|team|role|executor|permission|contextPolicy|approvalPolicy/i.test(message)) {
     return message;
   }
   return GENERIC_IPC_ERROR;

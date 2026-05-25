@@ -32,6 +32,8 @@ export const IPC_CHANNELS = {
   memoryApprove: "agent-hub:memory:approve",
   memoryIgnore: "agent-hub:memory:ignore",
   knowledgeWorkspace: "agent-hub:knowledge:workspace",
+  teamWorkspace: "agent-hub:team:workspace",
+  teamSaveRole: "agent-hub:team:save-role",
   settingsGetVerification: "agent-hub:settings:get-verification",
   settingsSaveVerification: "agent-hub:settings:save-verification"
 } as const;

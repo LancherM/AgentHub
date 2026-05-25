@@ -4,6 +4,7 @@ import { RunInspectorModal } from "./components/inspector/RunInspectorModal";
 import { KnowledgeWorkspace } from "./components/knowledge/KnowledgeWorkspace";
 import { Sidebar } from "./components/sidebar/Sidebar";
 import { VerificationSettingsPanel } from "./components/settings/VerificationSettingsPanel";
+import { TeamWorkspace } from "./components/team/TeamWorkspace";
 import { agentHubApi } from "./lib/agentHubApi";
 import type {
   AgentId,
@@ -18,7 +19,7 @@ import type {
   ThreadSummary
 } from "./lib/types";
 
-type DesktopWorkspace = "chat" | "knowledge";
+type DesktopWorkspace = "chat" | "knowledge" | "team";
 
 export function App(): JSX.Element {
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
@@ -257,6 +258,7 @@ export function App(): JSX.Element {
         onSelectProject={(projectId) => void selectProject(projectId)}
         onRegisterProject={registerProject}
         onOpenKnowledge={() => setActiveWorkspace("knowledge")}
+        onOpenTeam={() => setActiveWorkspace("team")}
         onOpenSettings={() => setSettingsOpen(true)}
         isBusy={isBusy}
       />
@@ -270,6 +272,8 @@ export function App(): JSX.Element {
             }}
             onOpenInspector={(runId, tab) => setSelectedInspector({ runId, tab })}
           />
+        ) : activeWorkspace === "team" ? (
+          <TeamWorkspace project={selectedProject} />
         ) : (
           <ChatView
             thread={currentThread}

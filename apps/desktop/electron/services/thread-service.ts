@@ -53,6 +53,7 @@ import type {
   ProjectService
 } from "./project-service";
 import type { ConversationRunSnapshot, RunService } from "./run-service";
+import type { TeamService } from "./team-service";
 
 const maxAssistantMessageCharacters = 2_000;
 const defaultRoomDefinitions = [
@@ -117,6 +118,7 @@ export interface ThreadServiceDependencies {
   runs: RunService;
   conversationContextBuilder?: ConversationContextBuilder;
   roles?: readonly WorkgroupRole[];
+  team?: Pick<TeamService, "rolesForProject">;
 }
 
 interface AgentRunTaskMetadata {
@@ -349,7 +351,17 @@ class RepositoryThreadService implements ThreadService {
 
   async sendMessage(input: SendThreadMessageInput): Promise<ThreadDetail> {
     await this.ensureLegacyRunThreads();
-    const parsed = parseWorkgroupMentions(input.text, this.dependencies.roles);
+    const contextMode = parseContextMode(input.contextMode ?? "auto");
+    const thread = input.threadId
+      ? await this.requireThread(input.threadId)
+      : await this.defaultRoomThread(
+          input.projectId ?? (await this.defaultProjectId()),
+          "general"
+        );
+    const roles =
+      this.dependencies.roles ??
+      (await this.dependencies.team?.rolesForProject(thread.projectId));
+    const parsed = parseWorkgroupMentions(input.text, roles);
     const cleanedPrompt = parsed.cleanedPrompt.trim();
     if (!cleanedPrompt) {
       throw new Error("message text is required");
@@ -366,13 +378,6 @@ class RepositoryThreadService implements ThreadService {
             ? []
             : [{ agentId: "fake", source: "adapter_mention" }];
     const agents = uniqueAgents(participants.map((participant) => participant.agentId));
-    const contextMode = parseContextMode(input.contextMode ?? "auto");
-    const thread = input.threadId
-      ? await this.requireThread(input.threadId)
-      : await this.defaultRoomThread(
-          input.projectId ?? (await this.defaultProjectId()),
-          "general"
-        );
     await this.reconcileAssistantMessages(thread.id);
     await this.refreshThreadSummary(thread.id);
 

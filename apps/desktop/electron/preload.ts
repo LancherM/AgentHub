@@ -6,6 +6,7 @@ import type {
   CreateRunInput,
   HandoffCopyKind,
   RunEvent,
+  SaveTeamRoleInput,
   SendThreadMessageInput,
   VerificationSettings,
   Unsubscribe
@@ -97,6 +98,12 @@ const api: AgentHubApi = {
   knowledge: {
     getWorkspace: (projectId: string) =>
       ipcRenderer.invoke(IPC_CHANNELS.knowledgeWorkspace, projectId)
+  },
+  team: {
+    getWorkspace: (projectId: string) =>
+      ipcRenderer.invoke(IPC_CHANNELS.teamWorkspace, projectId),
+    saveRole: (input: SaveTeamRoleInput) =>
+      ipcRenderer.invoke(IPC_CHANNELS.teamSaveRole, input)
   },
   settings: {
     getVerification: (projectId: string) =>

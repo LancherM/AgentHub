@@ -1,5 +1,6 @@
 import type {
   JsonObject,
+  WorkgroupRole,
   WorkgroupRoleRunMetadata,
   WorkgroupTaskAssignmentMetadata
 } from "@agent-hub/shared";
@@ -162,6 +163,8 @@ export type KnowledgeSourceKind =
   | "task"
   | "run"
   | "artifact";
+export type TeamRoleSource = "preset" | "preset_override" | "custom";
+export type TeamRoleStatus = "enabled" | "disabled";
 
 export interface ProjectSummary {
   id: string;
@@ -636,6 +639,54 @@ export interface KnowledgeWorkspace {
   items: KnowledgeItem[];
 }
 
+export interface TeamRoleActivity {
+  taskId: string;
+  title: string;
+  status: WorkgroupTaskAssignmentMetadata["status"];
+  runId?: string;
+  updatedAt: string;
+}
+
+export interface TeamRoleLinkedMemory {
+  id: string;
+  status: "proposed" | "approved" | "rejected";
+  content: string;
+  updatedAt: string;
+}
+
+export interface TeamRoleSummary {
+  role: WorkgroupRole;
+  source: TeamRoleSource;
+  executorRunnable: boolean;
+  executorLabel: string;
+  permissionSummary: string;
+  contextPolicySummary: string;
+  approvalPolicySummary: string;
+  status: TeamRoleStatus;
+  recentActivity: TeamRoleActivity[];
+  linkedMemory: TeamRoleLinkedMemory[];
+}
+
+export interface TeamWorkspaceMetrics {
+  total: number;
+  enabled: number;
+  custom: number;
+  presetOverrides: number;
+  reservedExecutors: number;
+}
+
+export interface TeamWorkspace {
+  projectId: string;
+  generatedAt: string;
+  metrics: TeamWorkspaceMetrics;
+  roles: TeamRoleSummary[];
+}
+
+export interface SaveTeamRoleInput {
+  projectId: string;
+  role: WorkgroupRole;
+}
+
 export type MemoryApprovalWriteback = "written" | "already_present" | "skipped";
 
 export interface MemoryApprovalResult {
@@ -706,6 +757,10 @@ export interface AgentHubApi {
   };
   knowledge: {
     getWorkspace(projectId: string): Promise<KnowledgeWorkspace>;
+  };
+  team: {
+    getWorkspace(projectId: string): Promise<TeamWorkspace>;
+    saveRole(input: SaveTeamRoleInput): Promise<TeamRoleSummary>;
   };
   settings: {
     getVerification(projectId: string): Promise<VerificationSettings>;

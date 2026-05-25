@@ -23,6 +23,7 @@ import {
 import { createReviewService } from "../apps/desktop/electron/services/review-service";
 import { createMemoryService } from "../apps/desktop/electron/services/memory-service";
 import { createKnowledgeService } from "../apps/desktop/electron/services/knowledge-service";
+import { createTeamService } from "../apps/desktop/electron/services/team-service";
 import { createRunService } from "../apps/desktop/electron/services/run-service";
 import { createThreadService } from "../apps/desktop/electron/services/thread-service";
 import { createSettingsService } from "../apps/desktop/electron/services/settings-service";
@@ -225,8 +226,9 @@ describe("desktop services", () => {
     const settings = createSettingsService(context);
     const comparison = createComparisonService(context);
     const knowledge = createKnowledgeService(context);
+    const team = createTeamService(context);
     const runs = createTestRunService(context, review, memory, fixture);
-    const threads = createThreadService({ context, projects, runs });
+    const threads = createThreadService({ context, projects, runs, team });
     const handlers = createIpcHandlers({
       projects,
       runs,
@@ -235,6 +237,7 @@ describe("desktop services", () => {
       comparison,
       memory,
       knowledge,
+      team,
       settings
     });
     const sender = { send: vi.fn() };
@@ -1922,6 +1925,206 @@ describe("desktop services", () => {
     expect(brief?.content).toContain("role_instructions:");
   });
 
+  it("stores project team roles and resolves custom role mentions through IPC-safe services", async () => {
+    const fixture = await createFixture();
+    const context = createDesktopServiceContext(fixture.repositories);
+    const projects = createProjectService(context);
+    const memory = createMemoryService(context);
+    const review = createReviewService(context, { memoryService: memory });
+    const settings = createSettingsService(context);
+    const comparison = createComparisonService(context);
+    const knowledge = createKnowledgeService(context);
+    const team = createTeamService(context);
+    const runs = createTestRunService(context, review, memory, fixture);
+    const threads = createThreadService({ context, projects, runs, team });
+    const handlers = createIpcHandlers({
+      projects,
+      runs,
+      threads,
+      review,
+      comparison,
+      memory,
+      knowledge,
+      team,
+      settings
+    });
+    const sender = { send: vi.fn() };
+    const project = await projects.open(fixture.projectRoot);
+    const researcher = presetWorkgroupRoles.find(
+      (role) => role.handle === "researcher"
+    );
+    const analyst = presetWorkgroupRoles.find((role) => role.handle === "analyst");
+    if (!researcher || !analyst) {
+      throw new Error("missing role preset");
+    }
+
+    await expect(
+      handlers[IPC_CHANNELS.teamWorkspace]({ sender } as never, project.id)
+    ).resolves.toMatchObject({
+      projectId: project.id,
+      metrics: expect.objectContaining({
+        total: presetWorkgroupRoles.length,
+        custom: 0
+      }),
+      roles: expect.arrayContaining([
+        expect.objectContaining({
+          source: "preset",
+          role: expect.objectContaining({ handle: "researcher" })
+        })
+      ])
+    });
+
+    const qaRole: WorkgroupRole = {
+      ...researcher,
+      id: "custom:qa",
+      handle: "qa",
+      displayName: "QA Reviewer",
+      purpose: "Review acceptance evidence.",
+      capabilitySummary: "Acceptance checks and release risk notes.",
+      persona: "Careful QA reviewer focused on local evidence.",
+      defaultInstructions:
+        "Review run evidence, list missing acceptance checks, and do not apply changes.",
+      permissions: ["read_thread_context", "read_run_evidence"],
+      executor: {
+        kind: "human",
+        unavailableReason: "Human role execution is reserved."
+      },
+      defaultRoom: "review",
+      tags: ["qa", "review"]
+    };
+    const analystOverride: WorkgroupRole = {
+      ...analyst,
+      displayName: "Planning Analyst",
+      permissions: [...analyst.permissions, "read_comparison_reports"],
+      executor: { kind: "agent_adapter", adapterKind: "fake" }
+    };
+
+    await expect(
+      handlers[IPC_CHANNELS.teamSaveRole]({ sender } as never, {
+        projectId: project.id,
+        role: qaRole
+      })
+    ).resolves.toMatchObject({
+      source: "custom",
+      executorRunnable: false,
+      role: expect.objectContaining({
+        handle: "qa",
+        executor: expect.objectContaining({ kind: "human" })
+      })
+    });
+    await expect(
+      team.saveRole({ projectId: project.id, role: analystOverride })
+    ).resolves.toMatchObject({
+      source: "preset_override",
+      role: expect.objectContaining({
+        id: "preset:analyst",
+        handle: "analyst",
+        displayName: "Planning Analyst"
+      })
+    });
+
+    await expect(
+      fixture.repositories.settingsRepository.get(
+        `desktop.project.${project.id}.workgroupRoles`
+      )
+    ).resolves.toBeDefined();
+    const reloadedTeam = createTeamService(context);
+    await expect(reloadedTeam.getWorkspace(project.id)).resolves.toMatchObject({
+      metrics: expect.objectContaining({
+        custom: 1,
+        presetOverrides: 1,
+        reservedExecutors: 1
+      }),
+      roles: expect.arrayContaining([
+        expect.objectContaining({
+          source: "custom",
+          role: expect.objectContaining({ handle: "qa" })
+        }),
+        expect.objectContaining({
+          source: "preset_override",
+          role: expect.objectContaining({
+            handle: "analyst",
+            displayName: "Planning Analyst"
+          })
+        })
+      ])
+    });
+
+    const detail = await threads.sendMessage({
+      projectId: project.id,
+      text: "@qa review release evidence",
+      contextMode: "auto"
+    });
+    expect(detail.messages.find((message) => message.type === "agent_run")).toBeUndefined();
+    expect(detail.messages[0]).toMatchObject({
+      type: "user",
+      text: "review release evidence",
+      roleMentions: [
+        expect.objectContaining({
+          roleHandle: "qa",
+          executorKind: "human"
+        })
+      ]
+    });
+    const taskEvent = detail.messages.find((message) => {
+      if (message.type !== "system") {
+        return false;
+      }
+      return message.metadata?.taskEvent === "participants_assigned";
+    });
+    if (taskEvent?.type !== "system") {
+      throw new Error("expected participants assignment event");
+    }
+    expect(taskEvent?.metadata).toMatchObject({
+      assignments: [
+        expect.objectContaining({
+          assignmentRole: "role",
+          roleHandle: "qa",
+          executorKind: "human",
+          executable: false,
+          status: "assigned"
+        })
+      ]
+    });
+    await fixture.repositories.memoryItemRepository.create(
+      validateMemoryItem({
+        id: "memory_qa_role",
+        projectId: project.id,
+        category: "workflow_rule",
+        status: "proposed",
+        content: "@qa should review release acceptance evidence.",
+        createdAt: context.now(),
+        updatedAt: context.now()
+      })
+    );
+    const workspace = await team.getWorkspace(project.id);
+    const qaSummary = workspace.roles.find((entry) => entry.role.handle === "qa");
+    expect(qaSummary).toMatchObject({
+      recentActivity: [
+        expect.objectContaining({
+          title: "review release evidence",
+          status: "assigned"
+        })
+      ],
+      linkedMemory: [
+        expect.objectContaining({
+          id: "memory_qa_role",
+          status: "proposed"
+        })
+      ]
+    });
+
+    await expect(
+      handlers[IPC_CHANNELS.teamSaveRole]({ sender } as never, {
+        projectId: project.id,
+        role: {
+          ...qaRole,
+          handle: "bad role"
+        }
+      })
+    ).rejects.toThrow(/role handle/);
+  });
+
   it("keeps non-executable role assignments on the shared task without starting a run", async () => {
     const fixture = await createFixture();
     const context = createDesktopServiceContext(fixture.repositories);
@@ -2066,8 +2269,9 @@ describe("desktop services", () => {
     const settings = createSettingsService(context);
     const comparison = createComparisonService(context);
     const knowledge = createKnowledgeService(context);
+    const team = createTeamService(context);
     const runs = createTestRunService(context, review, memory, fixture);
-    const threads = createThreadService({ context, projects, runs });
+    const threads = createThreadService({ context, projects, runs, team });
     const handlers = createIpcHandlers({
       projects,
       runs,
@@ -2076,6 +2280,7 @@ describe("desktop services", () => {
       comparison,
       memory,
       knowledge,
+      team,
       settings
     });
     const sender = { send: vi.fn() };
@@ -2689,8 +2894,9 @@ describe("desktop services", () => {
     const settings = createSettingsService(context);
     const comparison = createComparisonService(context);
     const knowledge = createKnowledgeService(context);
+    const team = createTeamService(context);
     const runs = createTestRunService(context, review, memory, fixture);
-    const threads = createThreadService({ context, projects, runs });
+    const threads = createThreadService({ context, projects, runs, team });
     const handlers = createIpcHandlers({
       projects,
       runs,
@@ -2699,6 +2905,7 @@ describe("desktop services", () => {
       comparison,
       memory,
       knowledge,
+      team,
       settings
     });
     const sender = { send: vi.fn() };

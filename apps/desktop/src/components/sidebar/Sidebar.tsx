@@ -6,12 +6,13 @@ interface SidebarProps {
   threads: ThreadSummary[];
   selectedThreadId?: string;
   selectedProjectId?: string;
-  activeWorkspace: "chat" | "knowledge";
+  activeWorkspace: "chat" | "knowledge" | "team";
   onNewThread(): void;
   onSelectThread(threadId: string): void;
   onSelectProject(projectId: string): void;
   onRegisterProject(projectPath: string): Promise<void>;
   onOpenKnowledge(): void;
+  onOpenTeam(): void;
   onOpenSettings(): void;
   isBusy: boolean;
 }
@@ -27,6 +28,7 @@ export function Sidebar({
   onSelectProject,
   onRegisterProject,
   onOpenKnowledge,
+  onOpenTeam,
   onOpenSettings,
   isBusy
 }: SidebarProps): JSX.Element {
@@ -156,10 +158,17 @@ export function Sidebar({
         <div className="section-label">Team</div>
         <div className="role-list">
           {roleRows.map((role) => (
-            <div className="role-row" key={role.handle}>
+            <button
+              className={`role-row ${
+                activeWorkspace === "team" ? "selected" : ""
+              }`}
+              key={role.handle}
+              onClick={onOpenTeam}
+              disabled={!selectedProjectId}
+            >
               <span className={`role-mark ${role.kind}`}>{role.initial}</span>
               <span>@{role.handle}</span>
-            </div>
+            </button>
           ))}
         </div>
       </section>
@@ -193,6 +202,13 @@ export function Sidebar({
           disabled={!selectedProjectId}
         >
           Knowledge
+        </button>
+        <button
+          className={activeWorkspace === "team" ? "selected" : ""}
+          onClick={onOpenTeam}
+          disabled={!selectedProjectId}
+        >
+          Team
         </button>
         <button onClick={onOpenSettings}>Settings</button>
       </nav>

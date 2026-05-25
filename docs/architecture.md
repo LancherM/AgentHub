@@ -164,7 +164,10 @@ accept any parent branch.
 `apps/desktop/electron/services/thread-service.ts` is the desktop conversation
 facade over those repositories. It parses safe debug adapter mentions
 (`@fake`, `@codex`, `@claude`, and `@claude-code`) plus enabled workgroup role
-mentions from the shared preset/custom role contract. `sendMessage` appends one
+mentions from the shared preset/custom role contract. Project-level custom
+roles and preset overrides are resolved through `TeamService` before mention
+parsing, so renderer code never performs role lookup or executor decisions.
+`sendMessage` appends one
 durable user message, stores resolved role metadata on that message when
 present, creates one shared task for the turn, stores local task assignment
 metadata, appends task-created and participants-assigned system messages, and
@@ -782,6 +785,19 @@ shows source links back to rooms and runs, and delegates proposed-memory
 approval/rejection to the existing explicit `MemoryService` methods. Proposed
 and rejected memory are never injected as approved memory, and thread summaries
 remain thread-local records.
+
+Phase 8 adds project-level Team role configuration without introducing a new
+runtime executor or repository export path. `TeamService` stores safe preset
+overrides and custom `WorkgroupRole` records in the existing local `settings`
+table under a project-scoped key, validates them with the core role validator,
+and returns a bounded Team workspace read model over roles, recent assignment
+metadata, and linked memory references. Electron exposes this through
+`window.agentHub.team.*` preload IPC. The renderer can edit role profile fields,
+policy metadata, enabled state, and executor bindings, but only
+`agent_adapter` roles become runnable through existing fake, Codex, or Claude
+Code adapters. Reserved `llm_api`, `workflow`, and `human` roles are stored and
+rendered as non-runnable assignment metadata until later runtime phases define
+explicit local executors.
 
 Repository CI/CD lives in `.github/workflows/ci-cd.yml` and stays outside the
 Agent Hub runtime. The workflow installs the pinned pnpm and Node versions from

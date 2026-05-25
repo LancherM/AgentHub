@@ -330,6 +330,17 @@ runnable executor kind is `agent_adapter`, which maps role turns to existing
 local fake, Codex, or Claude Code adapters. Reserved executor kinds for
 `llm_api`, `workflow`, and `human` are representable but not executed yet.
 
+The desktop Team workspace now exposes that role contract as local project
+configuration. Users can inspect preset roles, save safe preset overrides, and
+create custom roles with a handle, display name, purpose, capability summary,
+persona, default instructions, permissions, context policy, approval policy,
+executor binding, enabled state, default room, and tags. Role configuration is
+stored in Agent Hub's local SQLite settings for the selected project; it does
+not write to the target repository or export `AGENTS.md`, `CLAUDE.md`, or skill
+folders. The UI clearly marks `agent_adapter` roles as runnable through the
+existing local adapters and keeps `llm_api`, `workflow`, and `human` roles as
+reserved non-runnable metadata in this phase.
+
 Agent Hub Desktop is now available as a local conversation console under
 `apps/desktop`. It starts with `pnpm --filter desktop dev` and presents a
 room-based project shell: project selection and room navigation on the left, a
@@ -351,7 +362,8 @@ message and run-card metadata, and copied to run metadata so review surfaces
 can show which role and executor produced a run. The renderer sends prompt text
 through the safe
 `window.agentHub.threads.sendMessage` preload API; the Electron main-process
-thread service strips known agent or role mentions from the task body, persists
+thread service resolves project-level Team workspace roles, strips known agent
+or role mentions from the task body, persists
 one ordered user message in the selected SQLite-backed room thread, creates one
 shared task for the instruction, records task-created and participants-assigned
 system timeline events, then creates one run per executable assignment through
