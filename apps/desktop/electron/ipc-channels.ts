@@ -24,6 +24,11 @@ export const IPC_CHANNELS = {
   reviewAccept: "agent-hub:review:accept",
   reviewReject: "agent-hub:review:reject",
   reviewRefresh: "agent-hub:review:refresh",
+  lifecycleGet: "agent-hub:lifecycle:get",
+  lifecycleMarkKeep: "agent-hub:lifecycle:mark-keep",
+  lifecycleCleanupWorktree: "agent-hub:lifecycle:cleanup-worktree",
+  lifecyclePreviewApply: "agent-hub:lifecycle:preview-apply",
+  lifecycleConfirmApply: "agent-hub:lifecycle:confirm-apply",
   comparisonListCandidates: "agent-hub:comparison:list-candidates",
   comparisonListForRun: "agent-hub:comparison:list-for-run",
   comparisonCreate: "agent-hub:comparison:create",
@@ -32,6 +37,8 @@ export const IPC_CHANNELS = {
   memoryApprove: "agent-hub:memory:approve",
   memoryIgnore: "agent-hub:memory:ignore",
   knowledgeWorkspace: "agent-hub:knowledge:workspace",
+  teamWorkspace: "agent-hub:team:workspace",
+  teamSaveRole: "agent-hub:team:save-role",
   settingsGetVerification: "agent-hub:settings:get-verification",
   settingsSaveVerification: "agent-hub:settings:save-verification"
 } as const;

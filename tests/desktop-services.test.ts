@@ -1,4 +1,5 @@
 import fs from "node:fs/promises";
+import { readFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { execFile } from "node:child_process";
@@ -21,8 +22,10 @@ import {
   createProjectService
 } from "../apps/desktop/electron/services/project-service";
 import { createReviewService } from "../apps/desktop/electron/services/review-service";
+import { createLifecycleService } from "../apps/desktop/electron/services/lifecycle-service";
 import { createMemoryService } from "../apps/desktop/electron/services/memory-service";
 import { createKnowledgeService } from "../apps/desktop/electron/services/knowledge-service";
+import { createTeamService } from "../apps/desktop/electron/services/team-service";
 import { createRunService } from "../apps/desktop/electron/services/run-service";
 import { createThreadService } from "../apps/desktop/electron/services/thread-service";
 import { createSettingsService } from "../apps/desktop/electron/services/settings-service";
@@ -225,16 +228,20 @@ describe("desktop services", () => {
     const settings = createSettingsService(context);
     const comparison = createComparisonService(context);
     const knowledge = createKnowledgeService(context);
+    const team = createTeamService(context);
     const runs = createTestRunService(context, review, memory, fixture);
-    const threads = createThreadService({ context, projects, runs });
+    const threads = createThreadService({ context, projects, runs, team });
+    const lifecycle = createLifecycleService(context, { reviewService: review });
     const handlers = createIpcHandlers({
       projects,
       runs,
       threads,
       review,
+      lifecycle,
       comparison,
       memory,
       knowledge,
+      team,
       settings
     });
     const sender = { send: vi.fn() };
@@ -702,6 +709,63 @@ describe("desktop services", () => {
     ]);
   });
 
+  it("redacts sensitive git diff artifact previews", async () => {
+    const fixture = await createFixture();
+    const context = createDesktopServiceContext(fixture.repositories);
+    const projects = createProjectService(context);
+    const review = createReviewService(context);
+    const project = await projects.open(fixture.projectRoot);
+    const now = context.now();
+    const task = await fixture.repositories.taskRepository.create(
+      validateTask({
+        id: "task_sensitive_artifact_preview",
+        projectId: project.id,
+        title: "Inspect sensitive artifact preview",
+        status: "completed",
+        createdAt: now,
+        updatedAt: now
+      })
+    );
+    const run = await fixture.repositories.taskRunRepository.create(
+      validateTaskRun({
+        id: "run_sensitive_artifact_preview",
+        taskId: task.id,
+        agentKind: "codex",
+        status: "succeeded",
+        createdAt: now,
+        updatedAt: now
+      })
+    );
+    await fixture.repositories.runArtifactRepository.create(
+      validateRunArtifact({
+        id: "artifact_sensitive_artifact_preview",
+        taskRunId: run.id,
+        kind: "git_diff",
+        content: [
+          "diff --git a/.env.local b/.env.local",
+          "--- a/.env.local",
+          "+++ b/.env.local",
+          "@@ -1 +1 @@",
+          "-TOKEN=old",
+          "+TOKEN=secret-value"
+        ].join("\n"),
+        metadata: {
+          changedFiles: [{ path: ".env.local", status: "modified" }]
+        },
+        createdAt: now
+      })
+    );
+
+    const artifacts = await review.getArtifacts(run.id);
+
+    expect(artifacts[0]).toMatchObject({
+      kind: "git_diff",
+      contentPreview: "Patch redacted because sensitive file path changed: .env.local",
+      truncated: false
+    });
+    expect(artifacts[0]?.contentPreview).not.toContain("secret-value");
+  });
+
   it("lists knowledge workspace memory, thread summaries, and review decisions", async () => {
     const fixture = await createFixture();
     const context = createDesktopServiceContext(fixture.repositories);
@@ -1059,6 +1123,330 @@ describe("desktop services", () => {
         .join("\n\n")
     ]);
     await expect(fs.readdir(fixture.projectRoot)).resolves.toEqual(before);
+  });
+
+  it("records explicit lifecycle keep and cleanup decisions", async () => {
+    const fixture = await createFixture();
+    const context = createDesktopServiceContext(fixture.repositories);
+    const projects = createProjectService(context);
+    const memory = createMemoryService(context);
+    const review = createReviewService(context, { memoryService: memory });
+    const shell = new MockShellExecutor();
+    const lifecycle = createLifecycleService(context, {
+      reviewService: review,
+      shellExecutor: shell
+    });
+    const runs = createTestRunService(context, review, memory, fixture);
+    const project = await projects.open(fixture.projectRoot);
+    const run = await runs.createRun({
+      projectId: project.id,
+      prompt: "Exercise lifecycle controls.",
+      agentId: "fake",
+      contextMode: "auto"
+    });
+    await waitForRun(runs, run.id, "completed");
+
+    await expect(lifecycle.get(run.id)).resolves.toMatchObject({
+      handoff: {
+        available: true,
+        cleanup: {
+          retained: true,
+          cleaned: false
+        }
+      },
+      applyPreview: {
+        available: true,
+        confirmationPhrase: `apply ${run.id}`
+      },
+      audit: []
+    });
+
+    await expect(
+      lifecycle.markKeep({ runId: run.id, reason: "Need reviewer handoff." })
+    ).resolves.toMatchObject({
+      ok: true,
+      lifecycle: {
+        audit: [
+          expect.objectContaining({
+            action: "mark_keep",
+            status: "recorded"
+          })
+        ]
+      }
+    });
+
+    await expect(
+      lifecycle.cleanupWorktree({ runId: run.id, confirmation: "wrong" })
+    ).resolves.toMatchObject({
+      ok: false,
+      message: expect.stringContaining(`cleanup ${run.id}`)
+    });
+
+    await expect(
+      lifecycle.cleanupWorktree({
+        runId: run.id,
+        confirmation: `cleanup ${run.id}`,
+        reason: "Reviewed locally."
+      })
+    ).resolves.toMatchObject({
+      ok: true,
+      lifecycle: {
+        handoff: {
+          available: false,
+          message: expect.stringContaining("cleaned up")
+        }
+      }
+    });
+    expect(shell.calls.at(-1)?.command.args?.join(" ")).toContain("worktree");
+    await expect(fixture.repositories.runMetadataRepository.get(run.id)).resolves.toMatchObject({
+      workspaceCleanup: {
+        cleaned: true,
+        retained: false,
+        reason: "Reviewed locally."
+      }
+    });
+    await expect(
+      fixture.repositories.runArtifactRepository.getLatestByRunIdAndKind(
+        run.id,
+        "lifecycle_audit"
+      )
+    ).resolves.toMatchObject({
+      metadata: expect.objectContaining({
+        action: "cleanup_worktree",
+        status: "completed"
+      })
+    });
+    await expect(fixture.repositories.runEventRepository.listByRunId(run.id)).resolves.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "message",
+          message: expect.stringContaining("Retained worktree cleaned up")
+        })
+      ])
+    );
+  });
+
+  it("blocks explicit apply on blocking risk", async () => {
+    const fixture = await createFixture();
+    const context = createDesktopServiceContext(fixture.repositories);
+    const projects = createProjectService(context);
+    const memory = createMemoryService(context);
+    const review = createReviewService(context, { memoryService: memory });
+    const shell = new MockShellExecutor();
+    const lifecycle = createLifecycleService(context, {
+      reviewService: review,
+      shellExecutor: shell
+    });
+    const runs = createTestRunService(context, review, memory, fixture);
+    const project = await projects.open(fixture.projectRoot);
+    const run = await runs.createRun({
+      projectId: project.id,
+      prompt: "Preview local apply.",
+      agentId: "fake",
+      contextMode: "auto"
+    });
+    await waitForRun(runs, run.id, "completed");
+    const blockingRisk = validateRiskReport({
+      id: "risk_lifecycle_blocking",
+      taskRunId: run.id,
+      level: "blocking",
+      summary: "Sensitive path changed.",
+      verificationSummary: "Verification skipped.",
+      findings: [
+        {
+          level: "blocking",
+          summary: "Blocking lifecycle test risk",
+          details: "Do not apply this patch."
+        }
+      ],
+      riskFactors: ["blocking lifecycle test risk"],
+      failedChecks: [],
+      manualReviewChecklist: ["Inspect lifecycle blocking risk."],
+      acceptanceRecommendation: "Do not apply.",
+      changedFiles: ["fake-agent-output.md"],
+      createdAt: context.now()
+    });
+    await fixture.repositories.riskReportRepository.create(blockingRisk);
+
+    await expect(lifecycle.previewApply(run.id)).resolves.toMatchObject({
+      blocked: true,
+      riskLevel: "blocking",
+      message: expect.stringContaining("blocked")
+    });
+    await expect(
+      lifecycle.confirmApply({
+        runId: run.id,
+        confirmation: `apply ${run.id}`
+      })
+    ).resolves.toMatchObject({
+      ok: false,
+      message: expect.stringContaining("blocking")
+    });
+    expect(shell.calls).toEqual([]);
+  });
+
+  it("checks and applies a previewed patch only after exact confirmation", async () => {
+    const fixture = await createFixture();
+    const context = createDesktopServiceContext(fixture.repositories);
+    const projects = createProjectService(context);
+    const memory = createMemoryService(context);
+    const review = createReviewService(context, { memoryService: memory });
+    const shell = new MockShellExecutor();
+    const lifecycle = createLifecycleService(context, {
+      reviewService: review,
+      shellExecutor: shell
+    });
+    const runs = createTestRunService(context, review, memory, fixture);
+    const project = await projects.open(fixture.projectRoot);
+    const run = await runs.createRun({
+      projectId: project.id,
+      prompt: "Apply after explicit confirmation.",
+      agentId: "fake",
+      contextMode: "auto"
+    });
+    await waitForRun(runs, run.id, "completed");
+
+    await expect(
+      lifecycle.confirmApply({
+        runId: run.id,
+        confirmation: "apply"
+      })
+    ).resolves.toMatchObject({
+      ok: false,
+      message: expect.stringContaining(`apply ${run.id}`)
+    });
+    expect(shell.calls).toEqual([]);
+
+    await expect(
+      lifecycle.confirmApply({
+        runId: run.id,
+        confirmation: `apply ${run.id}`,
+        reason: "Manual approval."
+      })
+    ).resolves.toMatchObject({
+      ok: true,
+      message: expect.stringContaining("Patch applied")
+    });
+    expect(shell.calls.map((call) => call.command.args?.join(" "))).toEqual([
+      expect.stringContaining("apply --check"),
+      expect.stringContaining("apply")
+    ]);
+    await expect(
+      fixture.repositories.runArtifactRepository.getLatestByRunIdAndKind(
+        run.id,
+        "lifecycle_audit"
+      )
+    ).resolves.toMatchObject({
+      metadata: expect.objectContaining({
+        action: "apply_confirm",
+        status: "completed"
+      })
+    });
+  });
+
+  it("applies raw persisted patch content when the preview is truncated", async () => {
+    const fixture = await createFixture();
+    const context = createDesktopServiceContext(fixture.repositories);
+    const projects = createProjectService(context);
+    const review = createReviewService(context);
+    const observedPatches: string[] = [];
+    const shell = new MockShellExecutor([
+      (command) => {
+        observedPatches.push(readFileSync(command.args?.at(-1) ?? "", "utf8"));
+        return {};
+      },
+      (command) => {
+        observedPatches.push(readFileSync(command.args?.at(-1) ?? "", "utf8"));
+        return {};
+      }
+    ]);
+    const lifecycle = createLifecycleService(context, {
+      reviewService: review,
+      shellExecutor: shell
+    });
+    const project = await projects.open(fixture.projectRoot);
+    const now = context.now();
+    const task = await fixture.repositories.taskRepository.create(
+      validateTask({
+        id: "task_raw_apply_patch",
+        projectId: project.id,
+        title: "Apply raw patch",
+        status: "completed",
+        createdAt: now,
+        updatedAt: now
+      })
+    );
+    const run = await fixture.repositories.taskRunRepository.create(
+      validateTaskRun({
+        id: "run_raw_apply_patch",
+        taskId: task.id,
+        agentKind: "codex",
+        status: "succeeded",
+        createdAt: now,
+        updatedAt: now
+      })
+    );
+    const rawPatch = [
+      "diff --git a/large.txt b/large.txt",
+      "--- a/large.txt",
+      "+++ b/large.txt",
+      "@@ -1 +1 @@",
+      "-old",
+      `+${"new-value-".repeat(14_000)}`
+    ].join("\n");
+    await fixture.repositories.runMetadataRepository.save({
+      runId: run.id,
+      workspace: {
+        path: path.join(fixture.workspaceBasePath, "raw-apply"),
+        branchName: "agent-hub/raw-apply/codex",
+        sourceRepositoryPath: fixture.projectRoot,
+        workspaceBasePath: fixture.workspaceBasePath,
+        taskId: task.id,
+        runId: run.id,
+        agentKind: "codex",
+        dryRun: false,
+        sourceRepositoryDirty: false,
+        cleanupPolicy: "never"
+      },
+      diff: {
+        ok: true,
+        workspacePath: fixture.projectRoot,
+        isClean: false,
+        changedFiles: [{ path: "large.txt", status: "modified" }],
+        stat: { filesChanged: 1, insertions: 1, deletions: 1, text: "1 file changed" },
+        diff: rawPatch,
+        fileSummaries: ["large.txt: +1/-1"],
+        commands: []
+      }
+    });
+    await fixture.repositories.runArtifactRepository.create(
+      validateRunArtifact({
+        id: "artifact_raw_apply_patch",
+        taskRunId: run.id,
+        kind: "git_diff",
+        content: rawPatch,
+        metadata: {
+          changedFiles: [{ path: "large.txt", status: "modified" }],
+          fileSummaries: ["large.txt: +1/-1"]
+        },
+        createdAt: now
+      })
+    );
+
+    await expect(lifecycle.previewApply(run.id)).resolves.toMatchObject({
+      truncated: true,
+      patchPreview: expect.stringContaining("Apply preview truncated")
+    });
+    await expect(
+      lifecycle.confirmApply({
+        runId: run.id,
+        confirmation: `apply ${run.id}`
+      })
+    ).resolves.toMatchObject({
+      ok: true
+    });
+
+    expect(observedPatches).toEqual([rawPatch, rawPatch]);
   });
 
   it("keeps unsafe or unavailable handoff worktrees unavailable", async () => {
@@ -1922,6 +2310,355 @@ describe("desktop services", () => {
     expect(brief?.content).toContain("role_instructions:");
   });
 
+  it("stores project team roles and resolves custom role mentions through IPC-safe services", async () => {
+    const fixture = await createFixture();
+    const context = createDesktopServiceContext(fixture.repositories);
+    const projects = createProjectService(context);
+    const memory = createMemoryService(context);
+    const review = createReviewService(context, { memoryService: memory });
+    const settings = createSettingsService(context);
+    const comparison = createComparisonService(context);
+    const knowledge = createKnowledgeService(context);
+    const team = createTeamService(context);
+    const runs = createTestRunService(context, review, memory, fixture);
+    const threads = createThreadService({ context, projects, runs, team });
+    const lifecycle = createLifecycleService(context, { reviewService: review });
+    const handlers = createIpcHandlers({
+      projects,
+      runs,
+      threads,
+      review,
+      lifecycle,
+      comparison,
+      memory,
+      knowledge,
+      team,
+      settings
+    });
+    const sender = { send: vi.fn() };
+    const project = await projects.open(fixture.projectRoot);
+    const researcher = presetWorkgroupRoles.find(
+      (role) => role.handle === "researcher"
+    );
+    const analyst = presetWorkgroupRoles.find((role) => role.handle === "analyst");
+    if (!researcher || !analyst) {
+      throw new Error("missing role preset");
+    }
+
+    await expect(
+      handlers[IPC_CHANNELS.teamWorkspace]({ sender } as never, project.id)
+    ).resolves.toMatchObject({
+      projectId: project.id,
+      metrics: expect.objectContaining({
+        total: presetWorkgroupRoles.length,
+        custom: 0
+      }),
+      roles: expect.arrayContaining([
+        expect.objectContaining({
+          source: "preset",
+          role: expect.objectContaining({ handle: "researcher" })
+        })
+      ])
+    });
+
+    const qaRole: WorkgroupRole = {
+      ...researcher,
+      id: "custom:qa",
+      handle: "qa",
+      displayName: "QA Reviewer",
+      purpose: "Review acceptance evidence.",
+      capabilitySummary: "Acceptance checks and release risk notes.",
+      persona: "Careful QA reviewer focused on local evidence.",
+      defaultInstructions:
+        "Review run evidence, list missing acceptance checks, and do not apply changes.",
+      permissions: ["read_thread_context", "read_run_evidence"],
+      executor: {
+        kind: "human",
+        unavailableReason: "Human role execution is reserved."
+      },
+      defaultRoom: "review",
+      tags: ["qa", "review"]
+    };
+    const analystOverride: WorkgroupRole = {
+      ...analyst,
+      displayName: "Planning Analyst",
+      permissions: [...analyst.permissions, "read_comparison_reports"],
+      executor: { kind: "agent_adapter", adapterKind: "fake" }
+    };
+
+    await expect(
+      handlers[IPC_CHANNELS.teamSaveRole]({ sender } as never, {
+        projectId: project.id,
+        role: qaRole
+      })
+    ).resolves.toMatchObject({
+      source: "custom",
+      executorRunnable: false,
+      role: expect.objectContaining({
+        handle: "qa",
+        executor: expect.objectContaining({ kind: "human" })
+      })
+    });
+    await expect(
+      team.saveRole({ projectId: project.id, role: analystOverride })
+    ).resolves.toMatchObject({
+      source: "preset_override",
+      role: expect.objectContaining({
+        id: "preset:analyst",
+        handle: "analyst",
+        displayName: "Planning Analyst"
+      })
+    });
+
+    await expect(
+      fixture.repositories.settingsRepository.get(
+        `desktop.project.${project.id}.workgroupRoles`
+      )
+    ).resolves.toBeDefined();
+    const reloadedTeam = createTeamService(context);
+    await expect(reloadedTeam.getWorkspace(project.id)).resolves.toMatchObject({
+      metrics: expect.objectContaining({
+        custom: 1,
+        presetOverrides: 1,
+        reservedExecutors: 1
+      }),
+      roles: expect.arrayContaining([
+        expect.objectContaining({
+          source: "custom",
+          role: expect.objectContaining({ handle: "qa" })
+        }),
+        expect.objectContaining({
+          source: "preset_override",
+          role: expect.objectContaining({
+            handle: "analyst",
+            displayName: "Planning Analyst"
+          })
+        })
+      ])
+    });
+
+    const detail = await threads.sendMessage({
+      projectId: project.id,
+      text: "@qa review release evidence",
+      contextMode: "auto"
+    });
+    expect(detail.messages.find((message) => message.type === "agent_run")).toBeUndefined();
+    expect(detail.messages[0]).toMatchObject({
+      type: "user",
+      text: "review release evidence",
+      roleMentions: [
+        expect.objectContaining({
+          roleHandle: "qa",
+          executorKind: "human"
+        })
+      ]
+    });
+    const taskEvent = detail.messages.find((message) => {
+      if (message.type !== "system") {
+        return false;
+      }
+      return message.metadata?.taskEvent === "participants_assigned";
+    });
+    if (taskEvent?.type !== "system") {
+      throw new Error("expected participants assignment event");
+    }
+    expect(taskEvent?.metadata).toMatchObject({
+      assignments: [
+        expect.objectContaining({
+          assignmentRole: "role",
+          roleHandle: "qa",
+          executorKind: "human",
+          executable: false,
+          status: "assigned"
+        })
+      ]
+    });
+    await fixture.repositories.memoryItemRepository.create(
+      validateMemoryItem({
+        id: "memory_qa_role",
+        projectId: project.id,
+        category: "workflow_rule",
+        status: "proposed",
+        content: "@qa should review release acceptance evidence.",
+        createdAt: context.now(),
+        updatedAt: context.now()
+      })
+    );
+    const workspace = await team.getWorkspace(project.id);
+    const qaSummary = workspace.roles.find((entry) => entry.role.handle === "qa");
+    expect(qaSummary).toMatchObject({
+      recentActivity: [
+        expect.objectContaining({
+          title: "review release evidence",
+          status: "assigned"
+        })
+      ],
+      linkedMemory: [
+        expect.objectContaining({
+          id: "memory_qa_role",
+          status: "proposed"
+        })
+      ]
+    });
+
+    await expect(
+      handlers[IPC_CHANNELS.teamSaveRole]({ sender } as never, {
+        projectId: project.id,
+        role: {
+          ...qaRole,
+          handle: "bad role"
+        }
+      })
+    ).rejects.toThrow(/role handle/);
+  });
+
+  it("persists bounded workflow state and completion timeline metadata", async () => {
+    const fixture = await createFixture();
+    const context = createDesktopServiceContext(fixture.repositories);
+    const projects = createProjectService(context);
+    const memory = createMemoryService(context);
+    const review = createReviewService(context, { memoryService: memory });
+    const settings = createSettingsService(context);
+    const comparison = createComparisonService(context);
+    const knowledge = createKnowledgeService(context);
+    const team = createTeamService(context);
+    const runs = createTestRunService(context, review, memory, fixture);
+    const threads = createThreadService({ context, projects, runs, team });
+    const handlers = createIpcHandlers({
+      projects,
+      runs,
+      threads,
+      review,
+      comparison,
+      memory,
+      knowledge,
+      team,
+      settings
+    });
+    const sender = { send: vi.fn() };
+    const project = await projects.open(fixture.projectRoot);
+
+    const detail = await handlers[IPC_CHANNELS.threadsSendMessage](
+      { sender } as never,
+      {
+        projectId: project.id,
+        text: "@researcher review the bounded workflow implementation",
+        contextMode: "auto",
+        workflow: {
+          mode: "review_loop",
+          maxRounds: 2,
+          stopCondition: "reviewer_passed OR max_rounds_reached",
+          expectedOutputs: ["reviewer_findings", "final_summary"]
+        }
+      }
+    );
+    const threadDetail = detail as Awaited<ReturnType<typeof threads.getThread>>;
+    const runMessage = threadDetail.messages.find(
+      (message): message is AgentRunMessage => message.type === "agent_run"
+    );
+    if (!runMessage) {
+      throw new Error("expected workflow-linked run");
+    }
+    await waitForRun(runs, runMessage.runId, "completed");
+    const completed = await threads.getThread(threadDetail.id);
+    const tasks = await fixture.repositories.taskRepository.listByProjectId(project.id);
+    const workflowTask = tasks.find((task) => task.id === runMessage.taskId);
+    const workflowState = workflowTask?.metadata?.workflowState as
+      | { mode?: string; status?: string; maxRounds?: number; participants?: unknown[] }
+      | undefined;
+
+    expect(workflowState).toMatchObject({
+      mode: "review_loop",
+      status: "completed",
+      maxRounds: 2
+    });
+    expect(workflowState?.participants).toEqual([
+      expect.objectContaining({
+        roleHandle: "researcher",
+        runId: runMessage.runId,
+        status: "completed"
+      })
+    ]);
+    expect(
+      completed.messages
+        .filter((message) => message.type === "system")
+        .map((message) => message.metadata?.workflowEvent)
+    ).toEqual(
+      expect.arrayContaining([
+        "workflow_review_requested",
+        "workflow_review_completed",
+        "workflow_completed"
+      ])
+    );
+    expect(runMessage.timelineEvent?.linkedIds?.workflowId).toEqual(
+      expect.any(String)
+    );
+    expect(
+      completed.messages.find(
+        (message) =>
+          message.type === "system" &&
+          message.metadata?.workflowEvent === "workflow_completed"
+      )?.timelineEvent
+    ).toMatchObject({
+      kind: "workflow_completed",
+      linkedIds: expect.objectContaining({
+        taskId: runMessage.taskId,
+        workflowId: expect.any(String)
+      })
+    });
+  });
+
+  it("enforces workflow max rounds and records handoff start events", async () => {
+    const fixture = await createFixture();
+    const context = createDesktopServiceContext(fixture.repositories);
+    const projects = createProjectService(context);
+    const memory = createMemoryService(context);
+    const review = createReviewService(context, { memoryService: memory });
+    const settings = createSettingsService(context);
+    const comparison = createComparisonService(context);
+    const knowledge = createKnowledgeService(context);
+    const team = createTeamService(context);
+    const runs = createTestRunService(context, review, memory, fixture);
+    const threads = createThreadService({ context, projects, runs, team });
+    const handlers = createIpcHandlers({
+      projects,
+      runs,
+      threads,
+      review,
+      comparison,
+      memory,
+      knowledge,
+      team,
+      settings
+    });
+    const sender = { send: vi.fn() };
+    const project = await projects.open(fixture.projectRoot);
+
+    await expect(
+      handlers[IPC_CHANNELS.threadsSendMessage]({ sender } as never, {
+        projectId: project.id,
+        text: "@researcher hand off scoped findings",
+        workflow: {
+          mode: "handoff",
+          maxRounds: 2,
+          stopCondition: "handoff_summary_recorded",
+          expectedOutputs: ["handoff_summary"]
+        }
+      })
+    ).rejects.toThrow(/workflow maxRounds/);
+
+    const detail = (await threads.sendMessage({
+      projectId: project.id,
+      text: "/workflow handoff @researcher hand off scoped findings",
+      contextMode: "auto"
+    })) as Awaited<ReturnType<typeof threads.getThread>>;
+    expect(
+      detail.messages
+        .filter((message) => message.type === "system")
+        .map((message) => message.metadata?.workflowEvent)
+    ).toContain("workflow_handoff");
+  });
+
   it("keeps non-executable role assignments on the shared task without starting a run", async () => {
     const fixture = await createFixture();
     const context = createDesktopServiceContext(fixture.repositories);
@@ -2066,8 +2803,9 @@ describe("desktop services", () => {
     const settings = createSettingsService(context);
     const comparison = createComparisonService(context);
     const knowledge = createKnowledgeService(context);
+    const team = createTeamService(context);
     const runs = createTestRunService(context, review, memory, fixture);
-    const threads = createThreadService({ context, projects, runs });
+    const threads = createThreadService({ context, projects, runs, team });
     const handlers = createIpcHandlers({
       projects,
       runs,
@@ -2076,6 +2814,7 @@ describe("desktop services", () => {
       comparison,
       memory,
       knowledge,
+      team,
       settings
     });
     const sender = { send: vi.fn() };
@@ -2689,16 +3428,20 @@ describe("desktop services", () => {
     const settings = createSettingsService(context);
     const comparison = createComparisonService(context);
     const knowledge = createKnowledgeService(context);
+    const team = createTeamService(context);
     const runs = createTestRunService(context, review, memory, fixture);
-    const threads = createThreadService({ context, projects, runs });
+    const threads = createThreadService({ context, projects, runs, team });
+    const lifecycle = createLifecycleService(context, { reviewService: review });
     const handlers = createIpcHandlers({
       projects,
       runs,
       threads,
       review,
+      lifecycle,
       comparison,
       memory,
       knowledge,
+      team,
       settings
     });
     const sender = { send: vi.fn() };
@@ -2786,6 +3529,28 @@ describe("desktop services", () => {
         kind: "dangerous_text"
       })
     ).rejects.toThrow(/handoff copy kind/);
+    await expect(
+      handlers[IPC_CHANNELS.lifecycleGet](
+        { sender } as never,
+        runId
+      )
+    ).resolves.toMatchObject({
+      handoff: {
+        available: true
+      },
+      applyPreview: {
+        confirmationPhrase: `apply ${runId}`
+      }
+    });
+    await expect(
+      handlers[IPC_CHANNELS.lifecycleConfirmApply]({ sender } as never, {
+        runId,
+        confirmation: "not exact"
+      })
+    ).resolves.toMatchObject({
+      ok: false,
+      message: expect.stringContaining(`apply ${runId}`)
+    });
     await expect(
       handlers[IPC_CHANNELS.reviewReject]({ sender } as never, {
         runId,

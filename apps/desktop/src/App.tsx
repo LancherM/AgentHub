@@ -4,10 +4,12 @@ import { RunInspectorModal } from "./components/inspector/RunInspectorModal";
 import { KnowledgeWorkspace } from "./components/knowledge/KnowledgeWorkspace";
 import { Sidebar } from "./components/sidebar/Sidebar";
 import { VerificationSettingsPanel } from "./components/settings/VerificationSettingsPanel";
+import { TeamWorkspace } from "./components/team/TeamWorkspace";
 import { agentHubApi } from "./lib/agentHubApi";
 import type {
   AgentId,
   AgentRunMessage,
+  CollaborationWorkflowInput,
   ContextMode,
   ProjectSummary,
   RunDetail,
@@ -18,7 +20,7 @@ import type {
   ThreadSummary
 } from "./lib/types";
 
-type DesktopWorkspace = "chat" | "knowledge";
+type DesktopWorkspace = "chat" | "knowledge" | "team";
 
 export function App(): JSX.Element {
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
@@ -211,7 +213,8 @@ export function App(): JSX.Element {
 
   async function submitMessage(
     input: string,
-    contextMode: ContextMode
+    contextMode: ContextMode,
+    workflow?: CollaborationWorkflowInput
   ): Promise<void> {
     setError(undefined);
     setIsBusy(true);
@@ -221,6 +224,7 @@ export function App(): JSX.Element {
         projectId: activeProjectId ?? projects[0]?.id,
         text: input,
         contextMode,
+        workflow,
         continueFromRunId: pendingContinueFrom?.parentRunId,
         continueFromMessageId: pendingContinueFrom?.parentMessageId
       });
@@ -257,6 +261,7 @@ export function App(): JSX.Element {
         onSelectProject={(projectId) => void selectProject(projectId)}
         onRegisterProject={registerProject}
         onOpenKnowledge={() => setActiveWorkspace("knowledge")}
+        onOpenTeam={() => setActiveWorkspace("team")}
         onOpenSettings={() => setSettingsOpen(true)}
         isBusy={isBusy}
       />
@@ -270,6 +275,8 @@ export function App(): JSX.Element {
             }}
             onOpenInspector={(runId, tab) => setSelectedInspector({ runId, tab })}
           />
+        ) : activeWorkspace === "team" ? (
+          <TeamWorkspace project={selectedProject} />
         ) : (
           <ChatView
             thread={currentThread}

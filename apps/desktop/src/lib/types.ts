@@ -1,5 +1,6 @@
 import type {
   JsonObject,
+  WorkgroupRole,
   WorkgroupRoleRunMetadata,
   WorkgroupTaskAssignmentMetadata
 } from "@agent-hub/shared";
@@ -54,6 +55,7 @@ export type WorkgroupInspectorTab =
   | "artifacts"
   | "checks"
   | "risks"
+  | "lifecycle"
   | "memory"
   | "audit";
 export type LegacyRunInspectorTab =
@@ -73,6 +75,10 @@ export type TimelineEventKind =
   | "task_created"
   | "assignment_created"
   | "assignment_start_failed"
+  | "workflow_handoff"
+  | "workflow_review_requested"
+  | "workflow_review_completed"
+  | "workflow_completed"
   | "run_started"
   | "run_completed"
   | "run_failed"
@@ -81,7 +87,12 @@ export type TimelineEventKind =
   | "check_completed"
   | "risk_detected"
   | "memory_proposed"
-  | "review_decision";
+  | "review_decision"
+  | "lifecycle_marked_keep"
+  | "lifecycle_cleaned"
+  | "apply_previewed"
+  | "apply_applied"
+  | "apply_blocked";
 export type TimelineEventActor = "user" | "system" | "agent" | "assistant";
 export type TimelineEventTone =
   | "neutral"
@@ -94,6 +105,7 @@ export type TimelineEventTone =
 export interface TimelineEventLinkedIds extends JsonObject {
   taskId?: string;
   runId?: string;
+  workflowId?: string;
   assignmentId?: string;
   assignmentIds?: string[];
   artifactId?: string;
@@ -162,6 +174,8 @@ export type KnowledgeSourceKind =
   | "task"
   | "run"
   | "artifact";
+export type TeamRoleSource = "preset" | "preset_override" | "custom";
+export type TeamRoleStatus = "enabled" | "disabled";
 
 export interface ProjectSummary {
   id: string;
@@ -257,8 +271,53 @@ export interface SendThreadMessageInput {
   text: string;
   contextMode?: ContextMode;
   agents?: AgentId[];
+  workflow?: CollaborationWorkflowInput;
   continueFromRunId?: string;
   continueFromMessageId?: string;
+}
+
+export type CollaborationWorkflowMode =
+  | "handoff"
+  | "review_loop"
+  | "panel_discussion";
+export type CollaborationWorkflowStatus = "active" | "completed";
+
+export interface CollaborationWorkflowInput extends JsonObject {
+  mode: CollaborationWorkflowMode;
+  maxRounds: number;
+  stopCondition: string;
+  expectedOutputs: string[];
+  summary?: string;
+}
+
+export interface CollaborationWorkflowParticipant extends JsonObject {
+  assignmentId: string;
+  label: string;
+  assignmentRole: "agent" | "role";
+  agentId?: AgentId;
+  roleHandle?: string;
+  executorKind: string;
+  executable: boolean;
+  runId?: string;
+  status: string;
+}
+
+export interface CollaborationWorkflowState extends JsonObject {
+  workflowId: string;
+  mode: CollaborationWorkflowMode;
+  status: CollaborationWorkflowStatus;
+  taskId: string;
+  threadId: string;
+  sourceMessageId: string;
+  maxRounds: number;
+  currentRound: number;
+  stopCondition: string;
+  expectedOutputs: string[];
+  summary: string;
+  participants: CollaborationWorkflowParticipant[];
+  createdAt: string;
+  updatedAt: string;
+  completedAt?: string;
 }
 
 export interface RunSummary {
@@ -394,6 +453,47 @@ export interface ReviewHandoff {
 export interface ReviewHandoffActionResult {
   ok: boolean;
   message: string;
+}
+
+export interface LifecycleAuditEntry {
+  id: string;
+  action: string;
+  status: "recorded" | "blocked" | "failed" | "completed";
+  createdAt: string;
+  message: string;
+  artifactId?: string;
+}
+
+export interface ApplyPreview {
+  runId: string;
+  available: boolean;
+  confirmationPhrase: string;
+  blocked: boolean;
+  riskLevel: ReviewRiskLevel;
+  changedFiles: ChangedFile[];
+  patchPreview?: string;
+  truncated?: boolean;
+  message: string;
+}
+
+export interface RunLifecycle {
+  runId: string;
+  handoff: ReviewHandoff;
+  applyPreview: ApplyPreview;
+  audit: LifecycleAuditEntry[];
+  message: string;
+}
+
+export interface LifecycleActionInput {
+  runId: string;
+  confirmation?: string;
+  reason?: string;
+}
+
+export interface LifecycleActionResult {
+  ok: boolean;
+  message: string;
+  lifecycle: RunLifecycle;
 }
 
 export type ComparisonScopeKind = "task" | "conversation_turn";
@@ -636,6 +736,54 @@ export interface KnowledgeWorkspace {
   items: KnowledgeItem[];
 }
 
+export interface TeamRoleActivity {
+  taskId: string;
+  title: string;
+  status: WorkgroupTaskAssignmentMetadata["status"];
+  runId?: string;
+  updatedAt: string;
+}
+
+export interface TeamRoleLinkedMemory {
+  id: string;
+  status: "proposed" | "approved" | "rejected";
+  content: string;
+  updatedAt: string;
+}
+
+export interface TeamRoleSummary {
+  role: WorkgroupRole;
+  source: TeamRoleSource;
+  executorRunnable: boolean;
+  executorLabel: string;
+  permissionSummary: string;
+  contextPolicySummary: string;
+  approvalPolicySummary: string;
+  status: TeamRoleStatus;
+  recentActivity: TeamRoleActivity[];
+  linkedMemory: TeamRoleLinkedMemory[];
+}
+
+export interface TeamWorkspaceMetrics {
+  total: number;
+  enabled: number;
+  custom: number;
+  presetOverrides: number;
+  reservedExecutors: number;
+}
+
+export interface TeamWorkspace {
+  projectId: string;
+  generatedAt: string;
+  metrics: TeamWorkspaceMetrics;
+  roles: TeamRoleSummary[];
+}
+
+export interface SaveTeamRoleInput {
+  projectId: string;
+  role: WorkgroupRole;
+}
+
 export type MemoryApprovalWriteback = "written" | "already_present" | "skipped";
 
 export interface MemoryApprovalResult {
@@ -693,6 +841,13 @@ export interface AgentHubApi {
       kind: HandoffCopyKind
     ): Promise<ReviewHandoffActionResult>;
   };
+  lifecycle: {
+    get(runId: string): Promise<RunLifecycle>;
+    markKeep(input: LifecycleActionInput): Promise<LifecycleActionResult>;
+    cleanupWorktree(input: LifecycleActionInput): Promise<LifecycleActionResult>;
+    previewApply(runId: string): Promise<ApplyPreview>;
+    confirmApply(input: LifecycleActionInput): Promise<LifecycleActionResult>;
+  };
   comparison: {
     listCandidates(runId: string): Promise<ComparisonCandidate[]>;
     listForRun(runId: string): Promise<ComparisonReport[]>;
@@ -706,6 +861,10 @@ export interface AgentHubApi {
   };
   knowledge: {
     getWorkspace(projectId: string): Promise<KnowledgeWorkspace>;
+  };
+  team: {
+    getWorkspace(projectId: string): Promise<TeamWorkspace>;
+    saveRole(input: SaveTeamRoleInput): Promise<TeamRoleSummary>;
   };
   settings: {
     getVerification(projectId: string): Promise<VerificationSettings>;
