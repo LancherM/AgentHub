@@ -322,7 +322,7 @@ clearable one-shot continuation chip, and `ThreadService` resolves
 message-linked runs before passing parent ids to `RunService`. If both a run id
 and message id are supplied, `ThreadService` validates that the message is still
 linked to that parent run before forwarding the pair. The renderer does not
-receive filesystem, shell, Git, or SQLite access. Current desktop
+receive filesystem, shell, Git, or SQLite access. For untrusted markdown links, renderer `window.open` calls are intercepted by `BrowserWindow.webContents.setWindowOpenHandler` and denied, then approved external protocols (`http`, `https`, `mailto`) are opened through `shell.openExternal`; direct in-window navigation is prevented with `will-navigate`. Current desktop
 TaskRunner-backed paths require a retained parent worktree before continuing
 code state and otherwise fail with a clear system message.
 SQLite still stores the core run status enum, so the desktop-only `verifying` phase

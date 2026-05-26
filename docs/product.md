@@ -659,7 +659,7 @@ operations go through Electron main-process IPC registered in
 `apps/desktop/electron/ipc.ts`. The IPC handler factory is kept in
 `apps/desktop/electron/ipc-handlers.ts` so service-level validation and
 subscription behavior remain testable in the root Vitest suite without loading
-Electron.
+Electron. Desktop markdown links are treated as untrusted content: renderer links request `window.open`, while the Electron main process denies new in-app windows and routes only `http`, `https`, and `mailto` URLs to `shell.openExternal`.
 
 The current desktop execution path is TaskRunner-backed in the Electron main
 process. `RunService` can now attach a queued desktop run to an existing

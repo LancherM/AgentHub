@@ -1,6 +1,26 @@
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 
+const EXTERNAL_PROTOCOLS = new Set(["http:", "https:", "mailto:"]);
+
+function isExternalLink(href: string): boolean {
+  if (href.startsWith("#")) {
+    return false;
+  }
+
+  try {
+    const parsed = new URL(href, "https://agent-hub.local");
+    return EXTERNAL_PROTOCOLS.has(parsed.protocol);
+  } catch {
+    return false;
+  }
+}
+
+function handleExternalLinkClick(event: React.MouseEvent<HTMLAnchorElement>, href: string): void {
+  event.preventDefault();
+  window.open(href, "_blank", "noopener,noreferrer");
+}
+
 interface MarkdownTextProps {
   text: string;
   compact?: boolean;
@@ -8,13 +28,14 @@ interface MarkdownTextProps {
 
 const components: Components = {
   a({ children, href, ...props }) {
-    const external = typeof href === "string" && !href.startsWith("#");
+    const external = typeof href === "string" && isExternalLink(href);
     return (
       <a
         {...props}
         href={href}
-        rel={external ? "noreferrer" : undefined}
+        rel={external ? "noreferrer noopener" : undefined}
         target={external ? "_blank" : undefined}
+        onClick={external && href ? (event) => handleExternalLinkClick(event, href) : undefined}
       >
         {children}
       </a>
