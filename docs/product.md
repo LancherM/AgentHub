@@ -495,7 +495,8 @@ advanced. Routine one-agent chat turns render as compact participant activity
 and prefer the latest agent-facing natural-language output over lifecycle
 details. Agent-facing transcript output and live compact run output render
 Markdown, including lists, code blocks, links, tables, and other common GFM
-syntax, while raw HTML remains disabled. Raw event lines stay behind the
+syntax, while raw HTML remains disabled and image embeds are shown as inert
+placeholders rather than loaded resources. Raw event lines stay behind the
 inspector's Audit view by default.
 Once a completed run has a durable assistant answer and no changed files, the
 default transcript hides the run card entirely and keeps the answer as the main

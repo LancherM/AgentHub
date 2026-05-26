@@ -261,8 +261,10 @@ comparison-ready runs remain visible as review affordances. Active routine chat
 cards use the latest agent-facing message rather than lifecycle text as their
 primary activity copy. The renderer displays bounded assistant transcript text
 and live agent-facing card text through a sandboxed Markdown component using
-GFM parsing without raw-HTML plugins; logs, diffs, lifecycle events, and other
-review evidence continue to render only through their inspector-specific views.
+GFM parsing without raw-HTML plugins. Markdown image syntax is rendered as an
+inert placeholder instead of loading local or remote resources; logs, diffs,
+lifecycle events, and other review evidence continue to render only through
+their inspector-specific views.
 
 Composer autocomplete is implemented as renderer-only input assistance. The
 helper in `apps/desktop/src/lib/composer-controls.ts` derives active `@` and
