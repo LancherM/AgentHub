@@ -62,7 +62,10 @@ export function MessageList({
       }
       if (shouldRenderTaskGroup(group)) {
         renderedMessages.push(
-          <section className="task-run-group" key={`task-${message.taskId}`}>
+          <section
+            className={`task-run-group ${taskGroupStateClass(group)}`}
+            key={`task-${message.taskId}`}
+          >
             <header className="task-run-group-header">
               <div>
                 <span>Task</span>
@@ -143,6 +146,23 @@ export function MessageList({
       );
     });
   }
+}
+
+function taskGroupStateClass(messages: AgentRunMessage[]): string {
+  if (messages.some((message) => message.status === "failed")) {
+    return "has-failure";
+  }
+  if (
+    messages.some(
+      (message) => message.status === "running" || message.status === "verifying"
+    )
+  ) {
+    return "has-active-run";
+  }
+  if (messages.every((message) => message.status === "completed")) {
+    return "all-completed";
+  }
+  return "mixed-state";
 }
 
 function assignmentLabel(messages: AgentRunMessage[]): string {

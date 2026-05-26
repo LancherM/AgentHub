@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  runEvidenceTimelineGroups,
   runEvidenceTimelineChips,
   timelinePresentationForMessage
 } from "../apps/desktop/src/lib/timelineEvents";
@@ -143,6 +144,57 @@ describe("desktop timeline event presentation", () => {
         })
       ])
     );
+  });
+
+  it("groups card-level run evidence by status, evidence, and outputs", () => {
+    const review: ReviewSummary = {
+      runId: "run_1",
+      agentId: "codex",
+      status: "failed",
+      task: "Review output",
+      summary: "Failed before response generation.",
+      changedFileCount: 0,
+      additions: 0,
+      deletions: 0,
+      verificationStatus: "skipped",
+      riskLevel: "unknown",
+      memoryProposalCount: 0,
+      reviewStatus: "pending"
+    };
+
+    const groups = runEvidenceTimelineGroups(review, 3, "failed");
+
+    expect(groups.map((group) => group.label)).toEqual([
+      "Status",
+      "Evidence",
+      "Outputs"
+    ]);
+    expect(groups[0]?.items.map((item) => item.label)).toEqual([
+      "Failed",
+      "Review pending",
+      "Checks skipped",
+      "Risks unknown"
+    ]);
+    expect(groups[1]?.items.map((item) => item.label)).toEqual([
+      "Logs",
+      "Audit 3",
+      "Lifecycle"
+    ]);
+    expect(groups[2]?.items.map((item) => item.label)).toEqual([
+      "Artifacts 0",
+      "Memory 0"
+    ]);
+    expect(groups.flatMap((group) => group.items.map((item) => item.tab))).toEqual([
+      "brief",
+      "brief",
+      "checks",
+      "risks",
+      "audit",
+      "audit",
+      "lifecycle",
+      "artifacts",
+      "memory"
+    ]);
   });
 });
 

@@ -24,6 +24,11 @@ export interface TimelineEventPresentation {
   chips: TimelineEventChip[];
 }
 
+export interface RunEvidenceTimelineGroup {
+  label: string;
+  items: Array<TimelineEventChip & { tab: RunInspectorTab }>;
+}
+
 export function timelinePresentationForMessage(
   message: ThreadMessage,
   options: {
@@ -142,6 +147,107 @@ export function runEvidenceTimelineChips(
       label: `Audit ${eventCount}`,
       tone: "neutral",
       tab: "audit"
+    }
+  ];
+}
+
+export function runEvidenceTimelineGroups(
+  summary: ReviewSummary | undefined,
+  eventCount: number,
+  status: RunStatus,
+  artifacts: ReviewArtifact[] = []
+): RunEvidenceTimelineGroup[] {
+  const pending = isTerminalRunStatus(status) ? "unknown" : "pending";
+  const verificationStatus = summary?.verificationStatus ?? pending;
+  const riskLevel = summary?.riskLevel ?? pending;
+  const reviewStatus = summary?.reviewStatus ?? "pending";
+  const memoryCount = summary?.memoryProposalCount ?? 0;
+  const artifactSummaryLabel =
+    artifacts.length > 0
+      ? `Artifacts ${artifacts.length}`
+      : summary
+        ? summary.changedFileCount > 0
+          ? `Artifacts ${summary.changedFileCount}`
+          : "Artifacts 0"
+        : "Artifacts pending";
+
+  return [
+    {
+      label: "Status",
+      items: [
+        {
+          kind: terminalRunEventKind(status) ?? "run_started",
+          label: statusLabel(status),
+          tone: toneForRunStatus(status),
+          tab: "brief"
+        },
+        {
+          kind: "review_decision",
+          label: `Review ${reviewStatus}`,
+          tone:
+            reviewStatus === "accepted"
+              ? "success"
+              : reviewStatus === "rejected"
+                ? "danger"
+                : "neutral",
+          tab: "brief"
+        },
+        {
+          kind: "check_completed",
+          label: `Checks ${verificationStatus}`,
+          tone: verificationTone(verificationStatus),
+          tab: "checks"
+        },
+        {
+          kind: "risk_detected",
+          label: `Risks ${riskLevel}`,
+          tone: riskTone(riskLevel),
+          tab: "risks"
+        }
+      ]
+    },
+    {
+      label: "Evidence",
+      items: [
+        {
+          kind: "system_event",
+          label: eventCount > 0 ? "Logs" : "Logs pending",
+          tone: eventCount > 0 ? "info" : "neutral",
+          tab: "audit"
+        },
+        {
+          kind: "system_event",
+          label: `Audit ${eventCount}`,
+          tone: "neutral",
+          tab: "audit"
+        },
+        {
+          kind: "lifecycle_marked_keep",
+          label: "Lifecycle",
+          tone: "neutral",
+          tab: "lifecycle"
+        }
+      ]
+    },
+    {
+      label: "Outputs",
+      items: [
+        {
+          kind: "artifact_created",
+          label: artifactSummaryLabel,
+          tone:
+            artifacts.length > 0 || summary?.changedFileCount
+              ? "accent"
+              : "neutral",
+          tab: "artifacts"
+        },
+        {
+          kind: "memory_proposed",
+          label: `Memory ${memoryCount}`,
+          tone: memoryCount > 0 ? "accent" : "neutral",
+          tab: "memory"
+        }
+      ]
     }
   ];
 }
@@ -288,6 +394,10 @@ function terminalRunEventKind(status: RunStatus): TimelineEventKind | undefined 
     return "run_cancelled";
   }
   return undefined;
+}
+
+function statusLabel(status: RunStatus): string {
+  return status.charAt(0).toUpperCase() + status.slice(1);
 }
 
 function toneForRunStatus(status: RunStatus | undefined): TimelineEventTone {

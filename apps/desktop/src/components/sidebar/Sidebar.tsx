@@ -110,9 +110,15 @@ export function Sidebar({
         <div className="selected-project-block">
           <span className="project-dot" />
           <div className="truncate">
-            <div className="row-title">{selectedProject?.name ?? "No project"}</div>
+            <div className="row-title">
+              {selectedProject
+                ? projectDisplayName(selectedProject, projects)
+                : "No project"}
+            </div>
             <div className="row-subtitle">
-              {selectedProject?.rootPath ?? "Register a local repository"}
+              {selectedProject
+                ? compactProjectPath(selectedProject.rootPath)
+                : "Register a local repository"}
             </div>
           </div>
         </div>
@@ -128,8 +134,10 @@ export function Sidebar({
               >
                 <span className="project-dot" />
                 <div className="truncate">
-                  <div className="row-title">{project.name}</div>
-                  <div className="row-subtitle">{project.rootPath}</div>
+                  <div className="row-title">
+                    {projectDisplayName(project, projects)}
+                  </div>
+                  <div className="row-subtitle">{compactProjectPath(project.rootPath)}</div>
                 </div>
               </button>
             ))}
@@ -267,47 +275,12 @@ export function Sidebar({
         </div>
       </section>
 
-      <section className="nav-section team-nav">
-        <div className="section-label">Team</div>
-        <div className="role-list">
-          {roleRows.map((role) => (
-            <button
-              className={`role-row ${
-                activeWorkspace === "team" ? "selected" : ""
-              }`}
-              key={role.handle}
-              onClick={onOpenTeam}
-              disabled={!selectedProjectId}
-            >
-              <span className={`role-mark ${role.kind}`}>{role.initial}</span>
-              <span>@{role.handle}</span>
-            </button>
-          ))}
-        </div>
-      </section>
-
-      <section className="nav-section status-nav">
-        <div className="section-label">Task status</div>
-        <div className="status-list">
-          <div>
-            <span>Open</span>
-            <strong>{projectRooms.length}</strong>
-          </div>
-          <div>
-            <span>Running</span>
-            <strong>{activeRunCount}</strong>
-          </div>
-          <div>
-            <span>Runs</span>
-            <strong>{runCount}</strong>
-          </div>
-        </div>
-      </section>
-
       <nav className="utility-nav" aria-label="Utilities">
-        <div className="local-status">
-          <span className="project-dot" />
-          <span>Local-first</span>
+        <div className="utility-zone-label">Utilities</div>
+        <div className="sidebar-status-summary" aria-label="Task status">
+          <span>{projectRooms.length} rooms</span>
+          <span>{activeRunCount} running</span>
+          <span>{runCount} runs</span>
         </div>
         <button
           className={activeWorkspace === "knowledge" ? "selected" : ""}
@@ -332,15 +305,37 @@ export function Sidebar({
   );
 }
 
-const roleRows = [
-  { handle: "researcher", initial: "R", kind: "blue" },
-  { handle: "writer", initial: "W", kind: "orange" },
-  { handle: "analyst", initial: "A", kind: "plum" },
-  { handle: "operator", initial: "O", kind: "green" },
-  { handle: "reviewer", initial: "V", kind: "amber" },
-  { handle: "engineer", initial: "E", kind: "blue" },
-  { handle: "memory", initial: "M", kind: "cyan" }
-];
+function projectDisplayName(
+  project: ProjectSummary,
+  projects: ProjectSummary[]
+): string {
+  const duplicateName = projects.some(
+    (candidate) => candidate.id !== project.id && candidate.name === project.name
+  );
+  if (!duplicateName) {
+    return project.name;
+  }
+  const parent = parentFolderName(project.rootPath);
+  return parent ? `${project.name} · ${parent}` : project.name;
+}
+
+function compactProjectPath(rootPath: string): string {
+  const normalized = rootPath.replace(/\/+$/, "");
+  const parts = normalized.split("/").filter(Boolean);
+  if (parts.length <= 2) {
+    return normalized || rootPath;
+  }
+  return `.../${parts.slice(-2).join("/")}`;
+}
+
+function parentFolderName(rootPath: string): string | undefined {
+  const normalized = rootPath.replace(/\/+$/, "");
+  const parts = normalized.split("/").filter(Boolean);
+  if (parts.length < 2) {
+    return undefined;
+  }
+  return parts.at(-2);
+}
 
 function relativeTime(value: string): string {
   const date = new Date(value);

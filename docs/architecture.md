@@ -263,6 +263,18 @@ primary activity copy. The renderer displays bounded assistant transcript text
 and live agent-facing card text through a sandboxed Markdown component using
 GFM parsing without raw-HTML plugins; logs, diffs, lifecycle events, and other
 review evidence continue to render only through their inspector-specific views.
+The visual hierarchy pass remains renderer presentation over this same IPC
+boundary. `ChatView` derives only a lightweight local display state from
+already-loaded messages and run details so CSS can weight idle, running,
+failed, and review-ready surfaces differently. `AgentRunCard` derives failed
+incident copy, likely-cause text, and Status/Evidence/Outputs groups from
+persisted run events plus compact review summaries/artifacts that were already
+available to the card. It does not retry runs, apply patches, approve memory,
+read logs directly, or bypass the inspector; card buttons only open existing
+review tabs such as Brief, Audit, Checks, Risks, Lifecycle, Artifacts, and
+Memory. Sidebar and header hierarchy changes are likewise renderer-only
+navigation/copy changes over the same project, thread, team, settings, and
+review IPC services.
 
 Composer autocomplete is implemented as renderer-only input assistance. The
 helper in `apps/desktop/src/lib/composer-controls.ts` derives active `@` and
@@ -890,9 +902,10 @@ those contracts from the main process, so role mentions are a local orchestratio
 input layered over existing conversation messages and TaskRunner runs.
 
 Phase 2 implements the first room layer over that same boundary. The desktop
-sidebar now presents project selection, rooms, preset team roles, and local
-run-status counts, while the center timeline still reads and writes durable
-conversation messages and run cards through `window.agentHub.threads.*`.
+sidebar presents project selection, rooms, compact utility navigation, and
+small local run-status counts, while the center timeline still reads and
+writes durable conversation messages and run cards through
+`window.agentHub.threads.*`.
 Because rooms are conversation-thread metadata, the renderer gets no direct
 SQLite, filesystem, Git, shell, or orchestration access, and CLI chat continues
 to use the existing conversation repositories during the transition.
@@ -910,19 +923,20 @@ store. `conversation_messages.metadata_json` may include a bounded
 and small display chips. The Electron thread service writes these semantics for
 user rows, task-created rows, assignment rows, run cards, run terminal updates,
 and assistant participant output. The renderer maps that metadata plus lazy
-review summaries into audit-stream cards and chips for checks, risks,
-artifacts, review decisions, memory proposals, and audit logs. Raw logs,
-diffs, verification rows, risk reports, memory details, context previews, and
-comparison data remain on run evidence repositories and continue to load
-through review IPC only when the user opens the relevant inspector context.
+review summaries into audit-stream cards and grouped card evidence for status,
+checks, risks, logs/audit, lifecycle, artifacts, review decisions, and memory.
+Raw logs, diffs, verification rows, risk reports, memory details, context
+previews, and comparison data remain on run evidence repositories and continue
+to load through review IPC only when the user opens the relevant inspector
+context.
 Inline run cards compute a renderer-only Prepare/Run/Verify/Review stage model
 from persisted run status and event types. The model controls compact progress,
 last-activity, wait-state, disabled-action, and compare-entry display only; it
 does not create new persistence, duplicate raw event streams into the
 transcript, or bypass inspector IPC for review data. Terminal cards use review
-IPC only for the compact summary/artifact metadata needed by their chips; deeper
-checks, risks, logs, context, memory, and comparison payloads remain
-inspector-loaded.
+IPC only for the compact summary/artifact metadata needed by grouped card
+evidence; deeper checks, risks, logs, context, memory, and comparison payloads
+remain inspector-loaded.
 
 Phase 5 keeps the inspector as a renderer-only shell over those IPC services
 but changes its visible vocabulary from run-centric tabs to the workgroup
