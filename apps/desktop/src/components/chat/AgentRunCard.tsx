@@ -9,7 +9,7 @@ import {
   type CompareAffordance
 } from "../../lib/run-progress";
 import {
-  runEvidenceTimelineChips,
+  runEvidenceTimelineGroups,
   timelinePresentationForMessage
 } from "../../lib/timelineEvents";
 import type {
@@ -210,6 +210,12 @@ export function AgentRunCard({
   const failedEvidence = isFailedRun
     ? failedEvidenceLabel(events, reviewArtifacts)
     : undefined;
+  const evidenceGroups = runEvidenceTimelineGroups(
+    reviewSummary,
+    events.length,
+    status,
+    reviewArtifacts
+  );
 
   async function cancel(): Promise<void> {
     setCancelError(undefined);
@@ -498,17 +504,24 @@ export function AgentRunCard({
 
       {showEvidenceBody ? (
         <footer className="run-card-pills">
-          {reviewPills(reviewSummary, events.length, status, reviewArtifacts).map((pill) => (
-            <button
-              key={pill.label}
-              className={`timeline-chip-button ${pill.tone ?? "neutral"}`}
-              onClick={(event) => {
-                event.stopPropagation();
-                onOpenInspector(message.runId, pill.tab);
-              }}
-            >
-              {pill.label}
-            </button>
+          {evidenceGroups.map((group) => (
+            <div className="run-evidence-group" key={group.label}>
+              <span>{group.label}</span>
+              <div>
+                {group.items.map((pill) => (
+                  <button
+                    key={`${group.label}-${pill.label}`}
+                    className={`timeline-chip-button ${pill.tone ?? "neutral"}`}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      onOpenInspector(message.runId, pill.tab);
+                    }}
+                  >
+                    {pill.label}
+                  </button>
+                ))}
+              </div>
+            </div>
           ))}
         </footer>
       ) : null}
@@ -521,15 +534,6 @@ function appendEvent(events: RunEvent[], event: RunEvent): RunEvent[] {
     return events;
   }
   return [...events, event].sort((left, right) => left.sequence - right.sequence);
-}
-
-function reviewPills(
-  summary: ReviewSummary | undefined,
-  eventCount: number,
-  status: RunStatus,
-  artifacts: ReviewArtifact[]
-): ReturnType<typeof runEvidenceTimelineChips> {
-  return runEvidenceTimelineChips(summary, eventCount, status, artifacts);
 }
 
 function formatTime(value: string): string {
