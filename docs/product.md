@@ -440,7 +440,10 @@ controls in the project sidebar and the empty conversation pane; users can
 either paste a path or open the system folder picker through the sandboxed
 preload API. Submitting either control calls the existing
 `window.agentHub.projects.open` IPC path and selects the project's `#general`
-room after default room seeding.
+room after default room seeding. The empty conversation pane keeps the project
+registration card close to the bottom composer and shows a short
+register-then-run flow so first-time setup points toward the primary chat
+surface instead of reading like a static splash page.
 The room header uses product-facing context copy: project, room type, and
 `local desktop` are shown as one compact line, while `Context: runtime
 injection` stays visible as secondary context with detailed explanation in the
@@ -550,10 +553,13 @@ Verification setup failures in the desktop point back to the Settings panel
 instead of leaving a generic room error. Empty verification settings include
 an explicit no-commands state, the skipped-check consequence, examples such as
 `pnpm test`, `npm run lint`, and `npm run typecheck`, and an Add Command
-primary action. Save changes stays disabled until the command draft changes.
-Validation errors explain that commands should be split into executable and
-argument fields and that secret-like option names are rejected before
-persistence.
+primary action. Save changes stays disabled until the command draft changes
+and the renderer-side draft has a unique command id, executable, and valid
+timeout. Validation errors are shown as product-facing settings messages before
+IPC, while the main-process settings service still enforces the same boundary
+before persistence. Errors explain that commands should be split into
+executable and argument fields and that secret-like option names are rejected
+before persistence.
 
 Agent Hub keeps project context, thread context, current-turn context, and
 per-run context snapshots as separate layers. Desktop follow-up turns build a
@@ -609,7 +615,9 @@ the conclusion. Artifacts begins with a local artifact inventory derived from
 persisted `run_artifacts`.
 Each artifact has bounded metadata for title, artifact type, source run, source
 task, thread id when known, creator, summary, local availability, and a capped
-content preview.
+content preview. The artifact inventory uses compact visible labels for long
+artifact kinds such as conversation briefs while preserving the full kind as
+metadata.
 `git_diff` artifact previews use the same sensitive-path redaction boundary as
 the Diff review so secret-bearing patches are not copied into artifact chips or
 the sandboxed renderer.

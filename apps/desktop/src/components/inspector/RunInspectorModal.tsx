@@ -899,8 +899,11 @@ function ArtifactInventory({
               }`}
               onClick={() => setSelectedArtifactId(artifact.id)}
             >
-              <span className={`artifact-type ${artifact.artifactType}`}>
-                {artifact.kind}
+              <span
+                className={`artifact-type ${artifact.artifactType}`}
+                title={artifact.kind}
+              >
+                {artifactKindLabel(artifact.kind)}
               </span>
               <span>
                 <strong>{artifact.title}</strong>
@@ -1685,6 +1688,19 @@ function toInspectorViewTab(tab: RunInspectorTab): InspectorViewTab {
 
 function tabLabel(tab: WorkgroupInspectorTab): string {
   return tabs.find((entry) => entry.id === toInspectorViewTab(tab))?.label ?? tab;
+}
+
+function artifactKindLabel(kind: string): string {
+  switch (kind.toUpperCase()) {
+    case "GIT_DIFF":
+      return "Diff";
+    case "TASK_BRIEF":
+      return "Task brief";
+    case "CONVERSATION_BRIEF":
+      return "Conv brief";
+    default:
+      return kind.replaceAll("_", " ");
+  }
 }
 
 function formatTime(value: string): string {

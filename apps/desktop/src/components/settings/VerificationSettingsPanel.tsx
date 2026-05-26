@@ -4,20 +4,18 @@ import type {
   ProjectSummary,
   VerificationCommandConfig
 } from "../../lib/types";
+import {
+  cleanSettingsError,
+  validateDraftVerificationCommands,
+  type DraftVerificationCommand
+} from "./verification-settings-validation";
 
 interface VerificationSettingsPanelProps {
   project?: ProjectSummary;
   onClose(): void;
 }
 
-interface DraftCommand {
-  id: string;
-  label: string;
-  executable: string;
-  argsText: string;
-  timeoutMs: string;
-  continueOnFailure: boolean;
-}
+type DraftCommand = DraftVerificationCommand;
 
 export function VerificationSettingsPanel({
   project,
@@ -56,6 +54,7 @@ export function VerificationSettingsPanel({
 
   function addCommand(): void {
     const id = nextCommandId(commands);
+    clearFeedback();
     setCommands((current) => [
       ...current,
       {
@@ -73,6 +72,7 @@ export function VerificationSettingsPanel({
     index: number,
     patch: Partial<DraftCommand>
   ): void {
+    clearFeedback();
     setCommands((current) =>
       current.map((command, commandIndex) =>
         commandIndex === index ? { ...command, ...patch } : command
@@ -81,9 +81,15 @@ export function VerificationSettingsPanel({
   }
 
   function removeCommand(index: number): void {
+    clearFeedback();
     setCommands((current) =>
       current.filter((_command, commandIndex) => commandIndex !== index)
     );
+  }
+
+  function clearFeedback(): void {
+    setMessage(undefined);
+    setError(undefined);
   }
 
   async function save(): Promise<void> {
@@ -92,6 +98,10 @@ export function VerificationSettingsPanel({
     }
     setMessage(undefined);
     setError(undefined);
+    if (validation.message) {
+      setError(validation.message);
+      return;
+    }
     setIsSaving(true);
     try {
       const saved = await agentHubApi.settings.saveVerification({
@@ -117,6 +127,11 @@ export function VerificationSettingsPanel({
     () => serializeCommands(commands) !== serializeCommands(savedCommands),
     [commands, savedCommands]
   );
+  const validation = useMemo(
+    () => validateDraftVerificationCommands(commands),
+    [commands]
+  );
+  const activeError = error ?? (hasChanges ? validation.message : undefined);
 
   return (
     <div className="inspector-backdrop" role="presentation" onMouseDown={onClose}>
@@ -142,13 +157,14 @@ export function VerificationSettingsPanel({
 
         <div className="settings-body">
           {message ? <div className="decision-strip">{message}</div> : null}
-          {error ? (
-            <div className="inline-error actionable">
-              <span>{error}</span>
-              <span>
-                Check the executable, split args onto separate lines, or remove
-                the command from this settings panel.
-              </span>
+          {activeError ? (
+            <div className="inline-error settings-error">
+              <strong>Check command settings</strong>
+              <span>{activeError}</span>
+              <em>
+                Each command needs a unique ID and an executable. Put one
+                argument per line.
+              </em>
             </div>
           ) : null}
 
@@ -191,7 +207,12 @@ export function VerificationSettingsPanel({
                   </div>
                 ) : (
                   commands.map((command, index) => (
-                    <article className="verification-command-editor" key={index}>
+                    <article
+                      className={`verification-command-editor ${
+                        validation.commandIssues[index] ? "has-error" : ""
+                      }`}
+                      key={index}
+                    >
                       <div className="settings-row-head">
                         <strong>{command.label || command.id || "Command"}</strong>
                         <button
@@ -262,6 +283,11 @@ export function VerificationSettingsPanel({
                         />
                         <span>Continue after failure</span>
                       </label>
+                      {validation.commandIssues[index] ? (
+                        <p className="settings-field-error">
+                          {validation.commandIssues[index]}
+                        </p>
+                      ) : null}
                     </article>
                   ))
                 )}
@@ -276,7 +302,7 @@ export function VerificationSettingsPanel({
           <button
             className="primary-button compact"
             onClick={() => void save()}
-            disabled={!project || isLoading || isSaving || !hasChanges}
+            disabled={!project || isLoading || isSaving || !hasChanges || Boolean(validation.message)}
           >
             {isSaving ? "Saving..." : "Save changes"}
           </button>
@@ -330,5 +356,5 @@ function serializeCommands(commands: DraftCommand[]): string {
 }
 
 function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+  return cleanSettingsError(error);
 }

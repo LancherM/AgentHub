@@ -86,7 +86,9 @@ local metadata model with title, type, source run/task ids, optional thread id,
 creator, summary, availability, and a capped content preview. This Phase 6
 model intentionally reuses `run_artifacts` instead of adding an artifact table,
 so existing task briefs, conversation briefs, diffs, review decisions, and
-provenance records remain readable. `git_diff` artifact previews apply
+provenance records remain readable. The renderer may shorten long artifact kind
+labels in the inventory for fit, but it keeps the original kind in the artifact
+model and element title. `git_diff` artifact previews apply
 sensitive-path patch redaction before content crosses IPC, matching the diff
 review boundary while preserving raw run evidence in local persistence.
 Handoff, comparison, and diff data remain inside the Artifacts tab as
@@ -681,6 +683,12 @@ Migration version 8 repeats the `conversation_thread_summaries` table creation
 with `IF NOT EXISTS` as a compatibility backfill for databases that recorded an
 intermediate version 6 marker before the thread-summary migration reached
 `main`.
+Before applying migration version 9, initialization checks for databases that
+already have `task_runs.parent_run_id` and `task_runs.parent_message_id` but do
+not have the version 9 marker. This repairs local databases created by
+intermediate desktop builds by creating the parent-run indexes if needed and
+recording the migration marker instead of attempting duplicate `ALTER TABLE`
+statements.
 Migration version 10 adds nullable `role_json` to `run_metadata` so existing
 run review flows can associate a run with the resolved role handle, display
 name, executor kind, adapter kind, permissions, context policy, and approval

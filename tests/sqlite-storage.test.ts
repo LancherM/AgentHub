@@ -1024,6 +1024,47 @@ VALUES ('message_summary_legacy', 'thread_summary_legacy', 0, 'user', 'text', 'P
     ]);
   });
 
+  it("records run-parent migration when legacy columns already exist", async () => {
+    const baseDirectory = await createTestDirectory("sqlite-migration-v9-existing-columns");
+    const databasePath = path.join(baseDirectory, "agent-hub.sqlite");
+    await initializeSqliteThroughVersion(databasePath, 8);
+    await runSqlite(databasePath, `
+ALTER TABLE task_runs
+  ADD COLUMN parent_run_id TEXT REFERENCES task_runs(id) ON DELETE SET NULL;
+ALTER TABLE task_runs
+  ADD COLUMN parent_message_id TEXT REFERENCES conversation_messages(id) ON DELETE SET NULL;
+`);
+
+    const repositories = createSqliteRepositories({ databasePath });
+    await repositories.database.ensureInitialized();
+
+    await expect(
+      repositories.database.query<{ version: number }>(
+        "SELECT version FROM schema_migrations ORDER BY version ASC;"
+      )
+    ).resolves.toEqual([
+      { version: 1 },
+      { version: 2 },
+      { version: 3 },
+      { version: 4 },
+      { version: 5 },
+      { version: 6 },
+      { version: 7 },
+      { version: 8 },
+      { version: 9 },
+      { version: 10 },
+      { version: 11 }
+    ]);
+    await expect(
+      repositories.database.query<{ name: string }>(
+        "SELECT name FROM sqlite_master WHERE type = 'index' AND name IN ('idx_task_runs_parent_run', 'idx_task_runs_parent_message') ORDER BY name ASC;"
+      )
+    ).resolves.toEqual([
+      { name: "idx_task_runs_parent_message" },
+      { name: "idx_task_runs_parent_run" }
+    ]);
+  });
+
   it("migrates risk report JSON columns to array-constrained storage", async () => {
     const baseDirectory = await createTestDirectory("sqlite-migration-v7-risk");
     const databasePath = path.join(baseDirectory, "agent-hub.sqlite");

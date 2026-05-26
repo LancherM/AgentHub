@@ -779,6 +779,7 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
       "SELECT version FROM schema_migrations ORDER BY version ASC;"
     );
     const appliedVersions = new Set(rows.map((row) => row.version));
+    await this.reconcileLegacyColumnMigrationMarkers(appliedVersions);
     for (const migration of SQLITE_MIGRATIONS) {
       if (appliedVersions.has(migration.version)) {
         continue;
@@ -794,6 +795,52 @@ COMMIT;
 `;
       await runSqliteScript(this.databasePath, sqlScript(migrationSql));
     }
+  }
+
+  private async reconcileLegacyColumnMigrationMarkers(
+    appliedVersions: Set<number>
+  ): Promise<void> {
+    if (hasAppliedMigrationRange(appliedVersions, 1, 8) && !appliedVersions.has(9)) {
+      await this.addColumnIfMissing(
+        "task_runs",
+        "parent_run_id",
+        "TEXT REFERENCES task_runs(id) ON DELETE SET NULL"
+      );
+      await this.addColumnIfMissing(
+        "task_runs",
+        "parent_message_id",
+        "TEXT REFERENCES conversation_messages(id) ON DELETE SET NULL"
+      );
+      await runSqliteScript(
+        this.databasePath,
+        sqlScript(`
+CREATE INDEX IF NOT EXISTS idx_task_runs_parent_run
+  ON task_runs(parent_run_id);
+CREATE INDEX IF NOT EXISTS idx_task_runs_parent_message
+  ON task_runs(parent_message_id);
+INSERT OR IGNORE INTO schema_migrations (version, applied_at)
+VALUES (9, ${sqlString(new Date().toISOString())});
+`)
+      );
+      appliedVersions.add(9);
+    }
+  }
+
+  private async addColumnIfMissing(
+    tableName: string,
+    columnName: string,
+    columnDefinition: string
+  ): Promise<void> {
+    const columns = await this.queryWithoutInitialization<{ name: string }>(
+      `SELECT name FROM pragma_table_info(${sqlString(tableName)}) ORDER BY cid ASC;`
+    );
+    if (columns.some((column) => column.name === columnName)) {
+      return;
+    }
+    await runSqliteScript(
+      this.databasePath,
+      sqlScript(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${columnDefinition};`)
+    );
   }
 
   private async queryWithoutInitialization<T extends Record<string, unknown>>(
@@ -2667,6 +2714,19 @@ function sqlScript(sql: string): string {
 
 function sqlString(value: string): string {
   return `'${value.replaceAll("'", "''")}'`;
+}
+
+function hasAppliedMigrationRange(
+  appliedVersions: Set<number>,
+  startVersion: number,
+  endVersion: number
+): boolean {
+  for (let version = startVersion; version <= endVersion; version += 1) {
+    if (!appliedVersions.has(version)) {
+      return false;
+    }
+  }
+  return true;
 }
 
 function sqlNullableString(value: string | undefined): string {
