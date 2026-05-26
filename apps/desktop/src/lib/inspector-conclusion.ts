@@ -168,12 +168,12 @@ function suggestedDecisionFor(input: {
     input.failedRun ||
     input.cancelledRun
   ) {
-    return "Record reject or request a follow-up";
+    return "Reject or follow up";
   }
   if (input.cleanRun) {
-    return "Record accept after manual review";
+    return "Accept after review";
   }
-  return "Review evidence before deciding";
+  return "Review evidence first";
 }
 
 function rationaleFor(input: {

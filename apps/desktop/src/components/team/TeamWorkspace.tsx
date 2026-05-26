@@ -81,6 +81,11 @@ export function TeamWorkspace({ project }: TeamWorkspaceProps): JSX.Element {
   const selectedSummary =
     storedSelectedSummary ??
     (draftRole?.id === selectedRoleId ? undefined : roles[0]);
+  const hasUnsavedChanges = Boolean(
+    draftRole &&
+      serializeRole(draftRole) !==
+        (storedSelectedSummary ? serializeRole(storedSelectedSummary.role) : "")
+  );
 
   useEffect(() => {
     if (
@@ -206,11 +211,9 @@ export function TeamWorkspace({ project }: TeamWorkspaceProps): JSX.Element {
               <div className="team-table" role="table" aria-label="Team roles">
                 <div className="team-table-head" role="row">
                   <span>Role</span>
-                  <span>Capability</span>
+                  <span>Purpose</span>
                   <span>Executor</span>
-                  <span>Permissions</span>
-                  <span>Policies</span>
-                  <span>Activity</span>
+                  <span>Status</span>
                 </div>
                 {filteredRoles.length === 0 ? (
                   <EmptyState
@@ -247,7 +250,7 @@ export function TeamWorkspace({ project }: TeamWorkspaceProps): JSX.Element {
                           <small>{sourceLabel(summary.source)}</small>
                         </span>
                       </span>
-                      <span>{summary.role.capabilitySummary}</span>
+                      <span>{summary.role.purpose || summary.role.capabilitySummary}</span>
                       <span>
                         <span
                           className={`knowledge-tag ${
@@ -257,12 +260,10 @@ export function TeamWorkspace({ project }: TeamWorkspaceProps): JSX.Element {
                           {summary.executorLabel}
                         </span>
                       </span>
-                      <span>{summary.permissionSummary}</span>
-                      <span>{summary.approvalPolicySummary}</span>
                       <span>
-                        {summary.recentActivity.length > 0
-                          ? `${summary.recentActivity.length} recent task(s)`
-                          : "No recent activity"}
+                        <span className={`knowledge-tag ${summary.role.enabled ? "success" : "neutral"}`}>
+                          {summary.role.enabled ? "enabled" : "disabled"}
+                        </span>
                       </span>
                     </button>
                   ))
@@ -281,6 +282,7 @@ export function TeamWorkspace({ project }: TeamWorkspaceProps): JSX.Element {
             actionMessage={actionMessage}
             actionError={actionError}
             isSaving={isSaving}
+            hasUnsavedChanges={hasUnsavedChanges}
             onChange={setDraftRole}
             onSave={() => void saveRole()}
           />
@@ -322,6 +324,7 @@ function TeamRoleEditor({
   actionMessage,
   actionError,
   isSaving,
+  hasUnsavedChanges,
   onChange,
   onSave
 }: {
@@ -330,6 +333,7 @@ function TeamRoleEditor({
   actionMessage?: string;
   actionError?: string;
   isSaving: boolean;
+  hasUnsavedChanges: boolean;
   onChange(role: WorkgroupRole): void;
   onSave(): void;
 }): JSX.Element {
@@ -343,7 +347,7 @@ function TeamRoleEditor({
           <div className="eyebrow">Role Profile</div>
           <h2>@{role.handle || "new-role"}</h2>
           <div className="knowledge-detail-states">
-            <span className={`knowledge-tag ${role.enabled ? "success" : "danger"}`}>
+            <span className={`knowledge-tag ${role.enabled ? "success" : "neutral"}`}>
               {role.enabled ? "enabled" : "disabled"}
             </span>
             <span className={`knowledge-tag ${summary?.executorRunnable ? "success" : "warning"}`}>
@@ -357,8 +361,8 @@ function TeamRoleEditor({
         {actionMessage ? <div className="system-message accent">{actionMessage}</div> : null}
         {actionError ? <div className="inline-error">{actionError}</div> : null}
 
-        <section className="team-editor-panel">
-          <div className="panel-label">Safe Fields</div>
+        <details className="team-editor-panel" open>
+          <summary>Basic</summary>
           <div className="team-form-grid">
             <TextField
               label="Handle"
@@ -403,10 +407,25 @@ function TeamRoleEditor({
               onChange={(value) => onChange({ ...role, defaultInstructions: value })}
             />
           </div>
-        </section>
+          <div className="team-toggle-grid">
+            <label>
+              <input
+                type="checkbox"
+                checked={role.enabled}
+                onChange={(event) =>
+                  onChange({
+                    ...role,
+                    enabled: event.target.checked
+                  })
+                }
+              />
+              Enabled for mentions
+            </label>
+          </div>
+        </details>
 
-        <section className="team-editor-panel">
-          <div className="panel-label">Executor Binding</div>
+        <details className="team-editor-panel" open>
+          <summary>Executor</summary>
           <div className="team-form-grid">
             <SelectField
               label="Executor kind"
@@ -466,29 +485,16 @@ function TeamRoleEditor({
               }
             />
           </div>
-        </section>
+        </details>
 
-        <section className="team-editor-panel">
-          <div className="panel-label">Policy Metadata</div>
+        <details className="team-editor-panel">
+          <summary>Permissions</summary>
           <div className="team-form-grid">
             <TextArea
               label="Permissions"
               value={role.permissions.join(", ")}
               onChange={(value) =>
                 onChange({ ...role, permissions: parseCommaList(value) })
-              }
-            />
-            <TextArea
-              label="Approval required for"
-              value={role.approvalPolicy.requiredFor.join(", ")}
-              onChange={(value) =>
-                onChange({
-                  ...role,
-                  approvalPolicy: {
-                    ...role.approvalPolicy,
-                    requiredFor: parseCommaList(value)
-                  }
-                })
               }
             />
             <TextField
@@ -500,47 +506,6 @@ function TeamRoleEditor({
                   contextPolicy: { ...role.contextPolicy, scope: value }
                 })
               }
-            />
-            <TextField
-              label="Default room"
-              value={role.defaultRoom ?? ""}
-              onChange={(value) =>
-                onChange({
-                  ...role,
-                  defaultRoom: value
-                })
-              }
-            />
-            <TextArea
-              label="Context instructions"
-              value={role.contextPolicy.instructions.join("\n")}
-              wide
-              onChange={(value) =>
-                onChange({
-                  ...role,
-                  contextPolicy: {
-                    ...role.contextPolicy,
-                    instructions: parseLineList(value)
-                  }
-                })
-              }
-            />
-            <TextArea
-              label="Approval summary"
-              value={role.approvalPolicy.summary}
-              wide
-              onChange={(value) =>
-                onChange({
-                  ...role,
-                  approvalPolicy: { ...role.approvalPolicy, summary: value }
-                })
-              }
-            />
-            <TextField
-              label="Tags"
-              value={(role.tags ?? []).join(", ")}
-              wide
-              onChange={(value) => onChange({ ...role, tags: parseCommaList(value) })}
             />
           </div>
           <div className="team-toggle-grid">
@@ -576,23 +541,73 @@ function TeamRoleEditor({
               />
               Include thread summary
             </label>
-            <label>
-              <input
-                type="checkbox"
-                checked={role.enabled}
-                onChange={(event) =>
-                  onChange({
-                    ...role,
-                    enabled: event.target.checked
-                  })
-                }
-              />
-              Enabled for mentions
-            </label>
           </div>
-        </section>
+        </details>
 
-        <section className="team-editor-panel">
+        <details className="team-editor-panel">
+          <summary>Policies</summary>
+          <div className="team-form-grid">
+            <TextArea
+              label="Approval required for"
+              value={role.approvalPolicy.requiredFor.join(", ")}
+              onChange={(value) =>
+                onChange({
+                  ...role,
+                  approvalPolicy: {
+                    ...role.approvalPolicy,
+                    requiredFor: parseCommaList(value)
+                  }
+                })
+              }
+            />
+            <TextArea
+              label="Approval summary"
+              value={role.approvalPolicy.summary}
+              wide
+              onChange={(value) =>
+                onChange({
+                  ...role,
+                  approvalPolicy: { ...role.approvalPolicy, summary: value }
+                })
+              }
+            />
+            <TextField
+              label="Default room"
+              value={role.defaultRoom ?? ""}
+              onChange={(value) =>
+                onChange({
+                  ...role,
+                  defaultRoom: value
+                })
+              }
+            />
+            <TextArea
+              label="Context instructions"
+              value={role.contextPolicy.instructions.join("\n")}
+              wide
+              onChange={(value) =>
+                onChange({
+                  ...role,
+                  contextPolicy: {
+                    ...role.contextPolicy,
+                    instructions: parseLineList(value)
+                  }
+                })
+              }
+            />
+          </div>
+        </details>
+
+        <details className="team-editor-panel">
+          <summary>Advanced</summary>
+          <div className="team-form-grid">
+            <TextField
+              label="Tags"
+              value={(role.tags ?? []).join(", ")}
+              wide
+              onChange={(value) => onChange({ ...role, tags: parseCommaList(value) })}
+            />
+          </div>
           <div className="panel-label">Recent Tasks</div>
           <div className="team-activity-list">
             {summary?.recentActivity.length ? (
@@ -606,9 +621,7 @@ function TeamRoleEditor({
               <p className="muted-copy">No recent role assignments were recorded.</p>
             )}
           </div>
-        </section>
 
-        <section className="team-editor-panel">
           <div className="panel-label">Linked Memory</div>
           <div className="knowledge-source-chips">
             {summary?.linkedMemory.length ? (
@@ -621,16 +634,20 @@ function TeamRoleEditor({
               <p className="muted-copy">No linked memory references were found.</p>
             )}
           </div>
-        </section>
+        </details>
+      </div>
 
-        <div className="team-save-bar">
-          <button className="primary-button compact" disabled={isSaving} onClick={onSave}>
-            {isSaving ? "Saving..." : "Save Role"}
-          </button>
-          <span className="muted-copy">
-            Reserved executor kinds are stored only as non-runnable metadata.
-          </span>
-        </div>
+      <div className="team-save-bar">
+        <span className="muted-copy">
+          Reserved executor kinds are stored only as non-runnable metadata.
+        </span>
+        <button
+          className="primary-button compact"
+          disabled={isSaving || !hasUnsavedChanges}
+          onClick={onSave}
+        >
+          {isSaving ? "Saving..." : "Save Role"}
+        </button>
       </div>
     </>
   );
@@ -836,6 +853,10 @@ function parseLineList(value: string): string[] {
 
 function cloneRole(role: WorkgroupRole): WorkgroupRole {
   return JSON.parse(JSON.stringify(role)) as WorkgroupRole;
+}
+
+function serializeRole(role: WorkgroupRole): string {
+  return JSON.stringify(role);
 }
 
 function errorMessage(error: unknown): string {

@@ -74,9 +74,13 @@ services. `ReviewService` aggregates run summary, verification, logs, memory
 proposal counts, local accept/reject decision artifacts, the latest persisted
 conversation brief artifact, bounded artifact metadata derived from existing
 `run_artifacts`, and the latest persisted TaskRunner safety report when one
-exists. The desktop-facing inspector maps that evidence to workgroup tabs named
-Brief, Context, Artifacts, Checks, Risks, Lifecycle, Memory, and Audit. Context is a
-review IPC read of the `conversation_brief` artifact. Artifacts are exposed by
+exists. The desktop-facing inspector maps that evidence to compact workgroup
+tabs named Brief, Evidence, Artifacts, Memory, and Audit. Evidence is a
+renderer grouping over existing review IPC for verification, risk, context
+availability, and lifecycle summary; Deep mode exposes the longer lifecycle
+controls while leaving the default drawer narrow. Full conversation-brief
+content remains available through artifact evidence rather than a separate
+top-level tab. Artifacts are exposed by
 `ReviewService.getArtifacts(runId)`, which maps persisted run artifacts into a
 local metadata model with title, type, source run/task ids, optional thread id,
 creator, summary, availability, and a capped content preview. This Phase 6
@@ -266,15 +270,19 @@ review evidence continue to render only through their inspector-specific views.
 The visual hierarchy pass remains renderer presentation over this same IPC
 boundary. `ChatView` derives only a lightweight local display state from
 already-loaded messages and run details so CSS can weight idle, running,
-failed, and review-ready surfaces differently. `AgentRunCard` derives failed
-incident copy, likely-cause text, and Status/Evidence/Outputs groups from
-persisted run events plus compact review summaries/artifacts that were already
+failed, and review-ready surfaces differently. `AgentRunCard` derives only the
+agent label, status, conclusion line, high-level facts, and state-specific
+review actions from persisted run events plus compact review summaries already
 available to the card. It does not retry runs, apply patches, approve memory,
 read logs directly, or bypass the inspector; card buttons only open existing
-review tabs such as Brief, Audit, Checks, Risks, Lifecycle, Artifacts, and
-Memory. Sidebar and header hierarchy changes are likewise renderer-only
-navigation/copy changes over the same project, thread, team, settings, and
-review IPC services.
+review surfaces such as Brief, Evidence, Audit, Artifacts, and Memory. Sidebar
+and header hierarchy changes are likewise renderer-only navigation/copy
+changes over the same project, thread, team, settings, and review IPC services.
+The room page also keeps layout state renderer-only: the header, message list,
+workflow launcher, and composer share a centered maximum-width conversation
+column, the workflow launcher renders a compact summary row when idle, and the
+context-mode selector is only a quiet local composer control. These changes do
+not alter thread persistence, workflow metadata, or context injection.
 
 Composer autocomplete is implemented as renderer-only input assistance. The
 helper in `apps/desktop/src/lib/composer-controls.ts` derives active `@` and
@@ -793,8 +801,11 @@ private-key, and client-secret option names inside args, and loaded by
 execution boundary and continues to run verification in the isolated worktree
 with dangerous-command validation.
 Renderer verification-setting empty and error states only explain this existing
-settings boundary and route the user back to the Settings panel; they do not
-parse prompts into shell commands or create alternate execution paths.
+settings boundary, show skipped-check consequences and example commands, and
+route the user back to the Settings panel; they do not parse prompts into shell
+commands or create alternate execution paths. The renderer compares the draft
+command list to the last loaded settings payload so Save changes is disabled
+until local form state actually changes.
 
 All adapters run against an isolated worktree and refuse to run when that
 directory is the original project root or when the generated task brief is
@@ -942,8 +953,11 @@ Phase 5 keeps the inspector as a renderer-only shell over those IPC services
 but changes its visible vocabulary from run-centric tabs to the workgroup
 structure. Existing links that still request legacy tabs such as Summary, Diff,
 Tests, Risk, Compare, Handoff, or Logs are normalized in the renderer to Brief,
-Artifacts, Checks, Risks, Artifacts, Artifacts, or Audit so older timeline
-metadata remains openable while new UI chips use the workgroup names.
+Artifacts, Evidence, Evidence, Artifacts, Artifacts, or Audit so older timeline
+metadata remains openable while the visible tab bar stays at Brief, Evidence,
+Artifacts, Memory, and Audit. Evidence internally loads the same verification,
+risk, context, and lifecycle IPC payloads; the drawer width and Deep mode are
+renderer layout state only.
 The Brief tab is the default conclusion surface. It derives a renderer-only
 review conclusion from the loaded review summary and the existing risk IPC
 payload, pins blocking findings above the summary when present, and exposes
@@ -952,6 +966,11 @@ new review scores or write decisions; refreshing the Brief tab reloads both
 summary and risk payloads so the conclusion cannot remain pinned to stale risk
 state while a run is still settling. Accept/reject continue to call the existing
 review IPC and record audit-only review state.
+The inspector header separates local panel controls from review decisions:
+Close stays a renderer-only panel control, Refresh is a lower-priority utility,
+and Accept/Reject remain the only decision actions. The Brief metrics are
+rendered as two compact renderer summary sections, Outcome and Review, without
+adding new review fields or showing the suggested decision as a metric.
 
 Phase 6 adds an artifact model v0 without changing storage ownership. The
 Electron main process reads existing `run_artifacts`, derives desktop-facing
@@ -978,9 +997,13 @@ metadata, and linked memory references. Electron exposes this through
 `window.agentHub.team.*` preload IPC. The renderer can edit role profile fields,
 policy metadata, enabled state, and executor bindings, but only
 `agent_adapter` roles become runnable through existing fake, Codex, or Claude
-Code adapters. Reserved `llm_api`, `workflow`, and `human` roles are stored and
-rendered as non-runnable assignment metadata until later runtime phases define
-explicit local executors.
+Code adapters. The role list is a scan surface over Role, Purpose, Executor,
+and Status only; permissions, policies, activity, and linked memory remain in
+the right-side Role Profile accordions. Save Role is enabled by renderer draft
+comparison only and still persists through the same validated IPC path.
+Reserved `llm_api`, `workflow`, and `human` roles are stored and rendered as
+non-runnable assignment metadata until later runtime phases define explicit
+local executors.
 
 Phase 9 adds bounded collaboration workflow metadata without autonomous agent
 chatter or remote queues. `ThreadService` stores `handoff`, `review_loop`, and

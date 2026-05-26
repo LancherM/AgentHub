@@ -8,10 +8,7 @@ import {
   runStatusFromTerminalEvent,
   type CompareAffordance
 } from "../../lib/run-progress";
-import {
-  runEvidenceTimelineGroups,
-  timelinePresentationForMessage
-} from "../../lib/timelineEvents";
+import { timelinePresentationForMessage } from "../../lib/timelineEvents";
 import type {
   AgentRunMessage,
   ReviewArtifact,
@@ -152,7 +149,6 @@ export function AgentRunCard({
       }),
     [events, run?.createdAt, run?.summary, run?.updatedAt, status]
   );
-  const canCancel = isActiveRunStatus(status);
   const canContinueCodeState =
     isTerminalRunStatus(status) && run?.canContinueCodeState === true;
   const continueDisabledTitle = run
@@ -171,10 +167,6 @@ export function AgentRunCard({
     : run
       ? `Started ${formatTime(run.createdAt)} · ${elapsed}`
       : progress.waitState;
-  const simulationCopy =
-    message.agentId === "fake"
-      ? "Local TaskRunner fake run in an isolated worktree. The project root is not modified."
-      : `Local TaskRunner run for @${message.agentId} in an isolated worktree. Unavailable CLIs fail with persisted evidence.`;
   const displayHandle = message.assignment?.roleHandle
     ? `@${message.assignment.roleHandle}`
     : `@${message.agentId}`;
@@ -191,31 +183,31 @@ export function AgentRunCard({
     () => findCliUnavailableDiagnostic(events),
     [events]
   );
-  const hasChangedFiles = (run?.changedFiles.length ?? 0) > 0;
-  const showEvidenceBody =
-    Boolean(cliDiagnostic) ||
-    hasChangedFiles ||
-    status === "failed" ||
-    status === "cancelled" ||
-    compareAffordance.enabled;
+  const changedFileCount = run?.changedFiles.length ?? 0;
   const liveAgentText = latestAgentFacingText(events);
-  const hasAgentFacingOutput = Boolean(liveAgentText);
   const isFailedRun = status === "failed";
   const quietCompleted = compactCompleted && isTerminalRunStatus(status) && !cliDiagnostic;
-  const evidenceActivityText = liveAgentText ?? progress.activityText;
-  const conversationalActivityText = liveAgentText ?? progress.waitState;
   const failedRunCause = isFailedRun
     ? likelyFailureCause(events, cliDiagnostic?.reason, message.agentId)
     : undefined;
-  const failedEvidence = isFailedRun
-    ? failedEvidenceLabel(events, reviewArtifacts)
-    : undefined;
-  const evidenceGroups = runEvidenceTimelineGroups(
-    reviewSummary,
-    events.length,
+  const reviewNeedsDecision = reviewSummary?.reviewStatus === "pending";
+  const conclusionLine = runCardConclusion({
     status,
-    reviewArtifacts
-  );
+    liveAgentText,
+    progressText: progress.waitState,
+    failedRunCause,
+    changedFileCount
+  });
+  const highLevelFields = [
+    run ? `Started ${formatTime(run.createdAt)}` : undefined,
+    isTerminalRunStatus(status) ? progress.waitState : elapsed,
+    `${changedFileCount} changed file${changedFileCount === 1 ? "" : "s"}`,
+    compareAffordance.enabled
+      ? `${compareAffordance.candidateCount} peer${
+          compareAffordance.candidateCount === 1 ? "" : "s"
+        }`
+      : undefined
+  ].filter((field): field is string => Boolean(field));
 
   async function cancel(): Promise<void> {
     setCancelError(undefined);
@@ -252,79 +244,14 @@ export function AgentRunCard({
             className="primary-action"
             onClick={(event) => {
               event.stopPropagation();
-              onOpenInspector(message.runId, "brief");
+              onOpenInspector(message.runId, primaryActionTab(status));
             }}
           >
-            View review
+            {primaryActionLabel(status, reviewNeedsDecision)}
           </button>
-          {isFailedRun ? (
-            <>
-              <button
-                onClick={(event) => {
-                  event.stopPropagation();
-                  onOpenInspector(message.runId, "audit");
-                }}
-              >
-                Open logs
-              </button>
-              <details
-                className="run-card-more"
-                onClick={(event) => event.stopPropagation()}
-              >
-                <summary>More</summary>
-                <div className="run-card-more-menu">
-                  <button
-                    disabled={!compareAffordance.enabled}
-                    title={compareAffordance.title}
-                    aria-label={compareAffordance.title}
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      if (!compareAffordance.enabled) {
-                        return;
-                      }
-                      onOpenInspector(message.runId, "compare");
-                    }}
-                  >
-                    Compare
-                  </button>
-                  <button
-                    disabled={!canContinueCodeState}
-                    title={canContinueCodeState ? "Continue from this run" : continueDisabledTitle}
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      if (!canContinueCodeState) {
-                        return;
-                      }
-                      onContinueFromRun();
-                    }}
-                  >
-                    Continue
-                  </button>
-                  <button
-                    title="Open retained-worktree handoff evidence"
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      onOpenInspector(message.runId, "handoff");
-                    }}
-                  >
-                    Handoff
-                  </button>
-                  <button
-                    title="Open persisted run events in audit"
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      onOpenInspector(message.runId, "audit");
-                    }}
-                  >
-                    Audit
-                  </button>
-                </div>
-              </details>
-            </>
-          ) : (
-            <>
-          {canCancel ? (
+          {isActiveRunStatus(status) ? (
             <button
+              className="danger-action"
               title="Cancel this active local run"
               onClick={(event) => {
                 event.stopPropagation();
@@ -333,26 +260,11 @@ export function AgentRunCard({
             >
               Cancel
             </button>
-          ) : null}
-          <button
-            disabled={!compareAffordance.enabled}
-            title={compareAffordance.title}
-            aria-label={compareAffordance.title}
-            onClick={(event) => {
-              event.stopPropagation();
-              if (!compareAffordance.enabled) {
-                return;
-              }
-              onOpenInspector(message.runId, "compare");
-            }}
-          >
-            Compare
-          </button>
-          {isTerminalRunStatus(status) ? (
+          ) : status === "failed" ? (
             <>
               <button
                 disabled={!canContinueCodeState}
-                title={canContinueCodeState ? "Continue from this run" : continueDisabledTitle}
+                title={canContinueCodeState ? "Retry from retained worktree" : continueDisabledTitle}
                 onClick={(event) => {
                   event.stopPropagation();
                   if (!canContinueCodeState) {
@@ -361,28 +273,63 @@ export function AgentRunCard({
                   onContinueFromRun();
                 }}
               >
-                Continue
-              </button>
-              <button
-                title="Open retained-worktree handoff evidence"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  onOpenInspector(message.runId, "handoff");
-                }}
-              >
-                Handoff
+                Retry
               </button>
             </>
-          ) : null}
-          <button
-            title="Open persisted run events in audit"
-            onClick={(event) => {
-              event.stopPropagation();
-              onOpenInspector(message.runId, "audit");
-            }}
-          >
-            Audit
-          </button>
+          ) : status === "cancelled" ? (
+            <>
+              <button
+                className="danger-action"
+                title="Open review decision controls"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onOpenInspector(message.runId, "brief");
+                }}
+              >
+                Reject
+              </button>
+            </>
+          ) : reviewNeedsDecision ? (
+            <>
+              <button
+                title="Open review decision controls"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onOpenInspector(message.runId, "brief");
+                }}
+              >
+                Accept
+              </button>
+              <button
+                className="danger-action"
+                title="Open review decision controls"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onOpenInspector(message.runId, "brief");
+                }}
+              >
+                Reject
+              </button>
+            </>
+          ) : (
+            <>
+              <button
+                title="Open review decision controls"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onOpenInspector(message.runId, "brief");
+                }}
+              >
+                Accept
+              </button>
+              <button
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onOpenInspector(message.runId, "artifacts");
+                }}
+              >
+                Artifacts
+              </button>
             </>
           )}
         </div>
@@ -392,138 +339,22 @@ export function AgentRunCard({
         <div className="inline-error">{streamError ?? cancelError}</div>
       ) : null}
 
-      {isFailedRun ? (
-        <div className="run-card-body failed-incident-body">
-          <div className="failed-incident-copy">
-            {!hasAgentFacingOutput ? (
-              <p className="failed-output-note">No agent-facing output was produced.</p>
-            ) : (
-              <MarkdownText text={liveAgentText ?? ""} compact />
-            )}
-            <p>
-              <strong>Likely cause:</strong> {failedRunCause}
-            </p>
-            <p>
-              <strong>Evidence:</strong> {failedEvidence}
-            </p>
-          </div>
-          {cliDiagnostic ? (
-            <div className="cli-diagnostic-panel">
-              <div>
-                <div className="panel-label">CLI Diagnostic</div>
-                <strong>{cliDiagnostic.reason}</strong>
-                {cliDiagnostic.cwd ? <p>cwd: {cliDiagnostic.cwd}</p> : null}
-              </div>
-              {cliDiagnostic.verifyCommand ? (
-                <code>{cliDiagnostic.verifyCommand}</code>
-              ) : null}
-              <p>
-                PATH checked:{" "}
-                {cliDiagnostic.pathEntries.length > 0
-                  ? cliDiagnostic.pathEntries.join(", ")
-                  : "No PATH entries were available."}
-              </p>
-            </div>
-          ) : null}
-        </div>
-      ) : !quietCompleted && showEvidenceBody ? (
-        <div className="run-card-body">
-          <div className="run-progress-rail" aria-label="Run progress">
-            {progress.stages.map((stage) => (
-              <div className={`run-progress-stage ${stage.state}`} key={stage.id}>
-                <div className="run-progress-bar" />
-                <span>{stage.label}</span>
-              </div>
+      {!quietCompleted ? (
+        <div className="run-card-body compact-run-summary">
+          {liveAgentText ? (
+            <MarkdownText text={conclusionLine} compact />
+          ) : (
+            <p className="run-card-conclusion">{conclusionLine}</p>
+          )}
+          <div className="run-card-facts" aria-label="Run summary">
+            {highLevelFields.map((field) => (
+              <span key={field}>{field}</span>
             ))}
           </div>
-
-          <div className="run-activity-row">
-            <div>
-              <span>Last activity</span>
-              {liveAgentText ? (
-                <MarkdownText text={evidenceActivityText} compact />
-              ) : (
-                <p>{evidenceActivityText}</p>
-              )}
-            </div>
-            <span className={`run-wait-state ${progress.tone}`}>
-              {progress.waitState}
-            </span>
-          </div>
-
-          <p className="fake-boundary">{simulationCopy}</p>
-          {hasChangedFiles ? (
-            <p className="fake-boundary">
-              Changed {run?.changedFiles.length} file{run?.changedFiles.length === 1 ? "" : "s"}.
-            </p>
-          ) : null}
-          {run?.parentRunId ? (
-            <p className="fake-boundary">Continues code state from {run.parentRunId}.</p>
-          ) : null}
-          {progress.activityTimestamp ? (
-            <p className="fake-boundary">
-              Last event at {formatTime(progress.activityTimestamp)}.
-            </p>
-          ) : null}
           {cliDiagnostic ? (
-            <div className="cli-diagnostic-panel">
-              <div>
-                <div className="panel-label">CLI Diagnostic</div>
-                <strong>{cliDiagnostic.reason}</strong>
-                {cliDiagnostic.cwd ? <p>cwd: {cliDiagnostic.cwd}</p> : null}
-              </div>
-              {cliDiagnostic.verifyCommand ? (
-                <code>{cliDiagnostic.verifyCommand}</code>
-              ) : null}
-              <p>
-                PATH checked:{" "}
-                {cliDiagnostic.pathEntries.length > 0
-                  ? cliDiagnostic.pathEntries.join(", ")
-                  : "No PATH entries were available."}
-              </p>
-            </div>
+            <p className="fake-boundary">CLI diagnostic available in Audit.</p>
           ) : null}
         </div>
-      ) : !quietCompleted ? (
-        <div className="run-card-body conversational-run-body">
-          <div className="run-activity-row">
-            <div>
-              <span>{isActiveRunStatus(status) ? "Agent reply" : "Result"}</span>
-              {liveAgentText ? (
-                <MarkdownText text={conversationalActivityText} compact />
-              ) : (
-                <p>{conversationalActivityText}</p>
-              )}
-            </div>
-            <span className={`run-wait-state ${progress.tone}`}>
-              {progress.waitState}
-            </span>
-          </div>
-        </div>
-      ) : null}
-
-      {showEvidenceBody ? (
-        <footer className="run-card-pills">
-          {evidenceGroups.map((group) => (
-            <div className="run-evidence-group" key={group.label}>
-              <span>{group.label}</span>
-              <div>
-                {group.items.map((pill) => (
-                  <button
-                    key={`${group.label}-${pill.label}`}
-                    className={`timeline-chip-button ${pill.tone ?? "neutral"}`}
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      onOpenInspector(message.runId, pill.tab);
-                    }}
-                  >
-                    {pill.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-          ))}
-        </footer>
       ) : null}
     </article>
   );
@@ -534,6 +365,59 @@ function appendEvent(events: RunEvent[], event: RunEvent): RunEvent[] {
     return events;
   }
   return [...events, event].sort((left, right) => left.sequence - right.sequence);
+}
+
+function primaryActionLabel(status: RunStatus, needsDecision: boolean): string {
+  if (isActiveRunStatus(status)) {
+    return "View live log";
+  }
+  if (status === "failed") {
+    return "View failure";
+  }
+  if (status === "cancelled") {
+    return "Open audit";
+  }
+  if (needsDecision) {
+    return "Review";
+  }
+  return "View result";
+}
+
+function primaryActionTab(status: RunStatus): RunInspectorTab {
+  if (isActiveRunStatus(status) || status === "cancelled") {
+    return "audit";
+  }
+  return "brief";
+}
+
+function runCardConclusion({
+  status,
+  liveAgentText,
+  progressText,
+  failedRunCause,
+  changedFileCount
+}: {
+  status: RunStatus;
+  liveAgentText?: string;
+  progressText: string;
+  failedRunCause?: string;
+  changedFileCount: number;
+}): string {
+  if (liveAgentText) {
+    return liveAgentText;
+  }
+  if (status === "failed") {
+    return failedRunCause ?? "Run failed before producing agent-facing output.";
+  }
+  if (status === "cancelled") {
+    return "Run was cancelled. Audit details are available in the inspector.";
+  }
+  if (status === "completed") {
+    return changedFileCount > 0
+      ? "Run completed with reviewable output."
+      : "Run completed without file changes.";
+  }
+  return progressText;
 }
 
 function formatTime(value: string): string {
@@ -613,38 +497,6 @@ function likelyFailureCause(
     return processExit;
   }
   return `${displayAgentName(agentId)} process exited before response generation.`;
-}
-
-function failedEvidenceLabel(
-  events: RunEvent[],
-  artifacts: ReviewArtifact[]
-): string {
-  const evidence: string[] = [];
-  if (events.length > 0) {
-    evidence.push("logs");
-  }
-  if (events.some((event) => hasDiagnosticOutput(event))) {
-    evidence.push("stderr or runner output");
-  }
-  if (events.some((event) => event.type === "run_failed")) {
-    evidence.push("failure event");
-  }
-  if (artifacts.length > 0) {
-    evidence.push(
-      `${artifacts.length} review artifact${artifacts.length === 1 ? "" : "s"}`
-    );
-  }
-  if (evidence.length === 0) {
-    return "No persisted evidence has loaded yet.";
-  }
-  return `${evidence.join(", ")} available.`;
-}
-
-function hasDiagnosticOutput(event: RunEvent): boolean {
-  if (event.payload.assistantOutput === true) {
-    return false;
-  }
-  return event.type === "agent_output" || event.type === "agent_step";
 }
 
 function trimmedMessage(event: RunEvent | undefined): string | undefined {
