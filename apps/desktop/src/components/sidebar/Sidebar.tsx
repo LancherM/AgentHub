@@ -6,6 +6,7 @@ import type {
   ProjectSummary,
   ThreadSummary
 } from "../../lib/types";
+import { sortRoomsByRecentActivity } from "../../lib/sidebar-navigation";
 
 interface SidebarProps {
   projects: ProjectSummary[];
@@ -50,17 +51,9 @@ export function Sidebar({
   const [roomDescription, setRoomDescription] = useState("");
   const [isCreatingRoom, setIsCreatingRoom] = useState(false);
   const selectedProject = projects.find((project) => project.id === selectedProjectId);
-  const projectRooms = threads
-    .filter((thread) => !selectedProjectId || thread.projectId === selectedProjectId)
-    .sort((left, right) => {
-      if (left.id === selectedThreadId) {
-        return -1;
-      }
-      if (right.id === selectedThreadId) {
-        return 1;
-      }
-      return 0;
-    });
+  const projectRooms = sortRoomsByRecentActivity(
+    threads.filter((thread) => !selectedProjectId || thread.projectId === selectedProjectId)
+  );
   const activeRunCount = projectRooms.reduce(
     (total, thread) => total + (thread.activeRunCount ?? 0),
     0
@@ -107,52 +100,46 @@ export function Sidebar({
 
       <section className="nav-section project-nav">
         <div className="section-label">Project</div>
-        <div className="selected-project-block">
-          <span className="project-dot" />
-          <div className="truncate">
-            <div className="row-title">
+        <details className="project-switcher" open={projects.length === 0}>
+          <summary className="selected-project-block">
+            <span className="project-dot" />
+            <span className="current-project-name">
               {selectedProject
                 ? projectDisplayName(selectedProject, projects)
                 : "No project"}
-            </div>
-            <div className="row-subtitle">
-              {selectedProject
-                ? compactProjectPath(selectedProject.rootPath)
-                : "Register a local repository"}
-            </div>
+            </span>
+          </summary>
+          <div className="project-switcher-menu">
+            {projects.length > 0 ? (
+              <div className="project-list compact">
+                {projects.map((project) => (
+                  <button
+                    className={`project-row ${
+                      selectedProjectId === project.id ? "selected" : ""
+                    }`}
+                    key={project.id}
+                    onClick={() => onSelectProject(project.id)}
+                  >
+                    <span className="project-dot" />
+                    <div className="truncate">
+                      <div className="row-title">
+                        {projectDisplayName(project, projects)}
+                      </div>
+                      <div className="row-subtitle">
+                        {compactProjectPath(project.rootPath)}
+                      </div>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            ) : null}
+            <div className="project-registration-heading">Add project</div>
+            <ProjectRegistrationForm
+              isBusy={isBusy}
+              onRegister={onRegisterProject}
+              onSelectDirectory={onSelectProjectDirectory}
+            />
           </div>
-        </div>
-        {projects.length > 1 ? (
-          <div className="project-list compact">
-            {projects.map((project) => (
-              <button
-                className={`project-row ${
-                  selectedProjectId === project.id ? "selected" : ""
-                }`}
-                key={project.id}
-                onClick={() => onSelectProject(project.id)}
-              >
-                <span className="project-dot" />
-                <div className="truncate">
-                  <div className="row-title">
-                    {projectDisplayName(project, projects)}
-                  </div>
-                  <div className="row-subtitle">{compactProjectPath(project.rootPath)}</div>
-                </div>
-              </button>
-            ))}
-          </div>
-        ) : null}
-        <details
-          className="sidebar-add-project"
-          open={projects.length === 0}
-        >
-          <summary>Add project</summary>
-          <ProjectRegistrationForm
-            isBusy={isBusy}
-            onRegister={onRegisterProject}
-            onSelectDirectory={onSelectProjectDirectory}
-          />
         </details>
         {projects.length === 0 ? (
           <div className="sidebar-empty-action">
