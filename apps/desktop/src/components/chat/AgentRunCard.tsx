@@ -22,6 +22,7 @@ import type {
   RunStatus
 } from "../../lib/types";
 import { RunStatusBadge } from "../RunStatusBadge";
+import { MarkdownText } from "./MarkdownText";
 
 interface AgentRunCardProps {
   message: AgentRunMessage;
@@ -199,6 +200,8 @@ export function AgentRunCard({
     compareAffordance.enabled;
   const liveAgentText = latestAgentFacingText(events);
   const quietCompleted = compactCompleted && isTerminalRunStatus(status) && !cliDiagnostic;
+  const evidenceActivityText = liveAgentText ?? progress.activityText;
+  const conversationalActivityText = liveAgentText ?? progress.waitState;
 
   async function cancel(): Promise<void> {
     setCancelError(undefined);
@@ -319,7 +322,11 @@ export function AgentRunCard({
           <div className="run-activity-row">
             <div>
               <span>Last activity</span>
-              <p>{liveAgentText ?? progress.activityText}</p>
+              {liveAgentText ? (
+                <MarkdownText text={evidenceActivityText} compact />
+              ) : (
+                <p>{evidenceActivityText}</p>
+              )}
             </div>
             <span className={`run-wait-state ${progress.tone}`}>
               {progress.waitState}
@@ -364,7 +371,11 @@ export function AgentRunCard({
           <div className="run-activity-row">
             <div>
               <span>{isActiveRunStatus(status) ? "Agent reply" : "Result"}</span>
-              <p>{liveAgentText ?? progress.waitState}</p>
+              {liveAgentText ? (
+                <MarkdownText text={conversationalActivityText} compact />
+              ) : (
+                <p>{conversationalActivityText}</p>
+              )}
             </div>
             <span className={`run-wait-state ${progress.tone}`}>
               {progress.waitState}

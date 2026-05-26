@@ -493,7 +493,10 @@ Active inline run cards subscribe to the existing desktop run event stream and
 replay already-persisted events when a subscription starts after a fast run has
 advanced. Routine one-agent chat turns render as compact participant activity
 and prefer the latest agent-facing natural-language output over lifecycle
-details. Raw event lines stay behind the inspector's Audit view by default.
+details. Agent-facing transcript output and live compact run output render
+Markdown, including lists, code blocks, links, tables, and other common GFM
+syntax, while raw HTML remains disabled. Raw event lines stay behind the
+inspector's Audit view by default.
 Once a completed run has a durable assistant answer and no changed files, the
 default transcript hides the run card entirely and keeps the answer as the main
 visible row. Runs that modify files, fail, are cancelled, or have comparison
@@ -656,7 +659,7 @@ operations go through Electron main-process IPC registered in
 `apps/desktop/electron/ipc.ts`. The IPC handler factory is kept in
 `apps/desktop/electron/ipc-handlers.ts` so service-level validation and
 subscription behavior remain testable in the root Vitest suite without loading
-Electron.
+Electron. Desktop markdown links are treated as untrusted content: renderer links request `window.open`, while the Electron main process denies new in-app windows and routes only `http`, `https`, and `mailto` URLs to `shell.openExternal`.
 
 The current desktop execution path is TaskRunner-backed in the Electron main
 process. `RunService` can now attach a queued desktop run to an existing

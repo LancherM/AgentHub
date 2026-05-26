@@ -1,6 +1,7 @@
 import type { AssistantMessage } from "../../lib/types";
 import { timelinePresentationForMessage } from "../../lib/timelineEvents";
 import { RunStatusBadge } from "../RunStatusBadge";
+import { MarkdownText } from "./MarkdownText";
 
 interface AssistantMessageBubbleProps {
   message: AssistantMessage;
@@ -31,7 +32,7 @@ export function AssistantMessageBubble({
             ))}
           </div>
         ) : null}
-        <p>{message.text}</p>
+        <MarkdownText text={message.text} />
       </div>
     </article>
   );
