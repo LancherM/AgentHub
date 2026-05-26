@@ -244,10 +244,7 @@ export function AgentRunCard({
             className="primary-action"
             onClick={(event) => {
               event.stopPropagation();
-              onOpenInspector(
-                message.runId,
-                isActiveRunStatus(status) ? "audit" : "brief"
-              );
+              onOpenInspector(message.runId, primaryActionTab(status));
             }}
           >
             {primaryActionLabel(status, reviewNeedsDecision)}
@@ -278,25 +275,9 @@ export function AgentRunCard({
               >
                 Retry
               </button>
-              <button
-                onClick={(event) => {
-                  event.stopPropagation();
-                  onOpenInspector(message.runId, "audit");
-                }}
-              >
-                Open audit
-              </button>
             </>
           ) : status === "cancelled" ? (
             <>
-              <button
-                onClick={(event) => {
-                  event.stopPropagation();
-                  onOpenInspector(message.runId, "audit");
-                }}
-              >
-                Open audit
-              </button>
               <button
                 className="danger-action"
                 title="Open review decision controls"
@@ -400,6 +381,13 @@ function primaryActionLabel(status: RunStatus, needsDecision: boolean): string {
     return "Review";
   }
   return "View result";
+}
+
+function primaryActionTab(status: RunStatus): RunInspectorTab {
+  if (isActiveRunStatus(status) || status === "cancelled") {
+    return "audit";
+  }
+  return "brief";
 }
 
 function runCardConclusion({
