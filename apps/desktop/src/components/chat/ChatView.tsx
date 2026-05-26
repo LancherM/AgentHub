@@ -187,6 +187,11 @@ export function ChatView({
                 onRegister={onRegisterProject}
                 onSelectDirectory={onSelectProjectDirectory}
               />
+              <div className="onboarding-bridge" aria-label="First run flow">
+                <span>Register project</span>
+                <span>Composer unlocks</span>
+                <span>Run local agent</span>
+              </div>
             </EmptyState>
           </div>
         )}
