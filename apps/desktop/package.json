@@ -15,13 +15,15 @@
     "preview": "electron-vite preview"
   },
   "dependencies": {
-    "@agent-hub/core": "workspace:*",
     "@agent-hub/context-compiler": "workspace:*",
+    "@agent-hub/core": "workspace:*",
     "@agent-hub/db": "workspace:*",
     "@agent-hub/shared": "workspace:*",
     "@agent-hub/task-runner": "workspace:*",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1"
+    "react-dom": "^18.3.1",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1"
   },
   "devDependencies": {
     "@types/react": "^18.3.18",
