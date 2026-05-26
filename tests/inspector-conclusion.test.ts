@@ -26,9 +26,7 @@ describe("buildReviewConclusion", () => {
     );
 
     expect(conclusion.headline).toBe("Blocking risk needs review");
-    expect(conclusion.suggestedDecision).toBe(
-      "Record reject or request a follow-up"
-    );
+    expect(conclusion.suggestedDecision).toBe("Reject or follow up");
     expect(conclusion.tone).toBe("danger");
     expect(conclusion.blockingFindings).toHaveLength(1);
     expect(conclusion.nextActions[0]).toMatchObject({
@@ -44,9 +42,7 @@ describe("buildReviewConclusion", () => {
     );
 
     expect(conclusion.headline).toBe("Review ready");
-    expect(conclusion.suggestedDecision).toBe(
-      "Record accept after manual review"
-    );
+    expect(conclusion.suggestedDecision).toBe("Accept after review");
     expect(conclusion.tone).toBe("ready");
     expect(conclusion.blockingFindings).toEqual([]);
     expect(conclusion.nextActions.map((action) => action.tab)).toEqual([
@@ -63,7 +59,7 @@ describe("buildReviewConclusion", () => {
     );
 
     expect(conclusion.headline).toBe("Risk needs review");
-    expect(conclusion.suggestedDecision).toBe("Review evidence before deciding");
+    expect(conclusion.suggestedDecision).toBe("Review evidence first");
     expect(conclusion.tone).toBe("warning");
   });
 });

@@ -278,6 +278,11 @@ read logs directly, or bypass the inspector; card buttons only open existing
 review surfaces such as Brief, Evidence, Audit, Artifacts, and Memory. Sidebar
 and header hierarchy changes are likewise renderer-only navigation/copy
 changes over the same project, thread, team, settings, and review IPC services.
+The room page also keeps layout state renderer-only: the header, message list,
+workflow launcher, and composer share a centered maximum-width conversation
+column, the workflow launcher renders a compact summary row when idle, and the
+context-mode selector is only a quiet local composer control. These changes do
+not alter thread persistence, workflow metadata, or context injection.
 
 Composer autocomplete is implemented as renderer-only input assistance. The
 helper in `apps/desktop/src/lib/composer-controls.ts` derives active `@` and
@@ -961,6 +966,11 @@ new review scores or write decisions; refreshing the Brief tab reloads both
 summary and risk payloads so the conclusion cannot remain pinned to stale risk
 state while a run is still settling. Accept/reject continue to call the existing
 review IPC and record audit-only review state.
+The inspector header separates local panel controls from review decisions:
+Close stays a renderer-only panel control, Refresh is a lower-priority utility,
+and Accept/Reject remain the only decision actions. The Brief metrics are
+rendered as two compact renderer summary sections, Outcome and Review, without
+adding new review fields or showing the suggested decision as a metric.
 
 Phase 6 adds an artifact model v0 without changing storage ownership. The
 Electron main process reads existing `run_artifacts`, derives desktop-facing

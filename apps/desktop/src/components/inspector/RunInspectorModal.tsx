@@ -5,6 +5,7 @@ import {
   buildReviewConclusion,
   normalizeReviewInspectorTab
 } from "../../lib/inspector-conclusion";
+import type { ReviewConclusionModel } from "../../lib/inspector-conclusion";
 import type {
   ComparisonCandidate,
   ComparisonReport,
@@ -327,43 +328,56 @@ export function RunInspectorModal({
         onMouseDown={(event) => event.stopPropagation()}
       >
         <header className="inspector-header">
-          <div>
-            <div className="eyebrow">Workgroup Inspector</div>
-            <h2>{title}</h2>
-            <div className="inspector-status-row">
-              {summary.data ? (
-                <>
-                  <RunStatusBadge status={summary.data.status} compact />
-                  <span className={`review-state ${summary.data.reviewStatus}`}>
-                    {summary.data.reviewStatus}
-                  </span>
-                </>
-              ) : null}
+          <div className="inspector-title-row">
+            <div className="inspector-title-copy">
+              <div className="eyebrow">Workgroup Inspector</div>
+              <h2>{title}</h2>
+              <div className="inspector-status-row">
+                {summary.data ? (
+                  <>
+                    <RunStatusBadge status={summary.data.status} compact />
+                    <span className={`review-state ${summary.data.reviewStatus}`}>
+                      {summary.data.reviewStatus}
+                    </span>
+                  </>
+                ) : null}
+              </div>
             </div>
-          </div>
-          <div className="inspector-actions">
-            {canUseDeepReview ? (
-              <button
-                className={`ghost-button utility-action ${
-                  deepReviewMode ? "selected" : ""
-                }`}
-                onClick={() => setDeepReviewMode((current) => !current)}
-              >
-                Deep
-              </button>
-            ) : null}
-            <button className="ghost-button utility-action" onClick={() => void refresh()}>
-              Refresh
-            </button>
-            <button className="primary-button compact" onClick={() => void accept()}>
-              Accept
-            </button>
-            <button className="ghost-button danger" onClick={() => void reject()}>
-              Reject
-            </button>
-            <button className="ghost-button utility-action" onClick={onClose}>
+            <button
+              className="inspector-close-button"
+              onClick={onClose}
+              aria-label="Close inspector"
+            >
               Close
             </button>
+          </div>
+          <div className="inspector-action-row">
+            <div className="inspector-utility-actions">
+              {canUseDeepReview ? (
+                <button
+                  className={`ghost-button utility-action compact ${
+                    deepReviewMode ? "selected" : ""
+                  }`}
+                  onClick={() => setDeepReviewMode((current) => !current)}
+                >
+                  Deep
+                </button>
+              ) : null}
+              <button
+                className="ghost-button utility-action compact"
+                onClick={() => void refresh()}
+              >
+                Refresh
+              </button>
+            </div>
+            <div className="inspector-decision-actions">
+              <button className="primary-button compact" onClick={() => void accept()}>
+                Accept
+              </button>
+              <button className="ghost-button danger compact" onClick={() => void reject()}>
+                Reject
+              </button>
+            </div>
           </div>
         </header>
 
@@ -511,23 +525,14 @@ function Brief({
             <p>{conclusion.rationale}</p>
             {summary.summary ? <p className="muted-copy">{summary.summary}</p> : null}
           </div>
-          <span className={`decision-recommendation ${conclusion.tone}`}>
-            {conclusion.suggestedDecision}
-          </span>
         </div>
+        <p className="decision-guidance">
+          Suggested: <strong>{conclusion.suggestedDecision}</strong>. Use the
+          header actions to record a decision after reviewing evidence.
+        </p>
       </section>
 
-      <section className="summary-metrics wide handoff-metrics conclusion-metrics">
-        <Metric label="Changed Output" value={conclusion.changedOutput} />
-        <Metric label="Checks" value={conclusion.checkSummary} />
-        <Metric label="Risks" value={conclusion.riskSummary} />
-        <Metric label="Suggested" value={conclusion.suggestedDecision} />
-        <Metric label="Agent" value={`@${summary.agentId}`} />
-        <Metric label="Review" value={summary.reviewStatus} />
-        <Metric label="Duration" value={formatDuration(summary.durationMs)} />
-        <Metric label="Memory" value={conclusion.memorySummary} />
-        <Metric label="Parent" value={summary.parentRunId ?? "none"} />
-      </section>
+      <BriefSummarySections summary={summary} conclusion={conclusion} />
 
       <section>
         <div className="review-section-head">
@@ -582,6 +587,59 @@ function Brief({
           repository context files.
         </p>
       </section>
+    </div>
+  );
+}
+
+function BriefSummarySections({
+  summary,
+  conclusion
+}: {
+  summary: ReviewSummary;
+  conclusion: ReviewConclusionModel;
+}): JSX.Element {
+  return (
+    <section className="inspector-summary-sections">
+      <CompactSummarySection
+        title="Outcome"
+        items={[
+          ["Files changed", conclusion.changedOutput],
+          ["Checks", conclusion.checkSummary],
+          ["Risk", conclusion.riskSummary],
+          ["Duration", formatDuration(summary.durationMs)]
+        ]}
+      />
+      <CompactSummarySection
+        title="Review"
+        items={[
+          ["Agent", `@${summary.agentId}`],
+          ["Review state", summary.reviewStatus],
+          ["Memory proposals", conclusion.memorySummary],
+          ["Parent", summary.parentRunId ? shortId(summary.parentRunId) : "none"]
+        ]}
+      />
+    </section>
+  );
+}
+
+function CompactSummarySection({
+  title,
+  items
+}: {
+  title: string;
+  items: Array<[string, string]>;
+}): JSX.Element {
+  return (
+    <div className="compact-summary-section">
+      <h4>{title}</h4>
+      <div className="compact-summary-rows">
+        {items.map(([label, value]) => (
+          <div className="compact-summary-row" key={label}>
+            <span>{label}</span>
+            <strong>{value}</strong>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

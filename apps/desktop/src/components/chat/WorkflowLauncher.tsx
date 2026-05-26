@@ -96,17 +96,27 @@ export function WorkflowLauncher({
 
   return (
     <section className={`workflow-launcher ${isExpanded ? "expanded" : ""}`}>
-      <button
-        className="workflow-launcher-summary"
-        onClick={() => setIsExpanded((current) => !current)}
-        type="button"
-      >
-        <span>
-          <strong>Workflow</strong>
-          <small>{selectedMode.label} - max {maxRounds} round(s)</small>
-        </span>
-        <span className="workflow-start-label">Start</span>
-      </button>
+      <div className="workflow-launcher-summary">
+        <button
+          className="workflow-summary-toggle"
+          onClick={() => setIsExpanded((current) => !current)}
+          type="button"
+          aria-expanded={isExpanded}
+        >
+          <strong>Workflow:</strong>
+          <span>
+            {selectedMode.label} · max {maxRounds} round{maxRounds === 1 ? "" : "s"}
+          </span>
+        </button>
+        <button
+          className="workflow-start-button"
+          onClick={() => setIsExpanded((current) => !current)}
+          type="button"
+          aria-expanded={isExpanded}
+        >
+          Start
+        </button>
+      </div>
       {isExpanded ? (
         <div className="workflow-launcher-body">
           <div className="workflow-mode-tabs">
@@ -165,12 +175,12 @@ export function WorkflowLauncher({
           <div className="workflow-launcher-actions">
             <span className="muted-copy">Local task metadata, no auto-apply.</span>
             <button
-              className="primary-button compact"
+              className="secondary-button compact"
               disabled={isBusy}
               onClick={() => void startWorkflow()}
               type="button"
             >
-              Start Workflow
+              Start
             </button>
           </div>
         </div>

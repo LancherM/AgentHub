@@ -477,8 +477,14 @@ can pin fallback targets as explicit mentions, and can remove explicit
 mentions before the turn is submitted. Applying autocomplete and removing
 target chips preserve prompt formatting outside the affected mention token so
 indented code, YAML, and aligned text are not rewritten. Context mode uses
-segmented controls, and the submit button reports the expected local run
-fan-out. Role mentions are resolved in the Electron main process, persisted on
+quiet segmented controls, and the submit button reports the expected local run
+fan-out as the only high-emphasis composer action. The room workflow launcher
+stays compact when idle, showing a single-line summary such as
+`Workflow: Review Loop · max 2 rounds` with a low-priority Start affordance on
+the right. The room header, transcript, workflow launcher, and composer share a
+centered conversation column on wide screens so long responses read as a
+thread rather than scattered dashboard cards. Role mentions are resolved in
+the Electron main process, persisted on
 the user message and run-card metadata, and copied to run metadata so review
 surfaces can show which role and executor produced a run. The renderer sends
 prompt text through the safe `window.agentHub.threads.sendMessage` preload API;
@@ -589,10 +595,15 @@ Memory, and Audit. The default drawer is a narrow detail panel, with an
 optional Deep mode for long audit logs, lifecycle controls, and artifact diffs.
 Evidence groups checks, risks, context availability, and lifecycle summary;
 full conversation-brief content remains reachable through artifact evidence
-instead of occupying the default narrow panel. Brief is conclusion-first: it shows any
-blocking risk at the top, then the review conclusion, suggested audit-only
-decision, changed-output count, check state, risk state, memory proposal count,
-and manual next actions that route to secondary tabs. It still shows the goal,
+instead of occupying the default narrow panel. Brief is conclusion-first: it
+shows any
+blocking risk at the top, then the review conclusion and short suggested
+direction as text. The header treats Close as a panel control, keeps Refresh
+as a lower-priority utility, and separates Accept and Reject as decision
+actions. Brief summarizes run evidence in two compact sections: Outcome
+contains changed files, checks, risk, and duration; Review contains agent,
+review state, memory proposal count, and parent run. Suggestions stay in the
+conclusion or manual next-action area rather than appearing as metrics. It still shows the goal,
 status, assignee, acceptance-criteria placeholder, and decision boundary below
 the conclusion. Artifacts begins with a local artifact inventory derived from
 persisted `run_artifacts`.

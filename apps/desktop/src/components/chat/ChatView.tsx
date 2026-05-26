@@ -118,37 +118,39 @@ export function ChatView({
   return (
     <section className={`chat-view state-${chatState}`}>
       <header className="chat-header">
-        <div>
-          <h1>
-            {thread?.roomHandle ? `#${thread.roomHandle}` : thread?.title ?? "Select a room"}
-          </h1>
-          {thread?.description ? (
-            <p className="room-description">{thread.description}</p>
-          ) : null}
-          <div className="chat-context-row">
-            <span className="chat-product-context">
-              {project?.name ?? "No project"} · {roomContextLabel(thread)} · local desktop
-            </span>
-            <span
-              className="chat-context-mode"
-              title="Agent Hub injects task briefs and context at runtime unless a different delivery mode is explicitly selected."
-            >
-              Context: runtime injection
-            </span>
+        <div className="chat-header-inner">
+          <div>
+            <h1>
+              {thread?.roomHandle ? `#${thread.roomHandle}` : thread?.title ?? "Select a room"}
+            </h1>
+            {thread?.description ? (
+              <p className="room-description">{thread.description}</p>
+            ) : null}
+            <div className="chat-context-row">
+              <span className="chat-product-context">
+                {project?.name ?? "No project"} · {roomContextLabel(thread)} · local desktop
+              </span>
+              <span
+                className="chat-context-mode"
+                title="Agent Hub injects task briefs and context at runtime unless a different delivery mode is explicitly selected."
+              >
+                Context: runtime injection
+              </span>
+            </div>
           </div>
+          {thread ? (
+            <label className="room-context-toggle">
+              <input
+                type="checkbox"
+                role="switch"
+                checked={thread.sharedContextEnabled}
+                disabled={isBusy}
+                onChange={(event) => onSetSharedContext(event.target.checked)}
+              />
+              <span>Use this room's prior conversation in future agent runs</span>
+            </label>
+          ) : null}
         </div>
-        {thread ? (
-          <label className="room-context-toggle">
-            <input
-              type="checkbox"
-              role="switch"
-              checked={thread.sharedContextEnabled}
-              disabled={isBusy}
-              onChange={(event) => onSetSharedContext(event.target.checked)}
-            />
-            <span>Use this room's prior conversation in future agent runs</span>
-          </label>
-        ) : null}
       </header>
 
       {error ? (

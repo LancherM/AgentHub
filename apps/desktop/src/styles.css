@@ -35,6 +35,7 @@
   --surface-hover: rgba(255, 255, 255, 0.045);
   --surface-raised: rgba(20, 21, 18, 0.92);
   --shadow: 0 26px 90px rgba(0, 0, 0, 0.42);
+  --thread-column: 960px;
 }
 
 * {
@@ -650,6 +651,12 @@ select:focus-visible {
 .primary-button.compact {
   min-height: 34px;
   padding: 0 13px;
+  font-size: 12px;
+}
+
+.secondary-button.compact {
+  min-height: 34px;
+  padding: 0 12px;
   font-size: 12px;
 }
 
@@ -1472,12 +1479,18 @@ select:focus-visible {
 }
 
 .chat-header {
+  display: block;
+  padding: 18px 28px 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.chat-header-inner {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
   gap: 18px;
-  padding: 18px 28px 12px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  width: min(100%, var(--thread-column));
+  margin: 0 auto;
 }
 
 .room-context-toggle {
@@ -1551,7 +1564,7 @@ select:focus-visible {
 
 .message-list {
   display: flex;
-  width: min(100%, 1060px);
+  width: min(100%, var(--thread-column));
   margin: 0 auto;
   flex-direction: column;
   gap: 14px;
@@ -2563,14 +2576,14 @@ select:focus-visible {
 }
 
 .error-strip.inline {
-  width: min(100% - 56px, 1060px);
+  width: min(100% - 56px, var(--thread-column));
   margin: 12px auto 0;
 }
 
 .chat-composer {
   display: grid;
   align-self: end;
-  width: min(100% - 56px, 1060px);
+  width: min(100% - 56px, var(--thread-column));
   max-height: calc(100vh - 120px);
   margin: 0 auto 18px;
   gap: 8px;
@@ -2603,25 +2616,25 @@ select:focus-visible {
 .context-segmented-control {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  flex: 0 0 min(320px, 42%);
-  min-width: 250px;
-  gap: 2px;
-  padding: 2px;
-  border: 1px solid var(--line-soft);
+  flex: 0 1 272px;
+  min-width: 220px;
+  gap: 1px;
+  padding: 1px;
+  border: 1px solid transparent;
   border-radius: 8px;
-  background: rgba(255, 255, 255, 0.018);
+  background: rgba(255, 255, 255, 0.01);
 }
 
 .context-segmented-control button {
   min-width: 0;
-  min-height: 26px;
-  padding: 0 7px;
+  min-height: 24px;
+  padding: 0 6px;
   border: 0;
   border-radius: 6px;
   background: transparent;
   color: var(--muted-2);
-  font-size: 11px;
-  font-weight: 850;
+  font-size: 10.5px;
+  font-weight: 760;
 }
 
 .context-segmented-control button:hover {
@@ -2630,7 +2643,7 @@ select:focus-visible {
 }
 
 .context-segmented-control button.selected {
-  background: rgba(103, 216, 196, 0.1);
+  background: rgba(103, 216, 196, 0.075);
   color: var(--cyan);
 }
 
@@ -2856,12 +2869,27 @@ select:focus-visible {
 
 .inspector-header,
 .settings-header {
+  display: grid;
+  gap: 12px;
+  padding: 18px;
+  border-bottom: 1px solid var(--line);
+}
+
+.settings-header {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 14px;
-  padding: 18px;
-  border-bottom: 1px solid var(--line);
+}
+
+.inspector-title-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: start;
+}
+
+.inspector-title-copy {
+  min-width: 0;
 }
 
 .inspector-header h2,
@@ -2869,6 +2897,7 @@ select:focus-visible {
   margin: 0;
   overflow-wrap: anywhere;
   font-size: 20px;
+  line-height: 1.2;
 }
 
 .settings-header p {
@@ -2879,7 +2908,9 @@ select:focus-visible {
 }
 
 .inspector-status-row,
-.inspector-actions,
+.inspector-action-row,
+.inspector-utility-actions,
+.inspector-decision-actions,
 .review-section-head,
 .memory-toolbar,
 .log-filter-row {
@@ -2892,14 +2923,41 @@ select:focus-visible {
   margin-top: 9px;
 }
 
-.inspector-actions {
-  flex-wrap: wrap;
-  justify-content: flex-end;
+.inspector-action-row {
+  justify-content: space-between;
+  gap: 10px;
 }
 
-.inspector-actions .danger {
+.inspector-utility-actions,
+.inspector-decision-actions {
+  min-width: 0;
+  flex-wrap: nowrap;
+}
+
+.inspector-decision-actions {
+  margin-left: auto;
+}
+
+.inspector-decision-actions .danger {
   border-color: rgba(255, 125, 107, 0.36);
   color: #ffd6cf;
+}
+
+.inspector-close-button {
+  min-height: 28px;
+  padding: 0 9px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted-2);
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.inspector-close-button:hover {
+  border-color: var(--line-soft);
+  background: rgba(255, 255, 255, 0.025);
+  color: var(--muted);
 }
 
 .ghost-button.danger {
@@ -3169,6 +3227,83 @@ select:focus-visible {
   border-color: rgba(255, 125, 107, 0.42);
   color: var(--red);
   background: rgba(255, 125, 107, 0.08);
+}
+
+.decision-guidance {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.decision-guidance strong {
+  color: var(--text);
+}
+
+.summary-stack section.inspector-summary-sections {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 10px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.run-inspector.deep-review .summary-stack section.inspector-summary-sections {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.compact-summary-section {
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.022);
+}
+
+.compact-summary-section h4 {
+  margin: 0;
+  padding: 9px 10px;
+  border-bottom: 1px solid var(--line-soft);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 850;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.compact-summary-rows {
+  display: grid;
+}
+
+.compact-summary-row {
+  display: grid;
+  grid-template-columns: minmax(88px, 0.48fr) minmax(0, 1fr);
+  gap: 10px;
+  align-items: baseline;
+  min-height: 31px;
+  padding: 7px 10px;
+  border-top: 1px solid rgba(255, 255, 255, 0.028);
+}
+
+.compact-summary-row:first-child {
+  border-top: 0;
+}
+
+.compact-summary-row span {
+  color: var(--muted-2);
+  font-size: 11px;
+}
+
+.compact-summary-row strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 820;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .review-next-action-list {
@@ -3977,50 +4112,73 @@ select:focus-visible {
 }
 
 .workflow-launcher {
+  padding: 7px 0;
   border-top: 1px solid var(--line-soft);
-  background: rgba(10, 14, 11, 0.72);
+  background: rgba(10, 14, 11, 0.58);
 }
 
 .workflow-launcher-summary {
-  width: calc(100% - 48px);
-  min-height: 38px;
-  margin: 9px 24px;
-  padding: 6px 8px 6px 10px;
+  width: min(100% - 56px, var(--thread-column));
+  min-height: 34px;
+  margin: 0 auto;
+  padding: 4px 4px 4px 10px;
   border: 1px solid var(--line-soft);
   border-radius: 8px;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 14px;
+  gap: 10px;
   color: var(--text);
-  background: rgba(255, 255, 255, 0.018);
+  background: rgba(255, 255, 255, 0.014);
 }
 
-.workflow-launcher-summary span:first-child {
-  display: grid;
-  gap: 2px;
+.workflow-summary-toggle {
+  display: inline-flex;
+  min-width: 0;
+  min-height: 28px;
+  flex: 1;
+  align-items: center;
+  gap: 6px;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
   text-align: left;
 }
 
-.workflow-launcher-summary small {
-  color: var(--muted);
+.workflow-summary-toggle strong {
+  flex: 0 0 auto;
+  color: var(--text);
 }
 
-.workflow-start-label {
+.workflow-summary-toggle span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workflow-start-button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   min-height: 28px;
   padding: 0 12px;
+  border: 1px solid rgba(216, 255, 87, 0.24);
   border-radius: 8px;
-  background: var(--accent);
-  color: var(--accent-ink);
+  background: rgba(216, 255, 87, 0.055);
+  color: var(--accent);
   font-size: 12px;
   font-weight: 900;
 }
 
+.workflow-start-button:hover {
+  border-color: rgba(216, 255, 87, 0.38);
+  background: rgba(216, 255, 87, 0.09);
+}
+
 .workflow-launcher-body {
-  margin: 0 24px 12px;
+  width: min(100% - 56px, var(--thread-column));
+  margin: 8px auto 4px;
   padding: 12px;
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -4298,6 +4456,12 @@ select:focus-visible {
     width: calc(100% - 36px);
   }
 
+  .workflow-launcher-summary,
+  .workflow-launcher-body,
+  .error-strip.inline {
+    width: calc(100% - 36px);
+  }
+
   .run-card-header,
   .task-run-group-header,
   .composer-toolbar,
@@ -4339,6 +4503,7 @@ select:focus-visible {
   .lifecycle-control-grid,
   .lifecycle-confirm-box,
   .comparison-signals,
+  .summary-stack section.inspector-summary-sections,
   .blocking-risk-banner,
   .review-next-action-list article,
   .error-strip.actionable,
