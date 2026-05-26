@@ -848,11 +848,21 @@ class RepositoryThreadService implements ThreadService {
   }) {
     const room = roomMetadataForThread(input.thread);
     const contextSourceMessages = room.sharedContextEnabled
-      ? contextSourceMessagesForAgent(input.priorMessages, input.agentId)
+      ? contextSourceMessagesForParticipant(input.priorMessages, {
+          agentId: input.agentId,
+          roleHandle: input.role?.roleHandle
+        })
       : [];
     const messages = await Promise.all(
       contextSourceMessages.map((message) => this.toConversationContextMessage(message))
     );
+    const includedMessages = messages.filter(
+      (message): message is ConversationContextMessage => message !== undefined
+    );
+    const threadSummary =
+      room.sharedContextEnabled && input.role?.contextPolicy.includeThreadSummary !== false
+        ? this.conversationThreadSummaryBuilder.build({ messages: includedMessages })
+        : undefined;
     return this.conversationContextBuilder.build({
       thread: {
         id: input.thread.id,
@@ -866,12 +876,9 @@ class RepositoryThreadService implements ThreadService {
         deliveryMode: "runtime_injection",
         createdAt: input.currentMessageCreatedAt
       },
-      messages: messages.filter(
-        (message): message is ConversationContextMessage => message !== undefined
-      ),
-      threadSummary: room.sharedContextEnabled
-        ? await this.summaries.getByThreadId(input.thread.id)
-        : undefined,
+      messages: includedMessages,
+      threadSummary:
+        threadSummary && threadSummary.sourceMessageCount > 0 ? threadSummary : undefined,
       projectContextReferences: [
         `project:${input.thread.projectId}`,
         "Agent Hub-owned project context store",
@@ -1123,13 +1130,15 @@ class RepositoryThreadService implements ThreadService {
           status: toCoreRunStatus(snapshot.status),
           metadata: {
             agentId: toAgentId(message.agentKind),
+            role: message.metadata?.role,
+            assignment: metadataAssignment(message.metadata),
             assistantOutput: true,
             pending: false,
             terminalStatus: snapshot.status,
             timelineEvent: timelineEvent({
               kind: "participant_message",
               actor: "assistant",
-              title: `${toAgentId(message.agentKind)} response`,
+              title: `${messageParticipantHandle(message)} response`,
               summary: terminalAssistantContent(snapshot),
               status: snapshot.status,
               runId: message.runId,
@@ -1309,7 +1318,7 @@ class RepositoryThreadService implements ThreadService {
           timelineEvent: timelineEvent({
             kind: "participant_message",
             actor: "assistant",
-            title: `${agentId} response`,
+            title: `${messageParticipantHandle(message)} response`,
             summary: terminalAssistantContent(snapshot),
             status: snapshot.status,
             runId: message.runId,
@@ -2362,6 +2371,7 @@ function toAssistantMessage(message: ConversationMessage): AssistantMessage {
     agentId: message.agentKind ? toAgentId(message.agentKind) : undefined,
     runId: message.runId,
     status: message.status ? toDesktopRunStatus(message.status) : undefined,
+    assignment: metadataAssignment(message.metadata),
     timelineEvent: metadataTimelineEvent(message.metadata),
     createdAt: message.createdAt
   };
@@ -2419,6 +2429,14 @@ function runCardRoleHandle(message: ConversationMessage): string | undefined {
     assignment.roleHandle.trim().length > 0
     ? assignment.roleHandle
     : undefined;
+}
+
+function messageParticipantHandle(message: ConversationMessage): string {
+  const roleHandle = runCardRoleHandle(message);
+  if (roleHandle) {
+    return `@${roleHandle}`;
+  }
+  return message.agentKind ? `@${toAgentId(message.agentKind)}` : "Assistant";
 }
 
 function agentSessionIdFromEvents(events: RunEvent[]): string | undefined {
@@ -2555,9 +2573,9 @@ function isAssistantContextMessage(message: ConversationMessage): boolean {
   return message.role === "assistant" && !isPendingAssistantOutputMessage(message);
 }
 
-function contextSourceMessagesForAgent(
+function contextSourceMessagesForParticipant(
   messages: ConversationMessage[],
-  agentId: AgentId
+  participant: { agentId: AgentId; roleHandle?: string }
 ): ConversationMessage[] {
   const assistantRunIds = new Set(
     messages
@@ -2575,18 +2593,46 @@ function contextSourceMessagesForAgent(
     ) {
       return false;
     }
+    if (message.role === "user") {
+      return userMessageTargetsParticipant(message, participant);
+    }
     if (message.role === "assistant" || message.kind === "run_card") {
-      return messageBelongsToAgent(message, agentId);
+      return messageBelongsToParticipant(message, participant);
     }
     return true;
   });
 }
 
-function messageBelongsToAgent(
+function messageBelongsToParticipant(
   message: ConversationMessage,
-  agentId: AgentId
+  participant: { agentId: AgentId; roleHandle?: string }
 ): boolean {
-  return message.agentKind ? toAgentId(message.agentKind) === agentId : true;
+  if (message.agentKind && toAgentId(message.agentKind) !== participant.agentId) {
+    return false;
+  }
+  const messageRoleHandle = runCardRoleHandle(message);
+  return participant.roleHandle
+    ? messageRoleHandle === participant.roleHandle
+    : messageRoleHandle === undefined;
+}
+
+function userMessageTargetsParticipant(
+  message: ConversationMessage,
+  participant: { agentId: AgentId; roleHandle?: string }
+): boolean {
+  const roleMentions = metadataRoleMentions(message.metadata);
+  if (participant.roleHandle) {
+    return (
+      roleMentions?.some(
+        (roleMention) => roleMention.roleHandle === participant.roleHandle
+      ) ?? false
+    );
+  }
+  if (roleMentions && roleMentions.length > 0) {
+    return false;
+  }
+  const mentions = metadataAgents(message.metadata);
+  return mentions.length === 0 || mentions.includes(participant.agentId);
 }
 
 function isInternalTimelineMessage(message: ConversationMessage): boolean {

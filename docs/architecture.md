@@ -240,10 +240,11 @@ worktrees, applying changes, merging, pushing, or creating remote jobs.
 Reserved non-executable role executors remain assignment metadata only until a
 future executor exists. When the caller does not provide a thread id, the
 service resolves the project's seeded `#general` room instead of creating a
-prompt-titled chat thread. Role-targeted run-card messages persist both the
-compact role metadata, the shared task id, and the executor mapping so review
-surfaces can attribute local agent output to the requested participant without
-giving the renderer access to role resolution logic. The renderer-facing
+prompt-titled chat thread. Role-targeted run-card and assistant-output messages
+persist the compact role metadata, the shared task id, and the executor mapping
+so review and transcript surfaces can attribute local agent output to the
+requested participant without giving the renderer access to role resolution
+logic. The renderer-facing
 `window.agentHub.threads.*` contract stays a narrow preload boundary for
 create, update, get, list, and send-message operations; service state is loaded
 from SQLite through lightweight thread reads. Thread lists do not reconcile
@@ -321,24 +322,26 @@ package-level conversation context builder. The builder runs outside the
 renderer, applies deterministic message-count and character budgets, and
 produces a conversation brief that is injected through the runtime context
 bundle and persisted as a `conversation_brief` run artifact. Context ordering
-is current turn, recent messages, thread summary, then project context. A zero
-recent-message budget includes no prior thread messages, and recent messages
-are reduced when needed so thread summaries and project references remain
-inside the total brief budget. Desktop first-turn runs reload the retitled
-thread before building the brief so pre-created empty threads do not inject
-stale `New Chat` titles. If a room has `sharedContextEnabled: false`, the
-desktop thread service passes no prior room messages and no thread summary to
-the builder for that run while preserving the current turn, role context,
-project context references, approved memory handled by the context compiler,
-and explicit continuation provenance. Project
-context, thread context, current-turn context, and run context remain distinct
-layers so thread-local decisions do not automatically promote into project
-approved memory. Follow-up turns prefer terminal assistant messages from the
-same selected agent over run-card summaries for runs that have finished;
-same-agent run-card summaries remain available for pending runs and
-compatibility imports. Other agents' prior assistant text is not injected as
-raw recent-message context; any cross-agent signal must come through the
-bounded thread summary or an explicit continuation path.
+is current turn, participant-filtered recent messages, participant-scoped thread
+summary, then project context. A zero recent-message budget includes no prior
+thread messages, and recent messages are reduced when needed so summaries and
+project references remain inside the total brief budget. Desktop first-turn
+runs reload the retitled thread before building the brief so pre-created empty
+threads do not inject stale `New Chat` titles. If a room has
+`sharedContextEnabled: false`, the desktop thread service passes no prior room
+messages and no thread summary to the builder for that run while preserving the
+current turn, role context, project context references, approved memory handled
+by the context compiler, and explicit continuation provenance. Project context,
+thread context, current-turn context, and run context remain distinct layers so
+thread-local decisions do not automatically promote into project approved
+memory. Follow-up turns prefer terminal assistant messages from the same
+participant identity over run-card summaries for runs that have finished;
+same-participant run-card summaries remain available for pending runs and
+compatibility imports. Role-backed participants are keyed by role handle, while
+direct adapter participants are keyed by adapter id. Other roles' or direct
+agents' prior prompts and assistant text are not injected as raw recent-message
+context or into the participant summary unless the user chooses an explicit
+continuation path.
 
 The service maps desktop-facing agent IDs (`fake`, `codex`, `claude`) and run
 statuses (`queued`, `running`, `verifying`, `completed`, `failed`,
