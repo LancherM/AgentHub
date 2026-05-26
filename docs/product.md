@@ -423,13 +423,22 @@ room-based project shell: project selection and room navigation on the left, a
 conversation timeline in the center, and a bottom composer as the primary
 interaction surface. Each registered project receives default local rooms
 `#general`, `#planning`, `#research`, `#review`, and `#knowledge`, displayed
-alongside the preset workgroup roles and local task/run status counts. When
-there are no registered projects, the desktop renders local project path
-registration controls in the project sidebar and the empty conversation pane;
-users can either paste a path or open the system folder picker through the
-sandboxed preload API. Submitting either control calls the existing
+inside a sidebar hierarchy split into Project, Rooms, and Utilities. The
+Utilities zone links to Knowledge, Team, Settings, and sidebar density controls
+and carries compact room/running/run counts instead of a full status panel.
+Duplicate project names show a short parent-path hint so repeated names such
+as `~` remain distinguishable without exposing a wide path column. When there
+are no registered projects, the desktop renders local project path registration
+controls in the project sidebar and the empty conversation pane; users can
+either paste a path or open the system folder picker through the sandboxed
+preload API. Submitting either control calls the existing
 `window.agentHub.projects.open` IPC path and selects the project's `#general`
 room after default room seeding.
+The room header uses product-facing context copy: project, room type, and
+`local desktop` are shown as one compact line, while `Context: runtime
+injection` stays visible as secondary context with detailed explanation in the
+tooltip. This preserves the runtime-injection truth without making the header
+read like internal state output.
 The sidebar keeps an Add project disclosure visible after setup so additional
 local repositories can be registered without returning to onboarding. The
 selected project also has an inline custom-room creation flow for title,
@@ -500,14 +509,24 @@ inspector's Audit view by default.
 Once a completed run has a durable assistant answer and no changed files, the
 default transcript hides the run card entirely and keeps the answer as the main
 visible row. Runs that modify files, fail, are cancelled, or have comparison
-peers remain visible as review affordances with View review, Compare, Continue,
-Handoff, and Audit actions; disabled actions explain why they are not
-available. Compare becomes available only when another terminal run from the
-same task or the same multi-agent turn is present. Terminal cards do not load
-full run review evidence when a thread is merely selected, but they refresh the
-summary and artifact metadata needed for compact review chips. Checks, risks,
-memory proposals, brief data, context previews, comparison reports, and audit
-logs load lazily when the user opens the on-demand workgroup inspector drawer.
+peers remain visible as review affordances. Failed runs render as incident
+cards: the card title calls out the failed agent, notes when no agent-facing
+output was produced, shows a likely cause from persisted diagnostics or
+terminal events, and puts View review plus Open logs ahead of secondary
+Compare, Continue, Handoff, and Audit actions. Compare becomes available only
+when another terminal run from the same task or the same multi-agent turn is
+present. Terminal cards do not load full run review evidence when a thread is
+merely selected, but they refresh the summary and artifact metadata needed for
+grouped card evidence. Card-level evidence is grouped as Status, Evidence, and
+Outputs so checks, risks, logs/audit, lifecycle, artifacts, and memory remain
+one click away without a long flat pill row. Checks, risks, memory proposals,
+brief data, context previews, comparison reports, and audit logs load lazily
+when the user opens the on-demand workgroup inspector drawer.
+The chat surface also derives a lightweight visual state from the latest
+visible run. Idle rooms keep the composer and workflow controls inviting,
+running rooms emphasize live run progress, failed rooms make the incident card
+dominant while keeping composer/workflow usable, and review-ready rooms return
+attention to the transcript and review affordance.
 Existing persisted run records are
 synthesized into thread-shaped conversations only as a compatibility import
 when no durable conversation threads exist yet, so old desktop run data remains
