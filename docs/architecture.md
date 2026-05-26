@@ -49,7 +49,7 @@ exposing `ipcRenderer`.
 The desktop conversation console keeps the main-process `RunService` boundary
 for run creation, live event streaming, cancellation, lightweight conversation
 snapshots, and repository-backed review loading. Renderer components call
-`window.agentHub.projects.list/open` for local project registration,
+`window.agentHub.projects.list/open/selectDirectory` for local project registration,
 `window.agentHub.threads.*` for conversation orchestration, and
 `window.agentHub.runs.get/cancel/onEvent` for on-demand card hydration,
 cancellation, and live stream subscriptions; the preload hides channel names
@@ -58,9 +58,10 @@ register with the main-process emitter before replaying persisted run events,
 with event-id de-duplication, so renderer cards do not miss fast fake-run
 events that were written before the subscription attached. IPC handlers
 validate inputs and manage per-window subscriptions, but do not own run
-lifecycle logic. If the project list is empty, renderer onboarding forms submit
-a local path through the same project-open IPC service before creating a starter
-thread through the thread service.
+lifecycle logic. If the project list is empty, renderer onboarding forms either
+accept a pasted local path or ask the Electron main process to open the system
+directory picker, then submit the selected path through the same project-open
+IPC service before creating a starter thread through the thread service.
 The renderer composer remains a local control surface: it reads enabled role
 summaries through `window.agentHub.team.getWorkspace(projectId)`, builds
 autocomplete suggestions and target chips in React, and still submits only the
@@ -254,6 +255,11 @@ verification output, and risk evidence remain on the run model and load through
 review IPC only when the user opens the inspector. If an older database has
 runs but no conversation threads, the service performs a one-time compatibility
 import into conversation rows so existing desktop run records stay inspectable.
+Completed no-change run cards are hidden from the default transcript once a
+durable assistant message exists; file-changing, failed, cancelled, or
+comparison-ready runs remain visible as review affordances. Active routine chat
+cards use the latest agent-facing message rather than lifecycle text as their
+primary activity copy.
 
 Composer autocomplete is implemented as renderer-only input assistance. The
 helper in `apps/desktop/src/lib/composer-controls.ts` derives active `@` and
@@ -341,6 +347,14 @@ abort signal flows through adapters into `NodeProcessRunner` and verification
 shell execution; running desktop cancellation sends `SIGTERM` to process-backed
 agents or verification commands and records cancelled state only for runs that
 were actually stopped or had not started.
+
+For Codex follow-up turns, the thread service scans prior run-card events in
+the same room and participant identity. If it finds a prior Codex
+`thread.started` event, it passes that session id through `RunService` and
+`TaskRunner` as adapter input. The Codex adapter then invokes
+`codex exec resume --json <session-id> -` so same-role desktop chat continues
+the CLI conversation while still using Agent Hub's local run evidence and
+review boundaries.
 
 When a desktop run is created from a workgroup role mention, `RunService`
 validates the compact role metadata received over IPC, saves it in the legacy
@@ -769,7 +783,10 @@ parse prompts into shell commands or create alternate execution paths.
 
 All adapters run against an isolated worktree and refuse to run when that
 directory is the original project root or when the generated task brief is
-outside the isolated directory. Codex is invoked as `codex exec --json -`.
+outside the isolated directory. Codex is invoked as `codex exec --json -` for a
+fresh run and as `codex exec resume --json <session-id> -` when the desktop
+thread service provides a prior Codex session id for the same role or direct
+agent target.
 Claude Code is invoked as `claude --print --output-format stream-json`.
 
 The diff collector first reads git status, then filters generated files against

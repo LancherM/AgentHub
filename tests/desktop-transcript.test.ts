@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  hiddenRunCardIds,
   quietRunCardIds,
   visibleTranscriptMessages
 } from "../apps/desktop/src/lib/transcript";
-import type { ThreadMessage } from "../apps/desktop/src/lib/types";
+import type { RunDetail, ThreadMessage } from "../apps/desktop/src/lib/types";
 
 describe("quietRunCardIds", () => {
   it("marks terminal run cards quiet only when a durable assistant answer exists", () => {
@@ -42,6 +43,24 @@ describe("quietRunCardIds", () => {
   });
 });
 
+describe("hiddenRunCardIds", () => {
+  it("hides completed no-change run cards after assistant output is available", () => {
+    const messages: ThreadMessage[] = [
+      runMessage("run_1", "completed"),
+      assistantMessage("run_1"),
+      runMessage("run_2", "completed"),
+      assistantMessage("run_2")
+    ];
+
+    expect([
+      ...hiddenRunCardIds(messages, {
+        run_1: runDetail("run_1", []),
+        run_2: runDetail("run_2", ["src/index.ts"])
+      })
+    ]).toEqual(["run_1"]);
+  });
+});
+
 describe("visibleTranscriptMessages", () => {
   it("keeps lifecycle system events out of the default transcript", () => {
     const messages: ThreadMessage[] = [
@@ -77,3 +96,58 @@ describe("visibleTranscriptMessages", () => {
     ]);
   });
 });
+
+function runMessage(
+  runId: string,
+  status: "queued" | "running" | "verifying" | "completed" | "failed" | "cancelled"
+): ThreadMessage {
+  return {
+    type: "agent_run",
+    id: `message_${runId}`,
+    threadId: "thread_1",
+    runId,
+    agentId: "codex",
+    status,
+    createdAt: "2026-05-25T00:00:00.000Z"
+  };
+}
+
+function assistantMessage(runId: string): ThreadMessage {
+  return {
+    type: "assistant",
+    id: `assistant_${runId}`,
+    threadId: "thread_1",
+    runId,
+    agentId: "codex",
+    text: "Done",
+    status: "completed",
+    createdAt: "2026-05-25T00:00:01.000Z"
+  };
+}
+
+function runDetail(runId: string, changedFiles: string[]): RunDetail {
+  return {
+    id: runId,
+    projectId: "project_1",
+    projectName: "Project",
+    taskId: "task_1",
+    title: "Task",
+    taskPrompt: "Prompt",
+    agentId: "codex",
+    status: "completed",
+    canContinueCodeState: false,
+    createdAt: "2026-05-25T00:00:00.000Z",
+    updatedAt: "2026-05-25T00:00:01.000Z",
+    events: [],
+    changedFiles,
+    verification: { runId, status: "unknown", commands: [] },
+    risk: {
+      runId,
+      level: "low",
+      findings: [],
+      generatedAt: "2026-05-25T00:00:01.000Z"
+    },
+    memoryProposals: [],
+    summary: ""
+  };
+}

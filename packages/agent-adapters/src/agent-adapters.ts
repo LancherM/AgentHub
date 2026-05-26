@@ -29,6 +29,7 @@ export interface AgentRunInput {
   taskPrompt: string;
   contextBundle?: ContextBundle;
   contextMarkdown?: string;
+  agentSessionId?: string;
   environment?: Record<string, string | undefined>;
   signal?: AbortSignal;
 }
@@ -238,11 +239,12 @@ export class CodexAdapter implements AgentAdapter {
   }
 
   async *run(input: AgentRunInput): AsyncIterable<AgentRunEvent> {
+    const args = codexRunArgs(this.runArgs, input.agentSessionId);
     yield* runProcessAgentWithPreflight({
       adapterKind: this.kind,
       displayName: this.displayName,
       executable: this.executable,
-      args: this.runArgs,
+      args,
       detect: (runInput) =>
         detectProcessAgent({
           displayName: this.displayName,
@@ -692,7 +694,11 @@ class StructuredOutputParser {
       return [{ type: "error", message, metadata }];
     }
     if (isStructuredMessageEvent(adapterEvent, type, structuredOutput)) {
-      return [{ type: "message", message, metadata }];
+      return [{
+        type: "message",
+        message,
+        metadata: { ...metadata, assistantOutput: true }
+      }];
     }
     return [{ type: "status", message, metadata }];
   }
@@ -728,7 +734,27 @@ function isAssistantMessageItem(value: JsonObject[string]): boolean {
     return false;
   }
   const item = value as JsonObject;
-  return item.type === "message" && item.role === "assistant";
+  if (item.role === "assistant") {
+    return true;
+  }
+  return item.type === "agent_message" || item.type === "assistant_message";
+}
+
+function codexRunArgs(runArgs: string[], agentSessionId: string | undefined): string[] {
+  if (!agentSessionId || !isSafeCodexSessionId(agentSessionId)) {
+    return runArgs;
+  }
+  if (runArgs[0] !== "exec") {
+    return runArgs;
+  }
+  const execOptions = runArgs
+    .slice(1)
+    .filter((arg) => arg !== "-");
+  return ["exec", "resume", ...execOptions, agentSessionId, "-"];
+}
+
+function isSafeCodexSessionId(value: string): boolean {
+  return /^[A-Za-z0-9._:-]+$/.test(value);
 }
 
 function structuredTextFromValue(value: JsonObject[string], depth = 0): string | undefined {

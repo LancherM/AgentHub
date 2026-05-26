@@ -4,14 +4,17 @@ import type { FormEvent } from "react";
 interface ProjectRegistrationFormProps {
   isBusy: boolean;
   onRegister(projectPath: string): Promise<void>;
+  onSelectDirectory?: () => Promise<string | undefined>;
 }
 
 export function ProjectRegistrationForm({
   isBusy,
-  onRegister
+  onRegister,
+  onSelectDirectory
 }: ProjectRegistrationFormProps): JSX.Element {
   const [projectPath, setProjectPath] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isBrowsing, setIsBrowsing] = useState(false);
 
   async function submitProject(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
@@ -29,6 +32,21 @@ export function ProjectRegistrationForm({
     }
   }
 
+  async function browseProject(): Promise<void> {
+    if (!onSelectDirectory || isBusy || isSubmitting || isBrowsing) {
+      return;
+    }
+    setIsBrowsing(true);
+    try {
+      const selectedPath = await onSelectDirectory();
+      if (selectedPath) {
+        setProjectPath(selectedPath);
+      }
+    } finally {
+      setIsBrowsing(false);
+    }
+  }
+
   return (
     <form className="project-registration-form" onSubmit={submitProject}>
       <label>
@@ -41,13 +59,25 @@ export function ProjectRegistrationForm({
           onChange={(event) => setProjectPath(event.target.value)}
         />
       </label>
-      <button
-        type="submit"
-        className="primary-button"
-        disabled={!projectPath.trim() || isBusy || isSubmitting}
-      >
-        {isSubmitting ? "Registering…" : "Register Project"}
-      </button>
+      <div className="project-registration-actions">
+        {onSelectDirectory ? (
+          <button
+            type="button"
+            className="ghost-button"
+            disabled={isBusy || isSubmitting || isBrowsing}
+            onClick={() => void browseProject()}
+          >
+            {isBrowsing ? "Opening..." : "Choose Folder"}
+          </button>
+        ) : null}
+        <button
+          type="submit"
+          className="primary-button"
+          disabled={!projectPath.trim() || isBusy || isSubmitting || isBrowsing}
+        >
+          {isSubmitting ? "Registering…" : "Register Project"}
+        </button>
+      </div>
     </form>
   );
 }

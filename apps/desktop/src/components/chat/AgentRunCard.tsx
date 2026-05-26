@@ -190,6 +190,14 @@ export function AgentRunCard({
     () => findCliUnavailableDiagnostic(events),
     [events]
   );
+  const hasChangedFiles = (run?.changedFiles.length ?? 0) > 0;
+  const showEvidenceBody =
+    Boolean(cliDiagnostic) ||
+    hasChangedFiles ||
+    status === "failed" ||
+    status === "cancelled" ||
+    compareAffordance.enabled;
+  const liveAgentText = latestAgentFacingText(events);
   const quietCompleted = compactCompleted && isTerminalRunStatus(status) && !cliDiagnostic;
 
   async function cancel(): Promise<void> {
@@ -297,7 +305,7 @@ export function AgentRunCard({
         <div className="inline-error">{streamError ?? cancelError}</div>
       ) : null}
 
-      {!quietCompleted ? (
+      {!quietCompleted && showEvidenceBody ? (
         <div className="run-card-body">
           <div className="run-progress-rail" aria-label="Run progress">
             {progress.stages.map((stage) => (
@@ -311,7 +319,7 @@ export function AgentRunCard({
           <div className="run-activity-row">
             <div>
               <span>Last activity</span>
-              <p>{progress.activityText}</p>
+              <p>{liveAgentText ?? progress.activityText}</p>
             </div>
             <span className={`run-wait-state ${progress.tone}`}>
               {progress.waitState}
@@ -319,6 +327,11 @@ export function AgentRunCard({
           </div>
 
           <p className="fake-boundary">{simulationCopy}</p>
+          {hasChangedFiles ? (
+            <p className="fake-boundary">
+              Changed {run?.changedFiles.length} file{run?.changedFiles.length === 1 ? "" : "s"}.
+            </p>
+          ) : null}
           {run?.parentRunId ? (
             <p className="fake-boundary">Continues code state from {run.parentRunId}.</p>
           ) : null}
@@ -346,22 +359,36 @@ export function AgentRunCard({
             </div>
           ) : null}
         </div>
+      ) : !quietCompleted ? (
+        <div className="run-card-body conversational-run-body">
+          <div className="run-activity-row">
+            <div>
+              <span>{isActiveRunStatus(status) ? "Agent reply" : "Result"}</span>
+              <p>{liveAgentText ?? progress.waitState}</p>
+            </div>
+            <span className={`run-wait-state ${progress.tone}`}>
+              {progress.waitState}
+            </span>
+          </div>
+        </div>
       ) : null}
 
-      <footer className="run-card-pills">
-        {reviewPills(reviewSummary, events.length, status, reviewArtifacts).map((pill) => (
-          <button
-            key={pill.label}
-            className={`timeline-chip-button ${pill.tone ?? "neutral"}`}
-            onClick={(event) => {
-              event.stopPropagation();
-              onOpenInspector(message.runId, pill.tab);
-            }}
-          >
-            {pill.label}
-          </button>
-        ))}
-      </footer>
+      {showEvidenceBody ? (
+        <footer className="run-card-pills">
+          {reviewPills(reviewSummary, events.length, status, reviewArtifacts).map((pill) => (
+            <button
+              key={pill.label}
+              className={`timeline-chip-button ${pill.tone ?? "neutral"}`}
+              onClick={(event) => {
+                event.stopPropagation();
+                onOpenInspector(message.runId, pill.tab);
+              }}
+            >
+              {pill.label}
+            </button>
+          ))}
+        </footer>
+      ) : null}
     </article>
   );
 }
@@ -401,6 +428,41 @@ function elapsedLabel(start: string, end: string): string {
   const minutes = Math.floor(diffSeconds / 60);
   const seconds = diffSeconds % 60;
   return `${minutes}m ${seconds}s`;
+}
+
+function latestAgentFacingText(events: RunEvent[]): string | undefined {
+  for (const event of [...events].reverse()) {
+    const message = typeof event.payload.message === "string"
+      ? event.payload.message.trim()
+      : "";
+    if (!message) {
+      continue;
+    }
+    if (event.payload.assistantOutput === true) {
+      return message;
+    }
+    if (event.type === "agent_step" && isAssistantAdapterEvent(event.payload.adapterEvent)) {
+      return message;
+    }
+  }
+  return undefined;
+}
+
+function isAssistantAdapterEvent(value: unknown): boolean {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+  const event = value as Record<string, unknown>;
+  const item = event.item;
+  if (!item || typeof item !== "object" || Array.isArray(item)) {
+    return false;
+  }
+  const record = item as Record<string, unknown>;
+  return (
+    record.role === "assistant" ||
+    record.type === "agent_message" ||
+    record.type === "assistant_message"
+  );
 }
 
 function errorMessage(error: unknown): string {

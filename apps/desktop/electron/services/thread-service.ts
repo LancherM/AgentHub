@@ -615,6 +615,11 @@ class RepositoryThreadService implements ThreadService {
           contextMode,
           priorMessages
         });
+        const agentSessionId = await this.latestAgentSessionIdForParticipant({
+          priorMessages,
+          agentId: participant.agentId,
+          role: participant.role
+        });
         const run = await this.dependencies.runs.createRun({
           taskId: task.id,
           projectId: currentThread.projectId,
@@ -622,6 +627,7 @@ class RepositoryThreadService implements ThreadService {
           title,
           agentId: participant.agentId,
           role: participant.role,
+          agentSessionId,
           assignment,
           contextMode,
           deliveryMode: "runtime_injection",
@@ -874,6 +880,36 @@ class RepositoryThreadService implements ThreadService {
         ...roleContextReferences(input.role)
       ]
     });
+  }
+
+  private async latestAgentSessionIdForParticipant(input: {
+    priorMessages: ConversationMessage[];
+    agentId: AgentId;
+    role?: WorkgroupRoleRunMetadata;
+  }): Promise<string | undefined> {
+    if (input.agentId !== "codex") {
+      return undefined;
+    }
+    const expectedRoleHandle = input.role?.roleHandle;
+    for (const message of [...input.priorMessages].reverse()) {
+      if (
+        message.kind !== "run_card" ||
+        !message.runId ||
+        !message.agentKind ||
+        toAgentId(message.agentKind) !== input.agentId
+      ) {
+        continue;
+      }
+      if (runCardRoleHandle(message) !== expectedRoleHandle) {
+        continue;
+      }
+      const snapshot = await this.conversationRunSnapshot(message.runId);
+      const sessionId = snapshot ? agentSessionIdFromEvents(snapshot.events) : undefined;
+      if (sessionId) {
+        return sessionId;
+      }
+    }
+    return undefined;
   }
 
   private async toConversationContextMessage(
@@ -2368,6 +2404,40 @@ function metadataAssignment(
     return undefined;
   }
   return assignment;
+}
+
+function runCardRoleHandle(message: ConversationMessage): string | undefined {
+  const role = message.metadata?.role;
+  if (role && typeof role === "object" && !Array.isArray(role)) {
+    const roleHandle = (role as WorkgroupRoleRunMetadata).roleHandle;
+    if (typeof roleHandle === "string" && roleHandle.trim().length > 0) {
+      return roleHandle;
+    }
+  }
+  const assignment = metadataAssignment(message.metadata);
+  return typeof assignment?.roleHandle === "string" &&
+    assignment.roleHandle.trim().length > 0
+    ? assignment.roleHandle
+    : undefined;
+}
+
+function agentSessionIdFromEvents(events: RunEvent[]): string | undefined {
+  for (const event of events) {
+    const adapterEvent = event.payload.adapterEvent;
+    if (!adapterEvent || typeof adapterEvent !== "object" || Array.isArray(adapterEvent)) {
+      continue;
+    }
+    const record = adapterEvent as Record<string, unknown>;
+    const sessionId = record.thread_id ?? record.threadId ?? record.session_id;
+    if (
+      typeof sessionId === "string" &&
+      sessionId.trim().length > 0 &&
+      record.type === "thread.started"
+    ) {
+      return sessionId.trim();
+    }
+  }
+  return undefined;
 }
 
 function metadataWorkflowState(metadata: JsonObject | undefined): CollaborationWorkflowState | undefined {

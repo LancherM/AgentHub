@@ -131,6 +131,57 @@ describe("process-backed agent adapters", () => {
     }));
   });
 
+  it("treats Codex agent_message items as assistant output", async () => {
+    const runner = new MockProcessRunner([
+      [
+        { type: "stdout", data: "{\"type\":\"thread.started\",\"thread_id\":\"019e5f4d-a2fb-7b71-9a69-b6ecc2795aa2\"}\n" },
+        {
+          type: "stdout",
+          data: "{\"type\":\"item.completed\",\"item\":{\"id\":\"item_0\",\"type\":\"agent_message\",\"text\":\"hello from current codex\"}}\n"
+        },
+        { type: "exit", exitCode: 0, signal: null }
+      ]
+    ]);
+    const input = await createInput("codex-agent-message-adapter");
+
+    const events = await collect(new CodexAdapter({ processRunner: runner }).run(input));
+
+    expect(events).toContainEqual(expect.objectContaining({
+      type: "message",
+      message: "hello from current codex"
+    }));
+  });
+
+  it("resumes Codex sessions when a prior session id is supplied", async () => {
+    const runner = new MockProcessRunner([
+      [
+        { type: "stdout", data: "{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"continued\"}}\n" },
+        { type: "exit", exitCode: 0, signal: null }
+      ]
+    ]);
+    const input = {
+      ...(await createInput("codex-resume-adapter")),
+      agentSessionId: "019e5f4d-a2fb-7b71-9a69-b6ecc2795aa2"
+    };
+
+    const events = await collect(new CodexAdapter({ processRunner: runner }).run(input));
+
+    expect(runner.runCalls[0]).toMatchObject({
+      executable: "codex",
+      args: [
+        "exec",
+        "resume",
+        "--json",
+        "019e5f4d-a2fb-7b71-9a69-b6ecc2795aa2",
+        "-"
+      ]
+    });
+    expect(events).toContainEqual(expect.objectContaining({
+      type: "message",
+      message: "continued"
+    }));
+  });
+
   it("keeps structured tool-call output inside status events", async () => {
     const runner = new MockProcessRunner([
       [

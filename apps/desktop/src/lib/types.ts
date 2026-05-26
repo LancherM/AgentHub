@@ -378,6 +378,7 @@ export interface CreateRunInput {
   title?: string;
   agentId: AgentId;
   role?: WorkgroupRoleRunMetadata;
+  agentSessionId?: string;
   contextMode: ContextMode;
   deliveryMode?: "runtime_injection" | "worktree_overlay";
   continueFromRunId?: string;
@@ -816,6 +817,7 @@ export type Unsubscribe = () => void;
 export interface AgentHubApi {
   projects: {
     list(): Promise<ProjectSummary[]>;
+    selectDirectory(): Promise<string | undefined>;
     open(path: string): Promise<ProjectSummary>;
   };
   runs: {

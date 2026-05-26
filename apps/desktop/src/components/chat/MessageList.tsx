@@ -6,7 +6,11 @@ import type {
   ThreadMessage
 } from "../../lib/types";
 import { compareAffordanceForRun } from "../../lib/run-progress";
-import { quietRunCardIds, visibleTranscriptMessages } from "../../lib/transcript";
+import {
+  hiddenRunCardIds,
+  quietRunCardIds,
+  visibleTranscriptMessages
+} from "../../lib/transcript";
 import { AgentRunCard } from "./AgentRunCard";
 import { AssistantMessageBubble } from "./AssistantMessageBubble";
 import { SystemMessage } from "./SystemMessage";
@@ -38,7 +42,10 @@ export function MessageList({
     );
   }
 
-  const visibleMessages = visibleTranscriptMessages(messages);
+  const hiddenRunIds = hiddenRunCardIds(messages, runDetails);
+  const visibleMessages = visibleTranscriptMessages(messages).filter(
+    (message) => message.type !== "agent_run" || !hiddenRunIds.has(message.runId)
+  );
   const quietRunIds = quietRunCardIds(messages, runDetails);
   const renderedMessages: JSX.Element[] = [];
   for (let index = 0; index < visibleMessages.length; index += 1) {
@@ -53,20 +60,24 @@ export function MessageList({
         group.push(visibleMessages[nextIndex] as AgentRunMessage);
         nextIndex += 1;
       }
-      renderedMessages.push(
-        <section className="task-run-group" key={`task-${message.taskId}`}>
-          <header className="task-run-group-header">
-            <div>
-              <span>Task</span>
-              <strong>{message.taskTitle ?? message.taskId}</strong>
+      if (shouldRenderTaskGroup(group)) {
+        renderedMessages.push(
+          <section className="task-run-group" key={`task-${message.taskId}`}>
+            <header className="task-run-group-header">
+              <div>
+                <span>Task</span>
+                <strong>{message.taskTitle ?? message.taskId}</strong>
+              </div>
+              <p>{assignmentLabel(group)}</p>
+            </header>
+            <div className="task-run-group-list">
+              {group.map((runMessage) => renderRunCard(runMessage))}
             </div>
-            <p>{assignmentLabel(group)}</p>
-          </header>
-          <div className="task-run-group-list">
-            {group.map((runMessage) => renderRunCard(runMessage))}
-          </div>
-        </section>
-      );
+          </section>
+        );
+      } else {
+        renderedMessages.push(...group.map((runMessage) => renderRunCard(runMessage)));
+      }
       index = nextIndex - 1;
       continue;
     }
@@ -117,6 +128,20 @@ export function MessageList({
         }
       />
     );
+  }
+
+  function shouldRenderTaskGroup(group: AgentRunMessage[]): boolean {
+    if (group.length > 1) {
+      return true;
+    }
+    return group.some((runMessage) => {
+      const detail = runDetails[runMessage.runId];
+      return (
+        runMessage.status === "failed" ||
+        runMessage.status === "cancelled" ||
+        (detail?.changedFiles.length ?? 0) > 0
+      );
+    });
   }
 }
 

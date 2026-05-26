@@ -129,6 +129,7 @@ export interface RunTaskInput {
   conversationBrief?: string | ConversationContextBrief;
   userConstraints?: string[];
   executionHints?: string[];
+  agentSessionId?: string;
   continueFrom?: RunContinuationInput;
   onEvent?: (event: AgentRunEvent) => void | Promise<void>;
   signal?: AbortSignal;
@@ -710,6 +711,7 @@ export class TaskRunner {
             taskId: task.id,
             taskTitle: task.title,
             taskPrompt: parsed.taskPrompt,
+            agentSessionId: input.agentSessionId,
             environment: input.environmentOverrides,
             signal: input.signal
           })) {
