@@ -278,6 +278,11 @@ read logs directly, or bypass the inspector; card buttons only open existing
 review surfaces such as Brief, Evidence, Audit, Artifacts, and Memory. Sidebar
 and header hierarchy changes are likewise renderer-only navigation/copy
 changes over the same project, thread, team, settings, and review IPC services.
+The renderer-only sidebar projection keeps project switching and project
+registration inside one disclosure whose collapsed state exposes only the
+active project name. It also re-sorts the visible room list by each room
+summary's latest `updatedAt` activity, so selecting a room changes only
+selection state and does not promote that room above newer conversations.
 The room page also keeps layout state renderer-only: the header, message list,
 workflow launcher, and composer share a centered maximum-width conversation
 column, the workflow launcher renders a compact summary row when idle, and the

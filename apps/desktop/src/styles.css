@@ -141,6 +141,14 @@ textarea:disabled {
   color: var(--muted);
 }
 
+.thread-time {
+  justify-self: end;
+  font-size: 10px;
+  font-weight: 750;
+  line-height: 1;
+  white-space: nowrap;
+}
+
 .brand-subtitle,
 .row-subtitle {
   overflow: hidden;
@@ -272,22 +280,79 @@ select:focus-visible {
 }
 
 .project-list.compact {
-  max-height: 92px;
+  max-height: 134px;
+}
+
+.project-switcher {
+  position: relative;
+}
+
+.project-switcher summary::-webkit-details-marker {
+  display: none;
 }
 
 .selected-project-block {
   display: grid;
-  grid-template-columns: 10px minmax(0, 1fr);
+  grid-template-columns: 10px minmax(0, 1fr) auto;
   gap: 10px;
   align-items: center;
   min-height: 48px;
-  margin-bottom: 8px;
+  width: 100%;
   padding: 10px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background:
     linear-gradient(90deg, var(--cyan-soft), transparent 38%),
     var(--surface-muted);
+  cursor: pointer;
+  list-style: none;
+}
+
+.selected-project-block:hover {
+  border-color: var(--line-strong);
+  background:
+    linear-gradient(90deg, rgba(103, 216, 196, 0.13), transparent 42%),
+    var(--surface-hover);
+}
+
+.selected-project-block::after {
+  content: "v";
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1;
+}
+
+.project-switcher[open] .selected-project-block::after {
+  transform: rotate(180deg);
+}
+
+.current-project-name {
+  overflow: hidden;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 850;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-switcher-menu {
+  display: grid;
+  gap: 8px;
+  margin-top: 8px;
+  margin-bottom: 10px;
+  padding: 9px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.024);
+}
+
+.project-registration-heading {
+  margin-top: 2px;
+  color: var(--muted-2);
+  font-size: 11px;
+  font-weight: 850;
+  letter-spacing: 0;
+  text-transform: uppercase;
 }
 
 .thread-row,
@@ -424,44 +489,8 @@ select:focus-visible {
   margin-bottom: 10px;
 }
 
-.sidebar-add-project {
-  margin-top: 10px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.024);
-}
-
-.sidebar-add-project summary {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  min-height: 34px;
-  padding: 0 10px;
-  color: var(--text);
-  font-size: 12px;
-  font-weight: 850;
-  list-style: none;
-  cursor: pointer;
-}
-
-.sidebar-add-project summary::-webkit-details-marker {
-  display: none;
-}
-
-.sidebar-add-project summary::after {
-  content: "+";
-  color: var(--accent);
-  font-size: 17px;
-  line-height: 1;
-}
-
-.sidebar-add-project[open] summary::after {
-  content: "-";
-}
-
-.sidebar-add-project .project-registration-form {
+.project-switcher-menu .project-registration-form {
   margin: 0;
-  padding: 0 10px 10px;
 }
 
 .room-create-form {

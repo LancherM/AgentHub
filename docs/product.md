@@ -431,9 +431,12 @@ interaction surface. Each registered project receives default local rooms
 inside a sidebar hierarchy split into Project, Rooms, and Utilities. The
 Utilities zone links to Knowledge, Team, Settings, and sidebar density controls
 and carries room/running/run counts as one compact status line instead of a
-full status panel. Project rows show the project name and a shortened local
-path; a project rooted at `~` is labeled `Home` and displays `~/` as its path.
-Rooms show title, last activity, a one-line description, and compact metadata.
+full status panel. The Project section shows only the active project name in
+its collapsed state; project switching and additional project registration sit
+inside that same disclosure. A project rooted at `~` is labeled `Home` in the
+selector. Rooms show title, a compact last-activity time, a one-line
+description, and compact metadata, and the room list is ordered strictly by
+latest room activity rather than by the currently selected room.
 When there
 are no registered projects, the desktop renders local project path registration
 controls in the project sidebar and the empty conversation pane; users can
