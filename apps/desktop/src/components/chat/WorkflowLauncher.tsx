@@ -105,7 +105,7 @@ export function WorkflowLauncher({
           <strong>Workflow</strong>
           <small>{selectedMode.label} - max {maxRounds} round(s)</small>
         </span>
-        <span className="timeline-chip accent">Start</span>
+        <span className="workflow-start-label">Start</span>
       </button>
       {isExpanded ? (
         <div className="workflow-launcher-body">

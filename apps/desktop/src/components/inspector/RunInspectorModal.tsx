@@ -46,13 +46,12 @@ type LoadState<T> = {
   error?: string;
 };
 
-const tabs: Array<{ id: WorkgroupInspectorTab; label: string }> = [
+type InspectorViewTab = "brief" | "evidence" | "artifacts" | "memory" | "audit";
+
+const tabs: Array<{ id: InspectorViewTab; label: string }> = [
   { id: "brief", label: "Brief" },
-  { id: "context", label: "Context" },
+  { id: "evidence", label: "Evidence" },
   { id: "artifacts", label: "Artifacts" },
-  { id: "checks", label: "Checks" },
-  { id: "risks", label: "Risks" },
-  { id: "lifecycle", label: "Lifecycle" },
   { id: "memory", label: "Memory" },
   { id: "audit", label: "Audit" }
 ];
@@ -68,9 +67,10 @@ export function RunInspectorModal({
   initialTab = "brief",
   onClose
 }: RunInspectorModalProps): JSX.Element {
-  const [activeTab, setActiveTab] = useState<WorkgroupInspectorTab>(
-    normalizeReviewInspectorTab(initialTab)
+  const [activeTab, setActiveTab] = useState<InspectorViewTab>(
+    toInspectorViewTab(initialTab)
   );
+  const [deepReviewMode, setDeepReviewMode] = useState(false);
   const [summary, setSummary] = useState<LoadState<ReviewSummary>>({
     loading: true
   });
@@ -102,8 +102,9 @@ export function RunInspectorModal({
   const [decisionMessage, setDecisionMessage] = useState<string | undefined>();
 
   useEffect(() => {
-    const normalizedInitialTab = normalizeReviewInspectorTab(initialTab);
+    const normalizedInitialTab = toInspectorViewTab(initialTab);
     setActiveTab(normalizedInitialTab);
+    setDeepReviewMode(false);
     setDecisionMessage(undefined);
     setSummary({ loading: true });
     setContext({ loading: false });
@@ -123,6 +124,12 @@ export function RunInspectorModal({
   }, [initialTab, runId]);
 
   useEffect(() => {
+    if (activeTab === "brief" || activeTab === "memory") {
+      setDeepReviewMode(false);
+    }
+  }, [activeTab]);
+
+  useEffect(() => {
     void loadTab(activeTab);
   }, [activeTab]);
 
@@ -139,7 +146,7 @@ export function RunInspectorModal({
   }
 
   async function loadTab(
-    tab: WorkgroupInspectorTab,
+    tab: InspectorViewTab,
     options: { refresh?: boolean } = {}
   ): Promise<void> {
     if (tab === "brief") {
@@ -151,8 +158,15 @@ export function RunInspectorModal({
       }
       return;
     }
-    if (tab === "context") {
-      await loadState(setContext, () => agentHubApi.review.getContext(runId));
+    if (tab === "evidence") {
+      await Promise.all([
+        loadState(setVerification, () =>
+          agentHubApi.review.getVerification(runId)
+        ),
+        loadState(setRisk, () => agentHubApi.review.getRisk(runId)),
+        loadState(setLifecycle, () => agentHubApi.lifecycle.get(runId)),
+        loadState(setContext, () => agentHubApi.review.getContext(runId))
+      ]);
     } else if (tab === "artifacts") {
       await Promise.all([
         loadState(setArtifacts, () => agentHubApi.review.getArtifacts(runId)),
@@ -160,14 +174,6 @@ export function RunInspectorModal({
         loadState(setHandoff, () => agentHubApi.review.getHandoff(runId)),
         loadComparison()
       ]);
-    } else if (tab === "checks") {
-      await loadState(setVerification, () =>
-        agentHubApi.review.getVerification(runId)
-      );
-    } else if (tab === "risks") {
-      await loadState(setRisk, () => agentHubApi.review.getRisk(runId));
-    } else if (tab === "lifecycle") {
-      await loadState(setLifecycle, () => agentHubApi.lifecycle.get(runId));
     } else if (tab === "memory") {
       await loadState(setMemory, () => agentHubApi.memory.listProposals(runId));
       await loadSummary();
@@ -308,11 +314,13 @@ export function RunInspectorModal({
   }
 
   const title = summary.data?.task ?? initialRun?.title ?? "Loading run...";
+  const canUseDeepReview =
+    activeTab === "evidence" || activeTab === "artifacts" || activeTab === "audit";
 
   return (
     <div className="inspector-backdrop" role="presentation" onMouseDown={onClose}>
       <aside
-        className="run-inspector"
+        className={`run-inspector ${deepReviewMode ? "deep-review" : ""}`}
         role="dialog"
         aria-modal="true"
         aria-label="Workgroup inspector"
@@ -334,16 +342,26 @@ export function RunInspectorModal({
             </div>
           </div>
           <div className="inspector-actions">
-            <button className="ghost-button" onClick={() => void refresh()}>
+            {canUseDeepReview ? (
+              <button
+                className={`ghost-button utility-action ${
+                  deepReviewMode ? "selected" : ""
+                }`}
+                onClick={() => setDeepReviewMode((current) => !current)}
+              >
+                Deep
+              </button>
+            ) : null}
+            <button className="ghost-button utility-action" onClick={() => void refresh()}>
               Refresh
             </button>
-            <button className="ghost-button" onClick={() => void accept()}>
-              Record Accept
+            <button className="primary-button compact" onClick={() => void accept()}>
+              Accept
             </button>
             <button className="ghost-button danger" onClick={() => void reject()}>
-              Record Reject
+              Reject
             </button>
-            <button className="ghost-button" onClick={onClose}>
+            <button className="ghost-button utility-action" onClick={onClose}>
               Close
             </button>
           </div>
@@ -374,12 +392,42 @@ export function RunInspectorModal({
                   summary={data}
                   risk={risk}
                   fallbackRun={initialRun}
-                  onSelectTab={setActiveTab}
+                  onSelectTab={(tab) => setActiveTab(toInspectorViewTab(tab))}
                 />
               )}
             </LoadSlot>
-          ) : activeTab === "context" ? (
-            <LoadSlot state={context}>{(data) => <ContextPanel context={data} />}</LoadSlot>
+          ) : activeTab === "evidence" ? (
+            <EvidencePanel
+              context={context}
+              verification={verification}
+              risk={risk}
+              lifecycle={lifecycle}
+              deepReviewMode={deepReviewMode}
+              onMarkKeep={(reason) =>
+                void runLifecycleAction(() =>
+                  agentHubApi.lifecycle.markKeep({ runId, reason })
+                )
+              }
+              onCleanup={(confirmation, reason) =>
+                void runLifecycleAction(() =>
+                  agentHubApi.lifecycle.cleanupWorktree({
+                    runId,
+                    confirmation,
+                    reason
+                  })
+                )
+              }
+              onPreviewApply={() => void previewApply()}
+              onConfirmApply={(confirmation, reason) =>
+                void runLifecycleAction(() =>
+                  agentHubApi.lifecycle.confirmApply({
+                    runId,
+                    confirmation,
+                    reason
+                  })
+                )
+              }
+            />
           ) : activeTab === "artifacts" ? (
             <ArtifactsPanel
               artifacts={artifacts}
@@ -387,48 +435,11 @@ export function RunInspectorModal({
               handoff={handoff}
               comparison={comparison}
               baselineRunId={runId}
+              deepReviewMode={deepReviewMode}
               onOpenHandoff={() => void openHandoff()}
               onCopyHandoff={(kind) => void copyHandoff(kind)}
               onCreateComparison={(candidateRunId) => void createComparison(candidateRunId)}
             />
-          ) : activeTab === "checks" ? (
-            <LoadSlot state={verification}>
-              {(data) => <VerificationPanel report={data} />}
-            </LoadSlot>
-          ) : activeTab === "risks" ? (
-            <LoadSlot state={risk}>{(data) => <RiskReport report={data} />}</LoadSlot>
-          ) : activeTab === "lifecycle" ? (
-            <LoadSlot state={lifecycle}>
-              {(data) => (
-                <LifecyclePanel
-                  lifecycle={data}
-                  onMarkKeep={(reason) =>
-                    void runLifecycleAction(() =>
-                      agentHubApi.lifecycle.markKeep({ runId, reason })
-                    )
-                  }
-                  onCleanup={(confirmation, reason) =>
-                    void runLifecycleAction(() =>
-                      agentHubApi.lifecycle.cleanupWorktree({
-                        runId,
-                        confirmation,
-                        reason
-                      })
-                    )
-                  }
-                  onPreviewApply={() => void previewApply()}
-                  onConfirmApply={(confirmation, reason) =>
-                    void runLifecycleAction(() =>
-                      agentHubApi.lifecycle.confirmApply({
-                        runId,
-                        confirmation,
-                        reason
-                      })
-                    )
-                  }
-                />
-              )}
-            </LoadSlot>
           ) : activeTab === "memory" ? (
             <LoadSlot state={memory}>
               {(data) => (
@@ -523,8 +534,7 @@ function Brief({
           <div>
             <div className="panel-label">Manual Next Actions</div>
             <p className="muted-copy">
-              These actions open review evidence only. They do not merge, push,
-              apply code, clean worktrees, or export repository context.
+              Review-only actions. They will not modify the repository.
             </p>
           </div>
         </div>
@@ -539,7 +549,7 @@ function Brief({
                 className="ghost-button"
                 onClick={() => onSelectTab(action.tab)}
               >
-                {action.tab === "brief" ? "Stay Here" : `Open ${tabLabel(action.tab)}`}
+                {action.tab === "brief" ? "Stay" : tabLabel(action.tab)}
               </button>
             </article>
           ))}
@@ -573,6 +583,110 @@ function Brief({
         </p>
       </section>
     </div>
+  );
+}
+
+function EvidencePanel({
+  context,
+  verification,
+  risk,
+  lifecycle,
+  deepReviewMode,
+  onMarkKeep,
+  onCleanup,
+  onPreviewApply,
+  onConfirmApply
+}: {
+  context: LoadState<ReviewContext>;
+  verification: LoadState<VerificationReportModel>;
+  risk: LoadState<RiskReportModel>;
+  lifecycle: LoadState<RunLifecycle>;
+  deepReviewMode: boolean;
+  onMarkKeep(reason?: string): void;
+  onCleanup(confirmation?: string, reason?: string): void;
+  onPreviewApply(): void;
+  onConfirmApply(confirmation?: string, reason?: string): void;
+}): JSX.Element {
+  return (
+    <div className="summary-stack evidence-panel">
+      <section>
+        <div className="summary-heading">
+          <div>
+            <div className="panel-label">Evidence</div>
+            <p>
+              Checks, risks, context, and lifecycle state are grouped here so
+              the drawer stays focused.
+            </p>
+          </div>
+          <span className="handoff-state ready">
+            {deepReviewMode ? "deep" : "summary"}
+          </span>
+        </div>
+      </section>
+
+      <EvidenceSummary
+        context={context.data}
+        verification={verification.data}
+        risk={risk.data}
+        lifecycle={lifecycle.data}
+      />
+
+      <LoadSlot state={verification}>
+        {(data) => <VerificationPanel report={data} />}
+      </LoadSlot>
+      <LoadSlot state={risk}>{(data) => <RiskReport report={data} />}</LoadSlot>
+      {deepReviewMode ? (
+        <LoadSlot state={context}>{(data) => <ContextPanel context={data} />}</LoadSlot>
+      ) : null}
+      <LoadSlot state={lifecycle}>
+        {(data) =>
+          deepReviewMode ? (
+            <LifecyclePanel
+              lifecycle={data}
+              onMarkKeep={onMarkKeep}
+              onCleanup={onCleanup}
+              onPreviewApply={onPreviewApply}
+              onConfirmApply={onConfirmApply}
+            />
+          ) : (
+            <LifecycleSummary lifecycle={data} />
+          )
+        }
+      </LoadSlot>
+    </div>
+  );
+}
+
+function EvidenceSummary({
+  context,
+  verification,
+  risk,
+  lifecycle
+}: {
+  context?: ReviewContext;
+  verification?: VerificationReportModel;
+  risk?: RiskReportModel;
+  lifecycle?: RunLifecycle;
+}): JSX.Element {
+  return (
+    <section className="summary-metrics wide evidence-summary">
+      <Metric label="Checks" value={verification?.status ?? "loading"} />
+      <Metric label="Risks" value={risk?.level ?? "loading"} />
+      <Metric
+        label="Lifecycle"
+        value={
+          lifecycle
+            ? lifecycle.handoff.available
+              ? "retained"
+              : "unavailable"
+            : "loading"
+        }
+      />
+      <Metric
+        label="Context"
+        value={context ? (context.available ? "available" : "unavailable") : "loading"}
+      />
+    </section>
   );
 }
 
@@ -615,6 +729,7 @@ function ArtifactsPanel({
   handoff,
   comparison,
   baselineRunId,
+  deepReviewMode,
   onOpenHandoff,
   onCopyHandoff,
   onCreateComparison
@@ -624,6 +739,7 @@ function ArtifactsPanel({
   handoff: LoadState<ReviewHandoff>;
   comparison: LoadState<ComparisonPanelData>;
   baselineRunId: string;
+  deepReviewMode: boolean;
   onOpenHandoff(): void;
   onCopyHandoff(kind: HandoffCopyKind): void;
   onCreateComparison(candidateRunId: string): void;
@@ -645,7 +761,11 @@ function ArtifactsPanel({
       <LoadSlot state={artifacts}>
         {(data) => <ArtifactInventory artifacts={data} />}
       </LoadSlot>
-      <LoadSlot state={diff}>{(data) => <DiffViewer diff={data} />}</LoadSlot>
+      {deepReviewMode ? (
+        <LoadSlot state={diff}>{(data) => <DiffViewer diff={data} />}</LoadSlot>
+      ) : (
+        <LoadSlot state={diff}>{(data) => <DiffSummaryPanel diff={data} />}</LoadSlot>
+      )}
       <LoadSlot state={handoff}>
         {(data) => (
           <HandoffPanel
@@ -765,6 +885,32 @@ function ArtifactInventory({
         </>
       ) : null}
     </div>
+  );
+}
+
+function DiffSummaryPanel({ diff }: { diff: DiffSummary }): JSX.Element {
+  const additions = diff.files.reduce((total, file) => total + file.additions, 0);
+  const deletions = diff.files.reduce((total, file) => total + file.deletions, 0);
+  return (
+    <section>
+      <div className="summary-heading">
+        <div>
+          <div className="panel-label">Diff Summary</div>
+          <p>
+            {diff.message ??
+              (diff.empty
+                ? "No changed files were recorded."
+                : `${diff.files.length} file(s), +${additions}/-${deletions}.`)}
+          </p>
+        </div>
+        <span className="handoff-state unavailable">summary</span>
+      </div>
+      {!diff.empty ? (
+        <p className="muted-copy">
+          Use Deep review for the bounded unified diff.
+        </p>
+      ) : null}
+    </section>
   );
 }
 
@@ -909,6 +1055,36 @@ function HandoffPanel({
         </p>
       </section>
     </div>
+  );
+}
+
+function LifecycleSummary({ lifecycle }: { lifecycle: RunLifecycle }): JSX.Element {
+  const handoff = lifecycle.handoff;
+  const applyPreview = lifecycle.applyPreview;
+  return (
+    <section className="lifecycle-summary">
+      <div className="summary-heading">
+        <div>
+          <div className="panel-label">Lifecycle Summary</div>
+          <p>{lifecycle.message}</p>
+        </div>
+        <span className={`handoff-state ${handoff.available ? "ready" : "unavailable"}`}>
+          {handoff.available ? "retained" : "unavailable"}
+        </span>
+      </div>
+      <div className="summary-metrics wide">
+        <Metric label="Worktree" value={handoff.worktreePath ?? "none"} />
+        <Metric
+          label="Cleanup"
+          value={handoff.cleanup.cleaned ? "cleaned" : handoff.cleanup.retained ? "retained" : "unknown"}
+        />
+        <Metric label="Apply" value={applyPreview.blocked ? "blocked" : applyPreview.available ? "ready" : "unavailable"} />
+        <Metric label="Audit" value={`${lifecycle.audit.length} event${lifecycle.audit.length === 1 ? "" : "s"}`} />
+      </div>
+      <p className="muted-copy">
+        Use Deep review for cleanup, apply, and full lifecycle audit controls.
+      </p>
+    </section>
   );
 }
 
@@ -1433,8 +1609,24 @@ async function loadState<T>(
   }
 }
 
+function toInspectorViewTab(tab: RunInspectorTab): InspectorViewTab {
+  const normalized = normalizeReviewInspectorTab(tab);
+  if (
+    normalized === "checks" ||
+    normalized === "risks" ||
+    normalized === "lifecycle" ||
+    normalized === "context"
+  ) {
+    return "evidence";
+  }
+  if (normalized === "brief" || normalized === "artifacts" || normalized === "memory" || normalized === "audit") {
+    return normalized;
+  }
+  return "brief";
+}
+
 function tabLabel(tab: WorkgroupInspectorTab): string {
-  return tabs.find((entry) => entry.id === tab)?.label ?? tab;
+  return tabs.find((entry) => entry.id === toInspectorViewTab(tab))?.label ?? tab;
 }
 
 function formatTime(value: string): string {

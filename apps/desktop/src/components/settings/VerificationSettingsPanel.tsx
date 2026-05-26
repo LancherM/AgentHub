@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { agentHubApi } from "../../lib/agentHubApi";
 import type {
   ProjectSummary,
@@ -24,6 +24,7 @@ export function VerificationSettingsPanel({
   onClose
 }: VerificationSettingsPanelProps): JSX.Element {
   const [commands, setCommands] = useState<DraftCommand[]>([]);
+  const [savedCommands, setSavedCommands] = useState<DraftCommand[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [message, setMessage] = useState<string | undefined>();
@@ -34,13 +35,16 @@ export function VerificationSettingsPanel({
     setError(undefined);
     if (!project) {
       setCommands([]);
+      setSavedCommands([]);
       return;
     }
     setIsLoading(true);
     agentHubApi.settings
       .getVerification(project.id)
       .then((settings) => {
-        setCommands(settings.commands.map(toDraftCommand));
+        const drafts = settings.commands.map(toDraftCommand);
+        setCommands(drafts);
+        setSavedCommands(drafts);
       })
       .catch((err: unknown) => {
         setError(errorMessage(err));
@@ -94,7 +98,9 @@ export function VerificationSettingsPanel({
         projectId: project.id,
         commands: commands.map(fromDraftCommand)
       });
-      setCommands(saved.commands.map(toDraftCommand));
+      const drafts = saved.commands.map(toDraftCommand);
+      setCommands(drafts);
+      setSavedCommands(drafts);
       setMessage(
         saved.commands.length === 0
           ? "Verification will be skipped for this project."
@@ -106,6 +112,11 @@ export function VerificationSettingsPanel({
       setIsSaving(false);
     }
   }
+
+  const hasChanges = useMemo(
+    () => serializeCommands(commands) !== serializeCommands(savedCommands),
+    [commands, savedCommands]
+  );
 
   return (
     <div className="inspector-backdrop" role="presentation" onMouseDown={onClose}>
@@ -123,14 +134,7 @@ export function VerificationSettingsPanel({
             <p>{project ? project.name : "No project selected"}</p>
           </div>
           <div className="inspector-actions">
-            <button
-              className="ghost-button"
-              onClick={() => void save()}
-              disabled={!project || isLoading || isSaving}
-            >
-              {isSaving ? "Saving" : "Save"}
-            </button>
-            <button className="ghost-button" onClick={onClose}>
+            <button className="ghost-button utility-action" onClick={onClose}>
               Close
             </button>
           </div>
@@ -163,7 +167,11 @@ export function VerificationSettingsPanel({
                       : `${commands.length} command${commands.length === 1 ? "" : "s"} configured.`}
                   </p>
                 </div>
-                <button className="ghost-button" onClick={addCommand}>
+                <button
+                  className="primary-button compact"
+                  onClick={addCommand}
+                  disabled={isLoading || isSaving}
+                >
                   Add Command
                 </button>
               </div>
@@ -171,9 +179,15 @@ export function VerificationSettingsPanel({
               <div className="verification-settings-list">
                 {commands.length === 0 ? (
                   <div className="settings-empty">
-                    Runs will record skipped verification until a command is added.
-                    Use Add Command to point at a local executable such as
-                    pnpm, npm, or a project script runner.
+                    <strong>No verification commands configured</strong>
+                    <span>
+                      Runs will mark checks as skipped until you add a command.
+                    </span>
+                    <div className="settings-examples">
+                      <code>pnpm test</code>
+                      <code>npm run lint</code>
+                      <code>npm run typecheck</code>
+                    </div>
                   </div>
                 ) : (
                   commands.map((command, index) => (
@@ -255,6 +269,18 @@ export function VerificationSettingsPanel({
             </>
           )}
         </div>
+        <footer className="settings-footer">
+          <button className="ghost-button" onClick={onClose}>
+            Cancel
+          </button>
+          <button
+            className="primary-button compact"
+            onClick={() => void save()}
+            disabled={!project || isLoading || isSaving || !hasChanges}
+          >
+            {isSaving ? "Saving..." : "Save changes"}
+          </button>
+        </footer>
       </aside>
     </div>
   );
@@ -297,6 +323,10 @@ function nextCommandId(commands: DraftCommand[]): string {
     id = `verify-${index}`;
   }
   return id;
+}
+
+function serializeCommands(commands: DraftCommand[]): string {
+  return JSON.stringify(commands);
 }
 
 function errorMessage(error: unknown): string {

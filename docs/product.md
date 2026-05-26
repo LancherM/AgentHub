@@ -397,9 +397,14 @@ persona, default instructions, permissions, context policy, approval policy,
 executor binding, enabled state, default room, and tags. Role configuration is
 stored in Agent Hub's local SQLite settings for the selected project; it does
 not write to the target repository or export `AGENTS.md`, `CLAUDE.md`, or skill
-folders. The UI clearly marks `agent_adapter` roles as runnable through the
-existing local adapters and keeps `llm_api`, `workflow`, and `human` roles as
-reserved non-runnable metadata in this phase.
+folders. The role list is optimized for scanning with only Role, Purpose,
+Executor, and Status columns; longer permissions, policy metadata, and
+activity live in the right-side Role Profile panel. The profile panel groups
+fields into Basic, Executor, Permissions, Policies, and Advanced accordions,
+keeps Basic and Executor open by default, and enables Save Role only when the
+draft differs from the stored role. The UI clearly marks `agent_adapter` roles
+as runnable through the existing local adapters and keeps `llm_api`,
+`workflow`, and `human` roles as reserved non-runnable metadata in this phase.
 
 Desktop rooms now support the first bounded collaboration workflow metadata.
 Users can start `handoff`, `review_loop`, or `panel_discussion` workflows from
@@ -425,9 +430,11 @@ interaction surface. Each registered project receives default local rooms
 `#general`, `#planning`, `#research`, `#review`, and `#knowledge`, displayed
 inside a sidebar hierarchy split into Project, Rooms, and Utilities. The
 Utilities zone links to Knowledge, Team, Settings, and sidebar density controls
-and carries compact room/running/run counts instead of a full status panel.
-Duplicate project names show a short parent-path hint so repeated names such
-as `~` remain distinguishable without exposing a wide path column. When there
+and carries room/running/run counts as one compact status line instead of a
+full status panel. Project rows show the project name and a shortened local
+path; a project rooted at `~` is labeled `Home` and displays `~/` as its path.
+Rooms show title, last activity, a one-line description, and compact metadata.
+When there
 are no registered projects, the desktop renders local project path registration
 controls in the project sidebar and the empty conversation pane; users can
 either paste a path or open the system folder picker through the sandboxed
@@ -508,20 +515,15 @@ syntax, while raw HTML remains disabled. Raw event lines stay behind the
 inspector's Audit view by default.
 Once a completed run has a durable assistant answer and no changed files, the
 default transcript hides the run card entirely and keeps the answer as the main
-visible row. Runs that modify files, fail, are cancelled, or have comparison
-peers remain visible as review affordances. Failed runs render as incident
-cards: the card title calls out the failed agent, notes when no agent-facing
-output was produced, shows a likely cause from persisted diagnostics or
-terminal events, and puts View review plus Open logs ahead of secondary
-Compare, Continue, Handoff, and Audit actions. Compare becomes available only
-when another terminal run from the same task or the same multi-agent turn is
-present. Terminal cards do not load full run review evidence when a thread is
-merely selected, but they refresh the summary and artifact metadata needed for
-grouped card evidence. Card-level evidence is grouped as Status, Evidence, and
-Outputs so checks, risks, logs/audit, lifecycle, artifacts, and memory remain
-one click away without a long flat pill row. Checks, risks, memory proposals,
-brief data, context previews, comparison reports, and audit logs load lazily
-when the user opens the on-demand workgroup inspector drawer.
+visible row. Runs that modify files, fail, are cancelled, need review, or have
+comparison peers remain visible as review affordances. Main run cards stay
+compact: they show agent, status, one conclusion line, a few high-level facts,
+and state-specific actions such as Review, View failure, View live log,
+Cancel, Accept, Reject, or Artifacts. Detailed checks, risks, lifecycle, audit
+counts, memory proposals, artifacts, and raw logs remain in the inspector
+instead of the card body. Checks, risks, memory proposals, brief data, context
+previews, comparison reports, and audit logs load lazily when the user opens
+the on-demand workgroup inspector drawer.
 The chat surface also derives a lightweight visual state from the latest
 visible run. Idle rooms keep the composer and workflow controls inviting,
 running rooms emphasize live run progress, failed rooms make the incident card
@@ -540,9 +542,12 @@ SQLite-backed.
 
 Verification setup failures in the desktop point back to the Settings panel
 instead of leaving a generic room error. Empty verification settings include
-the expected executable-plus-args shape, while validation errors explain that
-commands should be split into executable and argument fields and that
-secret-like option names are rejected before persistence.
+an explicit no-commands state, the skipped-check consequence, examples such as
+`pnpm test`, `npm run lint`, and `npm run typecheck`, and an Add Command
+primary action. Save changes stays disabled until the command draft changes.
+Validation errors explain that commands should be split into executable and
+argument fields and that secret-like option names are rejected before
+persistence.
 
 Agent Hub keeps project context, thread context, current-turn context, and
 per-run context snapshots as separate layers. Desktop follow-up turns build a
@@ -579,15 +584,18 @@ terminal runs with no agent-facing output get a concise empty-output message
 and a review affordance instead of a fabricated answer.
 
 The workgroup inspector is the desktop drill-down surface for review evidence.
-Its top-level tabs use product vocabulary: Brief, Context, Artifacts, Checks,
-Risks, Lifecycle, Memory, and Audit. Brief is conclusion-first: it shows any
+Its top-level tabs use compact product vocabulary: Brief, Evidence, Artifacts,
+Memory, and Audit. The default drawer is a narrow detail panel, with an
+optional Deep mode for long audit logs, lifecycle controls, and artifact diffs.
+Evidence groups checks, risks, context availability, and lifecycle summary;
+full conversation-brief content remains reachable through artifact evidence
+instead of occupying the default narrow panel. Brief is conclusion-first: it shows any
 blocking risk at the top, then the review conclusion, suggested audit-only
 decision, changed-output count, check state, risk state, memory proposal count,
 and manual next actions that route to secondary tabs. It still shows the goal,
 status, assignee, acceptance-criteria placeholder, and decision boundary below
-the conclusion. Context loads the persisted `conversation_brief` run artifact
-through review IPC and otherwise shows a clear unavailable state. Artifacts now
-begins with a local artifact inventory derived from persisted `run_artifacts`.
+the conclusion. Artifacts begins with a local artifact inventory derived from
+persisted `run_artifacts`.
 Each artifact has bounded metadata for title, artifact type, source run, source
 task, thread id when known, creator, summary, local availability, and a capped
 content preview.
@@ -599,10 +607,11 @@ cards, linking back to the Artifacts inspector tab without copying raw evidence
 into the room transcript. The same tab still contains engineering-specific
 evidence such as changed-file stats, bounded unified diffs, retained-worktree
 handoff, and local comparison reports, keeping those labels out of the
-top-level navigation. Checks shows captured verification rows, Risks shows
-persisted TaskRunner safety reports or deterministic fallback findings,
-Lifecycle shows retained-worktree state plus explicit cleanup and local apply
-controls, Memory shows conservative proposals, and Audit shows bounded raw logs.
+top-level navigation. Evidence shows captured verification rows, persisted
+TaskRunner safety reports or deterministic fallback findings, and
+retained-worktree lifecycle summary; Deep mode exposes explicit cleanup and
+local apply controls. Memory shows conservative proposals, and Audit shows
+bounded raw logs.
 All of this
 loads through `window.agentHub.review.*`, `window.agentHub.comparison.*`, and
 `window.agentHub.lifecycle.*`, and `window.agentHub.memory.*` IPC methods.

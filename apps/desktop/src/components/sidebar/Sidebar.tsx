@@ -262,12 +262,17 @@ export function Sidebar({
                   </span>
                   <span className="thread-time">{relativeTime(thread.updatedAt)}</span>
                 </div>
-                <div className="row-subtitle">
+                <div className="row-subtitle thread-description">
                   {thread.description ?? thread.lastMessagePreview ?? "Local room"}
                 </div>
                 <div className="thread-meta">
-                  <span>{thread.runCount ?? 0} runs</span>
-                  {thread.roomType ? <span>{thread.roomType}</span> : null}
+                  <span>
+                    {thread.runCount ?? 0} runs
+                    {thread.roomType ? ` · ${thread.roomType}` : ""}
+                    {(thread.activeRunCount ?? 0) > 0
+                      ? ` · ${thread.activeRunCount} running`
+                      : ""}
+                  </span>
                 </div>
               </button>
             ))
@@ -278,9 +283,9 @@ export function Sidebar({
       <nav className="utility-nav" aria-label="Utilities">
         <div className="utility-zone-label">Utilities</div>
         <div className="sidebar-status-summary" aria-label="Task status">
-          <span>{projectRooms.length} rooms</span>
-          <span>{activeRunCount} running</span>
-          <span>{runCount} runs</span>
+          <span>
+            {projectRooms.length} rooms · {activeRunCount} running · {runCount} runs
+          </span>
         </div>
         <button
           className={activeWorkspace === "knowledge" ? "selected" : ""}
@@ -297,8 +302,8 @@ export function Sidebar({
           Team
         </button>
         <button onClick={onOpenSettings}>Settings</button>
-        <button onClick={onToggleSidebarDensity}>
-          {sidebarDensity === "compact" ? "Comfortable Sidebar" : "Compact Sidebar"}
+        <button className="utility-secondary-action" onClick={onToggleSidebarDensity}>
+          {sidebarDensity === "compact" ? "Expand sidebar" : "Collapse sidebar"}
         </button>
       </nav>
     </aside>
@@ -309,6 +314,9 @@ function projectDisplayName(
   project: ProjectSummary,
   projects: ProjectSummary[]
 ): string {
+  if (isHomePath(project.rootPath)) {
+    return "Home";
+  }
   const duplicateName = projects.some(
     (candidate) => candidate.id !== project.id && candidate.name === project.name
   );
@@ -321,11 +329,18 @@ function projectDisplayName(
 
 function compactProjectPath(rootPath: string): string {
   const normalized = rootPath.replace(/\/+$/, "");
+  if (isHomePath(normalized)) {
+    return "~/";
+  }
   const parts = normalized.split("/").filter(Boolean);
   if (parts.length <= 2) {
     return normalized || rootPath;
   }
   return `.../${parts.slice(-2).join("/")}`;
+}
+
+function isHomePath(rootPath: string): boolean {
+  return rootPath === "~" || rootPath === "~/";
 }
 
 function parentFolderName(rootPath: string): string | undefined {
