@@ -147,7 +147,8 @@ Implemented:
 - CLI commands for project registration/listing, context store init/show,
   context pack build, optional repo export, task creation/listing/history, task
   runs, manual run-event recording, threaded chat, metadata-backed rooms, team
-  role management, memory workflows, and run comparison.
+  role management, global skill create/list workflows, memory workflows, and
+  run comparison.
 - Interactive CLI with `@agent` prompts, `/agents`, `/use`, `/context`,
   `/context init`, `/clear`, `/exit`, and `/quit`.
 - Git worktree creation for task runs.
@@ -260,6 +261,8 @@ Implemented commands:
 - `agent-hub context show`
 - `agent-hub context build`
 - `agent-hub context export`
+- `agent-hub skills global create`
+- `agent-hub skills global list`
 - `agent-hub task create`
 - `agent-hub task list`
 - `agent-hub task history`
@@ -380,6 +383,8 @@ Responsible for:
 
 - Reading canonical context from the Agent Hub context store
 - Reading approved memory and skills
+- Reading reusable global skills from Agent Hub-owned app data when a task or
+  role explicitly references them
 - Building a task-specific context pack
 - Task brief generation
 - Runtime-injection payload generation for adapters
@@ -601,6 +606,19 @@ Canonical skills live in the Agent Hub context store by default:
 ```text
 skills/<skill-name>/SKILL.md
 ```
+
+Reusable global skills may also live in Agent Hub-owned app data:
+
+```text
+<agent-hub-app-data>/skills/<skill-name>/SKILL.md
+```
+
+Global skills are created and listed through
+`agent-hub skills global create/list`. They are injected only when explicitly
+selected for a task/run or referenced by a role default skill list. Project
+context-store skills override same-id global skills by default; an explicit
+`global:<id>` reference selects the global skill. Skills remain separate from
+approved memory.
 
 Repo-local mode may use `.agent-hub/skills/<skill-name>/SKILL.md`, but this is
 not required for the default workflow.
