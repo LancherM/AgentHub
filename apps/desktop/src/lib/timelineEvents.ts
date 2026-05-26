@@ -1,5 +1,6 @@
 import type {
   AgentRunMessage,
+  AssistantMessage,
   ReviewArtifact,
   ReviewSummary,
   RunInspectorTab,
@@ -54,12 +55,15 @@ export function timelinePresentationForMessage(
     };
   }
   if (message.type === "assistant") {
+    const displayHandle = participantDisplayHandle(message);
     return {
       kind: event?.kind ?? "participant_message",
-      title: event?.title ?? participantTitle(message.agentId),
+      title: message.assignment?.roleHandle
+        ? `${displayHandle} response`
+        : event?.title ?? participantTitle(message.agentId),
       subtitle: event?.summary,
       tone: event?.tone ?? toneForRunStatus(message.status),
-      actorLabel: message.agentId ? `@${message.agentId}` : "Assistant",
+      actorLabel: displayHandle,
       linkedRunId: message.runId ?? event?.linkedIds?.runId,
       linkedTaskId: event?.linkedIds?.taskId,
       defaultTab: "brief",
@@ -454,6 +458,13 @@ function artifactTone(artifact: ReviewArtifact): TimelineEventTone {
 
 function participantTitle(agentId: string | undefined): string {
   return agentId ? `@${agentId} participant message` : "Participant message";
+}
+
+function participantDisplayHandle(message: AssistantMessage): string {
+  if (message.assignment?.roleHandle) {
+    return `@${message.assignment.roleHandle}`;
+  }
+  return message.agentId ? `@${message.agentId}` : "Assistant";
 }
 
 function isTerminalRunStatus(status: RunStatus): boolean {

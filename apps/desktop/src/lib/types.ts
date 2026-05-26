@@ -244,6 +244,7 @@ export interface AssistantMessage extends BaseThreadMessage {
   agentId?: AgentId;
   runId?: string;
   status?: RunStatus;
+  assignment?: WorkgroupTaskAssignmentMetadata;
 }
 
 export interface SystemMessage extends BaseThreadMessage {

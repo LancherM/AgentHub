@@ -3309,7 +3309,7 @@ describe("desktop services", () => {
     });
   });
 
-  it("limits follow-up conversation briefs to same-agent assistant output", async () => {
+  it("excludes other direct agents from follow-up conversation briefs", async () => {
     const fixture = await createFixture();
     const context = createDesktopServiceContext(fixture.repositories);
     const projects = createProjectService(context);
@@ -3357,10 +3357,78 @@ describe("desktop services", () => {
         "conversation_brief"
       );
     expect(artifact?.content).toContain("second agent prompt");
-    expect(artifact?.content).toContain("first agent answer");
+    expect(artifact?.content).not.toContain("first agent answer");
     expect(artifact?.content).not.toContain("Assistant @fake");
     expect(artifact?.content).not.toContain("fake agent completed");
     expect(artifact?.content).not.toContain("Task created:");
+  });
+
+  it("isolates role-targeted conversation briefs for roles sharing one executor", async () => {
+    const fixture = await createFixture();
+    const context = createDesktopServiceContext(fixture.repositories);
+    const projects = createProjectService(context);
+    const memory = createMemoryService(context);
+    const review = createReviewService(context, { memoryService: memory });
+    const runs = createTestRunService(context, review, memory, fixture);
+    const threads = createThreadService({ context, projects, runs });
+    const project = await projects.open(fixture.projectRoot);
+
+    const first = await threads.sendMessage({
+      projectId: project.id,
+      text: "@researcher Decision: researcher private fact",
+      contextMode: "auto"
+    });
+    const firstRun = first.messages.find(
+      (message): message is AgentRunMessage => message.type === "agent_run"
+    );
+    if (!firstRun) {
+      throw new Error("expected first role run");
+    }
+    await waitForRun(runs, firstRun.runId, "completed");
+
+    const second = await threads.sendMessage({
+      threadId: first.id,
+      text: "@writer writer follow-up",
+      contextMode: "auto"
+    });
+    const secondRun = second.messages
+      .filter((message): message is AgentRunMessage => message.type === "agent_run")
+      .at(-1);
+    if (!secondRun) {
+      throw new Error("expected second role run");
+    }
+    await waitForRun(runs, secondRun.runId, "completed");
+
+    const writerBrief =
+      await fixture.repositories.runArtifactRepository.getLatestByRunIdAndKind(
+        secondRun.runId,
+        "conversation_brief"
+      );
+    expect(writerBrief?.content).toContain("workgroup_role: @writer");
+    expect(writerBrief?.content).not.toContain("researcher private fact");
+    expect(writerBrief?.content).not.toContain("workgroup_role: @researcher");
+
+    const third = await threads.sendMessage({
+      threadId: first.id,
+      text: "@researcher researcher follow-up",
+      contextMode: "auto"
+    });
+    const thirdRun = third.messages
+      .filter((message): message is AgentRunMessage => message.type === "agent_run")
+      .at(-1);
+    if (!thirdRun) {
+      throw new Error("expected third role run");
+    }
+    await waitForRun(runs, thirdRun.runId, "completed");
+
+    const researcherBrief =
+      await fixture.repositories.runArtifactRepository.getLatestByRunIdAndKind(
+        thirdRun.runId,
+        "conversation_brief"
+      );
+    expect(researcherBrief?.content).toContain("workgroup_role: @researcher");
+    expect(researcherBrief?.content).toContain("researcher private fact");
+    expect(researcherBrief?.content).not.toContain("writer follow-up");
   });
 
   it("resumes the previous Codex CLI session for follow-up turns to the same role", async () => {
@@ -3444,7 +3512,14 @@ describe("desktop services", () => {
       messages: expect.arrayContaining([
         expect.objectContaining({
           type: "assistant",
-          text: "continued role reply"
+          text: "continued role reply",
+          agentId: "codex",
+          assignment: expect.objectContaining({
+            roleHandle: "engineer"
+          }),
+          timelineEvent: expect.objectContaining({
+            title: "@engineer response"
+          })
         })
       ])
     });

@@ -359,7 +359,7 @@ preserving local-first operation as the default.
 The companion interaction optimization plan lives in
 `docs/interaction-optimization-roadmap.md`. It records the near-term
 experience corrections for reducing visible complexity: quiet room transcripts,
-agent-output-only answers, same-agent multi-turn room context, discoverable
+agent-output-only answers, same-participant multi-turn room context, discoverable
 project and room creation, room-level shared-context governance, global skill
 scope, composer autocomplete, button/control states, run progress, inspector
 hierarchy, error states, preferences, and keyboard polish. These changes should
@@ -498,7 +498,9 @@ system timeline events, then creates one run per executable assignment through
 The timeline groups linked run cards under the shared task and persists one
 hidden pending assistant-output message per run. When a run reaches a terminal
 state, the pending assistant message is updated with the agent-facing final
-output or a concise failure/cancel summary. If no room is selected, the message
+output or a concise failure/cancel summary while preserving the resolved role
+assignment, so the room transcript presents role-backed replies as `@role` with
+the local executor shown separately. If no room is selected, the message
 goes to the project's default `#general` room. If no agent or role is mentioned
 or supplied by the caller, desktop falls back to `@fake`.
 
@@ -558,12 +560,14 @@ persistence.
 Agent Hub keeps project context, thread context, current-turn context, and
 per-run context snapshots as separate layers. Desktop follow-up turns build a
 bounded conversation brief before each run. The brief includes the current
-turn, recent user messages, same-agent terminal assistant answers from prior
-runs, same-agent compact run summaries when no assistant answer exists yet, the
-latest conservative thread summary, project context-store references, and
-explicit character-budget metadata. Other agents' prior outputs stay out of the
-raw recent-message list and can affect future runs only through the bounded
-thread summary. Each room has a local shared-context switch, defaulting on. If
+turn, prior user messages for the same direct adapter or resolved role
+participant, terminal assistant answers from the same participant, compact run
+summaries for that participant when no assistant answer exists yet, a
+participant-scoped deterministic thread summary, project context-store
+references, and explicit character-budget metadata. Other roles' and direct
+agents' prior prompts and outputs stay out of the raw recent-message list and
+the injected thread summary unless the user chooses an explicit continuation
+path. Each room has a local shared-context switch, defaulting on. If
 the switch is off, new desktop runs in that room still receive the current
 prompt, approved project context, role instructions, selected skills, and any
 explicit continuation, but prior room messages and the room summary are left

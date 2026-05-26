@@ -6,6 +6,7 @@ import {
 } from "../apps/desktop/src/lib/timelineEvents";
 import type {
   AgentRunMessage,
+  AssistantMessage,
   ReviewArtifact,
   ReviewSummary,
   SystemMessage
@@ -29,6 +30,46 @@ describe("desktop timeline event presentation", () => {
       kind: "task_created",
       title: "Task created",
       tone: "accent"
+    });
+  });
+
+  it("presents role-backed assistant messages under the role identity", () => {
+    const message: AssistantMessage = {
+      id: "message_assistant",
+      threadId: "thread_1",
+      type: "assistant",
+      text: "Done.",
+      agentId: "codex",
+      runId: "run_1",
+      status: "completed",
+      assignment: {
+        assignmentId: "assignment_1",
+        taskId: "task_1",
+        threadId: "thread_1",
+        sourceMessageId: "message_user",
+        assignmentRole: "role",
+        agentId: "codex",
+        roleHandle: "engineer",
+        displayName: "Engineer",
+        executorKind: "agent_adapter",
+        adapterKind: "codex",
+        executable: true,
+        runId: "run_1",
+        status: "completed"
+      },
+      timelineEvent: {
+        kind: "participant_message",
+        actor: "assistant",
+        title: "codex response"
+      },
+      createdAt: "2026-05-25T00:00:00.000Z"
+    };
+
+    expect(timelinePresentationForMessage(message)).toMatchObject({
+      kind: "participant_message",
+      title: "@engineer response",
+      actorLabel: "@engineer",
+      linkedRunId: "run_1"
     });
   });
 

@@ -11,14 +11,22 @@ export function AssistantMessageBubble({
   message
 }: AssistantMessageBubbleProps): JSX.Element {
   const event = timelinePresentationForMessage(message);
+  const displayHandle = message.assignment?.roleHandle
+    ? `@${message.assignment.roleHandle}`
+    : message.agentId
+      ? `@${message.agentId}`
+      : "Assistant";
+  const executorLabel =
+    message.assignment?.roleHandle && message.agentId ? `via @${message.agentId}` : undefined;
   return (
     <article className={`assistant-message-row timeline-event ${event.tone}`}>
       <div className={`agent-mark ${message.agentId ?? "fake"}`}>
-        {(message.agentId ?? "A").slice(0, 1).toUpperCase()}
+        {displayHandle.replace(/^@/, "").slice(0, 1).toUpperCase()}
       </div>
       <div className="assistant-message-bubble">
         <div className="message-meta">
-          <strong>{message.agentId ? `@${message.agentId}` : "Assistant"}</strong>
+          <strong>{displayHandle}</strong>
+          {executorLabel ? <span>{executorLabel}</span> : null}
           <span className="timeline-event-kind">{event.title}</span>
           {message.status ? <RunStatusBadge status={message.status} compact /> : null}
           <span>{formatTime(message.createdAt)}</span>
