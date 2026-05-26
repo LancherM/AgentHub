@@ -12,17 +12,26 @@
   --bg-raised: #1c1d18;
   --bg-soft: #24261f;
   --line: #34372c;
+  --line-soft: rgba(255, 255, 255, 0.055);
   --line-strong: #515940;
   --text: #f4f0e7;
   --muted: #aaa48f;
   --muted-2: #807b6d;
   --accent: #d8ff57;
   --accent-ink: #1d2602;
+  --accent-soft: rgba(216, 255, 87, 0.075);
   --cyan: #67d8c4;
+  --cyan-soft: rgba(103, 216, 196, 0.09);
   --green: #8be977;
   --amber: #f5bd5a;
+  --amber-soft: rgba(245, 189, 90, 0.11);
   --red: #ff7d6b;
+  --red-soft: rgba(255, 125, 107, 0.1);
   --plum: #c59bff;
+  --plum-soft: rgba(197, 155, 255, 0.1);
+  --surface-muted: rgba(255, 255, 255, 0.026);
+  --surface-hover: rgba(255, 255, 255, 0.045);
+  --surface-raised: rgba(20, 21, 18, 0.92);
   --shadow: 0 26px 90px rgba(0, 0, 0, 0.42);
 }
 
@@ -212,16 +221,18 @@ textarea:disabled {
   min-height: 48px;
   margin-bottom: 8px;
   padding: 10px;
-  border: 1px solid rgba(216, 255, 87, 0.22);
+  border: 1px solid var(--line);
   border-radius: 8px;
-  background: rgba(216, 255, 87, 0.055);
+  background:
+    linear-gradient(90deg, var(--accent-soft), transparent 38%),
+    var(--surface-muted);
 }
 
 .thread-row,
 .project-row {
   width: 100%;
   min-width: 0;
-  border: 1px solid transparent;
+  border: 1px solid var(--line-soft);
   border-radius: 8px;
   color: var(--text);
   text-align: left;
@@ -231,15 +242,19 @@ textarea:disabled {
   display: grid;
   gap: 7px;
   padding: 11px;
-  background: rgba(255, 255, 255, 0.028);
+  background: var(--surface-muted);
 }
 
 .thread-row:hover,
+.project-row:hover {
+  border-color: var(--line-strong);
+  background: var(--surface-hover);
+}
+
 .thread-row.selected,
-.project-row:hover,
 .project-row.selected {
-  border-color: rgba(216, 255, 87, 0.45);
-  background: rgba(216, 255, 87, 0.08);
+  border-color: rgba(216, 255, 87, 0.42);
+  background: var(--accent-soft);
 }
 
 .thread-row-main {
@@ -271,12 +286,12 @@ textarea:disabled {
 }
 
 .thread-dot.active {
-  background: var(--accent);
-  box-shadow: 0 0 0 4px rgba(216, 255, 87, 0.12);
+  background: var(--cyan);
+  box-shadow: 0 0 0 4px rgba(103, 216, 196, 0.12);
 }
 
 .thread-row:not(.selected) .thread-dot.active {
-  background: var(--accent);
+  background: var(--cyan);
 }
 
 .thread-meta {
@@ -300,8 +315,8 @@ textarea:disabled {
 }
 
 .icon-button:hover {
-  border-color: rgba(216, 255, 87, 0.45);
-  background: rgba(216, 255, 87, 0.08);
+  border-color: var(--line-strong);
+  background: var(--surface-hover);
 }
 
 .thread-meta span {
@@ -569,7 +584,7 @@ textarea:disabled {
 }
 
 .project-registration-form input:focus {
-  border-color: rgba(216, 255, 87, 0.62);
+  border-color: rgba(103, 216, 196, 0.58);
 }
 
 .project-registration-actions {
@@ -631,7 +646,7 @@ textarea:disabled {
 
 .utility-nav button.selected {
   border-color: rgba(216, 255, 87, 0.45);
-  background: rgba(216, 255, 87, 0.08);
+  background: var(--accent-soft);
   color: var(--text);
 }
 
@@ -1809,10 +1824,10 @@ textarea:disabled {
   min-height: 24px;
   max-width: min(260px, 100%);
   padding: 2px 6px 2px 8px;
-  border: 1px solid rgba(216, 255, 87, 0.28);
+  border: 1px solid rgba(103, 216, 196, 0.28);
   border-radius: 999px;
-  background: rgba(216, 255, 87, 0.11);
-  color: var(--accent);
+  background: var(--cyan-soft);
+  color: var(--cyan);
   font-size: 12px;
   font-weight: 850;
 }
@@ -1896,11 +1911,9 @@ textarea:disabled {
 
 .agent-run-card {
   overflow: hidden;
-  border: 1px solid var(--line);
+  border: 1px solid var(--line-soft);
   border-radius: 8px;
-  background:
-    linear-gradient(90deg, rgba(216, 255, 87, 0.08), transparent 30%),
-    rgba(22, 23, 19, 0.92);
+  background: var(--surface-raised);
   box-shadow: 0 16px 42px rgba(0, 0, 0, 0.2);
   cursor: pointer;
 }
@@ -1909,11 +1922,27 @@ textarea:disabled {
   display: grid;
   gap: 10px;
   padding: 12px;
-  border: 1px solid rgba(216, 255, 87, 0.2);
+  border: 1px solid var(--line-soft);
   border-radius: 8px;
+  background: rgba(14, 15, 13, 0.74);
+}
+
+.task-run-group.has-active-run {
+  border-color: rgba(103, 216, 196, 0.24);
   background:
-    linear-gradient(90deg, rgba(216, 255, 87, 0.08), rgba(103, 216, 196, 0.04)),
-    rgba(14, 17, 14, 0.76);
+    linear-gradient(90deg, rgba(103, 216, 196, 0.055), transparent 40%),
+    rgba(14, 16, 15, 0.76);
+}
+
+.task-run-group.has-failure {
+  border-color: rgba(255, 125, 107, 0.28);
+  background:
+    linear-gradient(90deg, rgba(255, 125, 107, 0.075), transparent 42%),
+    rgba(20, 13, 12, 0.78);
+}
+
+.task-run-group.all-completed {
+  border-color: rgba(139, 233, 119, 0.16);
 }
 
 .task-run-group-header {
@@ -1959,16 +1988,22 @@ textarea:disabled {
 
 .agent-run-card.running,
 .agent-run-card.verifying {
-  border-color: rgba(216, 255, 87, 0.46);
+  border-color: rgba(103, 216, 196, 0.34);
+  background:
+    linear-gradient(90deg, rgba(103, 216, 196, 0.055), transparent 32%),
+    var(--surface-raised);
 }
 
 .agent-run-card.failed {
-  border-color: rgba(255, 125, 107, 0.4);
+  border-color: rgba(255, 125, 107, 0.42);
+  background:
+    linear-gradient(90deg, rgba(255, 125, 107, 0.085), transparent 32%),
+    rgba(25, 17, 15, 0.94);
 }
 
 .agent-run-card.compact-completed {
   background:
-    linear-gradient(90deg, rgba(216, 255, 87, 0.045), transparent 28%),
+    linear-gradient(90deg, rgba(139, 233, 119, 0.045), transparent 28%),
     rgba(16, 19, 15, 0.9);
   box-shadow: none;
 }
@@ -2042,8 +2077,10 @@ textarea:disabled {
 }
 
 .run-card-actions button.primary-action {
-  border-color: rgba(216, 255, 87, 0.46);
-  color: var(--text);
+  border-color: transparent;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-weight: 900;
 }
 
 .run-card-actions button:disabled {
@@ -2089,7 +2126,17 @@ textarea:disabled {
 
 .run-progress-stage.done .run-progress-bar,
 .run-progress-stage.current .run-progress-bar {
-  background: var(--accent);
+  background: var(--cyan);
+}
+
+.agent-run-card.completed .run-progress-stage.done .run-progress-bar,
+.agent-run-card.completed .run-progress-stage.current .run-progress-bar {
+  background: var(--green);
+}
+
+.agent-run-card.failed .run-progress-stage.done .run-progress-bar,
+.agent-run-card.failed .run-progress-stage.current .run-progress-bar {
+  background: var(--red);
 }
 
 .run-progress-stage span {
@@ -2153,8 +2200,8 @@ textarea:disabled {
 }
 
 .run-wait-state.success {
-  background: rgba(103, 216, 196, 0.1);
-  color: var(--cyan);
+  background: rgba(139, 233, 119, 0.1);
+  color: var(--green);
 }
 
 .run-wait-state.warning {
@@ -2164,7 +2211,7 @@ textarea:disabled {
 
 .run-wait-state.danger {
   background: rgba(255, 125, 107, 0.11);
-  color: var(--danger);
+  color: var(--red);
 }
 
 .latest-line {
@@ -2233,7 +2280,7 @@ textarea:disabled {
 }
 
 .run-card-pills button:hover {
-  border-color: rgba(216, 255, 87, 0.42);
+  border-color: var(--line-strong);
   color: var(--text);
 }
 
@@ -2325,10 +2372,10 @@ textarea:disabled {
   gap: 10px;
   overflow: visible;
   padding: 12px;
-  border: 1px solid rgba(216, 255, 87, 0.62);
+  border: 1px solid var(--line);
   border-radius: 8px;
   background: rgba(13, 14, 11, 0.96);
-  box-shadow: var(--shadow);
+  box-shadow: 0 18px 58px rgba(0, 0, 0, 0.34);
 }
 
 .composer-toolbar,
@@ -2379,8 +2426,8 @@ textarea:disabled {
 }
 
 .context-segmented-control button.selected {
-  background: var(--accent);
-  color: var(--accent-ink);
+  background: rgba(103, 216, 196, 0.14);
+  color: var(--cyan);
 }
 
 .composer-input-shell {
@@ -3667,14 +3714,14 @@ textarea:disabled {
   min-height: 46px;
   margin: 12px 24px;
   padding: 8px 12px;
-  border: 1px solid rgba(216, 255, 87, 0.24);
+  border: 1px solid var(--line);
   border-radius: 8px;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 14px;
   color: var(--text);
-  background: rgba(216, 255, 87, 0.04);
+  background: var(--surface-muted);
 }
 
 .workflow-launcher-summary span:first-child {
@@ -3712,9 +3759,9 @@ textarea:disabled {
 }
 
 .workflow-mode-tabs button.active {
-  border-color: rgba(216, 255, 87, 0.54);
+  border-color: rgba(103, 216, 196, 0.46);
   color: var(--text);
-  background: rgba(216, 255, 87, 0.08);
+  background: var(--cyan-soft);
 }
 
 .workflow-form-grid {
