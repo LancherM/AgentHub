@@ -1419,6 +1419,44 @@ textarea:disabled {
   overflow: hidden;
 }
 
+.chat-view.state-idle .chat-composer {
+  border-color: rgba(216, 255, 87, 0.34);
+  box-shadow: 0 20px 64px rgba(0, 0, 0, 0.38);
+}
+
+.chat-view.state-running .agent-run-card.running,
+.chat-view.state-running .agent-run-card.verifying {
+  border-color: rgba(103, 216, 196, 0.48);
+  box-shadow: 0 22px 66px rgba(0, 0, 0, 0.28);
+}
+
+.chat-view.state-running .workflow-launcher {
+  background: rgba(10, 14, 13, 0.86);
+}
+
+.chat-view.state-failed .agent-run-card.failed {
+  border-color: rgba(255, 125, 107, 0.62);
+  box-shadow: 0 24px 76px rgba(78, 25, 19, 0.32);
+}
+
+.chat-view.state-failed .workflow-launcher {
+  background: rgba(10, 11, 10, 0.78);
+}
+
+.chat-view.state-failed .workflow-launcher-summary,
+.chat-view.state-failed .chat-composer {
+  opacity: 0.78;
+}
+
+.chat-view.state-failed .chat-composer {
+  border-color: var(--line-soft);
+  box-shadow: none;
+}
+
+.chat-view.state-review-ready .chat-composer {
+  border-color: var(--line);
+}
+
 .chat-header {
   display: flex;
   align-items: flex-start;

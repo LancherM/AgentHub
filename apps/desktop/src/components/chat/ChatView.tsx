@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { agentHubApi } from "../../lib/agentHubApi";
 import type {
   AgentId,
@@ -10,7 +10,8 @@ import type {
   RunContinuationTarget,
   TeamRoleSummary,
   ThreadDetail,
-  ThreadMessage
+  ThreadMessage,
+  RunStatus
 } from "../../lib/types";
 import { ProjectRegistrationForm } from "../projects/ProjectRegistrationForm";
 import { EmptyState } from "../EmptyState";
@@ -71,6 +72,10 @@ export function ChatView({
 }: ChatViewProps): JSX.Element {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [roleTargets, setRoleTargets] = useState<TeamRoleSummary[]>([]);
+  const chatState = useMemo(
+    () => deriveChatViewState(messages, runDetails),
+    [messages, runDetails]
+  );
   const disabledReason = project
     ? undefined
     : "Select or register a local project before running agents.";
@@ -111,7 +116,7 @@ export function ChatView({
   }, [messages, runDetails]);
 
   return (
-    <section className="chat-view">
+    <section className={`chat-view state-${chatState}`}>
       <header className="chat-header">
         <div>
           <h1>
@@ -201,4 +206,30 @@ export function ChatView({
       />
     </section>
   );
+}
+
+type ChatViewState = "idle" | "running" | "failed" | "review-ready";
+
+function deriveChatViewState(
+  messages: ThreadMessage[],
+  runDetails: Record<string, RunDetail>
+): ChatViewState {
+  const latestRun = [...messages]
+    .reverse()
+    .find((message) => message.type === "agent_run");
+  if (!latestRun || latestRun.type !== "agent_run") {
+    return "idle";
+  }
+  const status = runDetails[latestRun.runId]?.status ?? latestRun.status;
+  if (status === "failed") {
+    return "failed";
+  }
+  if (isActiveStatus(status)) {
+    return "running";
+  }
+  return "review-ready";
+}
+
+function isActiveStatus(status: RunStatus): boolean {
+  return status === "queued" || status === "running" || status === "verifying";
 }
