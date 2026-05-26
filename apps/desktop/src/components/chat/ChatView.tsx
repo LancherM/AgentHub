@@ -126,10 +126,15 @@ export function ChatView({
             <p className="room-description">{thread.description}</p>
           ) : null}
           <div className="chat-context-row">
-            <span>Project: {project?.name ?? "No project selected"}</span>
-            <span>Room: {thread?.roomType ?? "none"}</span>
-            <span>Mode: local desktop</span>
-            <span>Context: runtime injection by default</span>
+            <span className="chat-product-context">
+              {project?.name ?? "No project"} · {roomContextLabel(thread)} · local desktop
+            </span>
+            <span
+              className="chat-context-mode"
+              title="Agent Hub injects task briefs and context at runtime unless a different delivery mode is explicitly selected."
+            >
+              Context: runtime injection
+            </span>
           </div>
         </div>
         {thread ? (
@@ -232,4 +237,17 @@ function deriveChatViewState(
 
 function isActiveStatus(status: RunStatus): boolean {
   return status === "queued" || status === "running" || status === "verifying";
+}
+
+function roomContextLabel(thread: ThreadDetail | undefined): string {
+  if (!thread) {
+    return "no room";
+  }
+  if (thread.roomType === "default") {
+    return "default room";
+  }
+  if (thread.roomType === "custom") {
+    return "custom room";
+  }
+  return "legacy room";
 }

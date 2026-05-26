@@ -1427,9 +1427,19 @@ textarea:disabled {
 .chat-context-row {
   display: flex;
   flex-wrap: wrap;
-  gap: 12px;
+  gap: 8px 14px;
+  align-items: center;
   color: var(--muted);
   font-size: 12px;
+}
+
+.chat-product-context {
+  color: #d8d0bf;
+  font-weight: 760;
+}
+
+.chat-context-mode {
+  color: var(--muted-2);
 }
 
 .chat-scroll {
