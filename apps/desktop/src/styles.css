@@ -2065,6 +2065,7 @@ textarea:disabled {
 }
 
 .run-card-actions {
+  position: relative;
   display: flex;
   flex-wrap: wrap;
   justify-content: flex-end;
@@ -2088,10 +2089,86 @@ textarea:disabled {
   opacity: 0.52;
 }
 
+.run-card-more {
+  position: relative;
+}
+
+.run-card-more summary {
+  display: inline-flex;
+  align-items: center;
+  min-height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.028);
+  color: var(--muted);
+  font-size: 12px;
+  list-style: none;
+  cursor: pointer;
+}
+
+.run-card-more summary::-webkit-details-marker {
+  display: none;
+}
+
+.run-card-more[open] summary {
+  border-color: var(--line-strong);
+  color: var(--text);
+}
+
+.run-card-more-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 20;
+  display: grid;
+  min-width: 148px;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #11120f;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.36);
+}
+
+.run-card-more-menu button {
+  justify-content: flex-start;
+  width: 100%;
+}
+
 .run-card-body {
   display: grid;
   gap: 10px;
   padding: 0 14px 12px;
+}
+
+.failed-incident-body {
+  padding-top: 2px;
+}
+
+.failed-incident-copy {
+  display: grid;
+  gap: 7px;
+  padding: 12px;
+  border: 1px solid rgba(255, 125, 107, 0.26);
+  border-radius: 8px;
+  background: rgba(78, 25, 19, 0.34);
+}
+
+.failed-incident-copy p {
+  margin: 0;
+  color: #f3dfd9;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.failed-incident-copy strong {
+  color: #ffd6cf;
+}
+
+.failed-output-note {
+  color: #fff2ed !important;
+  font-weight: 850;
 }
 
 .conversational-run-body {

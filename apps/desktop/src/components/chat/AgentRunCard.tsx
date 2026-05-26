@@ -199,9 +199,17 @@ export function AgentRunCard({
     status === "cancelled" ||
     compareAffordance.enabled;
   const liveAgentText = latestAgentFacingText(events);
+  const hasAgentFacingOutput = Boolean(liveAgentText);
+  const isFailedRun = status === "failed";
   const quietCompleted = compactCompleted && isTerminalRunStatus(status) && !cliDiagnostic;
   const evidenceActivityText = liveAgentText ?? progress.activityText;
   const conversationalActivityText = liveAgentText ?? progress.waitState;
+  const failedRunCause = isFailedRun
+    ? likelyFailureCause(events, cliDiagnostic?.reason, message.agentId)
+    : undefined;
+  const failedEvidence = isFailedRun
+    ? failedEvidenceLabel(events, reviewArtifacts)
+    : undefined;
 
   async function cancel(): Promise<void> {
     setCancelError(undefined);
@@ -225,8 +233,10 @@ export function AgentRunCard({
         </div>
         <div className="run-card-title">
           <div>
-            <strong>{displayHandle}</strong>
-            <span className="timeline-event-kind">{timelineEvent.title}</span>
+            <strong>{isFailedRun ? `${displayHandle} failed` : displayHandle}</strong>
+            {!isFailedRun ? (
+              <span className="timeline-event-kind">{timelineEvent.title}</span>
+            ) : null}
             <RunStatusBadge status={status} compact />
           </div>
           <span>{executorLabel ? `${executorLabel} · ${headerMeta}` : headerMeta}</span>
@@ -241,6 +251,72 @@ export function AgentRunCard({
           >
             View review
           </button>
+          {isFailedRun ? (
+            <>
+              <button
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onOpenInspector(message.runId, "audit");
+                }}
+              >
+                Open logs
+              </button>
+              <details
+                className="run-card-more"
+                onClick={(event) => event.stopPropagation()}
+              >
+                <summary>More</summary>
+                <div className="run-card-more-menu">
+                  <button
+                    disabled={!compareAffordance.enabled}
+                    title={compareAffordance.title}
+                    aria-label={compareAffordance.title}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      if (!compareAffordance.enabled) {
+                        return;
+                      }
+                      onOpenInspector(message.runId, "compare");
+                    }}
+                  >
+                    Compare
+                  </button>
+                  <button
+                    disabled={!canContinueCodeState}
+                    title={canContinueCodeState ? "Continue from this run" : continueDisabledTitle}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      if (!canContinueCodeState) {
+                        return;
+                      }
+                      onContinueFromRun();
+                    }}
+                  >
+                    Continue
+                  </button>
+                  <button
+                    title="Open retained-worktree handoff evidence"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      onOpenInspector(message.runId, "handoff");
+                    }}
+                  >
+                    Handoff
+                  </button>
+                  <button
+                    title="Open persisted run events in audit"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      onOpenInspector(message.runId, "audit");
+                    }}
+                  >
+                    Audit
+                  </button>
+                </div>
+              </details>
+            </>
+          ) : (
+            <>
           {canCancel ? (
             <button
               title="Cancel this active local run"
@@ -301,6 +377,8 @@ export function AgentRunCard({
           >
             Audit
           </button>
+            </>
+          )}
         </div>
       </header>
 
@@ -308,7 +386,41 @@ export function AgentRunCard({
         <div className="inline-error">{streamError ?? cancelError}</div>
       ) : null}
 
-      {!quietCompleted && showEvidenceBody ? (
+      {isFailedRun ? (
+        <div className="run-card-body failed-incident-body">
+          <div className="failed-incident-copy">
+            {!hasAgentFacingOutput ? (
+              <p className="failed-output-note">No agent-facing output was produced.</p>
+            ) : (
+              <MarkdownText text={liveAgentText ?? ""} compact />
+            )}
+            <p>
+              <strong>Likely cause:</strong> {failedRunCause}
+            </p>
+            <p>
+              <strong>Evidence:</strong> {failedEvidence}
+            </p>
+          </div>
+          {cliDiagnostic ? (
+            <div className="cli-diagnostic-panel">
+              <div>
+                <div className="panel-label">CLI Diagnostic</div>
+                <strong>{cliDiagnostic.reason}</strong>
+                {cliDiagnostic.cwd ? <p>cwd: {cliDiagnostic.cwd}</p> : null}
+              </div>
+              {cliDiagnostic.verifyCommand ? (
+                <code>{cliDiagnostic.verifyCommand}</code>
+              ) : null}
+              <p>
+                PATH checked:{" "}
+                {cliDiagnostic.pathEntries.length > 0
+                  ? cliDiagnostic.pathEntries.join(", ")
+                  : "No PATH entries were available."}
+              </p>
+            </div>
+          ) : null}
+        </div>
+      ) : !quietCompleted && showEvidenceBody ? (
         <div className="run-card-body">
           <div className="run-progress-rail" aria-label="Run progress">
             {progress.stages.map((stage) => (
@@ -474,6 +586,84 @@ function isAssistantAdapterEvent(value: unknown): boolean {
     record.type === "agent_message" ||
     record.type === "assistant_message"
   );
+}
+
+function likelyFailureCause(
+  events: RunEvent[],
+  cliReason: string | undefined,
+  agentId: string
+): string {
+  if (cliReason) {
+    return cliReason;
+  }
+  const failureEvent = [...events].reverse().find((event) => event.type === "run_failed");
+  const failureMessage = trimmedMessage(failureEvent);
+  if (failureMessage && failureMessage !== "Run failed.") {
+    return failureMessage;
+  }
+  const processExit = [...events]
+    .reverse()
+    .map((event) => trimmedMessage(event))
+    .find((message) => message && /exited with code|exited by signal/i.test(message));
+  if (processExit) {
+    return processExit;
+  }
+  return `${displayAgentName(agentId)} process exited before response generation.`;
+}
+
+function failedEvidenceLabel(
+  events: RunEvent[],
+  artifacts: ReviewArtifact[]
+): string {
+  const evidence: string[] = [];
+  if (events.length > 0) {
+    evidence.push("logs");
+  }
+  if (events.some((event) => hasDiagnosticOutput(event))) {
+    evidence.push("stderr or runner output");
+  }
+  if (events.some((event) => event.type === "run_failed")) {
+    evidence.push("failure event");
+  }
+  if (artifacts.length > 0) {
+    evidence.push(
+      `${artifacts.length} review artifact${artifacts.length === 1 ? "" : "s"}`
+    );
+  }
+  if (evidence.length === 0) {
+    return "No persisted evidence has loaded yet.";
+  }
+  return `${evidence.join(", ")} available.`;
+}
+
+function hasDiagnosticOutput(event: RunEvent): boolean {
+  if (event.payload.assistantOutput === true) {
+    return false;
+  }
+  return event.type === "agent_output" || event.type === "agent_step";
+}
+
+function trimmedMessage(event: RunEvent | undefined): string | undefined {
+  const message = typeof event?.payload.message === "string"
+    ? event.payload.message.trim()
+    : "";
+  if (message.length === 0) {
+    return undefined;
+  }
+  return message.length > 180 ? `${message.slice(0, 177)}...` : message;
+}
+
+function displayAgentName(agentId: string): string {
+  if (agentId === "codex") {
+    return "Codex";
+  }
+  if (agentId === "claude") {
+    return "Claude";
+  }
+  if (agentId === "fake") {
+    return "Fake agent";
+  }
+  return agentId;
 }
 
 function errorMessage(error: unknown): string {
