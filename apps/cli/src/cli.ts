@@ -3708,10 +3708,10 @@ function renderAgentOutput(result: CliRunResult): string {
 }
 
 function extractAgentOutput(result: CliRunResult): string {
-  return extractAgentFacingOutput({
-    fakeOutput: result.fakeOutput,
-    events: result.events
-  });
+  return extractAgentFacingOutput(
+    { events: result.events },
+    { preferExplicitOutput: true }
+  );
 }
 
 function renderRunDebug(

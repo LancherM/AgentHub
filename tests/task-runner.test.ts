@@ -34,6 +34,7 @@ import {
   InMemoryTaskRunRepository,
   InMemoryVerificationResultRepository,
   InMemoryMemoryItemRepository,
+  extractAgentFacingOutput,
   validateTask,
   validateRunEvent
 } from "@agent-hub/core";
@@ -599,8 +600,12 @@ describe("task runner", () => {
     });
 
     expect(result.contextMarkdown).toContain("Use runtime injection.");
-    expect(result.fakeOutput).toContain("context_sections: 4");
-    expect(result.fakeOutput).toContain("Use runtime injection.");
+    const output = extractAgentFacingOutput(
+      { events: result.events },
+      { preferExplicitOutput: true }
+    );
+    expect(output).toContain("context_sections: 4");
+    expect(output).toContain("Use runtime injection.");
   });
 
   it("records failed fake adapter execution without crashing", async () => {

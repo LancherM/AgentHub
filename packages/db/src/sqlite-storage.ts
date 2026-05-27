@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -726,8 +727,11 @@ function defaultAppDataDirectory(): string {
 export class SqliteDatabase {
   private initializePromise: Promise<void> | undefined;
   private closed = false;
+  private readonly driver: SqliteCliDriver;
 
-  constructor(readonly databasePath: string) {}
+  constructor(readonly databasePath: string) {
+    this.driver = new SqliteCliDriver(databasePath);
+  }
 
   async open(): Promise<void> {
     await this.ensureInitialized();
@@ -735,19 +739,17 @@ export class SqliteDatabase {
 
   async close(): Promise<void> {
     this.closed = true;
+    await this.driver.close();
   }
 
   async execute(sql: string): Promise<void> {
     await this.ensureInitialized();
-    await runSqliteScript(this.databasePath, sqlScript(sql));
+    await this.executeWithoutInitialization(sql);
   }
 
   async query<T extends Record<string, unknown>>(sql: string): Promise<T[]> {
     await this.ensureInitialized();
-    const output = await runSqliteScript(
-      this.databasePath,
-      sqlScript([".mode json", sql].join("\n"))
-    );
+    const output = await this.queryScript(sql);
     const trimmed = output.trim();
     if (trimmed.length === 0) {
       return [];
@@ -765,15 +767,14 @@ export class SqliteDatabase {
 
   private async initialize(): Promise<void> {
     await fs.mkdir(path.dirname(this.databasePath), { recursive: true });
-    await runSqliteScript(
-      this.databasePath,
-      sqlScript(`
+    await this.executeWithoutInitialization(`
+PRAGMA journal_mode = WAL;
+PRAGMA synchronous = NORMAL;
 CREATE TABLE IF NOT EXISTS schema_migrations (
   version INTEGER PRIMARY KEY,
   applied_at TEXT NOT NULL
 );
-`)
-    );
+`);
 
     const rows = await this.queryWithoutInitialization<{ version: number }>(
       "SELECT version FROM schema_migrations ORDER BY version ASC;"
@@ -793,7 +794,7 @@ INSERT OR IGNORE INTO schema_migrations (version, applied_at)
 VALUES (${migration.version}, ${sqlString(new Date().toISOString())});
 COMMIT;
 `;
-      await runSqliteScript(this.databasePath, sqlScript(migrationSql));
+      await this.executeWithoutInitialization(migrationSql);
     }
   }
 
@@ -811,17 +812,14 @@ COMMIT;
         "parent_message_id",
         "TEXT REFERENCES conversation_messages(id) ON DELETE SET NULL"
       );
-      await runSqliteScript(
-        this.databasePath,
-        sqlScript(`
+      await this.executeWithoutInitialization(`
 CREATE INDEX IF NOT EXISTS idx_task_runs_parent_run
   ON task_runs(parent_run_id);
 CREATE INDEX IF NOT EXISTS idx_task_runs_parent_message
   ON task_runs(parent_message_id);
 INSERT OR IGNORE INTO schema_migrations (version, applied_at)
 VALUES (9, ${sqlString(new Date().toISOString())});
-`)
-      );
+`);
       appliedVersions.add(9);
     }
   }
@@ -837,21 +835,25 @@ VALUES (9, ${sqlString(new Date().toISOString())});
     if (columns.some((column) => column.name === columnName)) {
       return;
     }
-    await runSqliteScript(
-      this.databasePath,
-      sqlScript(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${columnDefinition};`)
+    await this.executeWithoutInitialization(
+      `ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${columnDefinition};`
     );
   }
 
   private async queryWithoutInitialization<T extends Record<string, unknown>>(
     sql: string
   ): Promise<T[]> {
-    const output = await runSqliteScript(
-      this.databasePath,
-      sqlScript([".mode json", sql].join("\n"))
-    );
+    const output = await this.queryScript(sql);
     const trimmed = output.trim();
     return trimmed.length === 0 ? [] : JSON.parse(trimmed) as T[];
+  }
+
+  private async executeWithoutInitialization(sql: string): Promise<void> {
+    await this.driver.run(sqlScript(sql));
+  }
+
+  private async queryScript(sql: string): Promise<string> {
+    return this.driver.run(sqlScript([".mode json", sql].join("\n")));
   }
 }
 
@@ -2741,40 +2743,154 @@ function sqlJson(value: unknown | undefined): string {
   return value === undefined ? "NULL" : sqlString(JSON.stringify(value));
 }
 
-async function runSqliteScript(databasePath: string, script: string): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const child = spawn("sqlite3", [databasePath], {
+class SqliteCliDriver {
+  private child: ChildProcessWithoutNullStreams | undefined;
+  private childClosed = true;
+  private active:
+    | {
+      sentinel: string;
+      stdout: string;
+      stderr: Buffer[];
+      resolve(output: string): void;
+      reject(error: Error): void;
+    }
+    | undefined;
+  private queue: Promise<void> = Promise.resolve();
+  private requestCounter = 0;
+
+  constructor(private readonly databasePath: string) {}
+
+  async run(script: string): Promise<string> {
+    const operation = this.queue.then(
+      () => this.runUnlocked(script),
+      () => this.runUnlocked(script)
+    );
+    this.queue = operation.then(
+      () => undefined,
+      () => undefined
+    );
+    return operation;
+  }
+
+  async close(): Promise<void> {
+    await this.queue.catch(() => undefined);
+    if (!this.child || this.childClosed) {
+      return;
+    }
+    const child = this.child;
+    await new Promise<void>((resolve) => {
+      child.once("close", () => resolve());
+      child.stdin.end(".quit\n");
+    });
+  }
+
+  private async runUnlocked(script: string): Promise<string> {
+    const child = this.ensureChild();
+    const sentinel = this.nextSentinel();
+    return new Promise<string>((resolve, reject) => {
+      this.active = {
+        sentinel,
+        stdout: "",
+        stderr: [],
+        resolve: (output) => {
+          this.active = undefined;
+          resolve(output);
+        },
+        reject: (error) => {
+          this.active = undefined;
+          reject(error);
+        }
+      };
+      try {
+        child.stdin.write(`${script.trim()}\n.print ${sentinel}\n`);
+      } catch (error) {
+        this.rejectActive(sqliteExecutionError(error));
+      }
+    });
+  }
+
+  private ensureChild(): ChildProcessWithoutNullStreams {
+    if (this.child && !this.childClosed) {
+      return this.child;
+    }
+    const child = spawn("sqlite3", [this.databasePath], {
       stdio: ["pipe", "pipe", "pipe"]
     });
-    const stdout: Buffer[] = [];
-    const stderr: Buffer[] = [];
-
+    this.child = child;
+    this.childClosed = false;
     child.stdout.on("data", (chunk: Buffer) => {
-      stdout.push(chunk);
+      this.handleStdout(chunk);
     });
     child.stderr.on("data", (chunk: Buffer) => {
-      stderr.push(chunk);
+      this.active?.stderr.push(chunk);
     });
     child.on("error", (error) => {
-      reject(
-        new Error(
-          `sqlite3 execution failed. Ensure the sqlite3 CLI is installed: ${error.message}`
-        )
-      );
+      this.childClosed = true;
+      this.child = undefined;
+      this.rejectActive(sqliteExecutionError(error));
     });
     child.on("close", (code) => {
-      const stdoutText = Buffer.concat(stdout).toString("utf8");
-      const stderrText = Buffer.concat(stderr).toString("utf8");
-      if (code === 0) {
-        resolve(stdoutText);
-        return;
+      this.childClosed = true;
+      this.child = undefined;
+      if (this.active) {
+        const stderrText = Buffer.concat(this.active.stderr).toString("utf8");
+        this.rejectActive(
+          new Error(
+            `sqlite3 exited with code ${code}: ${
+              stderrText.trim() || this.active.stdout.trim()
+            }`
+          )
+        );
       }
-      reject(
-        new Error(
-          `sqlite3 exited with code ${code}: ${stderrText.trim() || stdoutText.trim()}`
-        )
-      );
     });
-    child.stdin.end(script);
-  });
+    child.stdin.write(".bail on\n.timeout 5000\n");
+    return child;
+  }
+
+  private handleStdout(chunk: Buffer): void {
+    if (!this.active) {
+      return;
+    }
+    this.active.stdout += chunk.toString("utf8");
+    const consumed = consumeSqliteSentinel(
+      this.active.stdout,
+      this.active.sentinel
+    );
+    if (consumed === undefined) {
+      return;
+    }
+    this.active.resolve(consumed);
+  }
+
+  private rejectActive(error: Error): void {
+    this.active?.reject(error);
+  }
+
+  private nextSentinel(): string {
+    this.requestCounter += 1;
+    return `__agent_hub_sqlite_done_${process.pid}_${this.requestCounter}__`;
+  }
+}
+
+function consumeSqliteSentinel(
+  output: string,
+  sentinel: string
+): string | undefined {
+  const startMarker = `${sentinel}\n`;
+  if (output.startsWith(startMarker)) {
+    return "";
+  }
+  const marker = `\n${sentinel}\n`;
+  const index = output.indexOf(marker);
+  if (index === -1) {
+    return undefined;
+  }
+  return output.slice(0, index + 1);
+}
+
+function sqliteExecutionError(error: unknown): Error {
+  const message = error instanceof Error ? error.message : String(error);
+  return new Error(
+    `sqlite3 execution failed. Ensure the sqlite3 CLI is installed: ${message}`
+  );
 }

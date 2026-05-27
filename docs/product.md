@@ -280,6 +280,9 @@ The process-backed adapters use direct executable-plus-args spawning:
   detection from that worktree with the run environment. Missing CLI,
   authentication, or setup failures become failed run events and no real
   adapter process is started.
+- Runtime injection payloads have a local stdin size guard. Oversized briefs or
+  context packs fail inspectably before the external adapter process is
+  launched.
 - Task runs may provide explicit `environmentOverrides` for process-backed
   adapters. Child processes receive only those overrides plus a small inherited
   allowlist for path lookup, home/config/cache paths, temp directories,
@@ -766,7 +769,11 @@ SQLite is stored in Agent Hub-owned application data by default, not in the
 target project repository. `AGENT_HUB_HOME` can point Agent Hub at an alternate
 app data directory, and `AGENT_HUB_DB_PATH` can point at an explicit database
 file for local testing or development. In-memory repositories remain available
-for injected tests and focused runner verification.
+for injected tests and focused runner verification. The current SQLite runtime
+uses a persistent queued `sqlite3` CLI session per database, initializes WAL
+mode for file databases, and closes that session when the database is closed.
+This removes the previous per-statement process startup cost while keeping the
+storage API local and swappable.
 
 Persisted run metadata currently covers:
 
@@ -829,6 +836,8 @@ reject secret-like option names before the structured command list is stored.
 SQLite initialization also includes an idempotent conversation-summary table
 backfill so local databases that recorded an intermediate migration marker can
 still gain `conversation_thread_summaries` on upgrade.
+Desktop thread compatibility import of legacy runs is retried after transient
+run-list failures rather than being treated as permanently complete.
 Ad-hoc CLI runs reuse an existing project for the same repository root. The
 first legacy ad-hoc root may still use `adhoc_project` for compatibility;
 additional ad-hoc roots get deterministic root-scoped project ids so tasks and

@@ -177,7 +177,6 @@ export interface RunResult {
   contextMarkdown: string;
   worktreePath?: string;
   taskBriefPath?: string;
-  fakeOutput?: string;
   diff?: DiffCollectionResult;
   verification?: VerificationSuiteResult;
   riskReport?: RiskReport;
@@ -480,33 +479,14 @@ export class TaskRunner {
           status: "failed"
         })
       );
-      await this.persistNewRunEvents(run.id, events, warnings);
-      await this.taskRunRepository.updateStatus(
-        run.id,
-        "running",
-        this.clock.now()
-      );
-      const failedAt = this.clock.now();
-      const failedRun = await this.taskRunRepository.updateStatus(
-        run.id,
-        "failed",
-        failedAt
-      );
-      const updatedTask = await this.updateTaskStatusAfterRun(
-        currentTask.id,
-        "failed",
-        failedAt,
-        input.taskStatusMode ?? "single_run"
-      );
-      return this.result({
-        ok: false,
-        task: updatedTask,
-        run: failedRun,
+      return this.failRunBeforeExecution({
+        run,
+        task: currentTask,
         events,
-        status: "failed",
+        warnings,
         contextBundle,
         contextMarkdown,
-        warnings,
+        taskStatusMode: input.taskStatusMode ?? "single_run",
         error: message
       });
     }
@@ -540,33 +520,14 @@ export class TaskRunner {
           status: "failed"
         })
       );
-      await this.persistNewRunEvents(run.id, events, warnings);
-      await this.taskRunRepository.updateStatus(
-        run.id,
-        "running",
-        this.clock.now()
-      );
-      const failedAt = this.clock.now();
-      const failedRun = await this.taskRunRepository.updateStatus(
-        run.id,
-        "failed",
-        failedAt
-      );
-      const updatedTask = await this.updateTaskStatusAfterRun(
-        currentTask.id,
-        "failed",
-        failedAt,
-        input.taskStatusMode ?? "single_run"
-      );
-      return this.result({
-        ok: false,
-        task: updatedTask,
-        run: failedRun,
+      return this.failRunBeforeExecution({
+        run,
+        task: currentTask,
         events,
-        status: "failed",
+        warnings,
         contextBundle,
         contextMarkdown,
-        warnings,
+        taskStatusMode: input.taskStatusMode ?? "single_run",
         error: message
       });
     }
@@ -917,8 +878,6 @@ export class TaskRunner {
       }
     }
 
-    status = finalRunStatus(status, finalizationFailed);
-
     try {
       workspaceCleanup = await workspaceSession.cleanup({
         successful: status === "succeeded"
@@ -1009,8 +968,6 @@ export class TaskRunner {
       }
     }
 
-    const fakeOutput = extractFakeOutput(events);
-
     return this.result({
       ok: status === "succeeded",
       task: updatedTask,
@@ -1021,7 +978,6 @@ export class TaskRunner {
       contextMarkdown,
       worktreePath,
       taskBriefPath,
-      fakeOutput,
       diff,
       verification,
       riskReport,
@@ -1043,6 +999,47 @@ export class TaskRunner {
       return task;
     }
     return this.taskRepository.updateStatus(task.id, "running", updatedAt);
+  }
+
+  private async failRunBeforeExecution(input: {
+    run: TaskRun;
+    task: Task;
+    events: AgentRunEvent[];
+    warnings: string[];
+    contextBundle: ContextBundle;
+    contextMarkdown: string;
+    taskStatusMode: NonNullable<RunTaskInput["taskStatusMode"]>;
+    error: string;
+  }): Promise<RunResult> {
+    await this.persistNewRunEvents(input.run.id, input.events, input.warnings);
+    await this.taskRunRepository.updateStatus(
+      input.run.id,
+      "running",
+      this.clock.now()
+    );
+    const failedAt = this.clock.now();
+    const failedRun = await this.taskRunRepository.updateStatus(
+      input.run.id,
+      "failed",
+      failedAt
+    );
+    const updatedTask = await this.updateTaskStatusAfterRun(
+      input.task.id,
+      "failed",
+      failedAt,
+      input.taskStatusMode
+    );
+    return this.result({
+      ok: false,
+      task: updatedTask,
+      run: failedRun,
+      events: input.events,
+      status: "failed",
+      contextBundle: input.contextBundle,
+      contextMarkdown: input.contextMarkdown,
+      warnings: input.warnings,
+      error: input.error
+    });
   }
 
   private async updateTaskStatusAfterRun(
@@ -1387,8 +1384,10 @@ function isCancellationExit(
 ): boolean {
   return signal?.aborted === true &&
     event?.type === "exit" &&
-    event.signal !== undefined &&
-    event.signal !== null;
+    (
+      event.metadata?.cancelled === true ||
+      (event.signal !== undefined && event.signal !== null)
+    );
 }
 
 function didVerificationObserveCancellation(
@@ -1676,23 +1675,6 @@ function shortSegment(value: string): string {
   return sanitizeSegment(value).slice(0, 24);
 }
 
-async function createRunDirectory(
-  runRoot: string,
-  taskId: string,
-  agentKind: AgentKind,
-  idGenerator: IdGenerator
-): Promise<string> {
-  await fs.mkdir(runRoot, { recursive: true });
-  const runDirectory = path.join(
-    runRoot,
-    `${sanitizeSegment(taskId)}-${sanitizeSegment(agentKind)}-${sanitizeSegment(
-      idGenerator.nextId("work")
-    )}`
-  );
-  await fs.mkdir(runDirectory, { recursive: false });
-  return runDirectory;
-}
-
 function targetRepository(
   projectRoot: string,
   overrides: Partial<TargetRepositoryMetadata> = {}
@@ -1881,16 +1863,6 @@ function findLastExitEvent(events: AgentRunEvent[]): AgentRunEvent | undefined {
   for (let index = events.length - 1; index >= 0; index -= 1) {
     if (events[index].type === "exit") {
       return events[index];
-    }
-  }
-
-  return undefined;
-}
-
-function extractFakeOutput(events: AgentRunEvent[]): string | undefined {
-  for (const event of events) {
-    if (event.type === "exit" && typeof event.metadata?.output === "string") {
-      return event.metadata.output;
     }
   }
 

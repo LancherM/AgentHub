@@ -247,7 +247,10 @@ prompt-titled chat thread. Role-targeted run-card and assistant-output messages
 persist the compact role metadata, the shared task id, and the executor mapping
 so review and transcript surfaces can attribute local agent output to the
 requested participant without giving the renderer access to role resolution
-logic. The renderer-facing
+logic. Legacy run import remains a one-way compatibility projection into
+conversation threads; if reading existing run records fails, the service retries
+on a later thread read instead of permanently caching the failed attempt. The
+renderer-facing
 `window.agentHub.threads.*` contract stays a narrow preload boundary for
 create, update, get, list, and send-message operations; service state is loaded
 from SQLite through lightweight thread reads. Thread lists do not reconcile
@@ -511,6 +514,12 @@ JSONL line as stdout and may emit a `status` event whose metadata contains the
 parsed adapter payload. Domain validation, SQLite checks, manual CLI event
 validation, and review rendering all use that same six-type model.
 
+Process-backed adapters validate the isolated worktree and task brief once
+before preflight, reuse that validation for launch, and refuse runtime injection
+payloads above the local stdin limit before starting the external CLI. The
+failure is persisted as ordinary adapter error/exit events rather than launching
+an oversized process.
+
 Persisted run review aggregation lives in `packages/task-runner`. The CLI
 parses `runs events <run-id>` and `runs diff <run-id> [--stat|--patch]`, then
 delegates repository-backed loading of ordered events, latest `git_diff`
@@ -677,6 +686,14 @@ database stored under Agent Hub application data by default:
 overrides the exact database file, and the CLI global `--db <path>` selects a
 database file for that invocation. These paths are Agent Hub-owned storage and
 are not written into the target repository.
+
+The current SQLite implementation still uses the local `sqlite3` executable for
+portability, but each `SqliteDatabase` owns a queued CLI session instead of
+spawning one process per query. Initialization enables WAL mode and
+`synchronous = NORMAL`; the session-level sqlite `.timeout` keeps busy waits
+consistent for later statements. Repository code should continue to go through
+the storage interfaces so this driver can be swapped for a native or built-in
+SQLite implementation later without changing task-runner or desktop services.
 
 The SQLite schema is initialized through versioned migrations. It covers
 `projects`, `agent_profiles`, `tasks`, `task_runs`, `run_events`,

@@ -74,6 +74,26 @@ describe("SQLite storage", () => {
         { name: "settings" }
       ])
     );
+    await expect(database.query<{ journal_mode: string }>("PRAGMA journal_mode;"))
+      .resolves.toEqual([{ journal_mode: "wal" }]);
+    await database.close();
+  });
+
+  it("keeps SQLite storage usable after a failed statement closes the CLI session", async () => {
+    const databasePath = path.join(
+      await createTestDirectory("sqlite-session-restart"),
+      "agent-hub.sqlite"
+    );
+    const { database } = createSqliteRepositories({ databasePath });
+
+    await database.execute("CREATE TABLE sample (id TEXT PRIMARY KEY);");
+    await expect(database.query("SELECT missing_column FROM sample;"))
+      .rejects.toThrow(/sqlite3 exited with code/);
+
+    await database.execute("INSERT INTO sample (id) VALUES ('ok');");
+    await expect(database.query<{ id: string }>("SELECT id FROM sample;"))
+      .resolves.toEqual([{ id: "ok" }]);
+    await database.close();
   });
 
   it("persists tasks, runs, status transitions, and run metadata across instances", async () => {

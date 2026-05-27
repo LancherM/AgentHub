@@ -1638,7 +1638,7 @@ export function replaceManagedBlock(existing: string | undefined, block: string)
     start !== -1 && end !== -1
       ? [...lines.slice(0, start), ...blockLines, ...lines.slice(end + 1)]
       : [...lines, ...(existing.endsWith("\n") ? [] : [""]), ...blockLines];
-  return `${nextLines.join("\n").replace(/\n{3,}/g, "\n\n").trimEnd()}\n`;
+  return `${nextLines.join("\n").trimEnd()}\n`;
 }
 
 export async function safeWriteFile(
