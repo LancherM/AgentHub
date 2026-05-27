@@ -180,8 +180,10 @@ It resolves the local project, creates or resumes a conversation thread or
 metadata-backed room, writes one user message per natural-language line, runs
 the selected agent through the existing `TaskRunner`, writes a run-card message
 plus a bounded assistant message, and persists the generated conversation
-brief as run evidence. Leading `@fake`, `@codex`, and `@claude-code` prefixes
-choose the agent for one turn; otherwise chat uses the selected default agent.
+brief as run evidence. Leading enabled adapter prefixes such as `@codex` and
+`@claude-code` choose the agent for one turn; otherwise chat uses the selected
+default enabled agent. `@fake` is accepted only when the internal
+debug/development agent availability policy enables it.
 Enabled workgroup role mentions such as `@researcher` or custom saved roles
 resolve through the CLI role store, create one shared task with assignment
 metadata, and execute each runnable `agent_adapter` participant through
@@ -214,9 +216,10 @@ states consistent across CLI and desktop without moving orchestration into the
 renderer or adding a terminal UI dependency.
 
 `apps/desktop/electron/services/thread-service.ts` is the desktop conversation
-facade over those repositories. It parses safe debug adapter mentions
-(`@fake`, `@codex`, `@claude`, and `@claude-code`) plus enabled workgroup role
-mentions from the shared preset/custom role contract. Project-level custom
+facade over those repositories. It parses enabled adapter mentions
+(`@codex`, `@claude`, and `@claude-code`, plus `@fake` only when enabled) plus
+enabled workgroup role mentions from the shared preset/custom role contract.
+Project-level custom
 roles and preset overrides are resolved through `TeamService` before mention
 parsing, so renderer code never performs role lookup or executor decisions.
 `sendMessage` appends one
@@ -372,7 +375,8 @@ constructs TaskRunner with the same SQLite repositories and a desktop ID
 generator that reuses the queued run id. Shared desktop tasks use TaskRunner's
 aggregate task-status mode so one finished run does not complete the task while
 sibling runs are still queued or running. `@fake` executes through
-`FakeAgentAdapter` in an isolated worktree, while `@codex` and `@claude` use the
+`FakeAgentAdapter` in an isolated worktree only when fake is enabled by the
+internal availability policy, while `@codex` and `@claude` use the
 process-backed Codex and Claude Code adapters, including local preflight. If a
 CLI is unavailable or unauthenticated, the run fails inspectably through
 persisted events and review evidence instead of crashing the service. Only
@@ -487,11 +491,12 @@ payloads, so lifecycle summaries and non-assistant message items remain status
 events. It does not show Agent Hub run metadata by default, and interactive
 mode does not echo prompt dispatch lines unless debug rendering is enabled.
 
-Debug rendering remains opt-in. `--debug` or `AGENT_HUB_DEBUG=1` appends the
-run summary, run boundaries, context artifact paths, verification
+Debug rendering remains opt-in. `--debug` or `AGENT_HUB_DEBUG=1` also enables
+the internal debug/development agent availability policy, including `fake`, and
+appends the run summary, run boundaries, context artifact paths, verification
 stdout/stderr, changed file summaries, and a truncated diff preview after the
-normal agent output. It does not alter runner inputs, adapter behavior,
-persistence, or exit status.
+normal agent output. It does not otherwise alter adapter behavior, persistence,
+or exit status.
 
 Manual run-event recording is a CLI persistence operation, not an adapter or
 runner behavior. `run event add` loads the target run through
@@ -536,7 +541,12 @@ artifact blob beyond the diff and the event stream in this phase; future
 artifact types can opt into the same `SafetyScanner` text boundary when they
 become first-class logs.
 
-The default agent registry includes fake, Codex, and Claude Code adapters.
+The default agent registry includes fake, Codex, and Claude Code adapters, but
+an internal agent availability policy decides which adapters are visible and
+accepted for a run. Normal mode exposes Codex and Claude Code and hides fake;
+debug, development, test, or hidden env configuration can enable fake. The
+same policy can disable any adapter through per-agent environment switches or
+the internal `AGENT_HUB_ENABLED_AGENTS` / `AGENT_HUB_DISABLED_AGENTS` lists.
 Real adapters run only inside the isolated worktree cwd. They use
 `ProcessRunner` to spawn executables with argument arrays and stdin; no shell
 interpolation is used. Runtime injection remains the default: task brief and

@@ -5,6 +5,7 @@ import {
   validateProject,
   type ProjectRepository
 } from "@agent-hub/core";
+import type { AgentAvailabilityOptions } from "@agent-hub/shared";
 import {
   createSqliteRepositories,
   type SqliteRepositories
@@ -14,6 +15,7 @@ import type { ProjectSummary } from "../../src/lib/types";
 export interface DesktopServiceContext {
   repositories: SqliteRepositories;
   agentHubHome?: string;
+  agentAvailability: AgentAvailabilityOptions;
   now(): string;
   nextId(prefix: string): string;
 }
@@ -34,6 +36,10 @@ export function createDesktopServiceContext(
   return {
     repositories,
     agentHubHome: options.agentHubHome,
+    agentAvailability: {
+      env: process.env,
+      dev: process.env.ELECTRON_RENDERER_URL !== undefined
+    },
     now: nowIso,
     nextId: createId
   };

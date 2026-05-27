@@ -7,8 +7,10 @@ import {
   type TaskRepository
 } from "@agent-hub/core";
 import {
+  isAgentKindEnabled,
   normalizeWorkgroupRoleHandle,
   presetWorkgroupRoles,
+  type AgentAvailabilityOptions,
   type WorkgroupAgentAdapterKind,
   type WorkgroupExecutor,
   type WorkgroupExecutorKind,
@@ -72,7 +74,13 @@ class RepositoryTeamService implements TeamService {
       this.memories.listByProjectId(parsedProjectId)
     ]);
     const summaries = roles.map((entry) =>
-      toTeamRoleSummary(entry.role, entry.source, tasks, memoryItems)
+      toTeamRoleSummary(
+        entry.role,
+        entry.source,
+        tasks,
+        memoryItems,
+        this.context.agentAvailability
+      )
     );
     return {
       projectId: parsedProjectId,
@@ -400,15 +408,16 @@ function toTeamRoleSummary(
   role: WorkgroupRole,
   source: TeamRoleSource,
   tasks: Task[],
-  memoryItems: MemoryItem[]
+  memoryItems: MemoryItem[],
+  availability: AgentAvailabilityOptions
 ): TeamRoleSummary {
   const recentActivity = recentRoleTasks(role.handle, tasks);
   const linkedMemory = linkedRoleMemory(role, memoryItems);
   return {
     role,
     source,
-    executorRunnable: role.executor.kind === "agent_adapter",
-    executorLabel: executorLabel(role.executor),
+    executorRunnable: isRunnableExecutor(role.executor, availability),
+    executorLabel: executorLabel(role.executor, availability),
     permissionSummary: compactList(role.permissions, "No permissions"),
     contextPolicySummary: contextPolicySummary(role),
     approvalPolicySummary: approvalPolicySummary(role),
@@ -490,11 +499,27 @@ function taskAssignments(task: Task): WorkgroupTaskAssignmentMetadata[] {
   );
 }
 
-function executorLabel(executor: WorkgroupExecutor): string {
+function executorLabel(
+  executor: WorkgroupExecutor,
+  availability: AgentAvailabilityOptions
+): string {
   if (executor.kind === "agent_adapter") {
+    if (!isAgentKindEnabled(executor.adapterKind, availability)) {
+      return "agent_adapter disabled";
+    }
     return `agent_adapter / ${executor.adapterKind}`;
   }
   return `${executor.kind} reserved`;
+}
+
+function isRunnableExecutor(
+  executor: WorkgroupExecutor,
+  availability: AgentAvailabilityOptions
+): boolean {
+  return (
+    executor.kind === "agent_adapter" &&
+    isAgentKindEnabled(executor.adapterKind, availability)
+  );
 }
 
 function contextPolicySummary(role: WorkgroupRole): string {

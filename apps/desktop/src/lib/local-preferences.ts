@@ -30,7 +30,7 @@ export const defaultDesktopPreferences: DesktopPreferences = {
   contextMode: "auto",
   inspectorTab: "brief",
   sidebarDensity: "comfortable",
-  lastUsedAgents: ["fake"],
+  lastUsedAgents: ["codex"],
   lastUsedRoleHandles: []
 };
 
@@ -147,7 +147,7 @@ function safeAgentList(value: unknown): AgentId[] {
   const agents = value.filter((entry): entry is AgentId =>
     entry === "fake" || entry === "codex" || entry === "claude"
   );
-  return agents.length > 0 ? unique(agents).slice(0, 5) : ["fake"];
+  return agents.length > 0 ? unique(agents).slice(0, 5) : ["codex"];
 }
 
 function safeRoleHandleList(value: unknown): string[] {

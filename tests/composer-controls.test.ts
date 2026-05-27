@@ -86,6 +86,7 @@ describe("desktop composer controls", () => {
     const resolved = resolveComposerTargets({
       value: "@engineer @fake compare",
       roles: [roleSummary("engineer", "Engineer", "codex")],
+      availableAgents: ["fake", "codex", "claude"],
       fallbackAgents: ["codex"]
     });
 
@@ -95,6 +96,25 @@ describe("desktop composer controls", () => {
     ]);
     expect(resolved.explicitTargetCount).toBe(2);
     expect(resolved.runCount).toBe(2);
+  });
+
+  it("filters disabled agents from suggestions and fallback targets", () => {
+    const trigger = activeComposerTrigger("@fa", 3);
+    const suggestions = buildComposerSuggestions({
+      roles: [],
+      availableAgents: ["codex", "claude"],
+      trigger
+    });
+    const resolved = resolveComposerTargets({
+      value: "@fake compare",
+      roles: [],
+      availableAgents: ["codex", "claude"],
+      defaultAgent: "codex",
+      fallbackAgents: ["fake", "codex"]
+    });
+
+    expect(suggestions.map((suggestion) => suggestion.label)).not.toContain("@fake");
+    expect(resolved.targets.map((target) => target.label)).toEqual(["@codex"]);
   });
 
   it("supports slash command suggestions without changing command execution", () => {

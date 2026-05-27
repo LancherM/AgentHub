@@ -27,7 +27,7 @@ export function parseAgentMentions(input: string): MentionParseResult {
 
 export function resolveMentionedAgents(
   input: string,
-  fallbackAgents: AgentId[] = ["fake"]
+  fallbackAgents: AgentId[] = ["codex"]
 ): MentionParseResult {
   const parsed = parseAgentMentions(input);
   if (parsed.agents.length > 0) {
@@ -35,7 +35,7 @@ export function resolveMentionedAgents(
   }
   return {
     ...parsed,
-    agents: fallbackAgents.length > 0 ? fallbackAgents : ["fake"]
+    agents: fallbackAgents.length > 0 ? fallbackAgents : ["codex"]
   };
 }
 

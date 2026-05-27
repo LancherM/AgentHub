@@ -23,8 +23,10 @@ import {
   type TaskRunnerDependencies
 } from "@agent-hub/task-runner";
 import {
+  isAgentKindEnabled,
   normalizeWorkgroupRoleHandle,
   workgroupExecutorKinds,
+  type AgentAvailabilityOptions,
   type WorkgroupAgentAdapterKind,
   type AgentKind as CoreAgentKind,
   type JsonObject,
@@ -247,7 +249,7 @@ class RepositoryRunService implements RunService {
   }
 
   async createRun(input: CreateDesktopRunInput): Promise<RunSummary> {
-    const parsed = parseCreateRunInput(input);
+    const parsed = parseCreateRunInput(input, this.context.agentAvailability);
     const project = await this.projects.get(parsed.projectId);
     if (!project) {
       throw new Error(`project ${parsed.projectId} not found`);
@@ -451,6 +453,7 @@ class RepositoryRunService implements RunService {
       projectRoot: project.rootPath,
       taskPrompt: input.prompt,
       agentKind: run.agentKind,
+      agentAvailability: this.context.agentAvailability,
       taskId: task.id,
       projectId: task.projectId,
       title: task.title,
@@ -802,7 +805,10 @@ class DesktopTaskRunnerClock implements Clock {
   }
 }
 
-function parseCreateRunInput(input: CreateDesktopRunInput): ParsedCreateRunInput {
+function parseCreateRunInput(
+  input: CreateDesktopRunInput,
+  availability: AgentAvailabilityOptions
+): ParsedCreateRunInput {
   if (!input || typeof input !== "object") {
     throw new Error("run input is required");
   }
@@ -810,7 +816,7 @@ function parseCreateRunInput(input: CreateDesktopRunInput): ParsedCreateRunInput
   if (!prompt) {
     throw new Error("run prompt is required");
   }
-  const agentId = parseAgentId(input.agentId);
+  const agentId = parseAgentId(input.agentId, availability);
   const contextMode = parseContextMode(input.contextMode);
   const deliveryMode = input.deliveryMode ?? "runtime_injection";
   if (deliveryMode !== "runtime_injection" && deliveryMode !== "worktree_overlay") {
@@ -1017,8 +1023,14 @@ function parseNonEmptyString(value: unknown, label: string): string {
   return value;
 }
 
-function parseAgentId(value: unknown): AgentId {
+function parseAgentId(value: unknown, availability: AgentAvailabilityOptions): AgentId {
   if (value === "fake" || value === "codex" || value === "claude") {
+    if (!isAgentKindEnabled(toCoreAgentKind(value), availability)) {
+      if (value === "fake") {
+        throw new Error("fake agent is disabled outside Agent Hub debug/development mode");
+      }
+      throw new Error(`${value} agent is disabled by Agent Hub agent availability config`);
+    }
     return value;
   }
   throw new Error("agentId must be fake, codex, or claude");

@@ -18,6 +18,11 @@ import {
   ConversationThreadSummaryBuilder,
   type ConversationContextMessage
 } from "@agent-hub/context-compiler";
+import {
+  defaultAgentKind,
+  isAgentKindEnabled,
+  type AgentAvailabilityOptions
+} from "@agent-hub/shared";
 import type {
   AgentKind,
   JsonObject,
@@ -478,14 +483,23 @@ class RepositoryThreadService implements ThreadService {
     const roles =
       this.dependencies.roles ??
       (await this.dependencies.team?.rolesForProject(thread.projectId));
-    const parsed = parseWorkgroupMentions(workflowRequest.text, roles);
+    const parsed = parseWorkgroupMentions(workflowRequest.text, roles, {
+      availableAgents: availableDesktopAgents(
+        this.dependencies.context.agentAvailability
+      ),
+      rejectUnavailableAgents: true
+    });
     const cleanedPrompt = parsed.cleanedPrompt.trim();
     if (!cleanedPrompt) {
       throw new Error("message text is required");
     }
     const participants: WorkgroupMentionParticipant[] =
       input.agents && input.agents.length > 0
-        ? uniqueAgents(input.agents.map(parseAgentId)).map((agentId) => ({
+        ? uniqueAgents(
+            input.agents.map((agent) =>
+              parseAgentId(agent, this.dependencies.context.agentAvailability)
+            )
+          ).map((agentId) => ({
             agentId,
             source: "adapter_mention" as const
           }))
@@ -493,7 +507,14 @@ class RepositoryThreadService implements ThreadService {
           ? parsed.participants
           : parsed.roleMentions.length > 0
             ? []
-            : [{ agentId: "fake", source: "adapter_mention" }];
+            : [
+                {
+                  agentId: toAgentId(
+                    defaultAgentKind(this.dependencies.context.agentAvailability)
+                  ),
+                  source: "adapter_mention"
+                }
+              ];
     const agents = uniqueAgents(participants.map((participant) => participant.agentId));
     await this.reconcileAssistantMessages(thread.id);
     await this.refreshThreadSummary(thread.id);
@@ -2530,11 +2551,23 @@ function isAgentId(value: unknown): value is AgentId {
   return value === "fake" || value === "codex" || value === "claude";
 }
 
-function parseAgentId(value: unknown): AgentId {
-  if (isAgentId(value)) {
+function parseAgentId(
+  value: unknown,
+  availability: AgentAvailabilityOptions
+): AgentId {
+  if (isAgentId(value) && isAgentKindEnabled(toCoreAgentKind(value), availability)) {
     return value;
   }
+  if (value === "fake") {
+    throw new Error("fake agent is disabled outside Agent Hub debug/development mode");
+  }
   throw new Error("agent must be fake, codex, or claude");
+}
+
+function availableDesktopAgents(availability: AgentAvailabilityOptions): AgentId[] {
+  return (["fake", "codex", "claude"] as const).filter((agentId) =>
+    isAgentKindEnabled(toCoreAgentKind(agentId), availability)
+  );
 }
 
 function parseContextMode(value: unknown): ContextMode {

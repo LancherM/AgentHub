@@ -3,12 +3,15 @@ import { describe, expect, it } from "vitest";
 import {
   DomainValidationError,
   DomainStateTransitionError,
+  availableAgentKinds,
+  defaultAgentKind,
   InMemoryConversationMessageRepository,
   InMemoryConversationThreadSummaryRepository,
   InMemoryConversationThreadRepository,
   InMemorySettingsRepository,
   InMemoryTaskRunRepository,
   nowIso,
+  isAgentKindEnabled,
   parseAgentKind,
   presetWorkgroupRoles,
   validateAgentProfile,
@@ -654,6 +657,25 @@ describe("domain model validation", () => {
     expect(parseAgentKind("codex")).toBe("codex");
     expect(parseAgentKind("claude-code")).toBe("claude-code");
     expect(() => parseAgentKind("unknown")).toThrow(DomainValidationError);
+  });
+
+  it("keeps fake agent behind debug, development, or explicit internal config", () => {
+    expect(availableAgentKinds({ env: { NODE_ENV: "production" } })).toEqual([
+      "codex",
+      "claude-code"
+    ]);
+    expect(defaultAgentKind({ env: { NODE_ENV: "production" } })).toBe("codex");
+    expect(isAgentKindEnabled("fake", { debug: true })).toBe(true);
+    expect(
+      isAgentKindEnabled("fake", {
+        env: { AGENT_HUB_AGENT_FAKE_ENABLED: "1", NODE_ENV: "production" }
+      })
+    ).toBe(true);
+    expect(
+      isAgentKindEnabled("codex", {
+        env: { AGENT_HUB_AGENT_CODEX_ENABLED: "0" }
+      })
+    ).toBe(false);
   });
 
   it("rejects status transitions outside the imported lifecycle", () => {

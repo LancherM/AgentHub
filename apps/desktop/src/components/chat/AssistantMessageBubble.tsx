@@ -20,7 +20,7 @@ export function AssistantMessageBubble({
     message.assignment?.roleHandle && message.agentId ? `via @${message.agentId}` : undefined;
   return (
     <article className={`assistant-message-row timeline-event ${event.tone}`}>
-      <div className={`agent-mark ${message.agentId ?? "fake"}`}>
+      <div className={`agent-mark ${message.agentId ?? "codex"}`}>
         {displayHandle.replace(/^@/, "").slice(0, 1).toUpperCase()}
       </div>
       <div className="assistant-message-bubble">

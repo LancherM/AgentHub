@@ -8,6 +8,7 @@ import type {
   AgentId,
   CollaborationWorkflowInput,
   ContextMode,
+  DesktopAgentConfig,
   ProjectSummary,
   RunDetail,
   RunInspectorTab,
@@ -29,6 +30,7 @@ interface ChatViewProps {
   messages: ThreadMessage[];
   runDetails: Record<string, RunDetail>;
   isBusy: boolean;
+  agentConfig: DesktopAgentConfig;
   lastUsedAgents: AgentId[];
   lastUsedRoleHandles: string[];
   initialContextMode: ContextMode;
@@ -57,6 +59,7 @@ export function ChatView({
   messages,
   runDetails,
   isBusy,
+  agentConfig,
   lastUsedAgents,
   lastUsedRoleHandles,
   initialContextMode,
@@ -233,6 +236,7 @@ export function ChatView({
 
       <Composer
         isBusy={isBusy}
+        agentConfig={agentConfig}
         lastUsedAgents={lastUsedAgents}
         lastUsedRoleHandles={lastUsedRoleHandles}
         roleTargets={roleTargets}

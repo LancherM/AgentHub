@@ -32,7 +32,7 @@ export function ThreadView({
   onRunEvent
 }: ThreadViewProps): JSX.Element {
   const [prompt, setPrompt] = useState("");
-  const [agentId, setAgentId] = useState<AgentId>("fake");
+  const [agentId, setAgentId] = useState<AgentId>("codex");
   const [contextMode, setContextMode] = useState<ContextMode>("auto");
   const [events, setEvents] = useState<RunEvent[]>(run?.events ?? []);
   const [liveStatus, setLiveStatus] = useState<RunStatus | undefined>(run?.status);
@@ -137,13 +137,8 @@ export function ThreadView({
           onChange={(event) => setAgentId(event.target.value as AgentId)}
           aria-label="Agent"
         >
-          <option value="fake">@fake</option>
-          <option value="codex" disabled>
-            @codex
-          </option>
-          <option value="claude" disabled>
-            @claude
-          </option>
+          <option value="codex">@codex</option>
+          <option value="claude">@claude</option>
         </select>
         <select
           value={contextMode}

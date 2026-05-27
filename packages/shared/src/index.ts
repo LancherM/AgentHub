@@ -65,6 +65,133 @@ export const validateWorkgroupPackDefinition =
 
 export const agentKinds = ["fake", "codex", "claude-code"] as const;
 export type AgentKind = (typeof agentKinds)[number];
+export type AgentAvailabilityEnvironment = Record<string, string | undefined>;
+
+export interface AgentAvailabilityOptions {
+  env?: AgentAvailabilityEnvironment;
+  debug?: boolean;
+  dev?: boolean;
+}
+
+const normalModeAgentKinds = ["codex", "claude-code"] as const satisfies readonly AgentKind[];
+
+export function availableAgentKinds(
+  options: AgentAvailabilityOptions = {}
+): AgentKind[] {
+  return agentKinds.filter((agentKind) => isAgentKindEnabled(agentKind, options));
+}
+
+export function defaultAgentKind(
+  options: AgentAvailabilityOptions = {}
+): AgentKind {
+  const available = availableAgentKinds(options);
+  if (available.length === 0) {
+    throw new DomainValidationError(["at least one agent must be enabled"]);
+  }
+  return available[0];
+}
+
+export function isAgentKindEnabled(
+  agentKind: AgentKind,
+  options: AgentAvailabilityOptions = {}
+): boolean {
+  const env = options.env ?? {};
+  const explicit = parseAgentEnabledEnv(env[agentEnabledEnvKey(agentKind)]);
+  if (explicit !== undefined) {
+    return explicit;
+  }
+
+  const enabledList = parseAgentKindList(env.AGENT_HUB_ENABLED_AGENTS);
+  if (enabledList !== undefined) {
+    return enabledList.includes(agentKind);
+  }
+
+  const disabledList = parseAgentKindList(env.AGENT_HUB_DISABLED_AGENTS);
+  if (disabledList?.includes(agentKind)) {
+    return false;
+  }
+
+  if (agentKind === "fake") {
+    return isDebugOrDevelopmentAgentMode(options);
+  }
+  return (normalModeAgentKinds as readonly AgentKind[]).includes(agentKind);
+}
+
+export function assertAgentKindEnabled(
+  agentKind: AgentKind,
+  options: AgentAvailabilityOptions = {}
+): void {
+  if (isAgentKindEnabled(agentKind, options)) {
+    return;
+  }
+  throw new DomainValidationError([`${agentKind} agent is disabled`]);
+}
+
+export function isDebugOrDevelopmentAgentMode(
+  options: AgentAvailabilityOptions = {}
+): boolean {
+  const env = options.env ?? {};
+  return (
+    options.debug === true ||
+    options.dev === true ||
+    isTruthyEnv(env.AGENT_HUB_DEBUG) ||
+    env.NODE_ENV === "development" ||
+    env.NODE_ENV === "test"
+  );
+}
+
+export function parseAgentKindAlias(value: string): AgentKind {
+  const normalized = value.replace(/^@/, "").trim().toLowerCase();
+  if (normalized === "claude") {
+    return "claude-code";
+  }
+  return parseAgentKind(normalized);
+}
+
+function agentEnabledEnvKey(agentKind: AgentKind): string {
+  return `AGENT_HUB_AGENT_${agentKind.toUpperCase().replace(/-/g, "_")}_ENABLED`;
+}
+
+function parseAgentEnabledEnv(value: string | undefined): boolean | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  const normalized = value.trim().toLowerCase();
+  if (["1", "true", "yes", "on", "enabled"].includes(normalized)) {
+    return true;
+  }
+  if (["0", "false", "no", "off", "disabled"].includes(normalized)) {
+    return false;
+  }
+  return undefined;
+}
+
+function parseAgentKindList(value: string | undefined): AgentKind[] | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  const agents = value
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+    .map((entry) => {
+      try {
+        return parseAgentKindAlias(entry);
+      } catch {
+        return undefined;
+      }
+    })
+    .filter((entry): entry is AgentKind => entry !== undefined);
+  return agents.length > 0 ? [...new Set(agents)] : [];
+}
+
+function isTruthyEnv(value: string | undefined): boolean {
+  if (value === undefined) {
+    return false;
+  }
+  const normalized = value.trim().toLowerCase();
+  return normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "on";
+}
 
 export const contextDeliveryModes = [
   "runtime_injection",

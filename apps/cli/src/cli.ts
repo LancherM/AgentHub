@@ -20,11 +20,15 @@ import {
   createId,
   nowIso,
   agentKinds,
+  assertAgentKindEnabled,
+  availableAgentKinds,
+  defaultAgentKind,
+  isAgentKindEnabled,
   memoryCategories,
   runEventTypes,
   findWorkgroupRoleByHandle,
   normalizeWorkgroupRoleHandle,
-  parseAgentKind,
+  parseAgentKindAlias,
   presetWorkgroupRoles,
   extractAgentFacingOutput,
   validateComparisonReport,
@@ -39,6 +43,7 @@ import {
   toWorkgroupRoleRunMetadata,
   type ContextDeliveryMode,
   type ContextStoreMode,
+  type AgentAvailabilityOptions,
   type AgentKind,
   type ConversationMessage,
   type ConversationThread,
@@ -295,6 +300,14 @@ export async function main(
       : getDefaultRuntime());
   const [command, ...rest] = global.args;
   const debug = global.debug || isEnvironmentDebugEnabled();
+  try {
+    if (global.agentKind) {
+      requireAgentEnabled(global.agentKind, debug);
+    }
+  } catch (error) {
+    io.stderr.write(`error: ${error instanceof Error ? error.message : String(error)}\n`);
+    return 1;
+  }
 
   if (!command) {
     return runInteractive({
@@ -302,13 +315,13 @@ export async function main(
       cwd,
       runtime: activeRuntime,
       projectRoot: global.projectRoot ?? cwd,
-      selectedAgent: global.agentKind ?? "fake",
+      selectedAgent: global.agentKind ?? defaultCliAgent(debug),
       debug
     });
   }
 
   if (command === "--help" || command === "-h") {
-    io.stdout.write(helpText());
+    io.stdout.write(helpText(debug));
     return 0;
   }
 
@@ -398,7 +411,7 @@ export async function main(
       cwd,
       runtime: activeRuntime,
       projectRoot: global.projectRoot ?? cwd,
-      selectedAgent: global.agentKind ?? "fake",
+      selectedAgent: global.agentKind ?? defaultCliAgent(debug),
       debug,
       args: rest
     });
@@ -484,12 +497,16 @@ export async function main(
   return 1;
 }
 
-export function helpText(): string {
+export function helpText(debug = isEnvironmentDebugEnabled()): string {
+  const agentChoices = availableCliAgents(debug).join("|");
+  const promptAgentChoices = availableCliAgents(debug)
+    .map((agent) => `@${agent}`)
+    .join("|");
   return [
     "agent-hub",
     "",
     "Usage:",
-    "  agent-hub [--project <path>] [--agent fake|codex|claude-code]",
+    `  agent-hub [--project <path>] [--agent ${agentChoices}]`,
     "  agent-hub [--debug] run ...",
     "  agent-hub [--db <path>] project add --name <name> --root <path>",
     "  agent-hub [--db <path>] project list",
@@ -502,8 +519,8 @@ export function helpText(): string {
     "  agent-hub context export --project-root <path> --project-id <project-id> [--target repo] --dry-run|--write",
     "  agent-hub skills global create --id <id> --name <name> --description <text> [--body <markdown>] [--agent-hub-home <path>]",
     "  agent-hub skills global list [--agent-hub-home <path>]",
-    "  agent-hub [--db <path>] run --task <task-id> --agent fake|codex|claude-code [--workspace-base <path>] [--skill [scope:]id]",
-    "  agent-hub [--db <path>] run [--repo <path>] [--workspace-base <path>] [--retain-on-failure] [--continue-from-run <run-id>|--continue-from-message <message-id>] [--skill [scope:]id] \"@fake|@codex|@claude-code <task>\"",
+    `  agent-hub [--db <path>] run --task <task-id> --agent ${agentChoices} [--workspace-base <path>] [--skill [scope:]id]`,
+    `  agent-hub [--db <path>] run [--repo <path>] [--workspace-base <path>] [--retain-on-failure] [--continue-from-run <run-id>|--continue-from-message <message-id>] [--skill [scope:]id] "${promptAgentChoices} <task>"`,
     "  agent-hub [--db <path>] run event add --run-id <run-id> --type <type> --message <message>",
     "  agent-hub [--db <path>] threads list",
     "  agent-hub [--db <path>] threads show <thread-id>",
@@ -515,7 +532,7 @@ export function helpText(): string {
     "  agent-hub [--db <path>] chat [--thread <thread-id>|--room <handle-or-thread-id>]",
     "  agent-hub [--db <path>] team roles list --project-id <project-id>",
     "  agent-hub [--db <path>] team roles show --project-id <project-id> --role <handle>",
-    "  agent-hub [--db <path>] team roles save --project-id <project-id> --handle <handle> [--display-name <name>] [--executor fake|codex|claude-code|human|llm_api|workflow] [--skill [scope:]id]",
+    `  agent-hub [--db <path>] team roles save --project-id <project-id> --handle <handle> [--display-name <name>] [--executor ${agentChoices}|human|llm_api|workflow] [--skill [scope:]id]`,
     "  agent-hub [--db <path>] team roles executor --project-id <project-id> --role <handle>",
     "  agent-hub runs list",
     "  agent-hub runs events <run-id>",
@@ -557,10 +574,11 @@ export async function runInteractive(
   };
   const cwd = options.cwd ?? process.cwd();
   const runtime = options.runtime ?? getDefaultRuntime();
+  const debug = options.debug ?? false;
   const state: InteractiveState = {
     projectRoot: path.resolve(cwd, options.projectRoot ?? cwd),
-    selectedAgent: options.selectedAgent ?? "fake",
-    debug: options.debug ?? false
+    selectedAgent: options.selectedAgent ?? defaultCliAgent(debug),
+    debug
   };
   const input = options.input ?? readInteractiveLines(io.stdin ?? process.stdin);
 
@@ -623,7 +641,18 @@ function interactivePrompt(state: InteractiveState): string {
   return `agent-hub[${state.selectedAgent}]> `;
 }
 
-function interactiveHelpText(): string {
+function interactiveHelpText(state: InteractiveState): string {
+  const promptExamples = [
+    ...(isAgentKindEnabled("fake", cliAgentAvailability(state.debug))
+      ? ["  @fake simulate the task"]
+      : []),
+    ...(isAgentKindEnabled("codex", cliAgentAvailability(state.debug))
+      ? ["  @codex implement the task"]
+      : []),
+    ...(isAgentKindEnabled("claude-code", cliAgentAvailability(state.debug))
+      ? ["  @claude-code review the task"]
+      : [])
+  ];
   return [
     "Interactive commands:",
     "  /help",
@@ -637,9 +666,7 @@ function interactiveHelpText(): string {
     "",
     "Prompts:",
     "  describe the task in natural language",
-    "  @fake simulate the task",
-    "  @codex implement the task",
-    "  @claude-code review the task",
+    ...promptExamples,
     ""
   ].join("\n");
 }
@@ -653,11 +680,11 @@ async function handleInteractiveSlash(
 ): Promise<"continue" | "exit"> {
   const [command, ...rest] = line.split(/\s+/);
   if (command === "/help") {
-    io.stdout.write(interactiveHelpText());
+    io.stdout.write(interactiveHelpText(state));
     return "continue";
   }
   if (command === "/agents") {
-    io.stdout.write(renderInteractiveAgents(state.selectedAgent));
+    io.stdout.write(renderInteractiveAgents(state.selectedAgent, state.debug));
     return "continue";
   }
   if (command === "/use") {
@@ -667,7 +694,7 @@ async function handleInteractiveSlash(
       return "continue";
     }
     try {
-      state.selectedAgent = parseInteractiveAgent(agent);
+      state.selectedAgent = parseInteractiveAgent(agent, state.debug);
       io.stdout.write(`using agent: ${state.selectedAgent}\n`);
     } catch (error) {
       io.stderr.write(`error: ${error instanceof Error ? error.message : String(error)}\n`);
@@ -690,16 +717,16 @@ async function handleInteractiveSlash(
   return "continue";
 }
 
-function renderInteractiveAgents(selectedAgent: AgentKind): string {
+function renderInteractiveAgents(selectedAgent: AgentKind, debug: boolean): string {
   return [
     "agents:",
-    ...agentKinds.map((agent) => `${agent === selectedAgent ? "*" : " "} ${agent}`),
+    ...availableCliAgents(debug).map((agent) => `${agent === selectedAgent ? "*" : " "} ${agent}`),
     ""
   ].join("\n");
 }
 
-function parseInteractiveAgent(value: string): AgentKind {
-  return parseAgentKind(value.replace(/^@/, ""));
+function parseInteractiveAgent(value: string, debug: boolean): AgentKind {
+  return parseAvailableAgent(value, debug);
 }
 
 async function renderInteractiveContext(
@@ -863,16 +890,17 @@ export async function runChat(options: ChatOptions = {}): Promise<number> {
     const roomThread = parsed.roomRef
       ? await resolveRoomThread(runtime, project.id, parsed.roomRef)
       : undefined;
+    const debug = options.debug === true || parsed.debug;
     state = {
       projectRoot: project.rootPath,
       project,
-      selectedAgent: options.selectedAgent ?? "fake",
+      selectedAgent: options.selectedAgent ?? defaultCliAgent(debug),
       threadId: parsed.threadId ?? roomThread?.id,
       roomHandle: roomThread ? roomHandleForThread(roomThread) : undefined,
       workspaceBasePath: parsed.workspaceBasePath,
       retainOnFailure: parsed.retainOnFailure,
       dryRun: parsed.dryRun,
-      debug: options.debug === true || parsed.debug
+      debug
     };
   } catch (error) {
     io.stderr.write(`error: ${error instanceof Error ? error.message : String(error)}\n`);
@@ -1249,6 +1277,7 @@ async function runChatTurn(
       title: titleFromPrompt(prompt),
       taskPrompt: prompt,
       agentKind: participant.agentKind,
+      agentAvailability: cliAgentAvailability(state.debug),
       deliveryMode: "runtime_injection",
       conversationBrief,
       roleSkillReferences: participant.role?.defaultSkillReferences,
@@ -1701,7 +1730,10 @@ async function sendRoomMessage(
     const state: ChatState = {
       projectRoot: project.rootPath,
       project,
-      selectedAgent: parseInteractiveAgent(optionalFlag(args, "--agent") ?? "fake"),
+      selectedAgent: parseInteractiveAgent(
+        optionalFlag(args, "--agent") ?? defaultCliAgent(inheritedDebug || args.includes("--debug")),
+        inheritedDebug || args.includes("--debug")
+      ),
       threadId: thread.id,
       roomHandle: roomHandleForThread(thread),
       workspaceBasePath: optionalFlag(args, "--workspace-base")
@@ -2034,14 +2066,18 @@ async function parseCliChatTurn(
   rawLine: string
 ): Promise<ParsedCliChatTurn> {
   const roles = await resolvedRoleValues(runtime, state.project.id);
-  const parsedMentions = parseCliWorkgroupMentions(rawLine, roles);
+  const parsedMentions = parseCliWorkgroupMentions(rawLine, roles, state.debug);
   if (parsedMentions.participants.length > 0 || parsedMentions.roleMentions.length > 0) {
     return {
       ...parsedMentions,
       prompt: parsedMentions.cleanedPrompt
     };
   }
-  const parsedAgent = parseAgentPrompt(rawLine, state.selectedAgent);
+  const parsedAgent = parseAgentPrompt(
+    rawLine,
+    state.selectedAgent,
+    cliAgentAvailability(state.debug)
+  );
   return {
     agentMentions: [parsedAgent.agentKind],
     roleMentions: [],
@@ -2058,7 +2094,8 @@ async function parseCliChatTurn(
 
 function parseCliWorkgroupMentions(
   input: string,
-  roles: readonly WorkgroupRole[]
+  roles: readonly WorkgroupRole[],
+  debug: boolean
 ): CliMentionParseResult {
   const agentMentions: AgentKind[] = [];
   const roleMentions: WorkgroupRoleRunMetadata[] = [];
@@ -2066,7 +2103,7 @@ function parseCliWorkgroupMentions(
   const participantKeys = new Set<string>();
   const cleanedPrompt = input
     .replace(/(^|[\s([{])@([a-z][a-z0-9_-]*)\b/gi, (match, prefix: string, rawMention: string) => {
-      const agentKind = normalizeMentionAgentKind(rawMention);
+      const agentKind = normalizeMentionAgentKind(rawMention, debug);
       if (agentKind) {
         addCliAgentMention(agentMentions, participants, participantKeys, agentKind);
         return prefix.length > 0 ? prefix : "";
@@ -2077,7 +2114,7 @@ function parseCliWorkgroupMentions(
         if (!roleMentions.some((mention) => mention.roleHandle === metadata.roleHandle)) {
           roleMentions.push(metadata);
         }
-        const adapter = adapterKindForRole(role);
+        const adapter = adapterKindForRole(role, debug);
         if (adapter) {
           addCliRoleMention(participants, participantKeys, adapter, metadata);
         }
@@ -2129,22 +2166,22 @@ function addCliRoleMention(
   participants.push({ agentKind, role, source: "role_mention" });
 }
 
-function normalizeMentionAgentKind(value: string): AgentKind | undefined {
-  const normalized = value.toLowerCase();
-  if (normalized === "fake" || normalized === "codex") {
-    return normalized;
+function normalizeMentionAgentKind(value: string, debug: boolean): AgentKind | undefined {
+  try {
+    const agent = parseAgentKindAlias(value);
+    return isAgentKindEnabled(agent, cliAgentAvailability(debug)) ? agent : undefined;
+  } catch {
+    return undefined;
   }
-  if (normalized === "claude" || normalized === "claude-code") {
-    return "claude-code";
-  }
-  return undefined;
 }
 
-function adapterKindForRole(role: WorkgroupRole): AgentKind | undefined {
+function adapterKindForRole(role: WorkgroupRole, debug: boolean): AgentKind | undefined {
   if (role.executor.kind !== "agent_adapter") {
     return undefined;
   }
-  return role.executor.adapterKind;
+  return isAgentKindEnabled(role.executor.adapterKind, cliAgentAvailability(debug))
+    ? role.executor.adapterKind
+    : undefined;
 }
 
 function createCliTaskAssignments(input: {
@@ -2576,9 +2613,15 @@ async function roleFromSaveArgs(
   )?.role;
   const preset = presetWorkgroupRoles.find((role) => role.handle === handle);
   const base = existing ?? preset;
+  const debug = isEnvironmentDebugEnabled();
+  const baseExecutor =
+    base?.executor.kind === "agent_adapter" &&
+    !isAgentKindEnabled(base.executor.adapterKind, cliAgentAvailability(debug))
+      ? undefined
+      : base?.executor;
   const executor = optionalFlag(args, "--executor")
-    ? parseRoleExecutor(requiredFlag(args, "--executor"))
-    : base?.executor ?? parseRoleExecutor("fake");
+    ? parseRoleExecutor(requiredFlag(args, "--executor"), debug)
+    : baseExecutor ?? parseRoleExecutor(defaultCliAgent(debug), debug);
   return validateWorkgroupRole({
     id: preset ? `preset:${handle}` : `custom:${handle}`,
     handle,
@@ -2645,13 +2688,13 @@ async function roleFromSaveArgs(
   });
 }
 
-function parseRoleExecutor(value: string): WorkgroupExecutor {
+function parseRoleExecutor(value: string, debug = isEnvironmentDebugEnabled()): WorkgroupExecutor {
   const normalized = value.replace(/^@/, "").toLowerCase();
   if (normalized === "fake" || normalized === "codex" || normalized === "claude-code") {
-    return { kind: "agent_adapter", adapterKind: normalized };
+    return { kind: "agent_adapter", adapterKind: parseAvailableAgent(normalized, debug) };
   }
   if (normalized === "claude") {
-    return { kind: "agent_adapter", adapterKind: "claude-code" };
+    return { kind: "agent_adapter", adapterKind: parseAvailableAgent("claude-code", debug) };
   }
   if (normalized === "human" || normalized === "llm_api" || normalized === "workflow") {
     return {
@@ -2695,6 +2738,14 @@ function upsertStoredRole(
 
 function executorLabel(executor: WorkgroupExecutor): string {
   if (executor.kind === "agent_adapter") {
+    if (
+      !isAgentKindEnabled(
+        executor.adapterKind,
+        cliAgentAvailability(isEnvironmentDebugEnabled())
+      )
+    ) {
+      return "agent_adapter disabled";
+    }
     return `agent_adapter / ${executor.adapterKind}`;
   }
   return `${executor.kind} reserved`;
@@ -2899,7 +2950,10 @@ async function contextBuild(args: string[], io: CliIO, cwd: string): Promise<num
       taskId: requiredFlag(args, "--task-id"),
       title: requiredFlag(args, "--title"),
       prompt: requiredFlag(args, "--prompt"),
-      selectedAgentId: parseAgentKind(optionalFlag(args, "--agent") ?? "fake"),
+      selectedAgentId: parseAvailableAgent(
+        optionalFlag(args, "--agent") ?? defaultCliAgent(isEnvironmentDebugEnabled()),
+        isEnvironmentDebugEnabled()
+      ),
       deliveryMode: parseContextBuildDeliveryMode(optionalFlag(args, "--delivery-mode"))
     });
     io.stdout.write(renderContextBuildResult(result));
@@ -3022,11 +3076,13 @@ async function runCommand(
 ): Promise<number> {
   try {
     const options = parseRunArgs(args, cwd);
-    const runInput = await resolveRunInput(options, runtime);
+    const debug = inheritedDebug || options.debug;
+    const runInput = await resolveRunInput(options, runtime, debug);
     const effectiveRunInput = await withAdhocProject(runInput, runtime);
 
     const result = await runtime.taskRunner.run({
       ...effectiveRunInput,
+      agentAvailability: cliAgentAvailability(debug),
       workspaceBasePath: options.workspaceBasePath,
       workspaceCleanupPolicy: options.retainOnFailure ? "retain_on_failure" : undefined,
       dryRun: options.dryRun,
@@ -3037,7 +3093,7 @@ async function runCommand(
 
     const deliveryMode = options.deliveryMode ?? "runtime_injection";
     io.stdout.write(renderAgentOutput(result));
-    if (inheritedDebug || options.debug) {
+    if (debug) {
       io.stdout.write(renderRunDebug(result, effectiveRunInput, deliveryMode));
     }
     return result.ok ? 0 : 1;
@@ -3785,6 +3841,39 @@ function isEnvironmentDebugEnabled(): boolean {
   return value === "1" || value?.toLowerCase() === "true";
 }
 
+function cliAgentAvailability(debug: boolean): AgentAvailabilityOptions {
+  return { env: process.env, debug };
+}
+
+function defaultCliAgent(debug: boolean): AgentKind {
+  return defaultAgentKind(cliAgentAvailability(debug));
+}
+
+function availableCliAgents(debug: boolean): AgentKind[] {
+  return availableAgentKinds(cliAgentAvailability(debug));
+}
+
+function parseAvailableAgent(value: string, debug: boolean): AgentKind {
+  const agent = parseAgentKindAlias(value);
+  requireAgentEnabled(agent, debug);
+  return agent;
+}
+
+function requireAgentEnabled(agentKind: AgentKind, debug: boolean): void {
+  try {
+    assertAgentKindEnabled(agentKind, cliAgentAvailability(debug));
+  } catch {
+    throw new Error(disabledAgentMessage(agentKind));
+  }
+}
+
+function disabledAgentMessage(agentKind: AgentKind): string {
+  if (agentKind === "fake") {
+    return "fake agent is disabled outside Agent Hub debug/development mode";
+  }
+  return `${agentKind} agent is disabled by Agent Hub agent availability config`;
+}
+
 interface ParsedRunArgs {
   rawPrompt: string;
   projectRoot: string;
@@ -3809,7 +3898,8 @@ interface ParsedRunArgs {
 
 async function resolveRunInput(
   options: ParsedRunArgs,
-  runtime: CliRuntime
+  runtime: CliRuntime,
+  debug = false
 ): Promise<RunTaskInput> {
   const continueFrom = await resolveRunContinuation(options, runtime);
   const selectedSkillReferences =
@@ -3828,7 +3918,10 @@ async function resolveRunInput(
     if (!project) {
       throw new Error(`project ${task.projectId} not found`);
     }
-    const agentKind = parseAgentKind(options.agentKind ?? "fake");
+    const agentKind = parseAvailableAgent(
+      options.agentKind ?? defaultCliAgent(debug),
+      debug
+    );
     return {
       projectRoot: project.rootPath,
       taskId: task.id,
@@ -3843,7 +3936,10 @@ async function resolveRunInput(
   }
 
   if (options.prompt !== undefined || options.agentKind !== undefined) {
-    const agentKind = parseAgentKind(options.agentKind ?? "fake");
+    const agentKind = parseAvailableAgent(
+      options.agentKind ?? defaultCliAgent(debug),
+      debug
+    );
     const taskPrompt = options.prompt ?? options.rawPrompt;
     if (!taskPrompt.trim()) {
       throw new Error("task prompt is required");
@@ -3863,10 +3959,14 @@ async function resolveRunInput(
   if (!options.rawPrompt.trim()) {
     throw new Error("task prompt is required");
   }
-  const parsed = parseAgentPrompt(options.rawPrompt);
+  const parsed = parseAgentPrompt(
+    options.rawPrompt,
+    defaultCliAgent(debug),
+    cliAgentAvailability(debug)
+  );
   return {
     projectRoot: options.projectRoot,
-    rawPrompt: options.rawPrompt,
+    taskPrompt: parsed.prompt,
     agentKind: parsed.agentKind,
     agentHubHome: options.agentHubHome,
     selectedSkillReferences,
@@ -4146,7 +4246,7 @@ function parseGlobalArgs(argv: string[], cwd: string): ParsedGlobalArgs {
       if (!value) {
         throw new Error("--agent requires an agent kind");
       }
-      agentKind = parseInteractiveAgent(value);
+      agentKind = parseAgentKindAlias(value);
       index += 1;
       continue;
     }

@@ -22,6 +22,7 @@ import type {
   AgentRunMessage,
   CollaborationWorkflowInput,
   ContextMode,
+  DesktopRuntimeConfig,
   CreateThreadInput,
   ProjectSummary,
   RunDetail,
@@ -33,6 +34,14 @@ import type {
 } from "./lib/types";
 
 type DesktopWorkspace = DesktopWorkspacePreference;
+
+const defaultRuntimeConfig: DesktopRuntimeConfig = {
+  agents: {
+    availableAgents: ["codex", "claude"],
+    defaultAgent: "codex",
+    fakeAgentEnabled: false
+  }
+};
 
 export function App(): JSX.Element {
   const [preferences, setPreferences] = useState<DesktopPreferences>(() =>
@@ -61,6 +70,8 @@ export function App(): JSX.Element {
   const [lastUsedRoleHandles, setLastUsedRoleHandles] = useState<string[]>(
     preferences.lastUsedRoleHandles
   );
+  const [runtimeConfig, setRuntimeConfig] =
+    useState<DesktopRuntimeConfig>(defaultRuntimeConfig);
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const [pendingContinueFrom, setPendingContinueFrom] =
     useState<RunContinuationTarget | undefined>();
@@ -150,10 +161,15 @@ export function App(): JSX.Element {
     setIsBusy(true);
     setError(undefined);
     try {
-      const [projectList, threadList] = await Promise.all([
+      const [config, projectList, threadList] = await Promise.all([
+        agentHubApi.app.getRuntimeConfig(),
         agentHubApi.projects.list(),
         agentHubApi.threads.list()
       ]);
+      setRuntimeConfig(config);
+      setLastUsedAgents((current) =>
+        filterAvailableAgents(current, config.agents)
+      );
       setProjects(projectList);
       setThreads(threadList);
       const projectId =
@@ -338,8 +354,9 @@ export function App(): JSX.Element {
       setSelectedProjectId((current) => detail.projectId ?? current);
       const mentions = lastUserMentions(detail.messages);
       if (mentions) {
-        setLastUsedAgents(mentions);
-        rememberPreferences({ lastUsedAgents: mentions });
+        const availableMentions = filterAvailableAgents(mentions, runtimeConfig.agents);
+        setLastUsedAgents(availableMentions);
+        rememberPreferences({ lastUsedAgents: availableMentions });
       }
       const roleMentions = lastUserRoleMentions(detail.messages);
       if (roleMentions) {
@@ -469,7 +486,10 @@ export function App(): JSX.Element {
             onOpenInspector={openInspector}
           />
         ) : activeWorkspace === "team" ? (
-          <TeamWorkspace project={selectedProject} />
+          <TeamWorkspace
+            project={selectedProject}
+            agentConfig={runtimeConfig.agents}
+          />
         ) : (
           <ChatView
             thread={currentThread}
@@ -477,6 +497,7 @@ export function App(): JSX.Element {
             messages={selectedMessages}
             runDetails={runDetails}
             isBusy={isBusy}
+            agentConfig={runtimeConfig.agents}
             lastUsedAgents={lastUsedAgents}
             lastUsedRoleHandles={lastUsedRoleHandles}
             initialContextMode={preferences.contextMode}
@@ -564,6 +585,14 @@ function lastUserRoleMentions(messages: ThreadMessage[]): string[] | undefined {
     .map((role) => role.roleHandle)
     .filter((handle, index, all) => all.indexOf(handle) === index);
   return handles.length > 0 ? handles : undefined;
+}
+
+function filterAvailableAgents(
+  agents: AgentId[],
+  config: DesktopRuntimeConfig["agents"]
+): AgentId[] {
+  const available = agents.filter((agent) => config.availableAgents.includes(agent));
+  return available.length > 0 ? available : [config.defaultAgent];
 }
 
 function upsertProjectSummary(

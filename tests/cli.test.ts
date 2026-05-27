@@ -73,6 +73,55 @@ describe("CLI", () => {
     expect(output.join("")).toContain("acceptance:");
   });
 
+  it("hides and rejects fake agent in normal production mode", async () => {
+    const previousNodeEnv = process.env.NODE_ENV;
+    const previousDebug = process.env.AGENT_HUB_DEBUG;
+    const previousFake = process.env.AGENT_HUB_AGENT_FAKE_ENABLED;
+    process.env.NODE_ENV = "production";
+    delete process.env.AGENT_HUB_DEBUG;
+    delete process.env.AGENT_HUB_AGENT_FAKE_ENABLED;
+    try {
+      const projectRoot = await createTestDirectory("cli-fake-disabled-project");
+      const runRoot = path.join(
+        await createTestDirectory("cli-fake-disabled-runs"),
+        "runs"
+      );
+      const runtime = createCliRuntime({
+        storageMode: "memory",
+        defaultRunRoot: runRoot,
+        workspaceManager: new TestWorkspaceManager(runRoot),
+        diffCollector: new StaticDiffCollector(),
+        verificationRunner: new VerificationRunner(new MockShellExecutor()),
+        idGenerator: new SequenceIdGenerator(),
+        clock: new FixedClock("2026-01-01T00:00:00.000Z")
+      });
+      const output: string[] = [];
+      const errors: string[] = [];
+      const io = {
+        stdout: { write: (chunk: string) => { output.push(chunk); return true; } },
+        stderr: { write: (chunk: string) => { errors.push(chunk); return true; } }
+      };
+
+      await expect(main(["--help"], io, projectRoot, runtime)).resolves.toBe(0);
+      expect(output.join("")).not.toContain("@fake");
+      expect(output.join("")).toContain("--agent codex|claude-code");
+
+      await expect(
+        main(["run", "@fake", "normal hidden"], io, projectRoot, runtime)
+      ).resolves.toBe(1);
+      expect(errors.join("")).toContain("fake agent is disabled");
+
+      await expect(
+        main(["--debug", "run", "@fake", "debug visible"], io, projectRoot, runtime)
+      ).resolves.toBe(0);
+      expect(output.join("")).toContain("# Fake Agent Output");
+    } finally {
+      restoreEnv("NODE_ENV", previousNodeEnv);
+      restoreEnv("AGENT_HUB_DEBUG", previousDebug);
+      restoreEnv("AGENT_HUB_AGENT_FAKE_ENABLED", previousFake);
+    }
+  });
+
   it("rejects repo_export delivery mode for task runs", async () => {
     const projectRoot = await createTestDirectory("cli-project");
     const runtime = createCliRuntime({ storageMode: "memory" });
