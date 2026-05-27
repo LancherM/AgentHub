@@ -174,18 +174,20 @@ Implemented:
   structured comparison details and deterministic review scoring.
 - Local AI workgroup metadata for preset/custom roles, built-in workgroup
   packs, metadata-backed rooms, shared-task role fan-out, bounded workflows,
-  timeline events, artifact review, knowledge browsing, and lifecycle audit
-  records without adding a cloud service or broad schema split.
+  timeline events, participant-scoped context, artifact review, knowledge
+  browsing, and lifecycle audit records without adding a cloud service or broad
+  schema split.
 - `apps/desktop` Electron + React shell with a room-based project layout, safe
   `window.agentHub` preload API, Electron main-process IPC handlers,
   SQLite-backed project/thread/message/run/review/memory/team/knowledge
-  service facades, inline run cards, bounded assistant output messages,
-  conversation brief artifacts, TaskRunner-backed fake/Codex/Claude desktop
-  runs in isolated worktrees, live run event replay, desktop cancellation,
-  retained-worktree handoff, local run comparison, explicit memory writeback,
-  lifecycle cleanup controls, human-gated local apply, and a workgroup
-  inspector for brief, context, artifacts, checks, risks, lifecycle, memory,
-  and audit evidence.
+  service facades, sidebar room/project navigation, inline run cards, bounded
+  role-attributed assistant output messages, participant-scoped conversation
+  brief artifacts, TaskRunner-backed fake/Codex/Claude desktop runs in isolated
+  worktrees, live run event replay, desktop cancellation, retained-worktree
+  handoff, local run comparison, explicit memory writeback, lifecycle cleanup
+  controls, human-gated local apply, and a workgroup inspector with Brief,
+  Evidence, Artifacts, Memory, and Audit surfaces covering context, checks,
+  risks, lifecycle, and logs.
 - Per-project desktop verification command configuration through validated IPC
   and local SQLite settings, with configured commands passed to TaskRunner for
   isolated-worktree execution.
