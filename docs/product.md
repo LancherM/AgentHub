@@ -263,7 +263,8 @@ These commands inspect SQLite-backed evidence only; they do not rerun agents,
 modify worktrees, accept output, merge branches, or push code.
 
 `--debug` is opt-in. It enables the internal debug/development agent
-availability policy, including the fake adapter, and for supported run
+availability policy, including the fake adapter, for task runs, chat, and
+context-build agent selection. For supported run
 commands it appends the detailed run summary, selected `context_delivery` mode,
 `branch_name`, run boundary details, context artifact paths, verification
 stdout/stderr, changed-file summaries, warnings, and a truncated diff preview

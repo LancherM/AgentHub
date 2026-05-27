@@ -492,8 +492,9 @@ events. It does not show Agent Hub run metadata by default, and interactive
 mode does not echo prompt dispatch lines unless debug rendering is enabled.
 
 Debug rendering remains opt-in. `--debug` or `AGENT_HUB_DEBUG=1` also enables
-the internal debug/development agent availability policy, including `fake`, and
-appends the run summary, run boundaries, context artifact paths, verification
+the internal debug/development agent availability policy, including `fake`, for
+task runs, chat, and context-build agent selection. It appends the run summary,
+run boundaries, context artifact paths, verification
 stdout/stderr, changed file summaries, and a truncated diff preview after the
 normal agent output. It does not otherwise alter adapter behavior, persistence,
 or exit status.

@@ -1134,6 +1134,55 @@ describe("CLI", () => {
     );
   });
 
+  it("honors global debug availability for context build fake agents", async () => {
+    const previousNodeEnv = process.env.NODE_ENV;
+    const previousDebug = process.env.AGENT_HUB_DEBUG;
+    const previousFake = process.env.AGENT_HUB_AGENT_FAKE_ENABLED;
+    process.env.NODE_ENV = "production";
+    delete process.env.AGENT_HUB_DEBUG;
+    delete process.env.AGENT_HUB_AGENT_FAKE_ENABLED;
+    try {
+      const projectRoot = await createTestDirectory("cli-context-debug-project");
+      const agentHubHome = await createTestDirectory("cli-context-debug-home");
+      const output: string[] = [];
+      const errors: string[] = [];
+      const io = {
+        stdout: { write: (chunk: string) => { output.push(chunk); return true; } },
+        stderr: { write: (chunk: string) => { errors.push(chunk); return true; } }
+      };
+
+      await expect(
+        main([
+          "--debug",
+          "context",
+          "build",
+          "--project-root",
+          projectRoot,
+          "--project-id",
+          "project_1",
+          "--task-id",
+          "task_1",
+          "--title",
+          "Build fake context",
+          "--prompt",
+          "Compile debug context",
+          "--agent",
+          "fake",
+          "--agent-hub-home",
+          agentHubHome
+        ], io, projectRoot)
+      ).resolves.toBe(0);
+
+      expect(errors.join("")).toBe("");
+      expect(output.join("")).toContain("Built context artifacts");
+      expect(output.join("")).toContain("task_id: task_1");
+    } finally {
+      restoreEnv("NODE_ENV", previousNodeEnv);
+      restoreEnv("AGENT_HUB_DEBUG", previousDebug);
+      restoreEnv("AGENT_HUB_AGENT_FAKE_ENABLED", previousFake);
+    }
+  });
+
   it("enters interactive mode for bare CLI and routes prompts through the runner", async () => {
     const projectRoot = await createTestDirectory("cli-interactive-project");
     const runRoot = path.join(await createTestDirectory("cli-interactive-runs"), "runs");
