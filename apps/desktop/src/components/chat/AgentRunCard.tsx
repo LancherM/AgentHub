@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { agentHubApi } from "../../lib/agentHubApi";
 import { findCliUnavailableDiagnostic } from "../../lib/cli-diagnostics";
 import {
@@ -42,11 +42,15 @@ export function AgentRunCard({
   onCancelRun,
   onContinueFromRun
 }: AgentRunCardProps): JSX.Element {
+  const cardRef = useRef<HTMLElement>(null);
   const [run, setRun] = useState<RunDetail | undefined>(initialRun);
   const [events, setEvents] = useState<RunEvent[]>(initialRun?.events ?? []);
   const [status, setStatus] = useState<RunStatus>(initialRun?.status ?? message.status);
   const [reviewSummary, setReviewSummary] = useState<ReviewSummary | undefined>();
   const [reviewArtifacts, setReviewArtifacts] = useState<ReviewArtifact[]>([]);
+  const [shouldHydrateTerminalRun, setShouldHydrateTerminalRun] = useState(
+    () => initialRun !== undefined
+  );
   const [streamError, setStreamError] = useState<string | undefined>();
   const [cancelError, setCancelError] = useState<string | undefined>();
 
@@ -56,6 +60,7 @@ export function AgentRunCard({
     setStatus(initialRun?.status ?? message.status);
     setReviewSummary(undefined);
     setReviewArtifacts([]);
+    setShouldHydrateTerminalRun(initialRun !== undefined);
   }, [initialRun, message.runId, message.status]);
 
   const loadReviewData = useCallback(async (): Promise<void> => {
@@ -128,7 +133,29 @@ export function AgentRunCard({
   }, [loadRun, message.runId, message.status]);
 
   useEffect(() => {
-    if (!isTerminalRunStatus(status)) {
+    if (!isTerminalRunStatus(status) || shouldHydrateTerminalRun) {
+      return;
+    }
+    const element = cardRef.current;
+    if (!element || typeof IntersectionObserver === "undefined") {
+      const timeout = window.setTimeout(() => setShouldHydrateTerminalRun(true), 250);
+      return () => window.clearTimeout(timeout);
+    }
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) {
+          setShouldHydrateTerminalRun(true);
+          observer.disconnect();
+        }
+      },
+      { root: null, rootMargin: "320px 0px", threshold: 0.01 }
+    );
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [message.runId, shouldHydrateTerminalRun, status]);
+
+  useEffect(() => {
+    if (!isTerminalRunStatus(status) || !shouldHydrateTerminalRun) {
       return;
     }
     if (run) {
@@ -136,7 +163,7 @@ export function AgentRunCard({
       return;
     }
     void loadRun({ includeReview: true });
-  }, [loadReviewData, loadRun, run, status]);
+  }, [loadReviewData, loadRun, run, shouldHydrateTerminalRun, status]);
 
   const progress = useMemo(
     () =>
@@ -220,6 +247,7 @@ export function AgentRunCard({
 
   return (
     <article
+      ref={cardRef}
       className={`agent-run-card timeline-event ${timelineEvent.tone} ${status} ${quietCompleted ? "compact-completed" : ""}`}
       onClick={() => {
         onOpenInspector(message.runId, "brief");

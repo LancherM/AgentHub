@@ -526,7 +526,10 @@ and prefer the latest agent-facing natural-language output over lifecycle
 details. Agent-facing transcript output and live compact run output render
 Markdown, including lists, code blocks, links, tables, and other common GFM
 syntax, while raw HTML remains disabled. Raw event lines stay behind the
-inspector's Audit view by default.
+inspector's Audit view by default. The transcript follows new room or live run
+updates only while the user is already near the bottom; scrolling up to inspect
+older messages disables automatic follow-scroll until the user returns to the
+bottom.
 Once a completed run has a durable assistant answer and no changed files, the
 default transcript hides the run card entirely and keeps the answer as the main
 visible row. Runs that modify files, fail, are cancelled, need review, or have
