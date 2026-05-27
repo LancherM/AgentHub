@@ -1,5 +1,9 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { agentHubApi } from "../../lib/agentHubApi";
+import {
+  isChatScrollNearBottom,
+  shouldFollowChatScroll
+} from "../../lib/chat-scroll";
 import type {
   AgentId,
   CollaborationWorkflowInput,
@@ -71,6 +75,8 @@ export function ChatView({
   onOpenSettings
 }: ChatViewProps): JSX.Element {
   const scrollRef = useRef<HTMLDivElement>(null);
+  const previousThreadIdRef = useRef<string | undefined>();
+  const shouldStickToBottomRef = useRef(true);
   const [roleTargets, setRoleTargets] = useState<TeamRoleSummary[]>([]);
   const chatState = useMemo(
     () => deriveChatViewState(messages, runDetails),
@@ -107,13 +113,34 @@ export function ChatView({
     };
   }, [project?.id]);
 
-  useEffect(() => {
+  const updateScrollAnchor = useCallback((): void => {
     const element = scrollRef.current;
     if (!element) {
       return;
     }
-    element.scrollTo({ top: element.scrollHeight, behavior: "smooth" });
-  }, [messages, runDetails]);
+    shouldStickToBottomRef.current = isChatScrollNearBottom(element);
+  }, []);
+
+  useLayoutEffect(() => {
+    const element = scrollRef.current;
+    if (!element) {
+      previousThreadIdRef.current = thread?.id;
+      return;
+    }
+    const threadChanged = previousThreadIdRef.current !== thread?.id;
+    previousThreadIdRef.current = thread?.id;
+    if (
+      !shouldFollowChatScroll({
+        threadChanged,
+        wasPinnedToBottom: shouldStickToBottomRef.current,
+        metrics: element
+      })
+    ) {
+      return;
+    }
+    element.scrollTo({ top: element.scrollHeight, behavior: "auto" });
+    shouldStickToBottomRef.current = true;
+  }, [thread?.id, messages, runDetails]);
 
   return (
     <section className={`chat-view state-${chatState}`}>
@@ -164,7 +191,7 @@ export function ChatView({
         </div>
       ) : null}
 
-      <div className="chat-scroll" ref={scrollRef}>
+      <div className="chat-scroll" ref={scrollRef} onScroll={updateScrollAnchor}>
         {project ? (
           <MessageList
             messages={messages}

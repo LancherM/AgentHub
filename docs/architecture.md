@@ -281,6 +281,12 @@ read logs directly, or bypass the inspector; card buttons only open existing
 review surfaces such as Brief, Evidence, Audit, Artifacts, and Memory. Sidebar
 and header hierarchy changes are likewise renderer-only navigation/copy
 changes over the same project, thread, team, settings, and review IPC services.
+The renderer keeps chat scrolling as local layout state: switching rooms jumps
+to the newest transcript item, live updates follow only while the scrollport is
+already near the bottom, and user scrollback prevents run-detail updates from
+pulling the transcript downward. Historical terminal run cards defer full
+run/review hydration until they approach the visible scroll area, while active
+run cards continue subscribing immediately for live progress.
 The renderer-only sidebar projection keeps project switching and project
 registration inside one disclosure whose collapsed state exposes only the
 active project name. It also re-sorts the visible room list by each room
