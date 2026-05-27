@@ -37,7 +37,7 @@ export function MessageList({
     return (
       <div className="empty-chat">
         <h2>Message an agent to start a local run.</h2>
-        <p>Use @fake, @codex, or @claude from the composer.</p>
+        <p>Use @codex or @claude from the composer.</p>
       </div>
     );
   }

@@ -23,9 +23,15 @@ export interface WorkgroupMentionParseResult {
   cleanedPrompt: string;
 }
 
+export interface WorkgroupMentionOptions {
+  availableAgents?: readonly AgentId[];
+  rejectUnavailableAgents?: boolean;
+}
+
 export function parseWorkgroupMentions(
   input: string,
-  roles: readonly WorkgroupRole[] = presetWorkgroupRoles
+  roles: readonly WorkgroupRole[] = presetWorkgroupRoles,
+  options: WorkgroupMentionOptions = {}
 ): WorkgroupMentionParseResult {
   const agentMentions: AgentId[] = [];
   const roleMentions: WorkgroupRoleRunMetadata[] = [];
@@ -34,9 +40,16 @@ export function parseWorkgroupMentions(
   const cleanedPrompt = input
     .replace(anyMentionPattern, (match, prefix: string, rawMention: string) => {
       const agent = normalizeAgentId(rawMention);
-      if (agent) {
+      if (agent && isAvailableAgent(agent, options.availableAgents)) {
         addAgentMention(agentMentions, participants, participantKeys, agent);
         return prefix.length > 0 ? prefix : "";
+      }
+      if (agent && options.rejectUnavailableAgents) {
+        throw new Error(
+          agent === "fake"
+            ? "fake agent is disabled outside Agent Hub debug/development mode"
+            : `${agent} agent is disabled by Agent Hub agent availability config`
+        );
       }
       const role = findWorkgroupRoleByHandle(roles, rawMention);
       if (role?.enabled) {
@@ -44,7 +57,7 @@ export function parseWorkgroupMentions(
         if (!roleMentions.some((mention) => mention.roleHandle === metadata.roleHandle)) {
           roleMentions.push(metadata);
         }
-        const adapter = adapterForRole(role);
+        const adapter = adapterForRole(role, options.availableAgents);
         if (adapter) {
           addRoleMention(participants, participantKeys, adapter, metadata);
         }
@@ -77,11 +90,15 @@ function normalizeAgentId(value: string): AgentId | undefined {
   return undefined;
 }
 
-function adapterForRole(role: WorkgroupRole): AgentId | undefined {
+function adapterForRole(
+  role: WorkgroupRole,
+  availableAgents: readonly AgentId[] | undefined
+): AgentId | undefined {
   if (role.executor.kind !== "agent_adapter") {
     return undefined;
   }
-  return toAgentId(role.executor.adapterKind);
+  const agentId = toAgentId(role.executor.adapterKind);
+  return agentId && isAvailableAgent(agentId, availableAgents) ? agentId : undefined;
 }
 
 function toAgentId(value: string): AgentId | undefined {
@@ -133,4 +150,11 @@ function uniqueAgents(agents: AgentId[]): AgentId[] {
     }
   }
   return unique;
+}
+
+function isAvailableAgent(
+  agentId: AgentId,
+  availableAgents: readonly AgentId[] | undefined
+): boolean {
+  return availableAgents === undefined || availableAgents.includes(agentId);
 }

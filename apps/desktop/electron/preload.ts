@@ -16,6 +16,10 @@ import type {
 import { IPC_CHANNELS, runEventChannel } from "./ipc-channels";
 
 const api: AgentHubApi = {
+  app: {
+    getRuntimeConfig: () =>
+      ipcRenderer.invoke(IPC_CHANNELS.appRuntimeConfig)
+  },
   projects: {
     list: () => ipcRenderer.invoke(IPC_CHANNELS.projectsList),
     selectDirectory: () =>

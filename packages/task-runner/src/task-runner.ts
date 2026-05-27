@@ -37,6 +37,11 @@ import {
   type DiffCollectorService
 } from "./diff-collector";
 import {
+  assertAgentKindEnabled,
+  defaultAgentKind,
+  type AgentAvailabilityOptions
+} from "@agent-hub/shared";
+import {
   createId,
   nowIso,
   validateRunArtifact,
@@ -109,6 +114,7 @@ export interface RunTaskInput {
   rawPrompt?: string;
   taskPrompt?: string;
   agentKind?: AgentKind;
+  agentAvailability?: AgentAvailabilityOptions;
   taskId?: string;
   projectId?: string;
   title?: string;
@@ -293,11 +299,7 @@ export class TaskRunner {
       dependencies.runMetadataRepository ?? new InMemoryRunMetadataRepository();
     this.agentRegistry =
       dependencies.agentRegistry ??
-      new DefaultAgentRegistry([
-        new FakeAgentAdapter(),
-        new CodexAdapter({ processRunner }),
-        new ClaudeCodeAdapter({ processRunner })
-      ]);
+      createDefaultAgentRegistry(processRunner);
     this.workspaceManager =
       dependencies.workspaceManager ?? new GitWorktreeWorkspaceManager(shellExecutor);
     this.diffCollector = dependencies.diffCollector ?? new DiffCollector(shellExecutor);
@@ -1597,8 +1599,10 @@ function parseRunInput(input: RunTaskInput): {
   deliveryMode: RunContextDeliveryMode;
 } {
   const deliveryMode = parseRunDeliveryMode(input.deliveryMode);
+  const availability = input.agentAvailability ?? processAgentAvailability();
+  const fallbackAgent = defaultAgentKind(availability);
   if (input.rawPrompt !== undefined) {
-    const parsed = parseAgentPrompt(input.rawPrompt);
+    const parsed = parseAgentPrompt(input.rawPrompt, fallbackAgent, availability);
     return { agentKind: parsed.agentKind, taskPrompt: parsed.prompt, deliveryMode };
   }
 
@@ -1606,11 +1610,25 @@ function parseRunInput(input: RunTaskInput): {
     throw new TaskRunnerError("task prompt is required");
   }
 
+  const agentKind = input.agentKind ?? fallbackAgent;
+  assertAgentKindEnabled(agentKind, availability);
   return {
-    agentKind: input.agentKind ?? "fake",
+    agentKind,
     taskPrompt: input.taskPrompt,
     deliveryMode
   };
+}
+
+function createDefaultAgentRegistry(processRunner: ProcessRunner): AgentRegistry {
+  return new DefaultAgentRegistry([
+    new FakeAgentAdapter(),
+    new CodexAdapter({ processRunner }),
+    new ClaudeCodeAdapter({ processRunner })
+  ]);
+}
+
+function processAgentAvailability(): AgentAvailabilityOptions {
+  return { env: process.env };
 }
 
 function parseRunDeliveryMode(

@@ -177,6 +177,7 @@ export function activeComposerTrigger(
 
 export function buildComposerSuggestions(input: {
   roles: readonly TeamRoleSummary[];
+  availableAgents?: readonly AgentId[];
   recentAgents?: readonly AgentId[];
   recentRoleHandles?: readonly string[];
   trigger?: ComposerTrigger;
@@ -194,10 +195,12 @@ export function buildComposerSuggestions(input: {
   const suggestions = [
     ...recentMentionSuggestions(
       input.roles,
-      input.recentAgents ?? [],
+      filterAvailableAgents(input.recentAgents ?? [], input.availableAgents),
       input.recentRoleHandles ?? []
     ),
-    ...agentSuggestions,
+    ...agentSuggestions.filter((suggestion) =>
+      isAvailableAgent(suggestion.handle as AgentId, input.availableAgents)
+    ),
     ...roleSuggestions(input.roles)
   ];
   return dedupeSuggestions(suggestions).filter((suggestion) =>
@@ -242,6 +245,8 @@ export function insertComposerTarget(input: string, target: ComposerTarget): str
 export function resolveComposerTargets(input: {
   value: string;
   roles: readonly TeamRoleSummary[];
+  availableAgents?: readonly AgentId[];
+  defaultAgent?: AgentId;
   fallbackAgents?: readonly AgentId[];
   fallbackRoleHandles?: readonly string[];
 }): ComposerTargetResolution {
@@ -253,7 +258,7 @@ export function resolveComposerTargets(input: {
     mentionPattern,
     (_match, _prefix: string, rawMention: string) => {
       const agent = normalizeAgentId(rawMention);
-      if (agent) {
+      if (agent && isAvailableAgent(agent, input.availableAgents)) {
         pushTarget(targets, keys, agentTarget(agent, "explicit"));
         return "";
       }
@@ -273,11 +278,18 @@ export function resolveComposerTargets(input: {
         pushTarget(targets, keys, roleTarget(role, "fallback"));
       }
     }
-    for (const agent of input.fallbackAgents ?? ["fake"]) {
+    for (const agent of filterAvailableAgents(
+      input.fallbackAgents ?? [],
+      input.availableAgents
+    )) {
       pushTarget(targets, keys, agentTarget(agent, "fallback"));
     }
     if (targets.length === 0) {
-      pushTarget(targets, keys, agentTarget("fake", "fallback"));
+      pushTarget(
+        targets,
+        keys,
+        agentTarget(input.defaultAgent ?? input.availableAgents?.[0] ?? "codex", "fallback")
+      );
     }
   }
 
@@ -308,6 +320,20 @@ function recentMentionSuggestions(
       detail: "Recent target"
     }))
   ];
+}
+
+function filterAvailableAgents(
+  agents: readonly AgentId[],
+  availableAgents: readonly AgentId[] | undefined
+): AgentId[] {
+  return agents.filter((agent) => isAvailableAgent(agent, availableAgents));
+}
+
+function isAvailableAgent(
+  agent: AgentId,
+  availableAgents: readonly AgentId[] | undefined
+): boolean {
+  return availableAgents === undefined || availableAgents.includes(agent);
 }
 
 function roleSuggestions(roles: readonly TeamRoleSummary[]): ComposerSuggestion[] {

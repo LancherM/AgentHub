@@ -7,6 +7,16 @@ import type {
 
 export type AgentId = "fake" | "codex" | "claude";
 export type AgentKind = AgentId;
+export interface DesktopAgentConfig {
+  availableAgents: AgentId[];
+  defaultAgent: AgentId;
+  fakeAgentEnabled: boolean;
+}
+
+export interface DesktopRuntimeConfig {
+  agents: DesktopAgentConfig;
+}
+
 export type MemoryCategory =
   | "project_fact"
   | "workflow_rule"
@@ -816,6 +826,9 @@ export interface RunLog {
 export type Unsubscribe = () => void;
 
 export interface AgentHubApi {
+  app: {
+    getRuntimeConfig(): Promise<DesktopRuntimeConfig>;
+  };
   projects: {
     list(): Promise<ProjectSummary[]>;
     selectDirectory(): Promise<string | undefined>;

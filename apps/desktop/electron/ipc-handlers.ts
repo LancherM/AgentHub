@@ -5,6 +5,7 @@ import type {
   ComparisonCreateInput,
   CreateThreadInput,
   CreateRunInput,
+  DesktopRuntimeConfig,
   HandoffCopyKind,
   LifecycleActionInput,
   RunEvent,
@@ -13,6 +14,12 @@ import type {
   UpdateThreadInput,
   VerificationSettings
 } from "../src/lib/types";
+import {
+  availableAgentKinds,
+  defaultAgentKind,
+  isAgentKindEnabled,
+  type AgentKind
+} from "@agent-hub/shared";
 import { IPC_CHANNELS, runEventChannel } from "./ipc-channels";
 import {
   createDesktopServiceContext,
@@ -61,6 +68,7 @@ import {
 export { IPC_CHANNELS, runEventChannel } from "./ipc-channels";
 
 export interface DesktopServices {
+  runtimeConfig?: DesktopRuntimeConfig;
   projects: ProjectService;
   runs: RunService;
   threads: ThreadService;
@@ -107,6 +115,7 @@ export function createDesktopServices(
   const knowledge = createKnowledgeService(context);
   const team = createTeamService(context);
   return {
+    runtimeConfig: runtimeConfigForContext(context),
     projects,
     runs,
     threads: createThreadService({ context, projects, runs, team }),
@@ -120,15 +129,41 @@ export function createDesktopServices(
   };
 }
 
+function runtimeConfigForContext(
+  context: DesktopServiceContext
+): DesktopRuntimeConfig {
+  return runtimeConfigForAvailability(context.agentAvailability);
+}
+
+function runtimeConfigForAvailability(
+  availability: DesktopServiceContext["agentAvailability"]
+): DesktopRuntimeConfig {
+  const availableAgents = availableAgentKinds(availability).map(toAgentId);
+  return {
+    agents: {
+      availableAgents,
+      defaultAgent: toAgentId(defaultAgentKind(availability)),
+      fakeAgentEnabled: isAgentKindEnabled("fake", availability)
+    }
+  };
+}
+
+function toAgentId(agentKind: AgentKind): AgentId {
+  return agentKind === "claude-code" ? "claude" : agentKind;
+}
+
 export function createIpcHandlers(
   services: DesktopServices
 ): Record<string, IpcHandler> {
+  const runtimeConfig =
+    services.runtimeConfig ?? runtimeConfigForAvailability({ env: process.env });
   const subscriptions = new WeakMap<
     IpcEventSender,
     Map<string, () => void>
   >();
 
   return safeHandlers({
+    [IPC_CHANNELS.appRuntimeConfig]: async () => runtimeConfig,
     [IPC_CHANNELS.projectsList]: async () => services.projects.list(),
     [IPC_CHANNELS.projectsOpen]: async (_event, input) =>
       services.projects.open(parsePath(input)),
@@ -137,7 +172,9 @@ export function createIpcHandlers(
     [IPC_CHANNELS.runsGet]: async (_event, input) =>
       services.runs.getRun(parseId(input, "runId")),
     [IPC_CHANNELS.runsCreate]: async (_event, input) =>
-      services.runs.createRun(parseCreateRunInput(input)),
+      services.runs.createRun(
+        parseCreateRunInput(input, runtimeConfig.agents.availableAgents)
+      ),
     [IPC_CHANNELS.runsCancel]: async (_event, input) => {
       await services.runs.cancelRun(parseId(input, "runId"));
     },
@@ -166,7 +203,9 @@ export function createIpcHandlers(
     [IPC_CHANNELS.threadsUpdate]: async (_event, input) =>
       services.threads.updateThread(parseUpdateThreadInput(input)),
     [IPC_CHANNELS.threadsSendMessage]: async (_event, input) =>
-      services.threads.sendMessage(parseSendThreadMessageInput(input)),
+      services.threads.sendMessage(
+        parseSendThreadMessageInput(input, runtimeConfig.agents.availableAgents)
+      ),
     [IPC_CHANNELS.reviewSummary]: async (_event, input) =>
       services.review.getSummary(parseId(input, "runId")),
     [IPC_CHANNELS.reviewContext]: async (_event, input) =>
@@ -403,7 +442,10 @@ function parseComparisonCreateInput(input: unknown): ComparisonCreateInput {
   };
 }
 
-function parseCreateRunInput(input: unknown): CreateRunInput {
+function parseCreateRunInput(
+  input: unknown,
+  availableAgents: readonly AgentId[]
+): CreateRunInput {
   if (!input || typeof input !== "object" || Array.isArray(input)) {
     throw new Error("run input is required");
   }
@@ -420,6 +462,7 @@ function parseCreateRunInput(input: unknown): CreateRunInput {
   ) {
     throw new Error("agentId must be fake, codex, or claude");
   }
+  requireAvailableAgentId(agentId, availableAgents);
   const contextMode = value.contextMode;
   if (
     contextMode !== "auto" &&
@@ -520,7 +563,10 @@ function parseBoolean(value: unknown, label: string): boolean {
   return value;
 }
 
-function parseSendThreadMessageInput(input: unknown): SendThreadMessageInput {
+function parseSendThreadMessageInput(
+  input: unknown,
+  availableAgents: readonly AgentId[]
+): SendThreadMessageInput {
   if (!input || typeof input !== "object" || Array.isArray(input)) {
     throw new Error("thread message input is required");
   }
@@ -542,7 +588,10 @@ function parseSendThreadMessageInput(input: unknown): SendThreadMessageInput {
       value.projectId === undefined ? undefined : parseId(value.projectId, "projectId"),
     text,
     contextMode,
-    agents: value.agents === undefined ? undefined : parseAgentList(value.agents),
+    agents:
+      value.agents === undefined
+        ? undefined
+        : parseAgentList(value.agents, availableAgents),
     workflow:
       value.workflow === undefined
         ? undefined
@@ -603,7 +652,7 @@ function parseSaveTeamRoleInput(input: unknown): SaveTeamRoleInput {
   };
 }
 
-function parseAgentList(input: unknown): AgentId[] {
+function parseAgentList(input: unknown, availableAgents: readonly AgentId[]): AgentId[] {
   if (!Array.isArray(input)) {
     throw new Error("agents must be an array");
   }
@@ -613,17 +662,31 @@ function parseAgentList(input: unknown): AgentId[] {
       throw new Error("agents must be fake, codex, or claude");
     }
     if (!agents.includes(value)) {
+      requireAvailableAgentId(value, availableAgents);
       agents.push(value);
     }
   }
   return agents;
 }
 
+function requireAvailableAgentId(
+  agentId: AgentId,
+  availableAgents: readonly AgentId[]
+): void {
+  if (availableAgents.includes(agentId)) {
+    return;
+  }
+  if (agentId === "fake") {
+    throw new Error("fake agent is disabled outside Agent Hub debug/development mode");
+  }
+  throw new Error(`${agentId} agent is disabled by Agent Hub agent availability config`);
+}
+
 const GENERIC_IPC_ERROR = "Agent Hub could not complete that local desktop request.";
 
 function safeErrorMessage(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
-  if (/not found|required|must be|cannot be|already|deliveryMode|agentId|contextMode|reason|projectId|runId|threadId|prompt|text|settings|verification|command|executable|args|timeout|handoff|lifecycle|confirmation|cleanup|apply|worktree|comparison|baseline|candidate|same task|multi-agent|team|role|executor|permission|contextPolicy|approvalPolicy|workflow|maxRounds|stopCondition|expectedOutputs/i.test(message)) {
+  if (/not found|required|must be|cannot be|already|disabled|deliveryMode|agent|agentId|contextMode|reason|projectId|runId|threadId|prompt|text|settings|verification|command|executable|args|timeout|handoff|lifecycle|confirmation|cleanup|apply|worktree|comparison|baseline|candidate|same task|multi-agent|team|role|executor|permission|contextPolicy|approvalPolicy|workflow|maxRounds|stopCondition|expectedOutputs/i.test(message)) {
     return message;
   }
   return GENERIC_IPC_ERROR;

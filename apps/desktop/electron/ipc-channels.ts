@@ -1,4 +1,5 @@
 export const IPC_CHANNELS = {
+  appRuntimeConfig: "agent-hub:app:runtime-config",
   projectsList: "agent-hub:projects:list",
   projectsOpen: "agent-hub:projects:open",
   projectsSelectDirectory: "agent-hub:projects:select-directory",

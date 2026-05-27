@@ -329,6 +329,45 @@ describe("desktop services", () => {
     ).rejects.toThrow(/secret-like option name/);
   });
 
+  it("keeps fake agent out of normal desktop runtime config", async () => {
+    const previousNodeEnv = process.env.NODE_ENV;
+    const previousDebug = process.env.AGENT_HUB_DEBUG;
+    const previousFake = process.env.AGENT_HUB_AGENT_FAKE_ENABLED;
+    process.env.NODE_ENV = "production";
+    delete process.env.AGENT_HUB_DEBUG;
+    delete process.env.AGENT_HUB_AGENT_FAKE_ENABLED;
+    try {
+      const fixture = await createFixture();
+      const context = createDesktopServiceContext(fixture.repositories);
+      const services = createDesktopServices(context);
+      const handlers = createIpcHandlers(services);
+      const sender = { send: vi.fn() };
+      const project = await services.projects.open(fixture.projectRoot);
+
+      await expect(
+        handlers[IPC_CHANNELS.appRuntimeConfig]({ sender } as never)
+      ).resolves.toMatchObject({
+        agents: {
+          availableAgents: ["codex", "claude"],
+          defaultAgent: "codex",
+          fakeAgentEnabled: false
+        }
+      });
+      await expect(
+        handlers[IPC_CHANNELS.runsCreate]({ sender } as never, {
+          projectId: project.id,
+          prompt: "should not use fake",
+          agentId: "fake",
+          contextMode: "auto"
+        })
+      ).rejects.toThrow("fake agent is disabled");
+    } finally {
+      restoreEnv("NODE_ENV", previousNodeEnv);
+      restoreEnv("AGENT_HUB_DEBUG", previousDebug);
+      restoreEnv("AGENT_HUB_AGENT_FAKE_ENABLED", previousFake);
+    }
+  });
+
   it("passes configured desktop verification commands to TaskRunner in the isolated worktree", async () => {
     const fixture = await createFixture();
     const context = createDesktopServiceContext(fixture.repositories);
@@ -4127,4 +4166,12 @@ async function initGitRepository(projectRoot: string): Promise<void> {
     ],
     { cwd: projectRoot }
   );
+}
+
+function restoreEnv(key: string, previousValue: string | undefined): void {
+  if (previousValue === undefined) {
+    delete process.env[key];
+    return;
+  }
+  process.env[key] = previousValue;
 }

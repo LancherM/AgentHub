@@ -29,7 +29,7 @@ export function NewRunModal({
   const [projectPath, setProjectPath] = useState("");
   const [title, setTitle] = useState("");
   const [prompt, setPrompt] = useState("");
-  const [agentId, setAgentId] = useState<AgentId>("fake");
+  const [agentId, setAgentId] = useState<AgentId>("codex");
   const [contextMode, setContextMode] = useState<ContextMode>("auto");
   const [validationError, setValidationError] = useState<string | undefined>();
 
@@ -114,13 +114,8 @@ export function NewRunModal({
               value={agentId}
               onChange={(event) => setAgentId(event.target.value as AgentId)}
             >
-              <option value="fake">@fake</option>
-              <option value="codex" disabled>
-                @codex - coming soon
-              </option>
-              <option value="claude" disabled>
-                @claude - coming soon
-              </option>
+              <option value="codex">@codex</option>
+              <option value="claude">@claude</option>
             </select>
           </label>
           <label>

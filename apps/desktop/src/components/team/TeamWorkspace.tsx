@@ -8,6 +8,7 @@ import type {
 import { agentHubApi } from "../../lib/agentHubApi";
 import { EmptyState } from "../EmptyState";
 import type {
+  DesktopAgentConfig,
   ProjectSummary,
   TeamRoleSource,
   TeamRoleSummary,
@@ -18,6 +19,7 @@ type TeamFilter = "all" | "enabled" | "custom" | "reserved";
 
 interface TeamWorkspaceProps {
   project?: ProjectSummary;
+  agentConfig: DesktopAgentConfig;
 }
 
 interface TeamWorkspaceState {
@@ -26,7 +28,7 @@ interface TeamWorkspaceState {
   error?: string;
 }
 
-export function TeamWorkspace({ project }: TeamWorkspaceProps): JSX.Element {
+export function TeamWorkspace({ project, agentConfig }: TeamWorkspaceProps): JSX.Element {
   const [workspace, setWorkspace] = useState<TeamWorkspaceState>({
     loading: false
   });
@@ -121,7 +123,7 @@ export function TeamWorkspace({ project }: TeamWorkspaceProps): JSX.Element {
 
   function selectRole(summary: TeamRoleSummary): void {
     setSelectedRoleId(summary.role.id);
-    setDraftRole(cloneRole(summary.role));
+    setDraftRole(normalizeDraftRoleForAgents(summary.role, agentConfig));
   }
 
   function newRole(): void {
@@ -283,6 +285,7 @@ export function TeamWorkspace({ project }: TeamWorkspaceProps): JSX.Element {
             actionError={actionError}
             isSaving={isSaving}
             hasUnsavedChanges={hasUnsavedChanges}
+            agentConfig={agentConfig}
             onChange={setDraftRole}
             onSave={() => void saveRole()}
           />
@@ -325,6 +328,7 @@ function TeamRoleEditor({
   actionError,
   isSaving,
   hasUnsavedChanges,
+  agentConfig,
   onChange,
   onSave
 }: {
@@ -334,9 +338,11 @@ function TeamRoleEditor({
   actionError?: string;
   isSaving: boolean;
   hasUnsavedChanges: boolean;
+  agentConfig: DesktopAgentConfig;
   onChange(role: WorkgroupRole): void;
   onSave(): void;
 }): JSX.Element {
+  const adapterOptions = availableAdapterOptions(agentConfig);
   return (
     <>
       <header className="team-detail-header">
@@ -428,21 +434,23 @@ function TeamRoleEditor({
           <summary>Executor</summary>
           <div className="team-form-grid">
             <SelectField
-              label="Executor kind"
-              value={role.executor.kind}
-              options={["agent_adapter", "llm_api", "workflow", "human"]}
-              onChange={(kind) =>
-                onChange({
-                  ...role,
-                  executor: executorForKind(kind)
-                })
-              }
-            />
+                label="Executor kind"
+                value={role.executor.kind}
+                options={["agent_adapter", "llm_api", "workflow", "human"]}
+                onChange={(kind) =>
+                  onChange({
+                    ...role,
+                    executor: executorForKind(kind, agentConfig)
+                  })
+                }
+              />
             {role.executor.kind === "agent_adapter" ? (
               <SelectField
                 label="Adapter"
-                value={role.executor.adapterKind}
-                options={["fake", "codex", "claude-code"]}
+                value={adapterOptions.includes(role.executor.adapterKind)
+                  ? role.executor.adapterKind
+                  : adapterOptions[0]}
+                options={adapterOptions}
                 onChange={(adapterKind) =>
                   onChange({
                     ...role,
@@ -775,14 +783,45 @@ function avatarTone(summary: TeamRoleSummary): string {
   return "blue";
 }
 
-function executorForKind(kind: WorkgroupExecutorKind): WorkgroupExecutor {
+function executorForKind(
+  kind: WorkgroupExecutorKind,
+  agentConfig: DesktopAgentConfig
+): WorkgroupExecutor {
   if (kind === "agent_adapter") {
-    return { kind, adapterKind: "fake" };
+    return { kind, adapterKind: toAdapterKind(agentConfig.defaultAgent) };
   }
   return {
     kind,
     unavailableReason: "Reserved executor is not runnable in this phase."
   };
+}
+
+function normalizeDraftRoleForAgents(
+  role: WorkgroupRole,
+  agentConfig: DesktopAgentConfig
+): WorkgroupRole {
+  const draft = cloneRole(role);
+  if (
+    draft.executor.kind === "agent_adapter" &&
+    !availableAdapterOptions(agentConfig).includes(draft.executor.adapterKind)
+  ) {
+    draft.executor = {
+      kind: "agent_adapter",
+      adapterKind: toAdapterKind(agentConfig.defaultAgent),
+      configRef: draft.executor.configRef
+    };
+  }
+  return draft;
+}
+
+function availableAdapterOptions(
+  agentConfig: DesktopAgentConfig
+): WorkgroupAgentAdapterKind[] {
+  return agentConfig.availableAgents.map(toAdapterKind);
+}
+
+function toAdapterKind(agentId: DesktopAgentConfig["defaultAgent"]): WorkgroupAgentAdapterKind {
+  return agentId === "claude" ? "claude-code" : agentId;
 }
 
 function executorLabel(executor: WorkgroupExecutor): string {

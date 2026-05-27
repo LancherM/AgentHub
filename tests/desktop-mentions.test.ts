@@ -62,6 +62,15 @@ describe("desktop mention parsing", () => {
     ]);
   });
 
+  it("rejects unavailable adapter mentions when requested by desktop services", () => {
+    expect(() =>
+      parseWorkgroupMentions("@fake inspect", undefined, {
+        availableAgents: ["codex", "claude"],
+        rejectUnavailableAgents: true
+      })
+    ).toThrow("fake agent is disabled");
+  });
+
   it("deduplicates role handles and supports user-defined role contracts", () => {
     const customRoles: WorkgroupRole[] = [
       {

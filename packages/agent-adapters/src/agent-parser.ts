@@ -1,6 +1,8 @@
 import {
   DomainValidationError,
+  assertAgentKindEnabled,
   parseAgentKind,
+  type AgentAvailabilityOptions,
   type AgentKind
 } from "@agent-hub/shared";
 
@@ -19,7 +21,8 @@ export class AgentPromptParseError extends Error {
 
 export function parseAgentPrompt(
   rawInput: string,
-  defaultAgent: AgentKind = "fake"
+  defaultAgent: AgentKind = "fake",
+  availability: AgentAvailabilityOptions = { dev: true }
 ): ParsedAgentPrompt {
   const input = rawInput.trim();
 
@@ -28,6 +31,7 @@ export function parseAgentPrompt(
   }
 
   if (!input.startsWith("@")) {
+    assertAgentKindEnabled(defaultAgent, availability);
     return {
       agentKind: defaultAgent,
       prompt: input,
@@ -43,9 +47,13 @@ export function parseAgentPrompt(
   let agentKind: AgentKind;
   try {
     agentKind = parseAgentKind(match[1]);
+    assertAgentKindEnabled(agentKind, availability);
   } catch (error) {
     if (error instanceof DomainValidationError) {
-      throw new AgentPromptParseError(`unknown agent ${match[1]}`);
+      const issue = error.issues[0] ?? "";
+      throw new AgentPromptParseError(
+        issue.includes("disabled") ? issue : `unknown agent ${match[1]}`
+      );
     }
     throw error;
   }

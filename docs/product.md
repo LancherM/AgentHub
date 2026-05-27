@@ -5,7 +5,7 @@ agents on a developer machine.
 
 The current verified rebuild slice supports registered projects, registered
 tasks, Agent Hub-owned context stores, context artifact build/export,
-deterministic fake-agent runs, process-backed Codex and Claude Code runs, and
+debug/development fake-agent runs, process-backed Codex and Claude Code runs, and
 cross-process SQLite-backed run inspection, manual run-event recording, memory
 workflows, comparison reports, and explicit threaded CLI chat/resume.
 Running `agent-hub` with no subcommand starts a stateless interactive shell
@@ -23,7 +23,7 @@ cloud sync, remote execution, automatic merge, automatic push, or repository
 export behavior.
 
 ```sh
-agent-hub [--project <path>] [--agent fake|codex|claude-code]
+agent-hub [--project <path>] [--agent codex|claude-code]
 agent-hub [--debug] run ...
 agent-hub [--db <path>] project add --name <name> --root <path>
 agent-hub [--db <path>] project list
@@ -34,8 +34,8 @@ agent-hub context init --project-root <path> --project-id <project-id>
 agent-hub context show --project-root <path> --project-id <project-id>
 agent-hub context build --project-root <path> --project-id <project-id> --task-id <task-id> --title <title> --prompt <prompt>
 agent-hub context export --project-root <path> --project-id <project-id> [--target repo] --dry-run|--write
-agent-hub [--db <path>] run --task <task-id> --agent fake|codex|claude-code
-agent-hub run [--repo <path>] [--workspace-base <path>] [--retain-on-failure] [--continue-from-run <run-id>|--continue-from-message <message-id>] "@fake|@codex|@claude-code <task>"
+agent-hub [--db <path>] run --task <task-id> --agent codex|claude-code
+agent-hub run [--repo <path>] [--workspace-base <path>] [--retain-on-failure] [--continue-from-run <run-id>|--continue-from-message <message-id>] "@codex|@claude-code <task>"
 agent-hub [--db <path>] run event add --run-id <run-id> --type <type> --message <message>
 agent-hub [--db <path>] threads list
 agent-hub [--db <path>] threads show <thread-id>
@@ -47,7 +47,7 @@ agent-hub [--db <path>] rooms timeline --project-id <project-id> --room <handle-
 agent-hub [--db <path>] chat [--thread <thread-id>|--room <handle-or-thread-id>]
 agent-hub [--db <path>] team roles list --project-id <project-id>
 agent-hub [--db <path>] team roles show --project-id <project-id> --role <handle>
-agent-hub [--db <path>] team roles save --project-id <project-id> --handle <handle> [--display-name <name>] [--executor fake|codex|claude-code|human|llm_api|workflow]
+agent-hub [--db <path>] team roles save --project-id <project-id> --handle <handle> [--display-name <name>] [--executor codex|claude-code|human|llm_api|workflow]
 agent-hub [--db <path>] team roles executor --project-id <project-id> --role <handle>
 agent-hub tasks list
 agent-hub runs list
@@ -62,8 +62,8 @@ agent-hub [--db <path>] memory reject --memory-id <memory-id>
 agent-hub [--db <path>] compare --task-id <task-id> --baseline <run-id> --candidate <run-id>
 ```
 
-Interactive mode accepts natural language prompts plus `@fake`, `@codex`, and
-`@claude-code` prompt prefixes. It supports `/help`, `/agents`, `/use`,
+Interactive mode accepts natural language prompts plus enabled adapter prefixes
+such as `@codex` and `@claude-code`. It supports `/help`, `/agents`, `/use`,
 `/context`, `/context init`, `/clear`, `/exit`, and `/quit`. Interactive task
 execution calls the same task runner and repositories as command mode, so it
 does not duplicate orchestration logic or create a separate execution path.
@@ -78,7 +78,7 @@ assistant-output messages, and accepts `/thread new`, `/thread use <id>`,
 `/room timeline`, `/roles`, `/role <handle>`, `/history`,
 `/continue run <id>`, `/continue message <id>`, `/continue clear`, and
 `/exit`. Natural-language chat turns use the selected default agent, while
-leading `@fake`, `@codex`, or `@claude-code` prefixes route that turn to a
+leading enabled adapter prefixes such as `@codex` or `@claude-code` route that turn to a
 specific adapter. Chat and `rooms send` also resolve enabled role handles such
 as `@researcher`, `@writer`, or custom saved roles, create one shared local
 task with assignment metadata, and run each executable `agent_adapter`
@@ -105,6 +105,16 @@ bodies. Chat code-state continuation is one-shot: a `/continue` command applies
 only to the next natural-language turn and then clears. `agent-hub run` remains
 stateless and does not require or create a thread unless an explicit
 message-linked continuation id is supplied.
+
+Agent availability is controlled by an internal configuration policy, not by a
+visible product setting. Normal CLI and desktop surfaces expose Codex and
+Claude Code when enabled and hide the deterministic fake adapter. The fake
+adapter is available only in debug, development, and test modes, or when an
+operator explicitly enables it through hidden environment configuration such
+as `AGENT_HUB_AGENT_FAKE_ENABLED=1`. Any adapter can be disabled with the same
+per-agent pattern, for example `AGENT_HUB_AGENT_CODEX_ENABLED=0`, or with the
+internal allow/block list variables `AGENT_HUB_ENABLED_AGENTS` and
+`AGENT_HUB_DISABLED_AGENTS`.
 
 The context commands initialize and inspect a project context store, build a
 task-specific context pack and task brief, and explicitly export managed
@@ -252,7 +262,8 @@ credential files.
 These commands inspect SQLite-backed evidence only; they do not rerun agents,
 modify worktrees, accept output, merge branches, or push code.
 
-`--debug` is opt-in and does not change run behavior. For supported run
+`--debug` is opt-in. It enables the internal debug/development agent
+availability policy, including the fake adapter, and for supported run
 commands it appends the detailed run summary, selected `context_delivery` mode,
 `branch_name`, run boundary details, context artifact paths, verification
 stdout/stderr, changed-file summaries, warnings, and a truncated diff preview
@@ -470,10 +481,11 @@ inspector tab, sidebar density, and recent agent or role targets. These
 preferences do not store prompts, logs, diffs, secrets, repository paths, or
 approved memory.
 
-The composer accepts mention-based prompts such as `@fake ...` or multi-agent
+The composer accepts mention-based prompts such as `@codex ...` or multi-agent
 mentions, and it now also accepts enabled role handles such as `@researcher`
-or `@engineer` through the same text path. Debug adapter mentions
-(`@fake`, `@codex`, `@claude`, and `@claude-code`) remain supported. The
+or `@engineer` through the same text path. Enabled adapter mentions
+(`@codex`, `@claude`, and `@claude-code`, plus `@fake` only when the internal
+debug/development policy enables it) remain supported. The
 desktop composer provides `@` autocomplete for adapters, enabled preset roles,
 enabled custom roles, and recent targets; `/` suggestions surface common room,
 review, memory, comparison, continuation, and workflow prompt patterns without
@@ -508,7 +520,8 @@ output or a concise failure/cancel summary while preserving the resolved role
 assignment, so the room transcript presents role-backed replies as `@role` with
 the local executor shown separately. If no room is selected, the message
 goes to the project's default `#general` room. If no agent or role is mentioned
-or supplied by the caller, desktop falls back to `@fake`.
+or supplied by the caller, desktop falls back to the current default enabled
+adapter.
 
 Timeline rows now carry bounded event semantics in message metadata. User
 messages, participant responses, task-created rows, assignment rows, system
@@ -722,7 +735,8 @@ The current desktop execution path is TaskRunner-backed in the Electron main
 process. `RunService` can now attach a queued desktop run to an existing
 thread-created task, so multi-role desktop turns share one task id while each
 executable assignment keeps its own run id and local worktree. `@fake` runs
-through `FakeAgentAdapter` in an isolated worktree
+through `FakeAgentAdapter` in an isolated worktree only when fake is enabled by
+debug/development or internal agent availability configuration
 and exposes real diff, skipped verification, risk, logs, metadata, and proposed
 memory evidence. Mentioned `@codex` and `@claude` runs invoke the local
 process-backed adapter preflight through TaskRunner; unavailable CLIs fail as

@@ -19,6 +19,7 @@ import {
 import type {
   AgentId,
   ContextMode,
+  DesktopAgentConfig,
   RunContinuationTarget,
   TeamRoleSummary
 } from "../../lib/types";
@@ -26,6 +27,7 @@ import { MentionInput } from "./MentionInput";
 
 interface ComposerProps {
   isBusy: boolean;
+  agentConfig: DesktopAgentConfig;
   lastUsedAgents: AgentId[];
   lastUsedRoleHandles: string[];
   roleTargets: TeamRoleSummary[];
@@ -39,6 +41,7 @@ interface ComposerProps {
 
 export function Composer({
   isBusy,
+  agentConfig,
   lastUsedAgents,
   lastUsedRoleHandles,
   roleTargets,
@@ -69,11 +72,13 @@ export function Composer({
         ? []
         : buildComposerSuggestions({
             roles: roleTargets,
+            availableAgents: agentConfig.availableAgents,
             recentAgents: lastUsedAgents,
             recentRoleHandles: lastUsedRoleHandles,
             trigger
           }).slice(0, 7),
     [
+      agentConfig.availableAgents,
       dismissedTriggerKey,
       lastUsedAgents,
       lastUsedRoleHandles,
@@ -87,10 +92,12 @@ export function Composer({
       resolveComposerTargets({
         value: input,
         roles: roleTargets,
+        availableAgents: agentConfig.availableAgents,
+        defaultAgent: agentConfig.defaultAgent,
         fallbackAgents: lastUsedAgents,
         fallbackRoleHandles: lastUsedRoleHandles
       }),
-    [input, lastUsedAgents, lastUsedRoleHandles, roleTargets]
+    [agentConfig.availableAgents, agentConfig.defaultAgent, input, lastUsedAgents, lastUsedRoleHandles, roleTargets]
   );
   const displayedTargets = targetResolution.targets;
   const canSubmit = input.trim().length > 0 && !isBusy && !disabledReason;
