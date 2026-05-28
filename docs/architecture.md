@@ -1002,6 +1002,13 @@ chat. Decision, result, todo, and event summaries feed the caller's next
 bounded continuation only when convergence rules show the graph is idle and
 below continuation limits; pending calls, waiting approvals, and final answers
 stop further automatic role expansion.
+Desktop role-call review is a renderer-safe projection over those local
+records. The Electron thread service reads RoleCall, RoleTodo, and
+RoleCallEvent repositories in the main process, attaches a bounded
+`RoleCallUiSummary` to assistant messages, and the sandboxed renderer shows
+only compact transcript chips plus a collapsed Role Details inspector for the
+graph, todos, events, evidence, disabled retry/cancel/approval placeholders,
+and raw JSON snippets.
 
 The interaction simplification and post-MVP UX phases are documented in
 `docs/interaction-optimization-roadmap.md`. Those phases should remain layered

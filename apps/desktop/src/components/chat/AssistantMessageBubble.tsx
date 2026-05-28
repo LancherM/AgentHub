@@ -2,6 +2,7 @@ import type { AssistantMessage } from "../../lib/types";
 import { timelinePresentationForMessage } from "../../lib/timelineEvents";
 import { RunStatusBadge } from "../RunStatusBadge";
 import { MarkdownText } from "./MarkdownText";
+import { RoleCallSummary } from "./RoleCallSummary";
 
 interface AssistantMessageBubbleProps {
   message: AssistantMessage;
@@ -41,6 +42,9 @@ export function AssistantMessageBubble({
           </div>
         ) : null}
         <MarkdownText text={message.text} />
+        {message.roleCallSummary ? (
+          <RoleCallSummary summary={message.roleCallSummary} />
+        ) : null}
       </div>
     </article>
   );

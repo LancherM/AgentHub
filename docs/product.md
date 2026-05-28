@@ -415,6 +415,12 @@ Caller reinjection now summarizes decisions, results, todos, and recent events
 back to the caller role, and graph convergence stops bounded continuation when
 work is pending, approval is blocking, continuation limits are reached, or a
 final answer exists.
+The desktop role-call surface keeps that collaboration collapsed in the main
+transcript: assistant messages can show a compact `n role calls` affordance,
+while a one-click Role Details inspector exposes the RoleCall graph, todo
+ledger, event stream, linked evidence, placeholder retry/cancel/approval
+actions, and bounded raw JSON without requiring the renderer to read SQLite,
+filesystem, shell, Git, or child-process state directly.
 
 The companion interaction optimization plan lives in
 `docs/interaction-optimization-roadmap.md`. It records the near-term
