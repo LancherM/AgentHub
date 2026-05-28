@@ -421,6 +421,13 @@ while a one-click Role Details inspector exposes the RoleCall graph, todo
 ledger, event stream, linked evidence, placeholder retry/cancel/approval
 actions, and bounded raw JSON without requiring the renderer to read SQLite,
 filesystem, shell, Git, or child-process state directly.
+CLI audit parity now exposes the same local records without requiring the
+desktop: `agent-hub role-calls list/show`, `agent-hub role-todos list`, and
+`agent-hub role-events list` provide concise human output plus `--json` for
+local scripting. Deferred and rejected role decisions are labelled as
+collaboration decisions rather than failed execution, while failed executable
+calls are labelled separately and link to existing `runs show/events/diff` and
+`risks show` review commands when a TaskRunner run exists.
 
 The companion interaction optimization plan lives in
 `docs/interaction-optimization-roadmap.md`. It records the near-term

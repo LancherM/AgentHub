@@ -1009,6 +1009,12 @@ RoleCallEvent repositories in the main process, attaches a bounded
 only compact transcript chips plus a collapsed Role Details inspector for the
 graph, todos, events, evidence, disabled retry/cancel/approval placeholders,
 and raw JSON snippets.
+CLI audit parity is read-only over the same repositories. The CLI runtime owns
+RoleCall, RoleCallEvent, and RoleTodo repositories alongside existing task/run
+repositories, and `role-calls`, `role-todos`, and `role-events` commands render
+either compact tabular output or stable JSON. RoleCall detail output links to
+existing run evidence commands only when a persisted TaskRunner run is linked,
+preserving the normal quiet `run` output path.
 
 The interaction simplification and post-MVP UX phases are documented in
 `docs/interaction-optimization-roadmap.md`. Those phases should remain layered
