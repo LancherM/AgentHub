@@ -964,6 +964,11 @@ risk evidence behind collapsed inspector or detail views; the default
 conversation transcript should expose only compact status affordances and
 blocking approvals. The implementation sequence is tracked in
 `docs/adaptive-role-calls-implementation-roadmap.md`.
+The shared/core boundary now owns the stable Adaptive Role Call type contracts
+and validators for role definitions, intents, calls, decisions, todos, events,
+results, and status transitions. This keeps parser, persistence, orchestrator,
+CLI, and desktop phases aligned while leaving runtime execution behavior
+unchanged until later slices.
 
 The interaction simplification and post-MVP UX phases are documented in
 `docs/interaction-optimization-roadmap.md`. Those phases should remain layered

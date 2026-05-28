@@ -390,6 +390,9 @@ and evidence are available through collapsed review surfaces rather than shown
 inline by default.
 The implementation sequence is tracked in
 `docs/adaptive-role-calls-implementation-roadmap.md`.
+The first implementation slice adds shared/core Adaptive Role Call contracts and
+runtime validators for role definitions, intents, calls, decisions, todos,
+events, results, and state transitions without changing run behavior yet.
 
 The companion interaction optimization plan lives in
 `docs/interaction-optimization-roadmap.md`. It records the near-term
