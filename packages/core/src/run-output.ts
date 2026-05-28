@@ -7,13 +7,13 @@ export interface AgentOutputEvent {
 }
 
 export interface ExtractAgentFacingOutputInput {
-  fakeOutput?: string;
   events: AgentOutputEvent[];
 }
 
 export interface ExtractAgentFacingOutputOptions {
   includeRawStreams?: boolean;
   includeTerminalSummaries?: boolean;
+  preferExplicitOutput?: boolean;
 }
 
 export function extractAgentFacingOutput(
@@ -22,9 +22,10 @@ export function extractAgentFacingOutput(
 ): string {
   const includeRawStreams = options.includeRawStreams ?? true;
   const includeTerminalSummaries = options.includeTerminalSummaries ?? false;
+  const explicitOutput = explicitOutputFromEvents(input.events);
 
-  if (input.fakeOutput?.trim()) {
-    return input.fakeOutput.trim();
+  if (options.preferExplicitOutput === true && explicitOutput) {
+    return explicitOutput.trim();
   }
 
   const structuredOutput = input.events
@@ -37,6 +38,10 @@ export function extractAgentFacingOutput(
     return structuredOutput.join("\n");
   }
 
+  if (explicitOutput) {
+    return explicitOutput.trim();
+  }
+
   if (!includeRawStreams) {
     return "";
   }
@@ -45,6 +50,14 @@ export function extractAgentFacingOutput(
     .filter((event) => event.type === "stdout" || event.type === "stderr")
     .flatMap((event) => humanReadableRawLines(event.message))
     .join("\n");
+}
+
+function explicitOutputFromEvents(events: AgentOutputEvent[]): string | undefined {
+  return events
+    .map((event) => event.metadata?.output)
+    .find((output): output is string =>
+      typeof output === "string" && output.trim().length > 0
+    );
 }
 
 function isStructuredOutputEvent(

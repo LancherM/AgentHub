@@ -883,6 +883,34 @@ describe("ContextCompiler", () => {
     expect(replaced).toContain("replacement");
   });
 
+  it("preserves user-authored blank lines outside managed blocks", () => {
+    const existing = [
+      "# User Notes",
+      "",
+      "",
+      "",
+      "Keep this spacing.",
+      "<!-- agent-hub:start -->",
+      "old",
+      "<!-- agent-hub:end -->",
+      "",
+      "",
+      "",
+      "After block.",
+      ""
+    ].join("\n");
+
+    const replaced = replaceManagedBlock(existing, [
+      "<!-- agent-hub:start -->",
+      "new",
+      "<!-- agent-hub:end -->",
+      ""
+    ].join("\n"));
+
+    expect(replaced).toContain("# User Notes\n\n\n\nKeep this spacing.");
+    expect(replaced).toContain("<!-- agent-hub:end -->\n\n\n\nAfter block.");
+  });
+
   it("rejects unsupported repository export targets", async () => {
     const projectRoot = await createTestDirectory("context-export-invalid-target-project");
     const agentHubHome = await createTestDirectory("context-export-invalid-target-home");

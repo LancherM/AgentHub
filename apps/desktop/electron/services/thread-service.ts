@@ -165,6 +165,7 @@ class RepositoryThreadService implements ThreadService {
   private readonly conversationThreadSummaryBuilder = new ConversationThreadSummaryBuilder();
   private readonly threadReconciliationByThreadId = new Map<string, Promise<void>>();
   private readonly workflowReconciliationByThreadId = new Map<string, Promise<void>>();
+  private legacyRunImportPromise: Promise<void> | undefined;
   private importedLegacyRuns = false;
 
   constructor(private readonly dependencies: ThreadServiceDependencies) {
@@ -1548,7 +1549,21 @@ class RepositoryThreadService implements ThreadService {
     if (this.importedLegacyRuns) {
       return;
     }
-    this.importedLegacyRuns = true;
+    if (this.legacyRunImportPromise) {
+      await this.legacyRunImportPromise;
+      return;
+    }
+    this.legacyRunImportPromise = this.importLegacyRunThreadsUnlocked()
+      .then(() => {
+        this.importedLegacyRuns = true;
+      })
+      .finally(() => {
+        this.legacyRunImportPromise = undefined;
+      });
+    await this.legacyRunImportPromise;
+  }
+
+  private async importLegacyRunThreadsUnlocked(): Promise<void> {
     if ((await this.threads.list()).length > 0) {
       return;
     }

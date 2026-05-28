@@ -3,6 +3,8 @@ import path from "node:path";
 import type { AgentKind, ContextBundle, JsonObject } from "@agent-hub/shared";
 import { NodeProcessRunner, type ProcessRunner } from "./process-runner";
 
+const MAX_RUNTIME_STDIN_CHARACTERS = 500_000;
+
 export interface AgentDetectionResult {
   available: boolean;
   version?: string;
@@ -503,8 +505,12 @@ async function* runProcessAgentWithPreflight(input: {
     }
   };
 
-  yield* runProcessAgent(input);
+  yield* runProcessAgent({ ...input, validation });
 }
+
+type ProcessAgentValidation =
+  | { ok: true; taskBrief: string }
+  | { ok: false; message: string };
 
 async function* runProcessAgent(input: {
   adapterKind: AgentKind;
@@ -514,8 +520,9 @@ async function* runProcessAgent(input: {
   processRunner: ProcessRunner;
   input: AgentRunInput;
   timeoutMs?: number;
+  validation?: ProcessAgentValidation;
 }): AsyncIterable<AgentRunEvent> {
-  const validation = await validateProcessAgentInput(input.input);
+  const validation = input.validation ?? await validateProcessAgentInput(input.input);
   if (!validation.ok) {
     yield* failureEvents(validation.message);
     return;
@@ -527,6 +534,12 @@ async function* runProcessAgent(input: {
 
   const parser = new StructuredOutputParser(input.displayName);
   const stdin = buildRuntimeStdin(input.input, validation.taskBrief);
+  if (stdin.length > MAX_RUNTIME_STDIN_CHARACTERS) {
+    yield* failureEvents(
+      `${input.displayName} runtime injection is too large (${stdin.length} characters; limit ${MAX_RUNTIME_STDIN_CHARACTERS}).`
+    );
+    return;
+  }
   yield {
     type: "status",
     message: `starting ${input.displayName}`,

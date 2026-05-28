@@ -2184,6 +2184,31 @@ describe("desktop services", () => {
       });
   });
 
+  it("retries legacy run thread import after a transient run-list failure", async () => {
+    const fixture = await createFixture();
+    const context = createDesktopServiceContext(fixture.repositories);
+    const projects = createProjectService(context);
+    const project = await projects.open(fixture.projectRoot);
+    const runs = {
+      listRuns: vi.fn()
+        .mockRejectedValueOnce(new Error("temporary run list failure"))
+        .mockResolvedValue([]),
+      listRunStatuses: vi.fn().mockResolvedValue(new Map())
+    } as unknown as ReturnType<typeof createRunService>;
+    const threads = createThreadService({ context, projects, runs });
+
+    await expect(threads.listThreads()).rejects.toThrow("temporary run list failure");
+    await expect(threads.listThreads()).resolves.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          projectId: project.id,
+          roomHandle: "general"
+        })
+      ])
+    );
+    expect(runs.listRuns).toHaveBeenCalledTimes(2);
+  });
+
   it("maps custom and legacy conversation threads as readable rooms", async () => {
     const fixture = await createFixture();
     const context = createDesktopServiceContext(fixture.repositories);

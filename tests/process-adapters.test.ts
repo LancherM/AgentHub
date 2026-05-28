@@ -298,6 +298,25 @@ describe("process-backed agent adapters", () => {
     );
   });
 
+  it("fails before launch when runtime injection exceeds the adapter limit", async () => {
+    const runner = new MockProcessRunner();
+    const input = await createInput("adapter-large-runtime");
+    await fs.writeFile(input.taskBriefPath, "x".repeat(500_001), "utf8");
+
+    const events = await collect(new CodexAdapter({ processRunner: runner }).run(input));
+
+    expect(runner.detectCalls).toHaveLength(1);
+    expect(runner.runCalls).toHaveLength(0);
+    expect(events).toEqual([
+      expect.objectContaining({ type: "status", message: "Codex preflight passed" }),
+      expect.objectContaining({
+        type: "error",
+        message: expect.stringContaining("runtime injection is too large")
+      }),
+      expect.objectContaining({ type: "exit", exitCode: 1 })
+    ]);
+  });
+
   it("refuses unsafe cwd and dangerous permission flags", async () => {
     const root = await createTestDirectory("adapter-original-root");
     const briefPath = path.join(root, "brief.md");

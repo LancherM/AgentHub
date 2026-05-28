@@ -52,4 +52,43 @@ describe("extractAgentFacingOutput", () => {
 
     expect(output).toBe("fake agent completed");
   });
+
+  it("uses explicit adapter output metadata without a fake-specific result field", () => {
+    const output = extractAgentFacingOutput(
+      {
+        events: [
+          {
+            type: "exit",
+            message: "fake agent completed",
+            metadata: { output: "full fake adapter output" }
+          }
+        ]
+      },
+      { includeRawStreams: false }
+    );
+
+    expect(output).toBe("full fake adapter output");
+  });
+
+  it("can prefer explicit output metadata for CLI rendering", () => {
+    const output = extractAgentFacingOutput(
+      {
+        events: [
+          {
+            type: "message",
+            message: "concise assistant output",
+            metadata: { assistantOutput: true }
+          },
+          {
+            type: "exit",
+            message: "done",
+            metadata: { output: "full adapter output" }
+          }
+        ]
+      },
+      { preferExplicitOutput: true }
+    );
+
+    expect(output).toBe("full adapter output");
+  });
 });
