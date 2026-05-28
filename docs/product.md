@@ -399,6 +399,10 @@ role, status, and todo-state queries.
 The parser/policy slice adds line-start role-call intent parsing and
 deterministic authorization checks for delegation, intake, project limits,
 graph limits, todo capacity, approval requirements, and dangerous command text.
+The ledger-runtime slice introduces a local RoleCall Orchestrator service that
+turns authorized intents into persisted RoleCalls, intake decisions, events,
+and callee todos with deterministic test intake, but still does not execute
+Codex, Claude, or other role workers.
 
 The companion interaction optimization plan lives in
 `docs/interaction-optimization-roadmap.md`. It records the near-term

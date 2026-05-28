@@ -981,6 +981,11 @@ Policy validation lives beside the safety scanner so it can reuse dangerous
 command detection while checking caller delegation policy, callee intake policy,
 project ceilings, depth, concurrency, cycle, duplicate, todo-capacity,
 approval, permission, and executor-capability constraints.
+The core RoleCall Orchestrator is now a ledger-only service boundary. It accepts
+validated intents, delegates authorization to an injected policy validator,
+persists RoleCall/RoleCallEvent/RoleTodo records, records accepted/deferred/
+rejected/context/approval decisions, and returns compact caller-visible
+summaries without running adapters or starting autonomous background loops.
 
 The interaction simplification and post-MVP UX phases are documented in
 `docs/interaction-optimization-roadmap.md`. Those phases should remain layered
