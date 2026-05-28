@@ -10,6 +10,9 @@ import {
   type ConversationThreadRepository,
   type ConversationThreadSummary,
   type ConversationThreadSummaryRepository,
+  type RoleCallEventRepository,
+  type RoleCallRepository,
+  type RoleTodoRepository,
   type Task,
   type TaskRepository
 } from "@agent-hub/core";
@@ -26,6 +29,9 @@ import {
 import type {
   AgentKind,
   JsonObject,
+  RoleCall,
+  RoleCallEvent,
+  RoleTodo,
   TaskRunStatus,
   WorkgroupRole,
   WorkgroupRoleRunMetadata,
@@ -52,9 +58,14 @@ import type {
   ThreadSummary,
   TimelineEventKind,
   TimelineEventMetadata,
+  RoleCallUiSummary,
   UpdateThreadInput,
   UserMessage
 } from "../../src/lib/types";
+import {
+  buildRoleCallUiSummary,
+  roleCallSummaryFromMetadata
+} from "../../src/lib/role-call-ui";
 import {
   parseWorkgroupMentions,
   type WorkgroupMentionParticipant
@@ -161,6 +172,9 @@ class RepositoryThreadService implements ThreadService {
   private readonly messages: ConversationMessageRepository;
   private readonly summaries: ConversationThreadSummaryRepository;
   private readonly tasks: TaskRepository;
+  private readonly roleCalls: RoleCallRepository;
+  private readonly roleCallEvents: RoleCallEventRepository;
+  private readonly roleTodos: RoleTodoRepository;
   private readonly conversationContextBuilder: ConversationContextBuilder;
   private readonly conversationThreadSummaryBuilder = new ConversationThreadSummaryBuilder();
   private readonly threadReconciliationByThreadId = new Map<string, Promise<void>>();
@@ -174,6 +188,9 @@ class RepositoryThreadService implements ThreadService {
     this.summaries =
       dependencies.context.repositories.conversationThreadSummaryRepository;
     this.tasks = dependencies.context.repositories.taskRepository;
+    this.roleCalls = dependencies.context.repositories.roleCallRepository;
+    this.roleCallEvents = dependencies.context.repositories.roleCallEventRepository;
+    this.roleTodos = dependencies.context.repositories.roleTodoRepository;
     this.conversationContextBuilder =
       dependencies.conversationContextBuilder ?? new ConversationContextBuilder();
   }
@@ -203,11 +220,17 @@ class RepositoryThreadService implements ThreadService {
     await this.reconcileAssistantMessages(thread.id);
     await this.refreshThreadSummary(thread.id);
     const refreshedThread = (await this.threads.get(thread.id)) ?? thread;
-    const [messages, runStatusById] = await Promise.all([
+    const [messages, runStatusById, roleCallSummariesByMessageId] = await Promise.all([
       this.messages.listByThreadId(thread.id),
-      this.runStatusById(thread.projectId)
+      this.runStatusById(thread.projectId),
+      this.roleCallSummariesByParentMessage(thread.id)
     ]);
-    return toThreadDetail(refreshedThread, messages, runStatusById);
+    return toThreadDetail(
+      refreshedThread,
+      messages,
+      runStatusById,
+      roleCallSummariesByMessageId
+    );
   }
 
   async createThread(input: CreateThreadInput = {}): Promise<ThreadSummary> {
@@ -257,11 +280,17 @@ class RepositoryThreadService implements ThreadService {
         updatedAt: this.dependencies.context.now()
       })
     );
-    const [messages, runStatusById] = await Promise.all([
+    const [messages, runStatusById, roleCallSummariesByMessageId] = await Promise.all([
       this.messages.listByThreadId(updated.id),
-      this.runStatusById(updated.projectId)
+      this.runStatusById(updated.projectId),
+      this.roleCallSummariesByParentMessage(updated.id)
     ]);
-    return toThreadDetail(updated, messages, runStatusById);
+    return toThreadDetail(
+      updated,
+      messages,
+      runStatusById,
+      roleCallSummariesByMessageId
+    );
   }
 
   async appendUserMessage(
@@ -1417,6 +1446,46 @@ class RepositoryThreadService implements ThreadService {
     }
   }
 
+  private async roleCallSummariesByParentMessage(
+    threadId: string
+  ): Promise<Map<string, RoleCallUiSummary>> {
+    const [calls, todos, events] = await Promise.all([
+      this.roleCalls.list({ threadId }),
+      this.roleTodos.list({ threadId }),
+      this.roleCallEvents.listByThreadId(threadId)
+    ]);
+    const callsByMessageId = new Map<string, RoleCall[]>();
+    for (const call of calls) {
+      if (!call.parentMessageId) {
+        continue;
+      }
+      const group = callsByMessageId.get(call.parentMessageId) ?? [];
+      group.push(call);
+      callsByMessageId.set(call.parentMessageId, group);
+    }
+
+    const summaries = new Map<string, RoleCallUiSummary>();
+    for (const [messageId, group] of callsByMessageId.entries()) {
+      const groupCallIds = new Set(group.map((call) => call.id));
+      const groupTodos = todos.filter((todo) =>
+        todoBelongsToRoleCallGroup(todo, groupCallIds)
+      );
+      const groupEvents = events.filter((event) => groupCallIds.has(event.roleCallId));
+      summaries.set(
+        messageId,
+        buildRoleCallUiSummary({
+          threadId,
+          sourceMessageId: messageId,
+          calls: group,
+          todos: groupTodos,
+          events: groupEvents,
+          updatedAt: latestRoleCallSummaryTimestamp(group, groupTodos, groupEvents)
+        })
+      );
+    }
+    return summaries;
+  }
+
   private async requireThread(threadId: string): Promise<ConversationThread> {
     await this.ensureLegacyRunThreads();
     const thread = await this.threads.get(threadId);
@@ -2271,10 +2340,13 @@ function compareThreadSummaries(
 function toThreadDetail(
   thread: ConversationThread,
   messages: ConversationMessage[],
-  runStatusById: Map<string, RunStatus>
+  runStatusById: Map<string, RunStatus>,
+  roleCallSummariesByMessageId: ReadonlyMap<string, RoleCallUiSummary> = new Map()
 ): ThreadDetail {
   const threadMessages = messages
-    .map((message) => toThreadMessage(message, runStatusById))
+    .map((message) =>
+      toThreadMessage(message, runStatusById, roleCallSummariesByMessageId)
+    )
     .filter((message): message is ThreadMessage => message !== undefined);
   const room = roomMetadataForThread(thread);
   return {
@@ -2290,6 +2362,34 @@ function toThreadDetail(
     updatedAt: latestUpdatedAt(thread, messages),
     messages: threadMessages
   };
+}
+
+function todoBelongsToRoleCallGroup(
+  todo: RoleTodo,
+  roleCallIds: ReadonlySet<string>
+): boolean {
+  if (todo.sourceRoleCallId && roleCallIds.has(todo.sourceRoleCallId)) {
+    return true;
+  }
+  return todo.relatedRoleCallIds.some((roleCallId) => roleCallIds.has(roleCallId));
+}
+
+function latestRoleCallSummaryTimestamp(
+  calls: readonly RoleCall[],
+  todos: readonly RoleTodo[],
+  events: readonly RoleCallEvent[]
+): string | undefined {
+  return [
+    ...calls.flatMap((call) => [
+      call.completedAt,
+      call.startedAt,
+      call.createdAt
+    ]),
+    ...todos.map((todo) => todo.updatedAt),
+    ...events.map((event) => event.createdAt)
+  ]
+    .filter((value): value is string => typeof value === "string")
+    .sort((left, right) => right.localeCompare(left))[0];
 }
 
 function roleContextReferences(role?: WorkgroupRoleRunMetadata): string[] {
@@ -2344,7 +2444,8 @@ function toThreadSummary(thread: ThreadDetail): ThreadSummary {
 
 function toThreadMessage(
   message: ConversationMessage,
-  runStatusById: Map<string, RunStatus>
+  runStatusById: Map<string, RunStatus>,
+  roleCallSummariesByMessageId: ReadonlyMap<string, RoleCallUiSummary>
 ): ThreadMessage | undefined {
   if (isPendingAssistantOutputMessage(message)) {
     return undefined;
@@ -2356,7 +2457,10 @@ function toThreadMessage(
     return toUserMessage(message);
   }
   if (message.role === "assistant") {
-    return toAssistantMessage(message);
+    return toAssistantMessage(
+      message,
+      roleCallSummariesByMessageId.get(message.id)
+    );
   }
   return toSystemMessage(message);
 }
@@ -2398,7 +2502,10 @@ function toAgentRunMessage(
   };
 }
 
-function toAssistantMessage(message: ConversationMessage): AssistantMessage {
+function toAssistantMessage(
+  message: ConversationMessage,
+  roleCallSummary?: RoleCallUiSummary
+): AssistantMessage {
   return {
     id: message.id,
     threadId: message.threadId,
@@ -2408,6 +2515,9 @@ function toAssistantMessage(message: ConversationMessage): AssistantMessage {
     runId: message.runId,
     status: message.status ? toDesktopRunStatus(message.status) : undefined,
     assignment: metadataAssignment(message.metadata),
+    roleCallSummary:
+      roleCallSummaryFromMetadata(message.metadata?.roleCallSummary) ??
+      roleCallSummary,
     timelineEvent: metadataTimelineEvent(message.metadata),
     createdAt: message.createdAt
   };

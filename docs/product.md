@@ -390,6 +390,52 @@ and evidence are available through collapsed review surfaces rather than shown
 inline by default.
 The implementation sequence is tracked in
 `docs/adaptive-role-calls-implementation-roadmap.md`.
+The first implementation slice adds shared/core Adaptive Role Call contracts and
+runtime validators for role definitions, intents, calls, decisions, todos,
+events, results, and state transitions without changing run behavior yet.
+The persistence slice stores RoleCalls, RoleCallEvents, and RoleTodos as
+first-class local SQLite audit records with thread, message, run, parent-call,
+role, status, and todo-state queries.
+The parser/policy slice adds line-start role-call intent parsing and
+deterministic authorization checks for delegation, intake, project limits,
+graph limits, todo capacity, approval requirements, and dangerous command text.
+The ledger-runtime slice introduces a local RoleCall Orchestrator service that
+turns authorized intents into persisted RoleCalls, intake decisions, events,
+and callee todos with deterministic test intake, but still does not execute
+Codex, Claude, or other role workers.
+The context/protocol slice builds compact RoleCallContext payloads from
+relevant role results, todos, constraints, files, and repo state; role prompts
+require strict RoleResult JSON, and invalid output stores only bounded raw
+audit evidence.
+The execution slice can run accepted agent-adapter RoleCalls through the local
+TaskRunner, link the RoleCall to the resulting task run, and persist structured
+RoleResult summaries, verification, diff, risk, and failure evidence without
+adding remote execution or automatic push/merge behavior.
+Caller reinjection now summarizes decisions, results, todos, and recent events
+back to the caller role, and graph convergence stops bounded continuation when
+work is pending, approval is blocking, continuation limits are reached, or a
+final answer exists.
+The desktop role-call surface keeps that collaboration collapsed in the main
+transcript: assistant messages can show a compact `n role calls` affordance,
+while a one-click Role Details inspector exposes the RoleCall graph, todo
+ledger, event stream, linked evidence, placeholder retry/cancel/approval
+actions, and bounded raw JSON without requiring the renderer to read SQLite,
+filesystem, shell, Git, or child-process state directly.
+CLI audit parity now exposes the same local records without requiring the
+desktop: `agent-hub role-calls list/show`, `agent-hub role-todos list`, and
+`agent-hub role-events list` provide concise human output plus `--json` for
+local scripting. Deferred and rejected role decisions are labelled as
+collaboration decisions rather than failed execution, while failed executable
+calls are labelled separately and link to existing `runs show/events/diff` and
+`risks show` review commands when a TaskRunner run exists.
+Governance hardening now covers the full Adaptive Role Calls loop with local
+regression tests for analyst -> operator -> reviewer collaboration, custom role
+authorization, duplicate suppression, todo-capacity limits, dangerous command
+blocking, and approval-required gates for file writes, shell commands, network
+access, and high-risk targets. Retry and cancellation remain explicit ledger
+operations: retry can only resume deferred or approval-waiting calls, cancellation
+updates the linked todo, and neither path automatically approves unsafe work,
+executes code, applies patches, merges, pushes, or creates pull requests.
 
 The companion interaction optimization plan lives in
 `docs/interaction-optimization-roadmap.md`. It records the near-term

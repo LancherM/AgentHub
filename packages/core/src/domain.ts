@@ -9,6 +9,14 @@ import {
   memoryStatuses,
   normalizeWorkgroupRoleHandle,
   riskLevels,
+  roleCallDispositions,
+  roleCallEventTypes,
+  roleCallStatuses,
+  roleExecutorKinds,
+  roleIntentTypes,
+  rolePriorities,
+  roleTodoStatuses,
+  roleTrustLevels,
   runEventTypes,
   skillScopes,
   taskRunStatuses,
@@ -25,6 +33,15 @@ import {
   type MemoryStatus,
   type Project,
   type RiskReport,
+  type RoleCall,
+  type RoleCallDecision,
+  type RoleCallEvent,
+  type RoleCallStatus,
+  type RoleDefinition,
+  type RoleIntent,
+  type RoleResult,
+  type RoleTodo,
+  type RoleTodoStatus,
   type RunArtifact,
   type RunEvent,
   type Setting,
@@ -66,6 +83,20 @@ export function validateMemoryStatusTransition(
   to: MemoryStatus
 ): void {
   validateStatusTransition(from, to, memoryStatusTransitions, "memory item");
+}
+
+export function validateRoleCallStatusTransition(
+  from: RoleCallStatus,
+  to: RoleCallStatus
+): void {
+  validateStatusTransition(from, to, roleCallStatusTransitions, "role call");
+}
+
+export function validateRoleTodoStatusTransition(
+  from: RoleTodoStatus,
+  to: RoleTodoStatus
+): void {
+  validateStatusTransition(from, to, roleTodoStatusTransitions, "role todo");
 }
 
 export function validateProject(input: Project): Project {
@@ -395,6 +426,209 @@ export function validateWorkgroupRole(input: WorkgroupRole): WorkgroupRole {
   return finish(input, issues);
 }
 
+export function validateRoleDefinition(input: RoleDefinition): RoleDefinition {
+  const issues: string[] = [];
+  required(input.id, "roleDefinition.id", issues);
+  required(input.handle, "roleDefinition.handle", issues);
+  if (input.handle && normalizeWorkgroupRoleHandle(input.handle) !== input.handle) {
+    issues.push("roleDefinition.handle must be lowercase without @");
+  }
+  required(input.displayName, "roleDefinition.displayName", issues);
+  required(input.purpose, "roleDefinition.purpose", issues);
+  required(input.defaultInstructions, "roleDefinition.defaultInstructions", issues);
+  stringArray(input.capabilities, "roleDefinition.capabilities", issues);
+  validatePermissionSet(input.permissions, "roleDefinition.permissions", issues);
+  validateRoleContextPolicy(
+    input.contextPolicy,
+    "roleDefinition.contextPolicy",
+    issues
+  );
+  validateRoleApprovalPolicy(
+    input.approvalPolicy,
+    "roleDefinition.approvalPolicy",
+    issues
+  );
+  validateDelegationPolicy(
+    input.delegationPolicy,
+    "roleDefinition.delegationPolicy",
+    issues
+  );
+  validateIntakePolicy(input.intakePolicy, "roleDefinition.intakePolicy", issues);
+  validateRoleExecutor(input.executor, "roleDefinition.executor", issues);
+  enumValue(input.trustLevel, roleTrustLevels, "roleDefinition.trustLevel", issues);
+  if (typeof input.enabled !== "boolean") {
+    issues.push("roleDefinition.enabled must be a boolean");
+  }
+  validateConservativeCustomRoleDefaults(input, issues);
+  return finish(input, issues);
+}
+
+export function validateRoleIntent(input: RoleIntent): RoleIntent {
+  const issues: string[] = [];
+  objectValue(input, "roleIntent", issues);
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    return finish(input, issues);
+  }
+
+  const intent = input as unknown as Record<string, unknown>;
+  enumValue(intent.type, roleIntentTypes, "roleIntent.type", issues);
+  switch (intent.type) {
+    case "delegate":
+      required(intent.targetRole, "roleIntent.targetRole", issues);
+      normalizedRoleHandle(intent.targetRole, "roleIntent.targetRole", issues);
+      required(intent.task, "roleIntent.task", issues);
+      required(intent.reason, "roleIntent.reason", issues);
+      validateExpectedOutputSpec(
+        intent.expectedOutput,
+        "roleIntent.expectedOutput",
+        issues
+      );
+      optionalRolePriority(intent.priority, "roleIntent.priority", issues);
+      break;
+    case "request_analysis":
+      required(intent.targetRole, "roleIntent.targetRole", issues);
+      normalizedRoleHandle(intent.targetRole, "roleIntent.targetRole", issues);
+      required(intent.task, "roleIntent.task", issues);
+      required(intent.reason, "roleIntent.reason", issues);
+      if (intent.expectedOutput !== undefined) {
+        validateExpectedOutputSpec(
+          intent.expectedOutput,
+          "roleIntent.expectedOutput",
+          issues
+        );
+      }
+      optionalRolePriority(intent.priority, "roleIntent.priority", issues);
+      break;
+    case "request_review":
+      required(intent.targetRole, "roleIntent.targetRole", issues);
+      normalizedRoleHandle(intent.targetRole, "roleIntent.targetRole", issues);
+      optionalString(intent.artifactId, "roleIntent.artifactId", issues);
+      required(intent.task, "roleIntent.task", issues);
+      required(intent.reason, "roleIntent.reason", issues);
+      optionalRolePriority(intent.priority, "roleIntent.priority", issues);
+      break;
+    case "request_evidence":
+      required(intent.targetRole, "roleIntent.targetRole", issues);
+      normalizedRoleHandle(intent.targetRole, "roleIntent.targetRole", issues);
+      required(intent.question, "roleIntent.question", issues);
+      if (intent.requiredEvidence !== undefined) {
+        stringArray(intent.requiredEvidence, "roleIntent.requiredEvidence", issues);
+      }
+      optionalRolePriority(intent.priority, "roleIntent.priority", issues);
+      break;
+    case "request_approval":
+      required(intent.approvalType, "roleIntent.approvalType", issues);
+      required(intent.reason, "roleIntent.reason", issues);
+      required(intent.requestedAction, "roleIntent.requestedAction", issues);
+      optionalRolePriority(intent.priority, "roleIntent.priority", issues);
+      break;
+    case "report_result":
+      validateRoleResultFields(intent.result, "roleIntent.result", issues);
+      break;
+    case "raise_risk":
+      required(intent.risk, "roleIntent.risk", issues);
+      stringArray(intent.evidence, "roleIntent.evidence", issues);
+      break;
+    case "update_todo":
+      optionalString(intent.todoId, "roleIntent.todoId", issues);
+      enumValue(intent.status, roleTodoStatuses, "roleIntent.status", issues);
+      required(intent.note, "roleIntent.note", issues);
+      break;
+  }
+  return finish(input, issues);
+}
+
+export function validateRoleCall(input: RoleCall): RoleCall {
+  const issues: string[] = [];
+  required(input.id, "roleCall.id", issues);
+  required(input.threadId, "roleCall.threadId", issues);
+  optionalString(input.parentMessageId, "roleCall.parentMessageId", issues);
+  optionalString(input.parentRoleCallId, "roleCall.parentRoleCallId", issues);
+  required(input.callerRole, "roleCall.callerRole", issues);
+  normalizedRoleHandle(input.callerRole, "roleCall.callerRole", issues);
+  required(input.calleeRole, "roleCall.calleeRole", issues);
+  normalizedRoleHandle(input.calleeRole, "roleCall.calleeRole", issues);
+  required(input.task, "roleCall.task", issues);
+  optionalString(input.reason, "roleCall.reason", issues);
+  validateRoleCallContext(input.context, "roleCall.context", issues);
+  validatePermissionSet(input.permissions, "roleCall.permissions", issues);
+  validateExpectedOutputSpec(
+    input.expectedOutput,
+    "roleCall.expectedOutput",
+    issues
+  );
+  enumValue(input.priority, rolePriorities, "roleCall.priority", issues);
+  if (!Number.isInteger(input.depth) || input.depth < 0) {
+    issues.push("roleCall.depth must be a non-negative integer");
+  }
+  enumValue(input.status, roleCallStatuses, "roleCall.status", issues);
+  if (input.decision !== undefined) {
+    validateRoleCallDecisionFields(input.decision, "roleCall.decision", issues);
+  }
+  if (input.result !== undefined) {
+    validateRoleResultFields(input.result, "roleCall.result", issues);
+  }
+  optionalString(input.taskRunId, "roleCall.taskRunId", issues);
+  optionalString(input.todoId, "roleCall.todoId", issues);
+  optionalString(input.error, "roleCall.error", issues);
+  timestamp(input.createdAt, "roleCall.createdAt", issues);
+  optionalTimestamp(input.startedAt, "roleCall.startedAt", issues);
+  optionalTimestamp(input.completedAt, "roleCall.completedAt", issues);
+  return finish(input, issues);
+}
+
+export function validateRoleCallDecision(
+  input: RoleCallDecision
+): RoleCallDecision {
+  const issues: string[] = [];
+  validateRoleCallDecisionFields(input, "roleCallDecision", issues);
+  return finish(input, issues);
+}
+
+export function validateRoleTodo(input: RoleTodo): RoleTodo {
+  const issues: string[] = [];
+  required(input.id, "roleTodo.id", issues);
+  required(input.threadId, "roleTodo.threadId", issues);
+  required(input.role, "roleTodo.role", issues);
+  normalizedRoleHandle(input.role, "roleTodo.role", issues);
+  optionalString(input.sourceRoleCallId, "roleTodo.sourceRoleCallId", issues);
+  optionalString(input.parentTodoId, "roleTodo.parentTodoId", issues);
+  required(input.title, "roleTodo.title", issues);
+  optionalString(input.description, "roleTodo.description", issues);
+  enumValue(input.status, roleTodoStatuses, "roleTodo.status", issues);
+  enumValue(input.priority, rolePriorities, "roleTodo.priority", issues);
+  optionalString(input.reason, "roleTodo.reason", issues);
+  if (input.blockedBy !== undefined) {
+    stringArray(input.blockedBy, "roleTodo.blockedBy", issues);
+  }
+  stringArray(input.relatedRoleCallIds, "roleTodo.relatedRoleCallIds", issues);
+  timestamp(input.createdAt, "roleTodo.createdAt", issues);
+  timestamp(input.updatedAt, "roleTodo.updatedAt", issues);
+  optionalTimestamp(input.completedAt, "roleTodo.completedAt", issues);
+  return finish(input, issues);
+}
+
+export function validateRoleCallEvent(input: RoleCallEvent): RoleCallEvent {
+  const issues: string[] = [];
+  required(input.id, "roleCallEvent.id", issues);
+  required(input.roleCallId, "roleCallEvent.roleCallId", issues);
+  required(input.threadId, "roleCallEvent.threadId", issues);
+  enumValue(input.type, roleCallEventTypes, "roleCallEvent.type", issues);
+  if (input.actorRole !== undefined) {
+    normalizedRoleHandle(input.actorRole, "roleCallEvent.actorRole", issues);
+  }
+  required(input.message, "roleCallEvent.message", issues);
+  optionalObject(input.metadata, "roleCallEvent.metadata", issues);
+  timestamp(input.createdAt, "roleCallEvent.createdAt", issues);
+  return finish(input, issues);
+}
+
+export function validateRoleResult(input: RoleResult): RoleResult {
+  const issues: string[] = [];
+  validateRoleResultFields(input, "roleResult", issues);
+  return finish(input, issues);
+}
+
 export function validateContextPack(input: ContextPack): ContextPack {
   const issues: string[] = [];
   required(input.id, "contextPack.id", issues);
@@ -471,6 +705,445 @@ function optionalObject(value: unknown, field: string, issues: string[]): void {
 function stringArray(value: unknown, field: string, issues: string[]): void {
   if (!Array.isArray(value) || value.some((entry) => typeof entry !== "string")) {
     issues.push(`${field} must be an array of strings`);
+  }
+}
+
+function optionalStringArray(
+  value: unknown,
+  field: string,
+  issues: string[]
+): void {
+  if (value !== undefined) {
+    stringArray(value, field, issues);
+  }
+}
+
+function booleanValue(value: unknown, field: string, issues: string[]): void {
+  if (typeof value !== "boolean") {
+    issues.push(`${field} must be a boolean`);
+  }
+}
+
+function plainObject(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function normalizedRoleHandle(
+  value: unknown,
+  field: string,
+  issues: string[]
+): void {
+  if (typeof value !== "string") {
+    return;
+  }
+  if (normalizeWorkgroupRoleHandle(value) !== value) {
+    issues.push(`${field} must be lowercase without @`);
+  }
+}
+
+function optionalRolePriority(
+  value: unknown,
+  field: string,
+  issues: string[]
+): void {
+  if (value !== undefined) {
+    enumValue(value, rolePriorities, field, issues);
+  }
+}
+
+function validatePermissionSet(
+  value: unknown,
+  field: string,
+  issues: string[]
+): void {
+  objectValue(value, field, issues);
+  if (!plainObject(value)) {
+    return;
+  }
+  booleanValue(value.canReadFiles, `${field}.canReadFiles`, issues);
+  booleanValue(value.canEditFiles, `${field}.canEditFiles`, issues);
+  booleanValue(value.canRunCommands, `${field}.canRunCommands`, issues);
+  booleanValue(value.canUseNetwork, `${field}.canUseNetwork`, issues);
+  booleanValue(value.canAskUser, `${field}.canAskUser`, issues);
+  booleanValue(
+    value.requiresApprovalForShell,
+    `${field}.requiresApprovalForShell`,
+    issues
+  );
+  booleanValue(
+    value.requiresApprovalForFileWrite,
+    `${field}.requiresApprovalForFileWrite`,
+    issues
+  );
+  optionalStringArray(
+    value.allowedCommandPatterns,
+    `${field}.allowedCommandPatterns`,
+    issues
+  );
+  optionalStringArray(
+    value.deniedCommandPatterns,
+    `${field}.deniedCommandPatterns`,
+    issues
+  );
+}
+
+function validateDelegationPolicy(
+  value: unknown,
+  field: string,
+  issues: string[]
+): void {
+  objectValue(value, field, issues);
+  if (!plainObject(value)) {
+    return;
+  }
+  booleanValue(
+    value.canInitiateRoleCalls,
+    `${field}.canInitiateRoleCalls`,
+    issues
+  );
+  stringEnumArray(
+    value.allowedIntentTypes,
+    roleIntentTypes,
+    `${field}.allowedIntentTypes`,
+    issues
+  );
+  optionalStringArray(value.allowedTargetRoles, `${field}.allowedTargetRoles`, issues);
+  optionalStringArray(
+    value.allowedTargetCapabilities,
+    `${field}.allowedTargetCapabilities`,
+    issues
+  );
+  optionalStringArray(
+    value.requiresApprovalForTargets,
+    `${field}.requiresApprovalForTargets`,
+    issues
+  );
+}
+
+function validateIntakePolicy(
+  value: unknown,
+  field: string,
+  issues: string[]
+): void {
+  objectValue(value, field, issues);
+  if (!plainObject(value)) {
+    return;
+  }
+  booleanValue(value.acceptsRoleCalls, `${field}.acceptsRoleCalls`, issues);
+  optionalStringArray(value.acceptedCallerRoles, `${field}.acceptedCallerRoles`, issues);
+  optionalStringArray(
+    value.acceptedCallerCapabilities,
+    `${field}.acceptedCallerCapabilities`,
+    issues
+  );
+  stringEnumArray(
+    value.acceptedIntentTypes,
+    roleIntentTypes,
+    `${field}.acceptedIntentTypes`,
+    issues
+  );
+  booleanValue(value.canReject, `${field}.canReject`, issues);
+  booleanValue(value.canDefer, `${field}.canDefer`, issues);
+}
+
+function validateRoleContextPolicy(
+  value: unknown,
+  field: string,
+  issues: string[]
+): void {
+  objectValue(value, field, issues);
+  if (!plainObject(value)) {
+    return;
+  }
+  required(value.scope, `${field}.scope`, issues);
+  booleanValue(
+    value.includeApprovedMemory,
+    `${field}.includeApprovedMemory`,
+    issues
+  );
+  booleanValue(
+    value.includeThreadSummary,
+    `${field}.includeThreadSummary`,
+    issues
+  );
+  stringArray(value.instructions, `${field}.instructions`, issues);
+}
+
+function validateRoleApprovalPolicy(
+  value: unknown,
+  field: string,
+  issues: string[]
+): void {
+  objectValue(value, field, issues);
+  if (!plainObject(value)) {
+    return;
+  }
+  stringArray(value.requiredFor, `${field}.requiredFor`, issues);
+  required(value.summary, `${field}.summary`, issues);
+}
+
+function validateRoleExecutor(
+  value: unknown,
+  field: string,
+  issues: string[]
+): void {
+  objectValue(value, field, issues);
+  if (!plainObject(value)) {
+    return;
+  }
+  enumValue(value.kind, roleExecutorKinds, `${field}.kind`, issues);
+  switch (value.kind) {
+    case "agent_adapter":
+      enumValue(value.adapter, agentKinds, `${field}.adapter`, issues);
+      optionalString(value.configRef, `${field}.configRef`, issues);
+      break;
+    case "local_workflow":
+      required(value.workflowId, `${field}.workflowId`, issues);
+      break;
+    case "human":
+      optionalString(value.configRef, `${field}.configRef`, issues);
+      optionalString(value.unavailableReason, `${field}.unavailableReason`, issues);
+      break;
+    case "llm_api":
+      required(value.modelRef, `${field}.modelRef`, issues);
+      break;
+  }
+}
+
+function validateExpectedOutputSpec(
+  value: unknown,
+  field: string,
+  issues: string[]
+): void {
+  objectValue(value, field, issues);
+  if (!plainObject(value)) {
+    return;
+  }
+  enumValue(value.format, expectedOutputFormats, `${field}.format`, issues);
+  optionalString(value.description, `${field}.description`, issues);
+  optionalString(value.schemaRef, `${field}.schemaRef`, issues);
+  optionalStringArray(value.requiredEvidence, `${field}.requiredEvidence`, issues);
+}
+
+function validateRoleCallContext(
+  value: unknown,
+  field: string,
+  issues: string[]
+): void {
+  objectValue(value, field, issues);
+  if (!plainObject(value)) {
+    return;
+  }
+  required(value.userGoal, `${field}.userGoal`, issues);
+  optionalString(value.currentPlan, `${field}.currentPlan`, issues);
+  optionalStringArray(value.relevantFiles, `${field}.relevantFiles`, issues);
+  optionalStringArray(value.recentFindings, `${field}.recentFindings`, issues);
+  optionalStringArray(value.constraints, `${field}.constraints`, issues);
+  if (value.previousRoleResults !== undefined) {
+    roleResultArray(
+      value.previousRoleResults,
+      `${field}.previousRoleResults`,
+      issues
+    );
+  }
+  if (value.callerTodoState !== undefined) {
+    roleTodoArray(value.callerTodoState, `${field}.callerTodoState`, issues);
+  }
+  if (value.calleeTodoState !== undefined) {
+    roleTodoArray(value.calleeTodoState, `${field}.calleeTodoState`, issues);
+  }
+  if (value.repoState !== undefined) {
+    objectValue(value.repoState, `${field}.repoState`, issues);
+    if (plainObject(value.repoState)) {
+      optionalString(value.repoState.branch, `${field}.repoState.branch`, issues);
+      optionalStringArray(
+        value.repoState.changedFiles,
+        `${field}.repoState.changedFiles`,
+        issues
+      );
+      optionalString(
+        value.repoState.testStatus,
+        `${field}.repoState.testStatus`,
+        issues
+      );
+    }
+  }
+  const tokenBudget = value.tokenBudget;
+  if (
+    tokenBudget !== undefined &&
+    (typeof tokenBudget !== "number" ||
+      !Number.isInteger(tokenBudget) ||
+      tokenBudget <= 0)
+  ) {
+    issues.push(`${field}.tokenBudget must be a positive integer when provided`);
+  }
+}
+
+function validateRoleCallDecisionFields(
+  value: unknown,
+  field: string,
+  issues: string[]
+): void {
+  objectValue(value, field, issues);
+  if (!plainObject(value)) {
+    return;
+  }
+  enumValue(value.disposition, roleCallDispositions, `${field}.disposition`, issues);
+  required(value.reason, `${field}.reason`, issues);
+  optionalStringArray(value.evidence, `${field}.evidence`, issues);
+  optionalStringArray(value.requiredContext, `${field}.requiredContext`, issues);
+  optionalString(
+    value.suggestedResumeCondition,
+    `${field}.suggestedResumeCondition`,
+    issues
+  );
+  optionalString(value.alternativeTask, `${field}.alternativeTask`, issues);
+  optionalString(value.risk, `${field}.risk`, issues);
+  if (
+    value.disposition === "needs_context" &&
+    (!Array.isArray(value.requiredContext) || value.requiredContext.length === 0)
+  ) {
+    issues.push(`${field}.requiredContext is required for needs_context decisions`);
+  }
+  if (value.todo !== undefined) {
+    objectValue(value.todo, `${field}.todo`, issues);
+    if (plainObject(value.todo)) {
+      required(value.todo.title, `${field}.todo.title`, issues);
+      optionalRolePriority(value.todo.priority, `${field}.todo.priority`, issues);
+      optionalString(value.todo.dueHint, `${field}.todo.dueHint`, issues);
+    }
+  }
+}
+
+function validateRoleResultFields(
+  value: unknown,
+  field: string,
+  issues: string[]
+): void {
+  objectValue(value, field, issues);
+  if (!plainObject(value)) {
+    return;
+  }
+  required(value.summary, `${field}.summary`, issues);
+  stringArray(value.evidence, `${field}.evidence`, issues);
+  if (value.commandsRun !== undefined) {
+    if (!Array.isArray(value.commandsRun)) {
+      issues.push(`${field}.commandsRun must be an array when provided`);
+    } else {
+      value.commandsRun.forEach((entry, index) => {
+        objectValue(entry, `${field}.commandsRun.${index}`, issues);
+        if (plainObject(entry)) {
+          required(entry.command, `${field}.commandsRun.${index}.command`, issues);
+          if (entry.exitCode !== null && !Number.isInteger(entry.exitCode)) {
+            issues.push(
+              `${field}.commandsRun.${index}.exitCode must be an integer or null`
+            );
+          }
+          required(
+            entry.outputSummary,
+            `${field}.commandsRun.${index}.outputSummary`,
+            issues
+          );
+        }
+      });
+    }
+  }
+  optionalStringArray(value.filesRead, `${field}.filesRead`, issues);
+  optionalStringArray(value.filesTouched, `${field}.filesTouched`, issues);
+  optionalString(value.patchSummary, `${field}.patchSummary`, issues);
+  optionalStringArray(value.risks, `${field}.risks`, issues);
+  optionalStringArray(value.nextSteps, `${field}.nextSteps`, issues);
+  optionalString(value.rawOutput, `${field}.rawOutput`, issues);
+}
+
+function roleResultArray(value: unknown, field: string, issues: string[]): void {
+  if (!Array.isArray(value)) {
+    issues.push(`${field} must be an array when provided`);
+    return;
+  }
+  value.forEach((entry, index) => {
+    validateRoleResultFields(entry, `${field}.${index}`, issues);
+  });
+}
+
+function roleTodoArray(value: unknown, field: string, issues: string[]): void {
+  if (!Array.isArray(value)) {
+    issues.push(`${field} must be an array when provided`);
+    return;
+  }
+  value.forEach((entry, index) => {
+    try {
+      validateRoleTodo(entry as RoleTodo);
+    } catch (error) {
+      if (error instanceof DomainValidationError) {
+        issues.push(...error.issues.map((issue) => `${field}.${index}.${issue}`));
+      } else {
+        issues.push(`${field}.${index} must be a valid role todo`);
+      }
+    }
+  });
+}
+
+function stringEnumArray<T extends readonly string[]>(
+  value: unknown,
+  values: T,
+  field: string,
+  issues: string[]
+): void {
+  if (!Array.isArray(value)) {
+    issues.push(`${field} must be an array of ${values.join(", ")}`);
+    return;
+  }
+  value.forEach((entry, index) => {
+    enumValue(entry, values, `${field}.${index}`, issues);
+  });
+}
+
+function validateConservativeCustomRoleDefaults(
+  input: RoleDefinition,
+  issues: string[]
+): void {
+  if (input.trustLevel === "preset") {
+    return;
+  }
+  const delegationPolicy = input.delegationPolicy as unknown;
+  const permissions = input.permissions as unknown;
+  if (!plainObject(delegationPolicy) || !plainObject(permissions)) {
+    return;
+  }
+  if (delegationPolicy.canInitiateRoleCalls !== true) {
+    return;
+  }
+  const hasExplicitTargets =
+    (Array.isArray(delegationPolicy.allowedTargetRoles)
+      ? delegationPolicy.allowedTargetRoles.length
+      : 0) > 0 ||
+    (Array.isArray(delegationPolicy.allowedTargetCapabilities)
+      ? delegationPolicy.allowedTargetCapabilities.length
+      : 0) > 0 ||
+    (Array.isArray(delegationPolicy.requiresApprovalForTargets)
+      ? delegationPolicy.requiresApprovalForTargets.length
+      : 0) > 0;
+  if (!hasExplicitTargets) {
+    issues.push(
+      "roleDefinition.delegationPolicy must name target roles, target capabilities, or approval targets for custom roles that initiate role calls"
+    );
+  }
+  if (
+    permissions.canEditFiles === true &&
+    permissions.requiresApprovalForFileWrite !== true
+  ) {
+    issues.push(
+      "roleDefinition.permissions.requiresApprovalForFileWrite must be true for custom roles that can edit files"
+    );
+  }
+  if (
+    permissions.canRunCommands === true &&
+    permissions.requiresApprovalForShell !== true
+  ) {
+    issues.push(
+      "roleDefinition.permissions.requiresApprovalForShell must be true for custom roles that can run commands"
+    );
   }
 }
 
@@ -604,6 +1277,40 @@ const memoryStatusTransitions: Record<MemoryStatus, readonly MemoryStatus[]> = {
   approved: [],
   rejected: []
 };
+
+const roleCallStatusTransitions: Record<RoleCallStatus, readonly RoleCallStatus[]> = {
+  proposed: ["assessing", "waiting_approval", "rejected", "cancelled"],
+  assessing: [
+    "accepted",
+    "deferred",
+    "rejected",
+    "waiting_context",
+    "waiting_approval",
+    "cancelled"
+  ],
+  accepted: ["queued", "running", "deferred", "cancelled"],
+  queued: ["running", "cancelled"],
+  running: ["succeeded", "failed", "waiting_context", "waiting_approval", "cancelled"],
+  deferred: ["accepted", "rejected", "cancelled"],
+  rejected: [],
+  waiting_context: ["assessing", "rejected", "cancelled"],
+  waiting_approval: ["accepted", "rejected", "cancelled"],
+  succeeded: [],
+  failed: [],
+  cancelled: []
+};
+
+const roleTodoStatusTransitions: Record<RoleTodoStatus, readonly RoleTodoStatus[]> = {
+  open: ["in_progress", "deferred", "blocked", "done", "rejected", "cancelled"],
+  in_progress: ["deferred", "blocked", "done", "rejected", "cancelled"],
+  deferred: ["open", "in_progress", "blocked", "done", "rejected", "cancelled"],
+  blocked: ["open", "in_progress", "deferred", "rejected", "cancelled"],
+  done: [],
+  rejected: [],
+  cancelled: []
+};
+
+const expectedOutputFormats = ["summary", "json", "patch", "risk_report"] as const;
 
 const secretLikeSettingValuePatterns = [
   /-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----/i,

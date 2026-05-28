@@ -26,6 +26,8 @@ import {
   isAgentKindEnabled,
   memoryCategories,
   runEventTypes,
+  roleCallStatuses,
+  roleTodoStatuses,
   findWorkgroupRoleByHandle,
   normalizeWorkgroupRoleHandle,
   parseAgentKindAlias,
@@ -53,6 +55,11 @@ import {
   type Project,
   type RunContextDeliveryMode,
   type RunEventType,
+  type RoleCall,
+  type RoleCallEvent,
+  type RoleCallStatus,
+  type RoleTodo,
+  type RoleTodoStatus,
   type SkillReference,
   type TaskRunStatus,
   type VerificationResult,
@@ -88,6 +95,9 @@ import {
   InMemoryRunMetadataRepository,
   InMemorySettingsRepository,
   InMemorySkillRepository,
+  InMemoryRoleCallEventRepository,
+  InMemoryRoleCallRepository,
+  InMemoryRoleTodoRepository,
   InMemoryTaskRepository,
   InMemoryTaskRunRepository,
   InMemoryVerificationResultRepository,
@@ -104,6 +114,9 @@ import {
   type RunMetadataRepository,
   type SettingsRepository,
   type SkillRepository,
+  type RoleCallEventRepository,
+  type RoleCallRepository,
+  type RoleTodoRepository,
   type TaskRepository,
   type TaskRunRepository,
   type VerificationResultRepository
@@ -132,6 +145,9 @@ export interface CliRuntime {
   comparisonReportRepository: ComparisonReportRepository;
   skillRepository: SkillRepository;
   settingsRepository: SettingsRepository;
+  roleCallRepository: RoleCallRepository;
+  roleCallEventRepository: RoleCallEventRepository;
+  roleTodoRepository: RoleTodoRepository;
   taskRunner: TaskRunner;
 }
 
@@ -147,6 +163,9 @@ export interface CliRuntimeDependencies extends TaskRunnerDependencies {
   comparisonReportRepository?: ComparisonReportRepository;
   skillRepository?: SkillRepository;
   settingsRepository?: SettingsRepository;
+  roleCallRepository?: RoleCallRepository;
+  roleCallEventRepository?: RoleCallEventRepository;
+  roleTodoRepository?: RoleTodoRepository;
 }
 
 export function createCliRuntime(
@@ -168,7 +187,10 @@ export function createCliRuntime(
     dependencies.memoryItemRepository !== undefined ||
     dependencies.comparisonReportRepository !== undefined ||
     dependencies.skillRepository !== undefined ||
-    dependencies.settingsRepository !== undefined;
+    dependencies.settingsRepository !== undefined ||
+    dependencies.roleCallRepository !== undefined ||
+    dependencies.roleCallEventRepository !== undefined ||
+    dependencies.roleTodoRepository !== undefined;
   const shouldUseSqlite =
     dependencies.storageMode === "sqlite" ||
     (dependencies.storageMode !== "memory" && !hasInjectedStorage);
@@ -240,6 +262,18 @@ export function createCliRuntime(
     dependencies.settingsRepository ??
     sqliteRepositories?.settingsRepository ??
     new InMemorySettingsRepository();
+  const roleTodoRepository =
+    dependencies.roleTodoRepository ??
+    sqliteRepositories?.roleTodoRepository ??
+    new InMemoryRoleTodoRepository();
+  const roleCallRepository =
+    dependencies.roleCallRepository ??
+    sqliteRepositories?.roleCallRepository ??
+    new InMemoryRoleCallRepository(roleTodoRepository);
+  const roleCallEventRepository =
+    dependencies.roleCallEventRepository ??
+    sqliteRepositories?.roleCallEventRepository ??
+    new InMemoryRoleCallEventRepository();
   const taskRunner = new TaskRunner({
     ...dependencies,
     taskRepository,
@@ -269,6 +303,9 @@ export function createCliRuntime(
     comparisonReportRepository,
     skillRepository,
     settingsRepository,
+    roleCallRepository,
+    roleCallEventRepository,
+    roleTodoRepository,
     taskRunner
   };
 }
@@ -473,6 +510,22 @@ export async function main(
     return showRisk(rest.slice(1), io, activeRuntime);
   }
 
+  if (command === "role-calls" && rest[0] === "list") {
+    return listRoleCalls(rest.slice(1), io, activeRuntime);
+  }
+
+  if (command === "role-calls" && rest[0] === "show") {
+    return showRoleCall(rest.slice(1), io, activeRuntime);
+  }
+
+  if (command === "role-todos" && rest[0] === "list") {
+    return listRoleTodos(rest.slice(1), io, activeRuntime);
+  }
+
+  if (command === "role-events" && rest[0] === "list") {
+    return listRoleEvents(rest.slice(1), io, activeRuntime);
+  }
+
   if (command === "memory" && rest[0] === "list") {
     return listMemory(rest.slice(1), io, activeRuntime);
   }
@@ -539,6 +592,10 @@ export function helpText(debug = isEnvironmentDebugEnabled()): string {
     "  agent-hub runs diff <run-id> [--stat|--patch] [--full]",
     "  agent-hub runs show <run-id>",
     "  agent-hub risks show <run-id>",
+    "  agent-hub role-calls list [--thread-id <thread-id>] [--role <role>] [--status <status>] [--json]",
+    "  agent-hub role-calls show <role-call-id> [--json]",
+    "  agent-hub role-todos list [--thread-id <thread-id>] [--role <role>] [--status <status>] [--json]",
+    "  agent-hub role-events list --role-call-id <role-call-id>|--thread-id <thread-id> [--json]",
     "  agent-hub memory list --project-id <project-id>",
     "  agent-hub memory propose --project-id <project-id> --category <category> --content <text>",
     "  agent-hub memory approve --memory-id <memory-id>",
@@ -3438,6 +3495,405 @@ async function showRisk(
     ].join("\n")
   );
   return 0;
+}
+
+async function listRoleCalls(
+  args: string[],
+  io: CliIO,
+  runtime: CliRuntime
+): Promise<number> {
+  let parsed: ParsedRoleCallListArgs;
+  try {
+    parsed = parseRoleCallListArgs(args);
+  } catch (error) {
+    io.stderr.write(`error: ${error instanceof Error ? error.message : String(error)}\n`);
+    return 1;
+  }
+  const calls = await runtime.roleCallRepository.list({
+    threadId: parsed.threadId,
+    role: parsed.role,
+    callerRole: parsed.callerRole,
+    calleeRole: parsed.calleeRole,
+    status: parsed.status,
+    todoStatus: parsed.todoStatus
+  });
+  if (parsed.json) {
+    io.stdout.write(`${JSON.stringify({ roleCalls: calls }, null, 2)}\n`);
+    return 0;
+  }
+  if (calls.length === 0) {
+    io.stdout.write("No role calls found.\n");
+    return 0;
+  }
+  io.stdout.write(
+    [
+      "role_call_id\tstatus\tcaller\tcallee\tthread_id\tlinked_run\ttask",
+      ...calls.map((call) =>
+        [
+          call.id,
+          roleCallStatusLabel(call),
+          formatRoleHandle(call.callerRole),
+          formatRoleHandle(call.calleeRole),
+          call.threadId,
+          call.taskRunId ?? "none",
+          inlineText(call.task)
+        ].join("\t")
+      ),
+      ""
+    ].join("\n")
+  );
+  return 0;
+}
+
+async function showRoleCall(
+  args: string[],
+  io: CliIO,
+  runtime: CliRuntime
+): Promise<number> {
+  let parsed: ParsedRoleCallShowArgs;
+  try {
+    parsed = parseRoleCallShowArgs(args);
+  } catch (error) {
+    io.stderr.write(`error: ${error instanceof Error ? error.message : String(error)}\n`);
+    return 1;
+  }
+  const call = await runtime.roleCallRepository.get(parsed.roleCallId);
+  if (!call) {
+    io.stderr.write(`error: role call ${parsed.roleCallId} not found\n`);
+    return 1;
+  }
+  const [events, todo, linkedRun] = await Promise.all([
+    runtime.roleCallEventRepository.listByRoleCallId(call.id),
+    call.todoId ? runtime.roleTodoRepository.get(call.todoId) : undefined,
+    call.taskRunId ? runtime.taskRunRepository.get(call.taskRunId) : undefined
+  ]);
+  if (parsed.json) {
+    io.stdout.write(
+      `${JSON.stringify({ roleCall: call, todo, events, linkedRun }, null, 2)}\n`
+    );
+    return 0;
+  }
+  io.stdout.write(renderRoleCallDetail(call, events, todo, linkedRun !== undefined));
+  return 0;
+}
+
+async function listRoleTodos(
+  args: string[],
+  io: CliIO,
+  runtime: CliRuntime
+): Promise<number> {
+  let parsed: ParsedRoleTodoListArgs;
+  try {
+    parsed = parseRoleTodoListArgs(args);
+  } catch (error) {
+    io.stderr.write(`error: ${error instanceof Error ? error.message : String(error)}\n`);
+    return 1;
+  }
+  const todos = await runtime.roleTodoRepository.list({
+    threadId: parsed.threadId,
+    role: parsed.role,
+    sourceRoleCallId: parsed.sourceRoleCallId,
+    status: parsed.status
+  });
+  if (parsed.json) {
+    io.stdout.write(`${JSON.stringify({ roleTodos: todos }, null, 2)}\n`);
+    return 0;
+  }
+  if (todos.length === 0) {
+    io.stdout.write("No role todos found.\n");
+    return 0;
+  }
+  io.stdout.write(
+    [
+      "role_todo_id\tstatus\trole\tthread_id\tsource_role_call\ttitle",
+      ...todos.map((todo) =>
+        [
+          todo.id,
+          todo.status,
+          formatRoleHandle(todo.role),
+          todo.threadId,
+          todo.sourceRoleCallId ?? "none",
+          inlineText(todo.title)
+        ].join("\t")
+      ),
+      ""
+    ].join("\n")
+  );
+  return 0;
+}
+
+async function listRoleEvents(
+  args: string[],
+  io: CliIO,
+  runtime: CliRuntime
+): Promise<number> {
+  let parsed: ParsedRoleEventListArgs;
+  try {
+    parsed = parseRoleEventListArgs(args);
+  } catch (error) {
+    io.stderr.write(`error: ${error instanceof Error ? error.message : String(error)}\n`);
+    return 1;
+  }
+  const events = parsed.roleCallId
+    ? await runtime.roleCallEventRepository.listByRoleCallId(parsed.roleCallId)
+    : await runtime.roleCallEventRepository.listByThreadId(parsed.threadId);
+  if (parsed.json) {
+    io.stdout.write(`${JSON.stringify({ roleCallEvents: events }, null, 2)}\n`);
+    return 0;
+  }
+  if (events.length === 0) {
+    io.stdout.write("No role events found.\n");
+    return 0;
+  }
+  io.stdout.write(
+    [
+      "role_event_id\trole_call_id\ttype\tactor\tcreated_at\tmessage",
+      ...events.map((event) =>
+        [
+          event.id,
+          event.roleCallId,
+          event.type,
+          event.actorRole ? formatRoleHandle(event.actorRole) : "system",
+          event.createdAt,
+          inlineText(event.message)
+        ].join("\t")
+      ),
+      ""
+    ].join("\n")
+  );
+  return 0;
+}
+
+function renderRoleCallDetail(
+  call: RoleCall,
+  events: RoleCallEvent[],
+  todo: RoleTodo | undefined,
+  linkedRunExists: boolean
+): string {
+  return [
+    `role_call_id: ${call.id}`,
+    `thread_id: ${call.threadId}`,
+    `status: ${roleCallStatusLabel(call)}`,
+    `caller: ${formatRoleHandle(call.callerRole)}`,
+    `callee: ${formatRoleHandle(call.calleeRole)}`,
+    `task: ${call.task}`,
+    `priority: ${call.priority}`,
+    `todo_id: ${todo?.id ?? call.todoId ?? "none"}`,
+    `linked_run: ${call.taskRunId ?? "none"}`,
+    ...(call.taskRunId
+      ? [
+          `linked_run_exists: ${linkedRunExists}`,
+          "review_commands:",
+          `  agent-hub runs show ${call.taskRunId}`,
+          `  agent-hub runs events ${call.taskRunId}`,
+          `  agent-hub runs diff ${call.taskRunId} --stat`,
+          `  agent-hub risks show ${call.taskRunId}`
+        ]
+      : []),
+    `decision: ${
+      call.decision
+        ? `${call.decision.disposition} - ${inlineText(call.decision.reason)}`
+        : "none"
+    }`,
+    `result: ${call.result ? inlineText(call.result.summary) : "none"}`,
+    `error: ${call.error ? inlineText(call.error) : "none"}`,
+    `events: ${events.length}`,
+    ...(events.length === 0
+      ? []
+      : events.map((event) =>
+          `  - ${event.createdAt} ${event.type} ${inlineText(event.message)}`
+        )),
+    ""
+  ].join("\n");
+}
+
+interface ParsedRoleCallListArgs {
+  threadId?: string;
+  role?: string;
+  callerRole?: string;
+  calleeRole?: string;
+  status?: RoleCallStatus;
+  todoStatus?: RoleTodoStatus;
+  json: boolean;
+}
+
+interface ParsedRoleCallShowArgs {
+  roleCallId: string;
+  json: boolean;
+}
+
+interface ParsedRoleTodoListArgs {
+  threadId?: string;
+  role?: string;
+  sourceRoleCallId?: string;
+  status?: RoleTodoStatus;
+  json: boolean;
+}
+
+interface ParsedRoleEventListArgs {
+  roleCallId?: string;
+  threadId: string;
+  json: boolean;
+}
+
+function parseRoleCallListArgs(args: string[]): ParsedRoleCallListArgs {
+  const parsed: ParsedRoleCallListArgs = { json: false };
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if (arg === "--json") {
+      parsed.json = true;
+      continue;
+    }
+    if (arg === "--thread-id") {
+      parsed.threadId = requiredValue(args, index, arg);
+      index += 1;
+      continue;
+    }
+    if (arg === "--role") {
+      parsed.role = normalizeRoleFilter(requiredValue(args, index, arg));
+      index += 1;
+      continue;
+    }
+    if (arg === "--caller-role") {
+      parsed.callerRole = normalizeRoleFilter(requiredValue(args, index, arg));
+      index += 1;
+      continue;
+    }
+    if (arg === "--callee-role") {
+      parsed.calleeRole = normalizeRoleFilter(requiredValue(args, index, arg));
+      index += 1;
+      continue;
+    }
+    if (arg === "--status") {
+      parsed.status = parseRoleCallStatus(requiredValue(args, index, arg));
+      index += 1;
+      continue;
+    }
+    if (arg === "--todo-status") {
+      parsed.todoStatus = parseRoleTodoStatus(requiredValue(args, index, arg));
+      index += 1;
+      continue;
+    }
+    throw new Error(`unknown role-calls list flag ${arg}`);
+  }
+  return parsed;
+}
+
+function parseRoleCallShowArgs(args: string[]): ParsedRoleCallShowArgs {
+  const roleCallId = args[0];
+  if (!roleCallId) {
+    throw new Error("role call id is required");
+  }
+  const flags = args.slice(1);
+  const unknownFlag = flags.find((flag) => flag !== "--json");
+  if (unknownFlag) {
+    throw new Error(`unknown role-calls show flag ${unknownFlag}`);
+  }
+  return { roleCallId, json: flags.includes("--json") };
+}
+
+function parseRoleTodoListArgs(args: string[]): ParsedRoleTodoListArgs {
+  const parsed: ParsedRoleTodoListArgs = { json: false };
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if (arg === "--json") {
+      parsed.json = true;
+      continue;
+    }
+    if (arg === "--thread-id") {
+      parsed.threadId = requiredValue(args, index, arg);
+      index += 1;
+      continue;
+    }
+    if (arg === "--role") {
+      parsed.role = normalizeRoleFilter(requiredValue(args, index, arg));
+      index += 1;
+      continue;
+    }
+    if (arg === "--source-role-call-id") {
+      parsed.sourceRoleCallId = requiredValue(args, index, arg);
+      index += 1;
+      continue;
+    }
+    if (arg === "--status") {
+      parsed.status = parseRoleTodoStatus(requiredValue(args, index, arg));
+      index += 1;
+      continue;
+    }
+    throw new Error(`unknown role-todos list flag ${arg}`);
+  }
+  return parsed;
+}
+
+function parseRoleEventListArgs(args: string[]): ParsedRoleEventListArgs {
+  let roleCallId: string | undefined;
+  let threadId: string | undefined;
+  let json = false;
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if (arg === "--json") {
+      json = true;
+      continue;
+    }
+    if (arg === "--role-call-id") {
+      roleCallId = requiredValue(args, index, arg);
+      index += 1;
+      continue;
+    }
+    if (arg === "--thread-id") {
+      threadId = requiredValue(args, index, arg);
+      index += 1;
+      continue;
+    }
+    throw new Error(`unknown role-events list flag ${arg}`);
+  }
+  if (roleCallId && threadId) {
+    throw new Error("role-events list accepts only one of --role-call-id or --thread-id");
+  }
+  if (!roleCallId && !threadId) {
+    throw new Error("role-events list requires --role-call-id or --thread-id");
+  }
+  return { roleCallId, threadId: threadId ?? "", json };
+}
+
+function parseRoleCallStatus(value: string): RoleCallStatus {
+  if ((roleCallStatuses as readonly string[]).includes(value)) {
+    return value as RoleCallStatus;
+  }
+  throw new Error(`unknown role call status ${value}`);
+}
+
+function parseRoleTodoStatus(value: string): RoleTodoStatus {
+  if ((roleTodoStatuses as readonly string[]).includes(value)) {
+    return value as RoleTodoStatus;
+  }
+  throw new Error(`unknown role todo status ${value}`);
+}
+
+function requiredValue(args: string[], index: number, flag: string): string {
+  const value = args[index + 1];
+  if (!value || value.startsWith("--")) {
+    throw new Error(`${flag} requires a value`);
+  }
+  return value;
+}
+
+function normalizeRoleFilter(value: string): string {
+  return value.replace(/^@/, "").trim();
+}
+
+function formatRoleHandle(value: string): string {
+  return `@${normalizeRoleFilter(value)}`;
+}
+
+function roleCallStatusLabel(call: RoleCall): string {
+  if (call.status === "deferred" || call.status === "rejected") {
+    return `${call.status} (decision)`;
+  }
+  if (call.status === "failed") {
+    return "failed (execution)";
+  }
+  return call.status;
 }
 
 function renderRunDiffStat(review: RunDiffReview): string {

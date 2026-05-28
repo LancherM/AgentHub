@@ -1,5 +1,10 @@
 import type {
   JsonObject,
+  RoleCallDisposition,
+  RoleCallEventType,
+  RoleCallStatus,
+  RolePriority,
+  RoleTodoStatus,
   WorkgroupRole,
   WorkgroupRoleRunMetadata,
   WorkgroupTaskAssignmentMetadata
@@ -255,6 +260,7 @@ export interface AssistantMessage extends BaseThreadMessage {
   runId?: string;
   status?: RunStatus;
   assignment?: WorkgroupTaskAssignmentMetadata;
+  roleCallSummary?: RoleCallUiSummary;
 }
 
 export interface SystemMessage extends BaseThreadMessage {
@@ -268,6 +274,94 @@ export type ThreadMessage =
   | AgentRunMessage
   | AssistantMessage
   | SystemMessage;
+
+export type RoleCallUiEvidenceKind =
+  | "evidence"
+  | "command"
+  | "file"
+  | "risk"
+  | "raw_json";
+
+export interface RoleCallUiEvidenceItem {
+  id: string;
+  kind: RoleCallUiEvidenceKind;
+  label: string;
+  summary?: string;
+  tone?: TimelineEventTone;
+  command?: string;
+  path?: string;
+  runId?: string;
+}
+
+export interface RoleCallUiDecision {
+  disposition: RoleCallDisposition;
+  reason: string;
+  evidence: string[];
+  requiredContext: string[];
+  risk?: string;
+}
+
+export interface RoleCallUiCall {
+  id: string;
+  callerRole: string;
+  calleeRole: string;
+  task: string;
+  status: RoleCallStatus;
+  priority: RolePriority;
+  depth: number;
+  taskRunId?: string;
+  todoId?: string;
+  decision?: RoleCallUiDecision;
+  resultSummary?: string;
+  error?: string;
+  evidence: RoleCallUiEvidenceItem[];
+  rawJson?: string;
+  createdAt: string;
+  startedAt?: string;
+  completedAt?: string;
+}
+
+export interface RoleCallUiTodo {
+  id: string;
+  role: string;
+  title: string;
+  status: RoleTodoStatus;
+  priority: RolePriority;
+  sourceRoleCallId?: string;
+  reason?: string;
+  updatedAt: string;
+}
+
+export interface RoleCallUiEvent {
+  id: string;
+  roleCallId: string;
+  type: RoleCallEventType;
+  actorRole?: string;
+  message: string;
+  createdAt: string;
+}
+
+export interface RoleCallUiCounts {
+  total: number;
+  running: number;
+  deferred: number;
+  rejected: number;
+  waitingApproval: number;
+  succeeded: number;
+  failed: number;
+  todosOpen: number;
+  todosBlocked: number;
+}
+
+export interface RoleCallUiSummary {
+  threadId: string;
+  sourceMessageId?: string;
+  counts: RoleCallUiCounts;
+  calls: RoleCallUiCall[];
+  todos: RoleCallUiTodo[];
+  events: RoleCallUiEvent[];
+  updatedAt?: string;
+}
 
 export interface CreateThreadInput {
   projectId?: string;

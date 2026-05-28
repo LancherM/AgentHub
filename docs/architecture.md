@@ -964,6 +964,70 @@ risk evidence behind collapsed inspector or detail views; the default
 conversation transcript should expose only compact status affordances and
 blocking approvals. The implementation sequence is tracked in
 `docs/adaptive-role-calls-implementation-roadmap.md`.
+The shared/core boundary now owns the stable Adaptive Role Call type contracts
+and validators for role definitions, intents, calls, decisions, todos, events,
+results, and status transitions. This keeps parser, persistence, orchestrator,
+CLI, and desktop phases aligned while leaving runtime execution behavior
+unchanged until later slices.
+RoleCall persistence is first-class SQLite storage rather than message metadata:
+`role_calls`, `role_call_events`, and `role_todos` keep JSON payloads validated
+at the database edge, link back to threads/messages/task runs where available,
+and expose repository queries by thread, role, parent call, lifecycle status,
+and todo state.
+RoleIntent parsing is implemented as a dedicated core parser for line-start
+role mentions; it ignores fenced code blocks and reports unknown or duplicate
+targets as non-blocking warnings instead of reusing desktop mention fan-out.
+Policy validation lives beside the safety scanner so it can reuse dangerous
+command detection while checking caller delegation policy, callee intake policy,
+project ceilings, depth, concurrency, cycle, duplicate, todo-capacity,
+approval, permission, and executor-capability constraints.
+The core RoleCall Orchestrator is now a ledger-only service boundary. It accepts
+validated intents, delegates authorization to an injected policy validator,
+persists RoleCall/RoleCallEvent/RoleTodo records, records accepted/deferred/
+rejected/context/approval decisions, and returns compact caller-visible
+summaries without running adapters or starting autonomous background loops.
+RoleCall context building is compact and role-scoped: it includes the user goal,
+current plan, constraints, relevant files, selected prior RoleResults, caller
+and callee todo state, and repo state while stripping valid raw output and
+excluding unrelated role chatter. Structured output helpers parse and validate
+RoleResult JSON, persist success as structured data, and store bounded raw
+output only on invalid-result failure events.
+TaskRunner-backed RoleCall execution is implemented as a local executor adapter
+around the existing TaskRunner. Accepted `agent_adapter` calls move through
+queued/running/succeeded/failed/cancelled RoleCall states, run inside isolated
+TaskRunner worktrees, link back to `task_runs`, and reuse existing run
+metadata, verification, diff, risk, and adapter preflight evidence.
+Caller reinjection is modeled as compact structured context, not role-to-role
+chat. Decision, result, todo, and event summaries feed the caller's next
+bounded continuation only when convergence rules show the graph is idle and
+below continuation limits; pending calls, waiting approvals, and final answers
+stop further automatic role expansion.
+Desktop role-call review is a renderer-safe projection over those local
+records. The Electron thread service reads RoleCall, RoleTodo, and
+RoleCallEvent repositories in the main process, attaches a bounded
+`RoleCallUiSummary` to assistant messages, and the sandboxed renderer shows
+only compact transcript chips plus a collapsed Role Details inspector for the
+graph, todos, events, evidence, disabled retry/cancel/approval placeholders,
+and raw JSON snippets.
+CLI audit parity is read-only over the same repositories. The CLI runtime owns
+RoleCall, RoleCallEvent, and RoleTodo repositories alongside existing task/run
+repositories, and `role-calls`, `role-todos`, and `role-events` commands render
+either compact tabular output or stable JSON. RoleCall detail output links to
+existing run evidence commands only when a persisted TaskRunner run is linked,
+preserving the normal quiet `run` output path.
+Governance hardening stays inside the same local core and safety boundaries.
+The policy validator deterministically enforces caller delegation, callee
+intake, project graph limits, duplicate suppression, todo capacity, executor
+availability, dangerous command blocking, and approval gates for file writes,
+shell commands, network access, and high-risk target roles. Role approval-policy
+labels are normalized before comparison so local role manifests can express
+those gates without prompt-only permission assumptions. The Orchestrator exposes
+explicit retry and cancellation ledger transitions for existing calls: retry can
+only move `deferred` or `waiting_approval` calls back to `accepted`, records an
+audited accepted event, and updates or creates the callee todo; cancellation
+records a cancellation event and cancels the linked todo. These operations do
+not grant hidden approvals, run executors by themselves, apply patches, merge,
+push, create pull requests, export repository context, or approve memory.
 
 The interaction simplification and post-MVP UX phases are documented in
 `docs/interaction-optimization-roadmap.md`. Those phases should remain layered

@@ -1952,6 +1952,38 @@ select:focus-visible {
   color: var(--gray);
 }
 
+.role-call-affordance-row {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  gap: 7px;
+  align-items: center;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.role-call-details-button {
+  display: inline-flex;
+  align-items: center;
+  min-height: 26px;
+  max-width: 100%;
+  padding: 4px 9px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.055);
+  color: #f4efe4;
+  font-size: 11px;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.role-call-details-button:hover {
+  border-color: rgba(103, 216, 196, 0.46);
+  background: rgba(103, 216, 196, 0.1);
+  color: var(--cyan);
+}
+
 .mention-chip {
   display: inline-flex;
   align-items: center;
@@ -3066,6 +3098,216 @@ select:focus-visible {
   min-height: 0;
   overflow: auto;
   padding: 16px;
+}
+
+.role-call-inspector {
+  width: min(960px, 72vw);
+}
+
+.role-call-inspector .inspector-title-copy p {
+  margin: 7px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.role-call-status-strip {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.role-call-inspector-body {
+  display: grid;
+  align-content: start;
+  gap: 14px;
+}
+
+.role-call-section,
+.role-call-collapsible {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.role-call-section {
+  display: grid;
+  gap: 0;
+}
+
+.role-call-section-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 11px 13px;
+  border-bottom: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.role-call-section-heading small {
+  color: var(--muted-2);
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: none;
+}
+
+.role-call-graph-list,
+.role-call-todo-list,
+.role-call-event-stream,
+.role-call-evidence-list,
+.role-call-raw-json-list {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+}
+
+.role-call-card,
+.role-call-todo-row,
+.role-call-evidence-row {
+  display: grid;
+  min-width: 0;
+  gap: 10px;
+  align-items: start;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.18);
+}
+
+.role-call-card {
+  grid-template-columns: minmax(0, 1fr) auto;
+  padding: 12px;
+}
+
+.role-call-card-main {
+  display: grid;
+  min-width: 0;
+  gap: 6px;
+}
+
+.role-call-card-main strong,
+.role-call-todo-row strong,
+.role-call-evidence-row strong {
+  min-width: 0;
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.role-call-card-main p,
+.role-call-evidence-row p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.role-call-edge {
+  color: var(--cyan);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+  font-weight: 900;
+  overflow-wrap: anywhere;
+}
+
+.role-call-card-meta {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 6px;
+  max-width: 240px;
+}
+
+.role-call-todo-row {
+  grid-template-columns: minmax(0, 1fr) auto;
+  padding: 10px 12px;
+}
+
+.role-call-todo-row div {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.role-call-todo-row span:not(.timeline-chip) {
+  color: var(--muted);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.role-call-collapsible {
+  padding: 0;
+}
+
+.role-call-collapsible summary {
+  min-height: 42px;
+  padding: 12px 13px;
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.role-call-event-row {
+  display: grid;
+  grid-template-columns: 56px 150px minmax(0, 1fr);
+  gap: 9px;
+  align-items: start;
+  padding: 9px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.role-call-event-row:last-child {
+  border-bottom: 0;
+}
+
+.role-call-event-row span,
+.role-call-event-row strong {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.role-call-event-row p {
+  margin: 0;
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.role-call-evidence-row {
+  grid-template-columns: auto minmax(0, 1fr);
+  padding: 10px;
+}
+
+.role-call-raw-json-list pre {
+  max-height: 260px;
+  margin: 0;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px;
+  background: rgba(0, 0, 0, 0.24);
+  color: #e9e2d6;
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.role-call-empty-state {
+  margin: 0;
+  padding: 12px;
+  color: var(--muted);
+  font-size: 13px;
 }
 
 .settings-body {
@@ -4616,5 +4858,21 @@ select:focus-visible {
   .workflow-form-grid,
   .workflow-mode-tabs {
     grid-template-columns: 1fr;
+  }
+
+  .role-call-inspector {
+    width: 100%;
+  }
+
+  .role-call-card,
+  .role-call-todo-row,
+  .role-call-event-row,
+  .role-call-evidence-row {
+    grid-template-columns: 1fr;
+  }
+
+  .role-call-card-meta {
+    justify-content: flex-start;
+    max-width: none;
   }
 }

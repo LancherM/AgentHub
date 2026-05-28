@@ -3,7 +3,11 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import type { DiffCollectionResult } from "@agent-hub/task-runner";
 import type { RiskReport } from "@agent-hub/core";
-import { presetWorkgroupRoles, toWorkgroupRoleRunMetadata } from "@agent-hub/core";
+import {
+  conservativePermissionSet,
+  presetWorkgroupRoles,
+  toWorkgroupRoleRunMetadata
+} from "@agent-hub/core";
 import { SQLITE_MIGRATIONS, createSqliteRepositories } from "@agent-hub/db";
 import type { VerificationSuiteResult } from "@agent-hub/task-runner";
 import type { Workspace, WorkspaceCleanupResult } from "@agent-hub/task-runner";
@@ -37,7 +41,8 @@ describe("SQLite storage", () => {
       { version: 8 },
       { version: 9 },
       { version: 10 },
-      { version: 11 }
+      { version: 11 },
+      { version: 12 }
     ]);
     await expect(
       database.query<{ name: string }>(
@@ -63,6 +68,9 @@ describe("SQLite storage", () => {
         { name: "task_runs" },
         { name: "run_events" },
         { name: "run_artifacts" },
+        { name: "role_call_events" },
+        { name: "role_calls" },
+        { name: "role_todos" },
         { name: "verification_results" },
         { name: "risk_reports" },
         { name: "conversation_threads" },
@@ -525,6 +533,228 @@ describe("SQLite storage", () => {
     ]);
   });
 
+  it("persists role calls, role call events, and role todos as first-class records", async () => {
+    const baseDirectory = await createTestDirectory("sqlite-role-calls");
+    const databasePath = path.join(baseDirectory, "agent-hub.sqlite");
+    const first = createSqliteRepositories({ databasePath });
+    await first.projectRepository.create({
+      id: "project_role_calls",
+      name: "Role Calls",
+      rootPath: path.join(baseDirectory, "source"),
+      createdAt,
+      updatedAt: createdAt
+    });
+    await first.taskRepository.create({
+      id: "task_role_calls",
+      projectId: "project_role_calls",
+      title: "Role call storage",
+      status: "open",
+      createdAt,
+      updatedAt: createdAt
+    });
+    await first.taskRunRepository.create({
+      id: "run_role_call",
+      taskId: "task_role_calls",
+      agentKind: "fake",
+      status: "queued",
+      createdAt,
+      updatedAt: createdAt
+    });
+    await first.conversationThreadRepository.create({
+      id: "thread_role_calls",
+      projectId: "project_role_calls",
+      title: "Role call graph",
+      createdAt,
+      updatedAt: createdAt
+    });
+    await first.conversationMessageRepository.create({
+      id: "message_role_calls",
+      threadId: "thread_role_calls",
+      sequence: 0,
+      role: "assistant",
+      kind: "text",
+      content: "@operator inspect the failed run",
+      createdAt
+    });
+
+    await first.roleCallRepository.create({
+      id: "role_call_1",
+      threadId: "thread_role_calls",
+      parentMessageId: "message_role_calls",
+      callerRole: "analyst",
+      calleeRole: "operator",
+      task: "Inspect the failed run and report root cause.",
+      reason: "The analyst needs local run evidence.",
+      context: {
+        userGoal: "Fix the failed run.",
+        constraints: ["Stay local-first"]
+      },
+      permissions: { ...conservativePermissionSet },
+      expectedOutput: { format: "json", requiredEvidence: ["run event"] },
+      priority: "normal",
+      depth: 1,
+      status: "proposed",
+      createdAt
+    });
+    await first.roleCallEventRepository.createMany([
+      {
+        id: "role_call_event_1",
+        roleCallId: "role_call_1",
+        threadId: "thread_role_calls",
+        type: "created",
+        actorRole: "analyst",
+        message: "Role call created.",
+        metadata: { intentType: "delegate" },
+        createdAt
+      },
+      {
+        id: "role_call_event_2",
+        roleCallId: "role_call_1",
+        threadId: "thread_role_calls",
+        type: "assessment_started",
+        actorRole: "operator",
+        message: "Operator is assessing the request.",
+        createdAt: updatedAt
+      }
+    ]);
+    await first.roleCallRepository.updateStatus(
+      "role_call_1",
+      "assessing",
+      updatedAt
+    );
+    const assessingCall = await first.roleCallRepository.get("role_call_1");
+    if (!assessingCall) {
+      throw new Error("missing role call");
+    }
+    await first.roleCallRepository.update({
+      ...assessingCall,
+      status: "accepted",
+      decision: {
+        disposition: "accepted",
+        reason: "The operator can inspect local run evidence.",
+        evidence: ["thread_role_calls"]
+      }
+    });
+    await first.roleTodoRepository.create({
+      id: "role_todo_1",
+      threadId: "thread_role_calls",
+      role: "operator",
+      sourceRoleCallId: "role_call_1",
+      title: "Inspect failed run",
+      status: "in_progress",
+      priority: "normal",
+      relatedRoleCallIds: ["role_call_1"],
+      createdAt,
+      updatedAt
+    });
+    const acceptedCall = await first.roleCallRepository.get("role_call_1");
+    if (!acceptedCall) {
+      throw new Error("missing accepted role call");
+    }
+    await first.roleCallRepository.update({
+      ...acceptedCall,
+      todoId: "role_todo_1"
+    });
+    await first.roleCallRepository.linkTaskRun("role_call_1", "run_role_call");
+    await first.roleTodoRepository.updateStatus(
+      "role_todo_1",
+      "deferred",
+      "2026-01-01T00:00:02.000Z"
+    );
+    await first.roleCallRepository.create({
+      id: "role_call_child",
+      threadId: "thread_role_calls",
+      parentRoleCallId: "role_call_1",
+      callerRole: "operator",
+      calleeRole: "reviewer",
+      task: "Review the operator findings for risk.",
+      context: { userGoal: "Fix the failed run." },
+      permissions: { ...conservativePermissionSet },
+      expectedOutput: { format: "summary" },
+      priority: "low",
+      depth: 2,
+      status: "proposed",
+      createdAt: "2026-01-01T00:00:03.000Z"
+    });
+
+    const second = createSqliteRepositories({ databasePath });
+    await expect(second.roleCallRepository.get("role_call_1")).resolves.toEqual(
+      expect.objectContaining({
+        id: "role_call_1",
+        parentMessageId: "message_role_calls",
+        status: "accepted",
+        taskRunId: "run_role_call",
+        todoId: "role_todo_1",
+        decision: expect.objectContaining({ disposition: "accepted" })
+      })
+    );
+    await expect(
+      second.roleCallRepository.list({ threadId: "thread_role_calls" })
+    ).resolves.toHaveLength(2);
+    await expect(
+      second.roleCallRepository.list({ role: "operator" })
+    ).resolves.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "role_call_1" }),
+        expect.objectContaining({ id: "role_call_child" })
+      ])
+    );
+    await expect(
+      second.roleCallRepository.list({ parentRoleCallId: "role_call_1" })
+    ).resolves.toEqual([
+      expect.objectContaining({ id: "role_call_child", depth: 2 })
+    ]);
+    await expect(
+      second.roleCallRepository.list({ todoStatus: "deferred" })
+    ).resolves.toEqual([
+      expect.objectContaining({ id: "role_call_1", todoId: "role_todo_1" })
+    ]);
+    await expect(
+      second.roleTodoRepository.list({
+        threadId: "thread_role_calls",
+        role: "operator",
+        status: "deferred"
+      })
+    ).resolves.toEqual([
+      expect.objectContaining({
+        id: "role_todo_1",
+        sourceRoleCallId: "role_call_1",
+        completedAt: undefined
+      })
+    ]);
+    await expect(
+      second.roleCallEventRepository.listByRoleCallId("role_call_1")
+    ).resolves.toEqual([
+      expect.objectContaining({ id: "role_call_event_1", type: "created" }),
+      expect.objectContaining({
+        id: "role_call_event_2",
+        type: "assessment_started"
+      })
+    ]);
+    await expect(roleCallJsonConstraint(second.database)).resolves.toBe(true);
+
+    await second.database.execute("DELETE FROM task_runs WHERE id = 'run_role_call';");
+    await expect(second.roleCallRepository.get("role_call_1")).resolves.toEqual(
+      expect.objectContaining({ taskRunId: undefined })
+    );
+    await second.database.execute(
+      "DELETE FROM conversation_messages WHERE id = 'message_role_calls';"
+    );
+    await expect(second.roleCallRepository.get("role_call_1")).resolves.toEqual(
+      expect.objectContaining({ parentMessageId: undefined })
+    );
+    await second.database.execute(
+      "DELETE FROM conversation_threads WHERE id = 'thread_role_calls';"
+    );
+    await expect(second.roleCallRepository.list({ threadId: "thread_role_calls" }))
+      .resolves.toEqual([]);
+    await expect(second.roleTodoRepository.list({ threadId: "thread_role_calls" }))
+      .resolves.toEqual([]);
+    await expect(
+      second.roleCallEventRepository.listByThreadId("thread_role_calls")
+    ).resolves.toEqual([]);
+  });
+
   it("enforces imported SQLite constraints for relationships, enums, JSON, and event order", async () => {
     const baseDirectory = await createTestDirectory("sqlite-constraints");
     const databasePath = path.join(baseDirectory, "agent-hub.sqlite");
@@ -916,7 +1146,8 @@ VALUES (
       { version: 8 },
       { version: 9 },
       { version: 10 },
-      { version: 11 }
+      { version: 11 },
+      { version: 12 }
     ]);
   });
 
@@ -967,7 +1198,8 @@ VALUES (
       { version: 8 },
       { version: 9 },
       { version: 10 },
-      { version: 11 }
+      { version: 11 },
+      { version: 12 }
     ]);
     await expect(repositories.database.execute(`
 INSERT INTO tasks (id, project_id, title, status, created_at, updated_at)
@@ -1040,7 +1272,8 @@ VALUES ('message_summary_legacy', 'thread_summary_legacy', 0, 'user', 'text', 'P
       { version: 8 },
       { version: 9 },
       { version: 10 },
-      { version: 11 }
+      { version: 11 },
+      { version: 12 }
     ]);
   });
 
@@ -1073,7 +1306,8 @@ ALTER TABLE task_runs
       { version: 8 },
       { version: 9 },
       { version: 10 },
-      { version: 11 }
+      { version: 11 },
+      { version: 12 }
     ]);
     await expect(
       repositories.database.query<{ name: string }>(
@@ -1194,6 +1428,17 @@ VALUES (
 `)).rejects.toThrow();
   });
 });
+
+async function roleCallJsonConstraint(
+  database: ReturnType<typeof createSqliteRepositories>["database"]
+): Promise<boolean> {
+  await expect(database.execute(`
+UPDATE role_calls
+SET context_json = '{bad'
+WHERE id = 'role_call_1';
+`)).rejects.toThrow();
+  return true;
+}
 
 function workspace(baseDirectory: string): Workspace {
   return {
