@@ -3501,26 +3501,61 @@ describe("desktop services", () => {
     const projects = createProjectService(context);
     const memory = createMemoryService(context);
     const review = createReviewService(context, { memoryService: memory });
+    const roleResultJson = JSON.stringify({
+      summary: "123",
+      evidence: ["RoleCall.task states: output exactly 123."],
+      commandsRun: [],
+      filesTouched: [],
+      patchSummary: "No changes.",
+      risks: [],
+      nextSteps: ["none"]
+    });
     const processRunner = new MockProcessRunner(
       [
         [
           {
             type: "stdout",
-            data: "{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"@researcher output exactly 123\\n@reviewer output exactly 123\"}}\n"
+            data: "{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"@researcher output exactly 123 @engineer output exactly 123\"}}\n"
           },
           { type: "exit", exitCode: 0, signal: null }
         ],
         [
           {
             type: "stdout",
-            data: "{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"123\"}}\n"
+            data: JSON.stringify({
+              type: "item.completed",
+              item: {
+                type: "agent_message",
+                text: "Using the provided Agent Hub role brief."
+              }
+            }) + "\n"
+          },
+          {
+            type: "stdout",
+            data: JSON.stringify({
+              type: "item.completed",
+              item: { type: "agent_message", text: roleResultJson }
+            }) + "\n"
           },
           { type: "exit", exitCode: 0, signal: null }
         ],
         [
           {
             type: "stdout",
-            data: "{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"123\"}}\n"
+            data: JSON.stringify({
+              type: "item.completed",
+              item: {
+                type: "agent_message",
+                text: "Using the provided Agent Hub role brief."
+              }
+            }) + "\n"
+          },
+          {
+            type: "stdout",
+            data: JSON.stringify({
+              type: "item.completed",
+              item: { type: "agent_message", text: roleResultJson }
+            }) + "\n"
           },
           { type: "exit", exitCode: 0, signal: null }
         ]
@@ -3533,7 +3568,7 @@ describe("desktop services", () => {
     const roles = presetWorkgroupRoles.map((role) =>
       role.handle === "analyst" ||
       role.handle === "researcher" ||
-      role.handle === "reviewer"
+      role.handle === "engineer"
         ? { ...role, executor: { kind: "agent_adapter" as const, adapterKind: "codex" as const } }
         : role
     );
@@ -3567,12 +3602,12 @@ describe("desktop services", () => {
         message.roleCallId !== undefined
     );
     expect(delegatedRunMessages.map((message) => message.assignment?.roleHandle).sort()).toEqual([
+      "engineer",
       "researcher",
-      "reviewer"
     ]);
     expect(delegatedRunMessages.map((message) => message.taskTitle).sort()).toEqual([
+      "Role call: @engineer output exactly 123",
       "Role call: @researcher output exactly 123",
-      "Role call: @reviewer output exactly 123"
     ]);
     for (const delegatedRunMessage of delegatedRunMessages) {
       await waitForRun(runs, delegatedRunMessage.runId, "completed");
@@ -3587,7 +3622,12 @@ describe("desktop services", () => {
     expect(brief?.content).toContain("role_call_protocol:");
     expect(brief?.content).toContain("available_role_calls:");
     expect(brief?.content).toContain("@operator");
-    expect(brief?.content).toContain("@reviewer");
+    expect(brief?.content).toContain("@engineer");
+    const availableRoleCallsLine = brief?.content
+      .split("\n")
+      .find((line) => line.includes("available_role_calls:"));
+    expect(availableRoleCallsLine).toContain("@engineer");
+    expect(availableRoleCallsLine).not.toContain("@memory");
 
     const roleCalls = await fixture.repositories.roleCallRepository.list({
       threadId: detail.id
@@ -3603,7 +3643,7 @@ describe("desktop services", () => {
       }),
       expect.objectContaining({
         callerRole: "analyst",
-        calleeRole: "reviewer",
+        calleeRole: "engineer",
         task: "output exactly 123",
         status: "succeeded",
         taskRunId: expect.any(String),
@@ -3627,7 +3667,7 @@ describe("desktop services", () => {
         }),
         expect.objectContaining({
           callerRole: "analyst",
-          calleeRole: "reviewer",
+          calleeRole: "engineer",
           status: "succeeded",
           resultSummary: "123",
           taskRunId: expect.any(String)
@@ -3668,7 +3708,7 @@ describe("desktop services", () => {
         title: "output exactly 123"
       }),
       expect.objectContaining({
-        role: "reviewer",
+        role: "engineer",
         status: "done",
         title: "output exactly 123"
       })

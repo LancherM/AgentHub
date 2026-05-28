@@ -73,6 +73,7 @@ import {
   buildRoleCallUiSummary,
   roleCallSummaryFromMetadata
 } from "../../src/lib/role-call-ui";
+import { roleResultSummaryFromText } from "../../src/lib/role-result-output";
 import {
   parseWorkgroupMentions,
   type WorkgroupMentionParticipant
@@ -2669,8 +2670,16 @@ function roleProtocolReferences(
   if (!role) {
     return [];
   }
+  const caller = roles.find((entry) => entry.handle === role.roleHandle);
+  const callerPolicy = caller ? roleDelegationPolicy(caller) : undefined;
   const available = roles
-    .filter((entry) => entry.enabled && entry.handle !== role.roleHandle)
+    .filter(
+      (entry) =>
+        entry.enabled &&
+        entry.handle !== role.roleHandle &&
+        callerPolicy !== undefined &&
+        roleDelegationPolicyAllowsTarget(callerPolicy, entry)
+    )
     .slice(0, 12)
     .map((entry) =>
       `@${entry.handle}: ${entry.purpose}; executor=${executorReference(entry)}; capability=${entry.capabilitySummary}`
@@ -2773,8 +2782,7 @@ function roleDelegationPolicy(role: WorkgroupRole): RoleDefinition["delegationPo
     return {
       canInitiateRoleCalls: true,
       allowedIntentTypes: ["delegate", "request_analysis", "request_review", "request_evidence"],
-      allowedTargetRoles: ["operator", "reviewer", "researcher", "writer"],
-      requiresApprovalForTargets: ["engineer"]
+      allowedTargetRoles: ["operator", "reviewer", "researcher", "writer", "engineer"]
     };
   }
   if (role.handle === "operator") {
@@ -2799,6 +2807,29 @@ function roleDelegationPolicy(role: WorkgroupRole): RoleDefinition["delegationPo
     allowedTargetCapabilities: [],
     requiresApprovalForTargets: ["operator", "engineer"]
   };
+}
+
+function roleDelegationPolicyAllowsTarget(
+  policy: RoleDefinition["delegationPolicy"],
+  target: WorkgroupRole
+): boolean {
+  if (!policy.canInitiateRoleCalls) {
+    return false;
+  }
+  const allowedTargetRoles = policy.allowedTargetRoles ?? [];
+  const allowedTargetCapabilities = policy.allowedTargetCapabilities ?? [];
+  if (allowedTargetRoles.includes(target.handle) || allowedTargetRoles.includes("*")) {
+    return true;
+  }
+  const targetCapabilities = roleCapabilities(target);
+  if (
+    targetCapabilities.some((capability) =>
+      allowedTargetCapabilities.includes(capability)
+    )
+  ) {
+    return true;
+  }
+  return allowedTargetRoles.length === 0 && allowedTargetCapabilities.length === 0;
 }
 
 function roleIntakePolicy(role: WorkgroupRole): RoleDefinition["intakePolicy"] {
@@ -3247,6 +3278,10 @@ function isInternalTimelineMessage(message: ConversationMessage): boolean {
 }
 
 function terminalAssistantContent(run: ConversationRunSnapshot): string {
+  const roleResultSummary = latestRoleResultSummary(run.events);
+  if (roleResultSummary) {
+    return truncateAssistantContent(roleResultSummary);
+  }
   const extracted = extractAgentFacingOutput(
     {
       events: run.events.map(toAgentOutputEvent)
@@ -3257,6 +3292,23 @@ function terminalAssistantContent(run: ConversationRunSnapshot): string {
     }
   ).trim();
   return truncateAssistantContent(extracted || terminalStatusSummary(run));
+}
+
+function latestRoleResultSummary(events: readonly RunEvent[]): string | undefined {
+  for (const event of [...events].reverse()) {
+    const message =
+      typeof event.payload.message === "string"
+        ? event.payload.message.trim()
+        : "";
+    if (!message) {
+      continue;
+    }
+    const summary = roleResultSummaryFromText(message);
+    if (summary) {
+      return summary;
+    }
+  }
+  return undefined;
 }
 
 function toAgentOutputEvent(event: RunEvent): {

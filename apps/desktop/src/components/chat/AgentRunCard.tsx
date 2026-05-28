@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { agentHubApi } from "../../lib/agentHubApi";
 import { findCliUnavailableDiagnostic } from "../../lib/cli-diagnostics";
+import { roleResultSummaryFromText } from "../../lib/role-result-output";
 import {
   buildRunProgress,
   isActiveRunStatus,
@@ -496,10 +497,10 @@ function latestAgentFacingText(events: RunEvent[]): string | undefined {
       continue;
     }
     if (event.payload.assistantOutput === true) {
-      return message;
+      return roleResultSummaryFromText(message) ?? message;
     }
     if (event.type === "agent_step" && isAssistantAdapterEvent(event.payload.adapterEvent)) {
-      return message;
+      return roleResultSummaryFromText(message) ?? message;
     }
   }
   return undefined;

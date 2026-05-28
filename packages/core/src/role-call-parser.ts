@@ -43,6 +43,7 @@ interface PendingIntent {
 }
 
 const lineStartRoleCallPattern = /^[ \t]*@([a-z][a-z0-9_-]*)\b[ \t]*(.*)$/i;
+const inlineRoleCallPattern = /(^|\s)@([a-z][a-z0-9_-]*)\b[ \t]*/gi;
 const fencePattern = /^[ \t]*```/;
 
 export function parseRoleCallIntents(
@@ -133,12 +134,19 @@ export function parseRoleCallIntents(
         });
         return;
       }
-      pending = {
-        targetRole,
-        lineStart: lineNumber,
-        taskLines: [match[2].trim()].filter(Boolean),
-        rawLines: [line]
-      };
+      const segments = splitInlineRoleCalls({
+        firstRole: targetRole,
+        rest: match[2],
+        rawLine: line,
+        lineNumber,
+        knownRoles
+      });
+      segments.forEach((segment, segmentIndex) => {
+        pending = segment;
+        if (segmentIndex < segments.length - 1) {
+          flush(lineNumber);
+        }
+      });
       return;
     }
 
@@ -159,4 +167,68 @@ export function parseRoleCallIntents(
 
 function normalizeTaskForDuplicateCheck(value: string): string {
   return value.replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+function splitInlineRoleCalls(input: {
+  firstRole: string;
+  rest: string;
+  rawLine: string;
+  lineNumber: number;
+  knownRoles: ReadonlySet<string>;
+}): PendingIntent[] {
+  const matches = [...input.rest.matchAll(inlineRoleCallPattern)]
+    .map((match) => {
+      const role = match[2].toLowerCase();
+      if (!input.knownRoles.has(role)) {
+        return undefined;
+      }
+      const markerStart = (match.index ?? 0) + match[1].length;
+      return {
+        role,
+        markerStart,
+        taskStart: markerStart + match[0].length - match[1].length
+      };
+    })
+    .filter((match): match is { role: string; markerStart: number; taskStart: number } =>
+      match !== undefined
+    );
+  if (matches.length === 0) {
+    return [pendingIntent(input.firstRole, input.rest, input.rawLine, input.lineNumber)];
+  }
+
+  const segments: PendingIntent[] = [];
+  segments.push(
+    pendingIntent(
+      input.firstRole,
+      input.rest.slice(0, matches[0].markerStart),
+      input.rawLine,
+      input.lineNumber
+    )
+  );
+  matches.forEach((match, index) => {
+    const next = matches[index + 1];
+    segments.push(
+      pendingIntent(
+        match.role,
+        input.rest.slice(match.taskStart, next?.markerStart),
+        input.rawLine,
+        input.lineNumber
+      )
+    );
+  });
+  return segments;
+}
+
+function pendingIntent(
+  targetRole: string,
+  taskText: string,
+  rawLine: string,
+  lineNumber: number
+): PendingIntent {
+  return {
+    targetRole,
+    lineStart: lineNumber,
+    taskLines: [taskText.trim()].filter(Boolean),
+    rawLines: [rawLine]
+  };
 }

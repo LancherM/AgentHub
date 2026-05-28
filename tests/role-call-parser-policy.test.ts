@@ -67,6 +67,18 @@ const reviewer = role({
   displayName: "Reviewer",
   capabilities: ["review", "risk"]
 });
+const researcher = role({
+  id: "role_researcher",
+  handle: "researcher",
+  displayName: "Researcher",
+  capabilities: ["analysis", "research"]
+});
+const engineer = role({
+  id: "role_engineer",
+  handle: "engineer",
+  displayName: "Engineer",
+  capabilities: ["implementation"]
+});
 
 describe("role call parser and policy", () => {
   it("parses line-start role calls without using broad mention fan-out", () => {
@@ -105,6 +117,27 @@ describe("role call parser and policy", () => {
         expect.objectContaining({ type: "duplicate_intent", role: "operator" })
       ])
     );
+  });
+
+  it("splits multiple same-line role calls from a role response", () => {
+    const result = parseRoleCallIntents(
+      "@researcher output 3 @engineer output 3",
+      { knownRoles: [analyst, researcher, engineer] }
+    );
+
+    expect(result.intents.map((entry) => entry.intent)).toEqual([
+      expect.objectContaining({
+        type: "delegate",
+        targetRole: "researcher",
+        task: "output 3"
+      }),
+      expect.objectContaining({
+        type: "delegate",
+        targetRole: "engineer",
+        task: "output 3"
+      })
+    ]);
+    expect(result.warnings).toEqual([]);
   });
 
   it("allows explicit custom qa to analyst policy and denies default random delegation", () => {
