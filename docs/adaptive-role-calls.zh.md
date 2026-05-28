@@ -86,6 +86,25 @@ Reason: operator is completing the current patch and queued the reviewer finding
 角色定义描述角色能做什么、默认上下文、默认权限、执行器和输出要求。
 
 ```ts
+type RoleTrustLevel = "preset" | "user_defined" | "restricted";
+
+interface DelegationPolicy {
+  canInitiateRoleCalls: boolean;
+  allowedIntentTypes: RoleIntentType[];
+  allowedTargetRoles?: string[];
+  allowedTargetCapabilities?: string[];
+  requiresApprovalForTargets?: string[];
+}
+
+interface IntakePolicy {
+  acceptsRoleCalls: boolean;
+  acceptedCallerRoles?: string[];
+  acceptedCallerCapabilities?: string[];
+  acceptedIntentTypes: RoleIntentType[];
+  canReject: boolean;
+  canDefer: boolean;
+}
+
 interface RoleDefinition {
   id: string;
   handle: string;
@@ -96,10 +115,17 @@ interface RoleDefinition {
   permissions: PermissionSet;
   contextPolicy: RoleContextPolicy;
   approvalPolicy: RoleApprovalPolicy;
+  delegationPolicy: DelegationPolicy;
+  intakePolicy: IntakePolicy;
   executor: RoleExecutor;
+  trustLevel: RoleTrustLevel;
   enabled: boolean;
 }
 ```
+
+预设角色可以带有较完整的默认策略。用户自定义角色必须使用保守默认值：默认不允许
+发起 RoleCall，或只允许请求低风险的 review/analysis；涉及 operator、engineer、
+文件写入、shell、网络或外部副作用的目标必须由用户显式配置或审批。
 
 ### RoleIntent
 
@@ -334,6 +360,8 @@ Orchestrator 是系统运行时组件，不是角色。它不产出面向用户�
 - 解析 role 输出中的结构化意图和行首 mention 语法。
 - 校验调用方是否允许提出该类型请求。
 - 校验被调用方能力、权限、上下文预算、深度、并发和循环风险。
+- 对自定义角色读取 `delegationPolicy`、`intakePolicy`、项目策略和审批状态，
+  用确定性规则判断调用权。
 - 创建 `RoleCall`、`RoleCallEvent` 和必要的 `RoleTodo`。
 - 为每次调用构建紧凑 `RoleCallContext`，而不是传整条 thread。
 - 启动被调用角色的接单判断。
@@ -342,6 +370,55 @@ Orchestrator 是系统运行时组件，不是角色。它不产出面向用户�
 - 校验 `RoleResult` schema。
 - 把 decision/result/todo 事件注入调用方后续上下文。
 - 保持 SQLite 审计记录和 UI 调用图一致。
+
+Orchestrator 固定的是判定算法，不固定具体角色关系。判断一个角色是否可以调用
+另一个角色时，它必须依次检查：
+
+1. caller role 存在、启用，且不处于 blocked/cancelled 状态。
+2. callee role 存在、启用，并声明可以接受 RoleCall。
+3. caller 的 `delegationPolicy.canInitiateRoleCalls` 为 true。
+4. caller 允许当前 intent 类型，例如 `delegate`、`request_review` 或
+   `request_evidence`。
+5. caller 的 `allowedTargetRoles` 直接包含 callee，或
+   `allowedTargetCapabilities` 能匹配 callee 的能力。
+6. callee 的 `intakePolicy` 接受 caller role、caller capability 和当前 intent 类型。
+7. 请求权限没有超过项目策略、caller 权限、callee 权限和执行器可提供的能力。
+8. depth、并发、每轮新增调用数、循环检测、重复任务和 todo 容量均通过。
+9. 目标或权限命中 `requiresApprovalForTargets` 或项目审批规则时，RoleCall 进入
+   `waiting_approval`，而不是直接执行。
+10. 即使策略允许，callee 仍可在接单阶段返回 accepted、rejected、deferred、
+    needs_context 或 needs_approval。
+
+例如用户自定义 `@qa` 能否调用 `@analyst`，不由 Orchestrator 猜测，而由双向策略决定：
+
+```ts
+const qaRole = {
+  handle: "qa",
+  capabilities: ["test_planning", "regression_detection"],
+  delegationPolicy: {
+    canInitiateRoleCalls: true,
+    allowedIntentTypes: ["request_analysis", "request_review"],
+    allowedTargetCapabilities: ["analysis", "review"]
+  }
+};
+
+const analystRole = {
+  handle: "analyst",
+  capabilities: ["analysis", "planning"],
+  intakePolicy: {
+    acceptsRoleCalls: true,
+    acceptedIntentTypes: ["request_analysis", "delegate"],
+    acceptedCallerCapabilities: ["test_planning", "implementation", "review"],
+    canReject: true,
+    canDefer: true
+  }
+};
+```
+
+在这个例子里，`@qa -> @analyst` 的 `request_analysis` 可以成立，因为 caller
+允许发起该 intent，目标能力匹配 `analysis`，且 analyst 接受具备 `test_planning`
+能力的 caller。若新建 `@random` 没有显式 delegation policy，它默认不能调用
+`@analyst`；用户必须在角色配置里授予调用能力，或在具体 RoleCall 上批准。
 
 ## 动态协作图
 
@@ -405,8 +482,13 @@ interface RoleExecutionPolicy {
   requireApprovalForDangerousShell: boolean;
   blockDangerousCommands: boolean;
   allowedDelegations: Record<string, string[]>;
+  defaultUserDefinedRoleTrustLevel: RoleTrustLevel;
 }
 ```
+
+`RoleExecutionPolicy.allowedDelegations` 是项目级上限或兼容性配置，不应取代
+`RoleDefinition.delegationPolicy` 和 `RoleDefinition.intakePolicy`。最终判定必须同时满足
+项目上限、caller 发起策略、callee 接单策略和当前审批状态。
 
 危险命令至少包括：
 
@@ -530,4 +612,3 @@ RoleTodoPanel 显示：
 - operator/reviewer 必须返回结构化 RoleResult，schema 不合法时调用失败且可审计。
 - UI 能展示 RoleCallCard、RoleTodoPanel 和调用图。
 - 所有执行仍通过本地 TaskRunner、SQLite、safety、context compiler 和 IPC 边界。
-

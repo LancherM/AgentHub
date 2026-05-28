@@ -954,7 +954,10 @@ parsing, RoleCall policy validation, compact role-call context construction,
 RoleTodo updates, RoleCallEvent persistence, execution scheduling, result
 schema validation, and caller-context reinjection. Role-to-role collaboration
 must remain a dynamic audited graph, not direct role chat and not a fixed
-workflow template.
+workflow template. The Orchestrator hardcodes validation and scheduling
+algorithms, not concrete role relationships: custom-role calls are authorized
+only when caller delegation policy, callee intake policy, project limits,
+executor capabilities, and approval state all permit the requested intent.
 
 The interaction simplification and post-MVP UX phases are documented in
 `docs/interaction-optimization-roadmap.md`. Those phases should remain layered
