@@ -415,12 +415,29 @@ Caller reinjection now summarizes decisions, results, todos, and recent events
 back to the caller role, and graph convergence stops bounded continuation when
 work is pending, approval is blocking, continuation limits are reached, or a
 final answer exists.
-The desktop role-call surface keeps that collaboration collapsed in the main
-transcript: assistant messages can show a compact `n role calls` affordance,
-while a one-click Role Details inspector exposes the RoleCall graph, todo
+The desktop role-call surface keeps the coordination visible in the main
+transcript: assistant messages show a compact `n role calls` affordance, and
+accepted executable calls also create normal delegated role run cards plus
+assistant results when the callee completes. Structured RoleResult JSON is
+summarized to its `summary` field in the main chat and run cards, with the raw
+payload retained for audit details instead of replacing the human-readable
+answer. A one-click Role Details inspector exposes the RoleCall graph, todo
 ledger, event stream, linked evidence, placeholder retry/cancel/approval
 actions, and bounded raw JSON without requiring the renderer to read SQLite,
 filesystem, shell, Git, or child-process state directly.
+Desktop role-backed agent runs also receive an injected role-call protocol and
+available-role directory. When a completed role response emits line-start
+delegation syntax such as `@operator investigate the failed check`, the Electron
+main process parses that output with the dedicated RoleCall parser and persists
+the resulting Orchestrator-owned RoleCall, RoleCallEvent, and RoleTodo records;
+accepted executable calls are then started through the same local TaskRunner
+path, surfaced as delegated role run cards, and linked back to the RoleCall
+evidence. Multiple same-line explicit role calls are split into separate
+bounded RoleCalls, and the injected available-role directory is filtered through
+the caller's delegation policy so roles are not encouraged to target
+policy-blocked peers. The role must not simulate hidden subagents or discover
+role syntax by reading the repository; Agent Hub owns delegation and audit
+state.
 CLI audit parity now exposes the same local records without requiring the
 desktop: `agent-hub role-calls list/show`, `agent-hub role-todos list`, and
 `agent-hub role-events list` provide concise human output plus `--json` for

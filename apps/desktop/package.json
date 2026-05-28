@@ -18,6 +18,7 @@
     "@agent-hub/context-compiler": "workspace:*",
     "@agent-hub/core": "workspace:*",
     "@agent-hub/db": "workspace:*",
+    "@agent-hub/safety": "workspace:*",
     "@agent-hub/shared": "workspace:*",
     "@agent-hub/task-runner": "workspace:*",
     "react": "^18.3.1",

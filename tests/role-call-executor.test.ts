@@ -14,7 +14,8 @@ import {
   InMemoryRunMetadataRepository,
   InMemoryTaskRunRepository,
   type RoleCall,
-  type RoleDefinition
+  type RoleDefinition,
+  type RoleTodo
 } from "@agent-hub/core";
 import {
   FixedClock,
@@ -97,6 +98,23 @@ function acceptedCall(overrides: Partial<RoleCall> = {}): RoleCall {
   };
 }
 
+function roleTodo(overrides: Partial<RoleTodo> = {}): RoleTodo {
+  return {
+    id: "role_todo_1",
+    threadId: "thread_1",
+    role: "operator",
+    sourceRoleCallId: "role_call_1",
+    title: "Inspect failed run evidence.",
+    status: "in_progress",
+    priority: "normal",
+    reason: "Operator accepted the task.",
+    relatedRoleCallIds: ["role_call_1"],
+    createdAt,
+    updatedAt: createdAt,
+    ...overrides
+  };
+}
+
 describe("role call TaskRunner executor", () => {
   it("executes accepted fake role calls through TaskRunner and links run evidence", async () => {
     const projectRoot = await createTestDirectory("role-call-project");
@@ -107,7 +125,8 @@ describe("role call TaskRunner executor", () => {
     const roleCallEventRepository = new InMemoryRoleCallEventRepository();
     const taskRunRepository = new InMemoryTaskRunRepository();
     const runMetadataRepository = new InMemoryRunMetadataRepository();
-    await roleCallRepository.create(acceptedCall());
+    await roleTodoRepository.create(roleTodo());
+    await roleCallRepository.create(acceptedCall({ todoId: "role_todo_1" }));
     const runner = new TaskRunner({
       defaultRunRoot: runRoot,
       workspaceManager: new TestWorkspaceManager(runRoot),
@@ -120,7 +139,7 @@ describe("role call TaskRunner executor", () => {
     });
     const executor = new RoleCallTaskRunnerExecutor({
       taskRunner: runner,
-      repositories: { roleCallRepository, roleCallEventRepository },
+      repositories: { roleCallRepository, roleCallEventRepository, roleTodoRepository },
       roles: [role({})],
       idFactory: createIdFactory(),
       now: () => createdAt
@@ -136,7 +155,7 @@ describe("role call TaskRunner executor", () => {
     expect(result.run?.status).toBe("succeeded");
     expect(result.result).toEqual(
       expect.objectContaining({
-        summary: expect.stringContaining("TaskRunner run"),
+        summary: "fake agent completed",
         filesTouched: ["fake-agent-output.md"]
       })
     );
@@ -164,8 +183,12 @@ describe("role call TaskRunner executor", () => {
     ).resolves.toEqual([
       expect.objectContaining({ type: "queued" }),
       expect.objectContaining({ type: "started" }),
-      expect.objectContaining({ type: "result_reported" })
+      expect.objectContaining({ type: "result_reported" }),
+      expect.objectContaining({ type: "todo_updated" })
     ]);
+    await expect(roleTodoRepository.get("role_todo_1")).resolves.toEqual(
+      expect.objectContaining({ status: "done", completedAt: createdAt })
+    );
     const outputPath = path.join(result.run?.worktreePath ?? "", "fake-agent-output.md");
     await expect(fs.readFile(outputPath, "utf8")).resolves.toContain("RoleCallContext");
   });

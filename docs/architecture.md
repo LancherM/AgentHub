@@ -975,8 +975,9 @@ at the database edge, link back to threads/messages/task runs where available,
 and expose repository queries by thread, role, parent call, lifecycle status,
 and todo state.
 RoleIntent parsing is implemented as a dedicated core parser for line-start
-role mentions; it ignores fenced code blocks and reports unknown or duplicate
-targets as non-blocking warnings instead of reusing desktop mention fan-out.
+role mentions; it can split multiple explicit same-line role calls, ignores
+fenced code blocks, and reports unknown or duplicate targets as non-blocking
+warnings instead of reusing desktop mention fan-out.
 Policy validation lives beside the safety scanner so it can reuse dangerous
 command detection while checking caller delegation policy, callee intake policy,
 project ceilings, depth, concurrency, cycle, duplicate, todo-capacity,
@@ -1009,6 +1010,30 @@ RoleCallEvent repositories in the main process, attaches a bounded
 only compact transcript chips plus a collapsed Role Details inspector for the
 graph, todos, events, evidence, disabled retry/cancel/approval placeholders,
 and raw JSON snippets.
+The Electron thread/run services now form the desktop bridge between role
+messages and the core RoleCall control plane. Role-backed TaskRunner prompts
+include a role-call protocol and bounded available-role directory, so models
+can emit line-start `@role task` intents without probing the repository for
+role syntax. The directory is generated from the same delegation policy used by
+the Orchestrator, so injected role instructions do not advertise targets that
+will be blocked by policy. After a terminal role-backed assistant message is
+reconciled, the main process parses its output with the dedicated RoleCall
+parser, converts valid intents through `RoleCallOrchestrator`, applies
+deterministic policy validation over generated RoleDefinition projections, and
+persists RoleCall, RoleCallEvent, and RoleTodo records with the assistant
+message as `parentMessageId`. Accepted executable RoleCalls are then handed
+back to the desktop run service, which uses `RoleCallTaskRunnerExecutor` and
+the existing TaskRunner adapter path to start an isolated local run, stream
+persisted run events, and return the delegated run id as soon as execution is
+observable. The thread service creates a normal delegated role run card and
+pending assistant placeholder for that run; the background executor links the
+`task_run` row to the RoleCall, persists result evidence, and closes the linked
+todo, while terminal message reconciliation renders the callee's final answer
+in the main transcript. If a run's latest assistant-facing event contains valid
+RoleResult JSON, the transcript and run card show the parsed `summary` while
+keeping the raw structured payload in run evidence. This bridge
+does not create renderer-side SQLite access, direct role chat, automatic
+repository export, automatic merge/push/PR, or memory approval.
 CLI audit parity is read-only over the same repositories. The CLI runtime owns
 RoleCall, RoleCallEvent, and RoleTodo repositories alongside existing task/run
 repositories, and `role-calls`, `role-todos`, and `role-events` commands render

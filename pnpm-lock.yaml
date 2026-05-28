@@ -53,6 +53,9 @@ importers:
       '@agent-hub/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@agent-hub/safety':
+        specifier: workspace:*
+        version: link:../../packages/safety
       '@agent-hub/shared':
         specifier: workspace:*
         version: link:../../packages/shared

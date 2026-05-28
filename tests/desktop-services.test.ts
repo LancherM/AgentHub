@@ -3495,6 +3495,226 @@ describe("desktop services", () => {
     expect(researcherBrief?.content).not.toContain("writer follow-up");
   });
 
+  it("injects role-call protocol and converts role output into orchestrated RoleCalls", async () => {
+    const fixture = await createFixture();
+    const context = createDesktopServiceContext(fixture.repositories);
+    const projects = createProjectService(context);
+    const memory = createMemoryService(context);
+    const review = createReviewService(context, { memoryService: memory });
+    const roleResultJson = JSON.stringify({
+      summary: "123",
+      evidence: ["RoleCall.task states: output exactly 123."],
+      commandsRun: [],
+      filesTouched: [],
+      patchSummary: "No changes.",
+      risks: [],
+      nextSteps: ["none"]
+    });
+    const processRunner = new MockProcessRunner(
+      [
+        [
+          {
+            type: "stdout",
+            data: "{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"@researcher output exactly 123 @engineer output exactly 123\"}}\n"
+          },
+          { type: "exit", exitCode: 0, signal: null }
+        ],
+        [
+          {
+            type: "stdout",
+            data: JSON.stringify({
+              type: "item.completed",
+              item: {
+                type: "agent_message",
+                text: "Using the provided Agent Hub role brief."
+              }
+            }) + "\n"
+          },
+          {
+            type: "stdout",
+            data: JSON.stringify({
+              type: "item.completed",
+              item: { type: "agent_message", text: roleResultJson }
+            }) + "\n"
+          },
+          { type: "exit", exitCode: 0, signal: null }
+        ],
+        [
+          {
+            type: "stdout",
+            data: JSON.stringify({
+              type: "item.completed",
+              item: {
+                type: "agent_message",
+                text: "Using the provided Agent Hub role brief."
+              }
+            }) + "\n"
+          },
+          {
+            type: "stdout",
+            data: JSON.stringify({
+              type: "item.completed",
+              item: { type: "agent_message", text: roleResultJson }
+            }) + "\n"
+          },
+          { type: "exit", exitCode: 0, signal: null }
+        ]
+      ],
+      Array.from({ length: 10 }, () => ({
+        available: true,
+        version: "codex-cli 0.130.0"
+      }))
+    );
+    const roles = presetWorkgroupRoles.map((role) =>
+      role.handle === "analyst" ||
+      role.handle === "researcher" ||
+      role.handle === "engineer"
+        ? { ...role, executor: { kind: "agent_adapter" as const, adapterKind: "codex" as const } }
+        : role
+    );
+    const runs = createTestRunService(context, review, memory, fixture, {
+      processRunner
+    });
+    const threads = createThreadService({
+      context,
+      projects,
+      runs,
+      roles
+    });
+    const project = await projects.open(fixture.projectRoot);
+
+    const detail = await threads.sendMessage({
+      projectId: project.id,
+      text: "@analyst try assign a job to other roles",
+      contextMode: "auto"
+    });
+    const runMessage = detail.messages.find(
+      (message): message is AgentRunMessage => message.type === "agent_run"
+    );
+    if (!runMessage) {
+      throw new Error("expected analyst run card");
+    }
+    await waitForRun(runs, runMessage.runId, "completed");
+    const withDelegatedRun = await threads.getThread(detail.id);
+    const delegatedRunMessages = withDelegatedRun.messages.filter(
+      (message): message is AgentRunMessage =>
+        message.type === "agent_run" &&
+        message.roleCallId !== undefined
+    );
+    expect(delegatedRunMessages.map((message) => message.assignment?.roleHandle).sort()).toEqual([
+      "engineer",
+      "researcher",
+    ]);
+    expect(delegatedRunMessages.map((message) => message.taskTitle).sort()).toEqual([
+      "Role call: @engineer output exactly 123",
+      "Role call: @researcher output exactly 123",
+    ]);
+    for (const delegatedRunMessage of delegatedRunMessages) {
+      await waitForRun(runs, delegatedRunMessage.runId, "completed");
+    }
+    const refreshed = await threads.getThread(detail.id);
+
+    const brief =
+      await fixture.repositories.runArtifactRepository.getLatestByRunIdAndKind(
+        runMessage.runId,
+        "conversation_brief"
+      );
+    expect(brief?.content).toContain("role_call_protocol:");
+    expect(brief?.content).toContain("available_role_calls:");
+    expect(brief?.content).toContain("@operator");
+    expect(brief?.content).toContain("@engineer");
+    const availableRoleCallsLine = brief?.content
+      .split("\n")
+      .find((line) => line.includes("available_role_calls:"));
+    expect(availableRoleCallsLine).toContain("@engineer");
+    expect(availableRoleCallsLine).not.toContain("@memory");
+
+    const roleCalls = await fixture.repositories.roleCallRepository.list({
+      threadId: detail.id
+    });
+    expect(roleCalls).toEqual([
+      expect.objectContaining({
+        callerRole: "analyst",
+        calleeRole: "researcher",
+        task: "output exactly 123",
+        status: "succeeded",
+        taskRunId: expect.any(String),
+        result: expect.objectContaining({ summary: "123" })
+      }),
+      expect.objectContaining({
+        callerRole: "analyst",
+        calleeRole: "engineer",
+        task: "output exactly 123",
+        status: "succeeded",
+        taskRunId: expect.any(String),
+        result: expect.objectContaining({ summary: "123" })
+      })
+    ]);
+    const analystAssistant = refreshed.messages.find(
+      (message): message is Extract<(typeof refreshed.messages)[number], { type: "assistant" }> =>
+        message.type === "assistant" &&
+        message.assignment?.roleHandle === "analyst"
+    );
+    expect(analystAssistant?.roleCallSummary?.counts.total).toBe(2);
+    expect(analystAssistant?.roleCallSummary?.calls).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          callerRole: "analyst",
+          calleeRole: "researcher",
+          status: "succeeded",
+          resultSummary: "123",
+          taskRunId: expect.any(String)
+        }),
+        expect.objectContaining({
+          callerRole: "analyst",
+          calleeRole: "engineer",
+          status: "succeeded",
+          resultSummary: "123",
+          taskRunId: expect.any(String)
+        })
+      ])
+    );
+    expect(analystAssistant?.roleCallSummary?.counts.running).toBe(0);
+    expect(analystAssistant?.roleCallSummary?.counts.succeeded).toBe(2);
+    expect(analystAssistant?.roleCallSummary?.counts.todosOpen).toBe(0);
+    for (const roleCall of roleCalls) {
+      expect(
+        refreshed.messages.find(
+          (message) =>
+            message.type === "agent_run" &&
+            message.roleCallId === roleCall.id &&
+            message.assignment?.roleHandle === roleCall.calleeRole
+        )
+      ).toEqual(expect.objectContaining({ runId: roleCall.taskRunId }));
+      expect(
+        refreshed.messages.find(
+          (message) =>
+            message.type === "assistant" &&
+            message.assignment?.roleHandle === roleCall.calleeRole
+        )
+      ).toEqual(
+        expect.objectContaining({
+          text: "123",
+          runId: roleCall.taskRunId
+        })
+      );
+    }
+    await expect(
+      fixture.repositories.roleTodoRepository.list({ threadId: detail.id })
+    ).resolves.toEqual([
+      expect.objectContaining({
+        role: "researcher",
+        status: "done",
+        title: "output exactly 123"
+      }),
+      expect.objectContaining({
+        role: "engineer",
+        status: "done",
+        title: "output exactly 123"
+      })
+    ]);
+  });
+
   it("resumes the previous Codex CLI session for follow-up turns to the same role", async () => {
     const fixture = await createFixture();
     const context = createDesktopServiceContext(fixture.repositories);

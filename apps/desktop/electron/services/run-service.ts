@@ -17,9 +17,11 @@ import {
 } from "@agent-hub/core";
 import {
   TaskRunner,
+  RoleCallTaskRunnerExecutor,
   type AgentRunEvent,
   type Clock,
   type IdGenerator,
+  type RoleCallExecutionResult,
   type TaskRunnerDependencies
 } from "@agent-hub/task-runner";
 import {
@@ -30,6 +32,7 @@ import {
   type WorkgroupAgentAdapterKind,
   type AgentKind as CoreAgentKind,
   type JsonObject,
+  type RoleDefinition,
   type RunEventType as CoreRunEventType,
   type TaskRunStatus as CoreRunStatus,
   type WorkgroupRoleRunMetadata,
@@ -52,6 +55,8 @@ import type { SettingsService } from "./settings-service";
 
 export interface RunService {
   createRun(input: CreateDesktopRunInput): Promise<RunSummary>;
+  executeRoleCall(input: ExecuteDesktopRoleCallInput): Promise<RoleCallExecutionResult>;
+  startRoleCall(input: ExecuteDesktopRoleCallInput): Promise<StartedDesktopRoleCallRun>;
   getRun(runId: string): Promise<RunDetail>;
   getConversationRunSnapshot(runId: string): Promise<ConversationRunSnapshot>;
   listRuns(projectId?: string): Promise<RunSummary[]>;
@@ -73,6 +78,19 @@ export interface CreateDesktopRunInput extends CreateRunInput {
   assignment?: WorkgroupTaskAssignmentMetadata;
   conversationBrief?: string | ConversationContextBrief;
   startImmediately?: boolean;
+}
+
+export interface ExecuteDesktopRoleCallInput {
+  roleCallId: string;
+  projectId: string;
+  roles: readonly RoleDefinition[];
+}
+
+export interface StartedDesktopRoleCallRun {
+  roleCallId: string;
+  runId: string;
+  agentId: AgentId;
+  status: RunStatus;
 }
 
 export interface ConversationRunSnapshot {
@@ -301,6 +319,153 @@ class RepositoryRunService implements RunService {
     }
 
     return await this.toRunSummary(run, task, project);
+  }
+
+  async executeRoleCall(
+    input: ExecuteDesktopRoleCallInput
+  ): Promise<RoleCallExecutionResult> {
+    const project = await this.projects.get(input.projectId);
+    if (!project) {
+      throw new Error(`project ${input.projectId} not found`);
+    }
+    const verificationCommands =
+      await this.dependencies.settingsService?.verificationCommandsForProject(project.id);
+    const runId = this.context.nextId("run");
+    const executor = new RoleCallTaskRunnerExecutor({
+      taskRunner: this.createTaskRunner(runId),
+      repositories: {
+        roleCallRepository: this.context.repositories.roleCallRepository,
+        roleCallEventRepository: this.context.repositories.roleCallEventRepository,
+        roleTodoRepository: this.context.repositories.roleTodoRepository
+      },
+      roles: input.roles,
+      idFactory: (prefix) => this.context.nextId(prefix),
+      now: () => this.context.now()
+    });
+    return executor.execute({
+      roleCallId: input.roleCallId,
+      projectId: project.id,
+      projectRoot: project.rootPath,
+      taskRunnerOptions: {
+        agentAvailability: this.context.agentAvailability,
+        agentHubHome: this.context.agentHubHome,
+        deliveryMode: "runtime_injection",
+        verificationCommands,
+        workspaceBasePath: this.desktopWorkspaceBasePath(),
+        workspaceCleanupPolicy: "never"
+      }
+    });
+  }
+
+  async startRoleCall(
+    input: ExecuteDesktopRoleCallInput
+  ): Promise<StartedDesktopRoleCallRun> {
+    const project = await this.projects.get(input.projectId);
+    if (!project) {
+      throw new Error(`project ${input.projectId} not found`);
+    }
+    const roleCall = await this.context.repositories.roleCallRepository.get(input.roleCallId);
+    if (!roleCall) {
+      throw new Error(`role call ${input.roleCallId} not found`);
+    }
+    const calleeRole = input.roles.find((role) => role.handle === roleCall.calleeRole);
+    if (!calleeRole) {
+      throw new Error(`callee role @${roleCall.calleeRole} not found`);
+    }
+    if (calleeRole.executor.kind !== "agent_adapter") {
+      throw new Error(
+        `callee role @${calleeRole.handle} executor ${calleeRole.executor.kind} is not executable by TaskRunner`
+      );
+    }
+
+    const verificationCommands =
+      await this.dependencies.settingsService?.verificationCommandsForProject(project.id);
+    const runId = this.context.nextId("run");
+    const agentId = toAgentId(calleeRole.executor.adapter);
+    const active: ActiveRun = {
+      status: "running",
+      controller: new AbortController(),
+      promise: Promise.resolve()
+    };
+    this.activeRuns.set(runId, active);
+
+    let started = false;
+    let resolveStarted: (run: StartedDesktopRoleCallRun) => void = () => undefined;
+    let rejectStarted: (error: Error) => void = () => undefined;
+    const startedRun = new Promise<StartedDesktopRoleCallRun>((resolve, reject) => {
+      resolveStarted = resolve;
+      rejectStarted = reject;
+    });
+    const resolveStartedOnce = (): void => {
+      if (started) {
+        return;
+      }
+      started = true;
+      resolveStarted({
+        roleCallId: input.roleCallId,
+        runId,
+        agentId,
+        status: active.status
+      });
+    };
+    const rejectStartedOnce = (error: Error): void => {
+      if (started) {
+        return;
+      }
+      started = true;
+      rejectStarted(error);
+    };
+
+    const executor = new RoleCallTaskRunnerExecutor({
+      taskRunner: this.createTaskRunner(runId),
+      repositories: {
+        roleCallRepository: this.context.repositories.roleCallRepository,
+        roleCallEventRepository: this.context.repositories.roleCallEventRepository,
+        roleTodoRepository: this.context.repositories.roleTodoRepository
+      },
+      roles: input.roles,
+      idFactory: (prefix) => this.context.nextId(prefix),
+      now: () => this.context.now()
+    });
+    active.promise = executor
+      .execute({
+        roleCallId: input.roleCallId,
+        projectId: project.id,
+        projectRoot: project.rootPath,
+        taskRunnerOptions: {
+          agentAvailability: this.context.agentAvailability,
+          agentHubHome: this.context.agentHubHome,
+          deliveryMode: "runtime_injection",
+          verificationCommands,
+          workspaceBasePath: this.desktopWorkspaceBasePath(),
+          workspaceCleanupPolicy: "never",
+          signal: active.controller.signal,
+          onEvent: async (event) => {
+            const persisted = await this.persistTaskRunnerEvent(runId, event);
+            this.applyLiveEventStatus(runId, persisted);
+            this.emitLiveEvent(persisted);
+            resolveStartedOnce();
+          }
+        }
+      })
+      .then(async (result) => {
+        if (!result.run) {
+          throw new Error(result.error ?? `role call ${input.roleCallId} did not create a run`);
+        }
+        active.status = toDesktopRunStatus(result.run.run.status);
+        resolveStartedOnce();
+        await this.emitPersistedEvents(runId);
+      })
+      .catch(async (error: unknown) => {
+        const normalized = error instanceof Error ? error : new Error(String(error));
+        rejectStartedOnce(normalized);
+        await this.failActiveRun(runId, normalized);
+      })
+      .finally(() => {
+        this.activeRuns.delete(runId);
+      });
+
+    return startedRun;
   }
 
   async startRun(runId: string): Promise<void> {
@@ -728,7 +893,11 @@ class RepositoryRunService implements RunService {
   }
 
   private currentDesktopStatus(run: TaskRun): RunStatus {
-    return this.activeRuns.get(run.id)?.status ?? toDesktopRunStatus(run.status);
+    const persistedStatus = toDesktopRunStatus(run.status);
+    if (isTerminalStatus(persistedStatus)) {
+      return persistedStatus;
+    }
+    return this.activeRuns.get(run.id)?.status ?? persistedStatus;
   }
 
   private async failActiveRun(runId: string, error: unknown): Promise<void> {
@@ -983,7 +1152,11 @@ function roleUserConstraints(role?: WorkgroupRoleRunMetadata): string[] | undefi
     `Role persona: ${role.persona}`,
     `Role instructions: ${role.defaultInstructions}`,
     `Role permissions: ${role.permissions.join(", ") || "none"}`,
-    `Role approval policy: ${role.approvalPolicy.summary}`
+    `Role approval policy: ${role.approvalPolicy.summary}`,
+    "Agent Hub owns role delegation. Do not simulate subagents, worker roles, or hidden role chats inside your response.",
+    "To delegate to another Agent Hub role, emit a separate line-start role call in the form '@role bounded task'. Agent Hub will parse and orchestrate it.",
+    "Delegation-only requests do not require repository reconnaissance; emit the role call first and let Agent Hub schedule the callee.",
+    "Use the injected available_role_calls directory for role names; do not inspect the repository merely to discover roles or delegation syntax."
   ];
 }
 
