@@ -354,7 +354,7 @@ export async function main(
   }
 
   if (command === "context" && rest[0] === "build") {
-    return contextBuild(rest.slice(1), io, cwd);
+    return contextBuild(rest.slice(1), io, cwd, debug);
   }
 
   if (command === "context" && rest[0] === "export") {
@@ -2942,7 +2942,12 @@ async function contextShow(args: string[], io: CliIO, cwd: string): Promise<numb
   }
 }
 
-async function contextBuild(args: string[], io: CliIO, cwd: string): Promise<number> {
+async function contextBuild(
+  args: string[],
+  io: CliIO,
+  cwd: string,
+  debug: boolean
+): Promise<number> {
   try {
     const store = parseContextStoreArgs(args, cwd);
     const result = await buildContextArtifacts({
@@ -2951,8 +2956,8 @@ async function contextBuild(args: string[], io: CliIO, cwd: string): Promise<num
       title: requiredFlag(args, "--title"),
       prompt: requiredFlag(args, "--prompt"),
       selectedAgentId: parseAvailableAgent(
-        optionalFlag(args, "--agent") ?? defaultCliAgent(isEnvironmentDebugEnabled()),
-        isEnvironmentDebugEnabled()
+        optionalFlag(args, "--agent") ?? defaultCliAgent(debug),
+        debug
       ),
       deliveryMode: parseContextBuildDeliveryMode(optionalFlag(args, "--delivery-mode"))
     });
