@@ -974,6 +974,13 @@ RoleCall persistence is first-class SQLite storage rather than message metadata:
 at the database edge, link back to threads/messages/task runs where available,
 and expose repository queries by thread, role, parent call, lifecycle status,
 and todo state.
+RoleIntent parsing is implemented as a dedicated core parser for line-start
+role mentions; it ignores fenced code blocks and reports unknown or duplicate
+targets as non-blocking warnings instead of reusing desktop mention fan-out.
+Policy validation lives beside the safety scanner so it can reuse dangerous
+command detection while checking caller delegation policy, callee intake policy,
+project ceilings, depth, concurrency, cycle, duplicate, todo-capacity,
+approval, permission, and executor-capability constraints.
 
 The interaction simplification and post-MVP UX phases are documented in
 `docs/interaction-optimization-roadmap.md`. Those phases should remain layered

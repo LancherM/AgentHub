@@ -17,6 +17,11 @@ const dangerousCommandRules: Array<{ pattern: RegExp; summary: string }> = [
   },
   {
     pattern:
+      /\brm\b(?=[^\n;&|]*?(?:\s-[^\s;&|]*r[^\s;&|]*|--recursive\b))(?=[^\n;&|]*?(?:\s-[^\s;&|]*f[^\s;&|]*|--force\b))[^\n;&|]*/i,
+    summary: "Recursive deletion command detected."
+  },
+  {
+    pattern:
       /\bchmod\b(?=[^\n;&|]*?(?:\s-[^\s;&|]*r[^\s;&|]*|--recursive\b))(?=[^\n;&|]*?\s777(?=$|[\s;&|"'`]))[^\n;&|]*/i,
     summary: "Unsafe recursive permission broadening detected."
   },
@@ -34,9 +39,21 @@ const dangerousCommandRules: Array<{ pattern: RegExp; summary: string }> = [
     summary: "Force push command detected."
   },
   {
+    pattern: /\bgit\b[^\n;&|]*?\bpush\b[^\n;&|]*/i,
+    summary: "Git push command detected."
+  },
+  {
+    pattern: /\bgit\b[^\n;&|]*?\breset\b[^\n;&|]*?--hard\b[^\n;&|]*/i,
+    summary: "Hard git reset command detected."
+  },
+  {
     pattern:
       /\bgit\b[^\n;&|]*?\bclean\b(?=[^\n;&|]*?(?:-[a-z]*f[a-z]*|--force\b))(?=[^\n;&|]*?(?:-[a-z]*d[a-z]*|(?:^|\s)-d(?=$|\s)))(?=[^\n;&|]*?(?:-[a-z]*x[a-z]*|(?:^|\s)-x(?=$|\s)))[^\n;&|]*/i,
     summary: "Destructive git clean command detected."
+  },
+  {
+    pattern: /\bdocker\b[^\n;&|]*?\bsystem\b[^\n;&|]*?\bprune\b[^\n;&|]*/i,
+    summary: "Docker system prune command detected."
   }
 ];
 
@@ -51,8 +68,17 @@ export function detectDangerousCommandText(text: string): DangerousCommandMatch[
     if (!match) {
       continue;
     }
+    const command = match[0].trim();
+    if (
+      matches.some(
+        (existing) =>
+          existing.command.includes(command) || command.includes(existing.command)
+      )
+    ) {
+      continue;
+    }
     matches.push({
-      command: match[0].trim(),
+      command,
       summary: rule.summary
     });
   }

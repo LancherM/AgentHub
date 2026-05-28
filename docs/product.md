@@ -396,6 +396,9 @@ events, results, and state transitions without changing run behavior yet.
 The persistence slice stores RoleCalls, RoleCallEvents, and RoleTodos as
 first-class local SQLite audit records with thread, message, run, parent-call,
 role, status, and todo-state queries.
+The parser/policy slice adds line-start role-call intent parsing and
+deterministic authorization checks for delegation, intake, project limits,
+graph limits, todo capacity, approval requirements, and dangerous command text.
 
 The companion interaction optimization plan lives in
 `docs/interaction-optimization-roadmap.md`. It records the near-term
