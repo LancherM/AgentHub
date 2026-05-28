@@ -997,6 +997,11 @@ around the existing TaskRunner. Accepted `agent_adapter` calls move through
 queued/running/succeeded/failed/cancelled RoleCall states, run inside isolated
 TaskRunner worktrees, link back to `task_runs`, and reuse existing run
 metadata, verification, diff, risk, and adapter preflight evidence.
+Caller reinjection is modeled as compact structured context, not role-to-role
+chat. Decision, result, todo, and event summaries feed the caller's next
+bounded continuation only when convergence rules show the graph is idle and
+below continuation limits; pending calls, waiting approvals, and final answers
+stop further automatic role expansion.
 
 The interaction simplification and post-MVP UX phases are documented in
 `docs/interaction-optimization-roadmap.md`. Those phases should remain layered

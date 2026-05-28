@@ -411,6 +411,10 @@ The execution slice can run accepted agent-adapter RoleCalls through the local
 TaskRunner, link the RoleCall to the resulting task run, and persist structured
 RoleResult summaries, verification, diff, risk, and failure evidence without
 adding remote execution or automatic push/merge behavior.
+Caller reinjection now summarizes decisions, results, todos, and recent events
+back to the caller role, and graph convergence stops bounded continuation when
+work is pending, approval is blocking, continuation limits are reached, or a
+final answer exists.
 
 The companion interaction optimization plan lives in
 `docs/interaction-optimization-roadmap.md`. It records the near-term
