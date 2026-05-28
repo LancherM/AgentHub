@@ -474,9 +474,10 @@ stage cannot produce its normal output, marks the run `failed`, returns the
 task to `open`, persists every available partial record, and still attempts
 workspace cleanup according to policy. Finalization failures are downgraded
 before cleanup policy evaluation so `retain_on_failure` keeps the worktree
-available for inspection. Event persistence is the last best-effort
-write; if it fails after an otherwise successful run, the run is downgraded to
-`failed` so it is not reported as cleanly complete without its event stream.
+available for inspection. The runner persists the status-affecting metadata and
+event stream before cleanup. Cleanup-result metadata and the final terminal
+event are best-effort writes after cleanup; failures there add warnings without
+retroactively changing the already-applied cleanup policy.
 
 Interactive CLI mode is a shell over the same command/runtime path. Bare
 `agent-hub` reads line-oriented input, handles slash commands locally, and

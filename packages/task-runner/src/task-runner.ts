@@ -559,16 +559,32 @@ export class TaskRunner {
     let riskReport: RiskReport | undefined;
     let finalizationFailed = false;
     let finalizationError: string | undefined;
-    const recordDiagnostic = (stage: string, error: unknown): void => {
+    const recordDiagnostic = (
+      stage: string,
+      error: unknown,
+      options: { warningAlreadyRecorded?: boolean } = {}
+    ): void => {
       const detail = errorMessage(error);
       const message = `${stage} failed: ${detail}`;
       finalizationFailed = true;
       finalizationError ??= message;
-      warnings.push(message);
+      if (!options.warningAlreadyRecorded) {
+        warnings.push(message);
+      }
       events.push({
         type: "error",
         message,
         metadata: { stage, error: detail }
+      });
+    };
+    const recordPostCleanupWarning = (stage: string, error: unknown): void => {
+      const detail = errorMessage(error);
+      const message = `${stage} failed: ${detail}`;
+      warnings.push(message);
+      events.push({
+        type: "status",
+        message,
+        metadata: { stage, error: detail, assistantOutput: false }
       });
     };
 
@@ -881,6 +897,28 @@ export class TaskRunner {
     status = finalRunStatus(status, finalizationFailed);
 
     try {
+      await this.runMetadataRepository.save({
+        runId: run.id,
+        workspace: workspaceSession.workspace,
+        diff,
+        verification,
+        riskReport
+      });
+    } catch (error) {
+      recordDiagnostic("run metadata persistence", error);
+    }
+    status = finalRunStatus(status, finalizationFailed);
+
+    try {
+      await this.persistNewRunEvents(run.id, events, warnings);
+    } catch (error) {
+      recordDiagnostic("run event persistence", error, {
+        warningAlreadyRecorded: true
+      });
+    }
+    status = finalRunStatus(status, finalizationFailed);
+
+    try {
       workspaceCleanup = await workspaceSession.cleanup({
         successful: status === "succeeded"
       });
@@ -899,15 +937,11 @@ export class TaskRunner {
       await this.runMetadataRepository.save({
         runId: run.id,
         workspace: workspaceSession.workspace,
-        workspaceCleanup,
-        diff,
-        verification,
-        riskReport
+        workspaceCleanup
       });
     } catch (error) {
-      recordDiagnostic("run metadata persistence", error);
+      recordPostCleanupWarning("workspace cleanup metadata persistence", error);
     }
-    status = finalRunStatus(status, finalizationFailed);
 
     const errorEvent = events.find((event) => event.type === "error");
     const failureMessage =
@@ -928,12 +962,7 @@ export class TaskRunner {
     try {
       await this.persistNewRunEvents(run.id, events, warnings);
     } catch (error) {
-      const message = `run event persistence failed: ${errorMessage(error)}`;
-      warnings.push(message);
-      if (status === "succeeded") {
-        status = "failed";
-        finalizationError ??= message;
-      }
+      warnings.push(`final run event persistence failed: ${errorMessage(error)}`);
     }
 
     const completedAt = this.clock.now();

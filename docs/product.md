@@ -213,7 +213,10 @@ finalized as `failed`, the task is returned to `open`, partial structured
 outputs are returned when available, and workspace cleanup is still attempted
 according to the selected cleanup policy. Finalization failures are classified
 as failed before cleanup policy evaluation, so `retain_on_failure` preserves
-the inspectable worktree. Dangerous verification commands are
+the inspectable worktree. Cleanup-result metadata and final-event persistence
+are best-effort after cleanup has already followed that policy; failures there
+emit warnings but do not retroactively turn a cleaned successful run into a
+failed one. Dangerous verification commands are
 reported as failed verification results instead of bypassing finalization;
 verification commands receive a 10-minute default timeout unless an explicit
 command timeout is configured, and timeout or process signal details are
