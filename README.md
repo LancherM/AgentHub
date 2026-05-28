@@ -4,7 +4,7 @@
 
 [中文说明](README_CN.md)
 
-Agent Hub is a **local-first, CLI-first** developer tool for orchestrating coding agents (such as Codex, Claude Code, and Fake Agent) in isolated git worktrees, then reviewing and comparing their outputs.
+Agent Hub is a **local-first, CLI-first** developer tool for orchestrating coding agents such as Codex and Claude Code in isolated git worktrees, then reviewing and comparing their outputs. A deterministic fake adapter remains available for debug and test workflows.
 
 The repository is already runnable and includes core workflows, but it is still evolving quickly.
 
@@ -51,7 +51,7 @@ tests                     Cross-package test coverage
 - CLI workflows for projects, tasks, runs, events, risks, memory, and comparison
 - Local SQLite persistence for project/task/run/event/risk/memory/comparison data
 - Context build pipeline that compiles Agent Hub-owned context into brief/context pack artifacts
-- Adapter-based execution for Fake, Codex, and Claude Code in isolated worktrees
+- Adapter-based execution for Codex and Claude Code in isolated worktrees, with the deterministic fake adapter hidden outside debug/development/test workflows
 - Run artifacts including logs, verification results, git diffs, and risk reports
 - Memory workflow: propose, approve/reject, and approved-memory writeback
 - Desktop shell with room navigation, TaskRunner-backed run cards,
@@ -103,7 +103,7 @@ If global `pnpm` is unavailable, use the repo-local binary:
 ## CLI command reference
 
 ```sh
-agent-hub [--project <path>] [--agent fake|codex|claude-code]
+agent-hub [--project <path>] [--agent codex|claude-code]
 agent-hub [--db <path>] project add --name <name> --root <path>
 agent-hub [--db <path>] project list
 agent-hub [--db <path>] task create --project-id <project-id> --title <title> [--description <text>]
@@ -113,8 +113,8 @@ agent-hub context init --project-root <path> --project-id <project-id>
 agent-hub context show --project-root <path> --project-id <project-id>
 agent-hub context build --project-root <path> --project-id <project-id> --task-id <task-id> --title <title> --prompt <prompt>
 agent-hub context export --project-root <path> --project-id <project-id> --dry-run|--write
-agent-hub [--db <path>] run --task <task-id> --agent fake|codex|claude-code
-agent-hub run [--repo <path>] [--workspace-base <path>] [--retain-on-failure] "@fake|@codex|@claude-code <task>"
+agent-hub [--db <path>] run --task <task-id> --agent codex|claude-code
+agent-hub run [--repo <path>] [--workspace-base <path>] [--retain-on-failure] "@codex|@claude-code <task>"
 agent-hub [--db <path>] run event add --run-id <run-id> --type <type> --message <message>
 agent-hub tasks list
 agent-hub runs list
@@ -128,3 +128,7 @@ agent-hub [--db <path>] memory approve --memory-id <memory-id>
 agent-hub [--db <path>] memory reject --memory-id <memory-id>
 agent-hub [--db <path>] compare --task-id <task-id> --baseline <run-id> --candidate <run-id>
 ```
+
+Debug/development/test mode can enable the deterministic fake adapter with
+`--debug`, `AGENT_HUB_DEBUG=1`, or the hidden per-agent availability
+configuration.
