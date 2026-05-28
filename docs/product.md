@@ -428,6 +428,14 @@ local scripting. Deferred and rejected role decisions are labelled as
 collaboration decisions rather than failed execution, while failed executable
 calls are labelled separately and link to existing `runs show/events/diff` and
 `risks show` review commands when a TaskRunner run exists.
+Governance hardening now covers the full Adaptive Role Calls loop with local
+regression tests for analyst -> operator -> reviewer collaboration, custom role
+authorization, duplicate suppression, todo-capacity limits, dangerous command
+blocking, and approval-required gates for file writes, shell commands, network
+access, and high-risk targets. Retry and cancellation remain explicit ledger
+operations: retry can only resume deferred or approval-waiting calls, cancellation
+updates the linked todo, and neither path automatically approves unsafe work,
+executes code, applies patches, merges, pushes, or creates pull requests.
 
 The companion interaction optimization plan lives in
 `docs/interaction-optimization-roadmap.md`. It records the near-term

@@ -185,6 +185,61 @@ export class RoleCallOrchestrator {
     };
   }
 
+  async retryRoleCall(
+    roleCallId: string,
+    reason: string,
+    at = this.now()
+  ): Promise<RoleCallLedgerSummary> {
+    const call = await this.requireRoleCall(roleCallId);
+    if (call.status !== "deferred" && call.status !== "waiting_approval") {
+      return {
+        roleCallId,
+        targetRole: call.calleeRole,
+        status: "blocked",
+        message: `Role call to @${call.calleeRole} cannot be retried from ${call.status}.`,
+        reasons: [
+          "Only deferred or waiting-approval role calls can be retried."
+        ]
+      };
+    }
+
+    const decision: RoleCallDecision = {
+      disposition: "accepted",
+      reason
+    };
+    const todo = call.todoId
+      ? undefined
+      : await this.createTodoForDecision(call, decision, "in_progress", at);
+    const updated = await this.repositories.roleCallRepository.update({
+      ...call,
+      status: "accepted",
+      decision,
+      todoId: call.todoId ?? todo?.id
+    });
+    await this.createEvent({
+      roleCallId,
+      threadId: updated.threadId,
+      type: "accepted",
+      actorRole: updated.calleeRole,
+      message: reason,
+      metadata: {
+        retry: true,
+        previousStatus: call.status
+      },
+      createdAt: at
+    });
+    if (call.todoId) {
+      await this.updateLinkedTodo(updated, "in_progress", at);
+    }
+    return {
+      roleCallId,
+      targetRole: updated.calleeRole,
+      status: "accepted",
+      decision,
+      message: `Role call to @${updated.calleeRole} was retried and accepted.`
+    };
+  }
+
   async blockRoleCallTodo(
     roleCallId: string,
     reason: string,

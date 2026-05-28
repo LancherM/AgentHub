@@ -1015,6 +1015,19 @@ repositories, and `role-calls`, `role-todos`, and `role-events` commands render
 either compact tabular output or stable JSON. RoleCall detail output links to
 existing run evidence commands only when a persisted TaskRunner run is linked,
 preserving the normal quiet `run` output path.
+Governance hardening stays inside the same local core and safety boundaries.
+The policy validator deterministically enforces caller delegation, callee
+intake, project graph limits, duplicate suppression, todo capacity, executor
+availability, dangerous command blocking, and approval gates for file writes,
+shell commands, network access, and high-risk target roles. Role approval-policy
+labels are normalized before comparison so local role manifests can express
+those gates without prompt-only permission assumptions. The Orchestrator exposes
+explicit retry and cancellation ledger transitions for existing calls: retry can
+only move `deferred` or `waiting_approval` calls back to `accepted`, records an
+audited accepted event, and updates or creates the callee todo; cancellation
+records a cancellation event and cancels the linked todo. These operations do
+not grant hidden approvals, run executors by themselves, apply patches, merge,
+push, create pull requests, export repository context, or approve memory.
 
 The interaction simplification and post-MVP UX phases are documented in
 `docs/interaction-optimization-roadmap.md`. Those phases should remain layered

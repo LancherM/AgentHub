@@ -1,6 +1,6 @@
 # Adaptive Role Calls Implementation Roadmap
 
-Status: planning
+Status: implemented through ARC-10
 Last updated: 2026-05-28
 
 This roadmap turns `docs/adaptive-role-calls.en.md` into an implementation
@@ -502,4 +502,3 @@ docs/adaptive-role-calls-implementation-prompts.md
 That file is intentionally ignored by git because implementation prompt
 documents are local planning artifacts in this repository. Do not commit or push
 it unless the user explicitly asks to publish implementation prompts.
-

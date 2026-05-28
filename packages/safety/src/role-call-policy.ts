@@ -324,14 +324,23 @@ function validatePermissions(
       reasons.push(`Callee role lacks ${label} permission.`);
     }
   }
-  if (permissions.canEditFiles && policy.requireApprovalForFileWrite) {
-    approvalReasons.push("file write permission");
+  if (
+    permissions.canEditFiles &&
+    (policy.requireApprovalForFileWrite ||
+      roleRequiresApproval(request, "file_write"))
+  ) {
+    pushApprovalReason(approvalReasons, "file write permission");
   }
   if (
     permissions.canRunCommands &&
-    (policy.requireApprovalForDangerousShell || permissions.requiresApprovalForShell)
+    (policy.requireApprovalForDangerousShell ||
+      permissions.requiresApprovalForShell ||
+      roleRequiresApproval(request, "shell"))
   ) {
-    approvalReasons.push("shell command permission");
+    pushApprovalReason(approvalReasons, "shell command permission");
+  }
+  if (permissions.canUseNetwork && roleRequiresApproval(request, "network")) {
+    pushApprovalReason(approvalReasons, "network permission");
   }
 }
 
@@ -342,6 +351,39 @@ const permissionChecks: Array<[keyof PermissionSet, string]> = [
   ["canUseNetwork", "network"],
   ["canAskUser", "ask user"]
 ];
+
+function roleRequiresApproval(
+  request: RoleCallPolicyRequest,
+  action: "file_write" | "shell" | "network"
+): boolean {
+  const requiredFor = [
+    ...request.callerRole.approvalPolicy.requiredFor,
+    ...request.calleeRole.approvalPolicy.requiredFor
+  ].map(normalizeApprovalPolicyEntry);
+  const aliases = approvalAliases[action];
+  return requiredFor.some(
+    (entry) =>
+      entry === "*" ||
+      entry === "external_side_effects" ||
+      aliases.includes(entry)
+  );
+}
+
+const approvalAliases: Record<"file_write" | "shell" | "network", string[]> = {
+  file_write: ["file_write", "file_writes", "write_files"],
+  shell: ["shell", "commands", "shell_command", "shell_commands", "run_commands"],
+  network: ["network", "network_access", "external_network"]
+};
+
+function pushApprovalReason(reasons: string[], reason: string): void {
+  if (!reasons.includes(reason)) {
+    reasons.push(reason);
+  }
+}
+
+function normalizeApprovalPolicyEntry(entry: string): string {
+  return entry.trim().toLowerCase().replace(/[\s-]+/g, "_");
+}
 
 function roleIntentTargetRole(intent: RoleIntent): string | undefined {
   if ("targetRole" in intent) {
