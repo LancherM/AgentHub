@@ -3495,6 +3495,100 @@ describe("desktop services", () => {
     expect(researcherBrief?.content).not.toContain("writer follow-up");
   });
 
+  it("injects role-call protocol and converts role output into orchestrated RoleCalls", async () => {
+    const fixture = await createFixture();
+    const context = createDesktopServiceContext(fixture.repositories);
+    const projects = createProjectService(context);
+    const memory = createMemoryService(context);
+    const review = createReviewService(context, { memoryService: memory });
+    const processRunner = new MockProcessRunner(
+      [
+        [
+          {
+            type: "stdout",
+            data: "{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"@operator Verify that delegation was routed through Agent Hub and report the evidence.\"}}\n"
+          },
+          { type: "exit", exitCode: 0, signal: null }
+        ]
+      ],
+      Array.from({ length: 10 }, () => ({
+        available: true,
+        version: "codex-cli 0.130.0"
+      }))
+    );
+    const roles = presetWorkgroupRoles.map((role) =>
+      role.handle === "analyst"
+        ? { ...role, executor: { kind: "agent_adapter" as const, adapterKind: "codex" as const } }
+        : role
+    );
+    const runs = createTestRunService(context, review, memory, fixture, {
+      processRunner
+    });
+    const threads = createThreadService({
+      context,
+      projects,
+      runs,
+      roles
+    });
+    const project = await projects.open(fixture.projectRoot);
+
+    const detail = await threads.sendMessage({
+      projectId: project.id,
+      text: "@analyst try assign a job to other roles",
+      contextMode: "auto"
+    });
+    const runMessage = detail.messages.find(
+      (message): message is AgentRunMessage => message.type === "agent_run"
+    );
+    if (!runMessage) {
+      throw new Error("expected analyst run card");
+    }
+    await waitForRun(runs, runMessage.runId, "completed");
+    const refreshed = await threads.getThread(detail.id);
+
+    const brief =
+      await fixture.repositories.runArtifactRepository.getLatestByRunIdAndKind(
+        runMessage.runId,
+        "conversation_brief"
+      );
+    expect(brief?.content).toContain("role_call_protocol:");
+    expect(brief?.content).toContain("available_role_calls:");
+    expect(brief?.content).toContain("@operator");
+    expect(brief?.content).toContain("@reviewer");
+
+    const roleCalls = await fixture.repositories.roleCallRepository.list({
+      threadId: detail.id
+    });
+    expect(roleCalls).toEqual([
+      expect.objectContaining({
+        callerRole: "analyst",
+        calleeRole: "operator",
+        task: "Verify that delegation was routed through Agent Hub and report the evidence.",
+        status: "accepted"
+      })
+    ]);
+    const assistant = refreshed.messages.find(
+      (message) => message.type === "assistant"
+    );
+    expect(assistant?.roleCallSummary?.counts.total).toBe(1);
+    expect(assistant?.roleCallSummary?.calls[0]).toEqual(
+      expect.objectContaining({
+        callerRole: "analyst",
+        calleeRole: "operator",
+        status: "accepted"
+      })
+    );
+    await expect(
+      fixture.repositories.roleTodoRepository.list({ threadId: detail.id, role: "operator" })
+    ).resolves.toEqual([
+      expect.objectContaining({
+        role: "operator",
+        status: "in_progress",
+        title: "Verify that delegation was routed through Agent Hub and report the evidence."
+      })
+    ]);
+  });
+
   it("resumes the previous Codex CLI session for follow-up turns to the same role", async () => {
     const fixture = await createFixture();
     const context = createDesktopServiceContext(fixture.repositories);

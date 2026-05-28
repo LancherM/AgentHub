@@ -1,9 +1,12 @@
 import {
   extractAgentFacingOutput,
+  parseRoleCallIntents,
+  RoleCallOrchestrator,
   validateTask,
   validateConversationMessage,
   validateConversationThread,
   validateConversationThreadSummary,
+  validateRoleDefinition,
   type ConversationMessage,
   type ConversationMessageRepository,
   type ConversationThread,
@@ -24,6 +27,7 @@ import {
 import {
   defaultAgentKind,
   isAgentKindEnabled,
+  presetWorkgroupRoles,
   type AgentAvailabilityOptions
 } from "@agent-hub/shared";
 import type {
@@ -31,12 +35,14 @@ import type {
   JsonObject,
   RoleCall,
   RoleCallEvent,
+  RoleDefinition,
   RoleTodo,
   TaskRunStatus,
   WorkgroupRole,
   WorkgroupRoleRunMetadata,
   WorkgroupTaskAssignmentMetadata
 } from "@agent-hub/shared";
+import { validateRoleCallPolicy } from "@agent-hub/safety";
 import type {
   AgentId,
   AssistantMessage,
@@ -513,7 +519,8 @@ class RepositoryThreadService implements ThreadService {
     const roles =
       this.dependencies.roles ??
       (await this.dependencies.team?.rolesForProject(thread.projectId));
-    const parsed = parseWorkgroupMentions(workflowRequest.text, roles, {
+    const availableRoles = roles ?? presetWorkgroupRoles;
+    const parsed = parseWorkgroupMentions(workflowRequest.text, availableRoles, {
       availableAgents: availableDesktopAgents(
         this.dependencies.context.agentAvailability
       ),
@@ -664,7 +671,8 @@ class RepositoryThreadService implements ThreadService {
           agentId: participant.agentId,
           role: participant.role,
           contextMode,
-          priorMessages
+          priorMessages,
+          availableRoles
         });
         const agentSessionId = await this.latestAgentSessionIdForParticipant({
           priorMessages,
@@ -896,6 +904,7 @@ class RepositoryThreadService implements ThreadService {
     role?: WorkgroupRoleRunMetadata;
     contextMode: ContextMode;
     priorMessages: ConversationMessage[];
+    availableRoles: readonly WorkgroupRole[];
   }) {
     const room = roomMetadataForThread(input.thread);
     const contextSourceMessages = room.sharedContextEnabled
@@ -935,6 +944,7 @@ class RepositoryThreadService implements ThreadService {
         "Agent Hub-owned project context store",
         "Approved memory only; thread context is not promoted automatically",
         `room_shared_context:${room.sharedContextEnabled ? "enabled" : "disabled"}`,
+        ...roleProtocolReferences(input.role, input.availableRoles),
         ...roleContextReferences(input.role)
       ]
     });
@@ -1168,14 +1178,15 @@ class RepositoryThreadService implements ThreadService {
         continue;
       }
       const now = this.dependencies.context.now();
-      await this.messages.create(
+      const content = terminalAssistantContent(snapshot);
+      const created = await this.messages.create(
         validateConversationMessage({
           id: this.dependencies.context.nextId("message"),
           threadId,
           sequence: await this.messages.countByThreadId(threadId),
           role: "assistant",
           kind: "text",
-          content: terminalAssistantContent(snapshot),
+          content,
           agentKind: message.agentKind,
           runId: message.runId,
           status: toCoreRunStatus(snapshot.status),
@@ -1190,7 +1201,7 @@ class RepositoryThreadService implements ThreadService {
               kind: "participant_message",
               actor: "assistant",
               title: `${messageParticipantHandle(message)} response`,
-              summary: terminalAssistantContent(snapshot),
+              summary: content,
               status: snapshot.status,
               runId: message.runId,
               taskId: metadataString(message.metadata, "taskId"),
@@ -1206,6 +1217,7 @@ class RepositoryThreadService implements ThreadService {
           createdAt: now
         })
       );
+      await this.processRoleCallOutput(thread, created);
       await this.touchThread(thread, { updatedAt: now });
       refreshedAssistantRunIds.add(message.runId);
     }
@@ -1352,13 +1364,15 @@ class RepositoryThreadService implements ThreadService {
       message.status === status &&
       message.content.trim().length > 0
     ) {
+      await this.processRoleCallOutput(thread, message);
       return;
     }
     const agentId = message.agentKind ? toAgentId(message.agentKind) : snapshot.agentId;
-    await this.messages.update(
+    const content = terminalAssistantContent(snapshot);
+    const updated = await this.messages.update(
       validateConversationMessage({
         ...message,
-        content: terminalAssistantContent(snapshot),
+        content,
         status,
         metadata: {
           ...(message.metadata ?? {}),
@@ -1370,7 +1384,7 @@ class RepositoryThreadService implements ThreadService {
             kind: "participant_message",
             actor: "assistant",
             title: `${messageParticipantHandle(message)} response`,
-            summary: terminalAssistantContent(snapshot),
+            summary: content,
             status: snapshot.status,
             runId: message.runId,
             taskId: metadataString(message.metadata, "taskId"),
@@ -1385,7 +1399,138 @@ class RepositoryThreadService implements ThreadService {
         }
       })
     );
+    await this.processRoleCallOutput(thread, updated);
     await this.touchThread(thread, { updatedAt: this.dependencies.context.now() });
+  }
+
+  private async processRoleCallOutput(
+    thread: ConversationThread,
+    message: ConversationMessage
+  ): Promise<void> {
+    const role = metadataRoleRun(message.metadata);
+    if (
+      !role ||
+      message.role !== "assistant" ||
+      message.status !== "succeeded" ||
+      message.metadata?.roleCallProcessed === true
+    ) {
+      return;
+    }
+    const existingForMessage = (await this.roleCalls.list({ threadId: thread.id }))
+      .filter((call) => call.parentMessageId === message.id);
+    if (existingForMessage.length > 0) {
+      await this.markRoleCallProcessed(message, []);
+      return;
+    }
+
+    const roles = await this.rolesForProject(thread.projectId);
+    const roleDefinitions = roleDefinitionsForWorkgroupRoles(roles);
+    const parsed = parseRoleCallIntents(message.content, {
+      knownRoles: roleDefinitions,
+      defaultReason: `Line-start role mention emitted by @${role.roleHandle}.`,
+      defaultExpectedOutput: { format: "summary" }
+    });
+    if (parsed.intents.length === 0) {
+      if (parsed.warnings.length > 0) {
+        await this.markRoleCallProcessed(message, parsed.warnings.map((warning) => warning.message));
+      }
+      return;
+    }
+
+    const orchestrator = new RoleCallOrchestrator({
+      repositories: {
+        roleCallRepository: this.roleCalls,
+        roleCallEventRepository: this.roleCallEvents,
+        roleTodoRepository: this.roleTodos
+      },
+      roles: roleDefinitions,
+      policyValidator: (request) =>
+        validateRoleCallPolicy({
+          callerRole: request.callerRole,
+          calleeRole: request.calleeRole,
+          intent: request.intent,
+          currentDepth: request.currentDepth,
+          activeRoleCalls: request.activeRoleCalls,
+          existingRoleCalls: request.existingRoleCalls,
+          roleTodos: request.roleTodos
+        }),
+      idFactory: (prefix) => this.dependencies.context.nextId(prefix),
+      now: () => this.dependencies.context.now()
+    });
+    const summaries = await orchestrator.processRoleIntents({
+      threadId: thread.id,
+      callerRole: role.roleHandle,
+      intents: parsed.intents.map((entry) => entry.intent),
+      userGoal: await this.roleCallUserGoal(message),
+      parentMessageId: message.id,
+      currentPlan: message.content
+    });
+    const summary = (await this.roleCallSummariesByParentMessage(thread.id)).get(message.id);
+    await this.messages.update(
+      validateConversationMessage({
+        ...message,
+        metadata: {
+          ...(message.metadata ?? {}),
+          roleCallProcessed: true,
+          roleCallProcessedAt: this.dependencies.context.now(),
+          roleCallParseWarnings: parsed.warnings.map((warning) => warning.message),
+          roleCallLedgerSummaries: summaries.map((entry) => ({
+            roleCallId: entry.roleCallId,
+            targetRole: entry.targetRole,
+            status: entry.status,
+            message: entry.message,
+            reasons: entry.reasons
+          })),
+          roleCallSummary: summary
+        }
+      })
+    );
+  }
+
+  private async rolesForProject(projectId: string): Promise<readonly WorkgroupRole[]> {
+    return (
+      this.dependencies.roles ??
+      (await this.dependencies.team?.rolesForProject(projectId)) ??
+      presetWorkgroupRoles
+    );
+  }
+
+  private async roleCallUserGoal(message: ConversationMessage): Promise<string> {
+    const assignment = metadataAssignment(message.metadata);
+    if (assignment?.sourceMessageId) {
+      const sourceMessage = await this.messages.get(assignment.sourceMessageId);
+      if (sourceMessage?.content.trim()) {
+        return sourceMessage.content;
+      }
+    }
+    const taskId = metadataString(message.metadata, "taskId") ?? assignment?.taskId;
+    if (taskId) {
+      const task = await this.tasks.get(taskId);
+      if (task?.description?.trim()) {
+        return task.description;
+      }
+      if (task?.title.trim()) {
+        return task.title;
+      }
+    }
+    return message.content;
+  }
+
+  private async markRoleCallProcessed(
+    message: ConversationMessage,
+    warnings: string[]
+  ): Promise<void> {
+    await this.messages.update(
+      validateConversationMessage({
+        ...message,
+        metadata: {
+          ...(message.metadata ?? {}),
+          roleCallProcessed: true,
+          roleCallProcessedAt: this.dependencies.context.now(),
+          roleCallParseWarnings: warnings
+        }
+      })
+    );
   }
 
   private async markRunCardTerminalEvent(
@@ -2416,6 +2561,188 @@ function roleContextReferences(role?: WorkgroupRoleRunMetadata): string[] {
   ];
 }
 
+function roleProtocolReferences(
+  role: WorkgroupRoleRunMetadata | undefined,
+  roles: readonly WorkgroupRole[]
+): string[] {
+  if (!role) {
+    return [];
+  }
+  const available = roles
+    .filter((entry) => entry.enabled && entry.handle !== role.roleHandle)
+    .slice(0, 12)
+    .map((entry) =>
+      `@${entry.handle}: ${entry.purpose}; executor=${executorReference(entry)}; capability=${entry.capabilitySummary}`
+    );
+  return [
+    "role_call_protocol: Agent Hub owns delegation. Do not simulate subagents, worker roles, or hidden role chats inside your own response.",
+    "role_call_protocol: To request another role, emit a line-start role call exactly as '@role bounded task'. Agent Hub will parse it into a RoleCall.",
+    "role_call_protocol: Delegation-only requests do not require repository reconnaissance. Emit the role call first and let Agent Hub schedule the callee.",
+    "role_call_protocol: Do not inspect the repository merely to discover available roles or delegation syntax; use the role directory below.",
+    "role_call_protocol: Mentions inside prose or code blocks are not delegation requests. Use separate line-start calls only.",
+    `available_role_calls: ${available.length > 0 ? available.join(" | ") : "none"}`
+  ];
+}
+
+function roleDefinitionsForWorkgroupRoles(
+  roles: readonly WorkgroupRole[]
+): RoleDefinition[] {
+  return roles
+    .filter((role) => role.enabled)
+    .map((role) =>
+      validateRoleDefinition({
+        id: role.id,
+        handle: role.handle,
+        displayName: role.displayName,
+        purpose: role.purpose,
+        defaultInstructions: role.defaultInstructions,
+        capabilities: roleCapabilities(role),
+        permissions: rolePermissions(role),
+        contextPolicy: {
+          scope: role.contextPolicy.scope,
+          includeApprovedMemory: role.contextPolicy.includeApprovedMemory,
+          includeThreadSummary: role.contextPolicy.includeThreadSummary,
+          instructions: [...role.contextPolicy.instructions]
+        },
+        approvalPolicy: {
+          requiredFor: [...role.approvalPolicy.requiredFor],
+          summary: role.approvalPolicy.summary
+        },
+        delegationPolicy: roleDelegationPolicy(role),
+        intakePolicy: roleIntakePolicy(role),
+        executor: roleExecutor(role),
+        trustLevel: presetWorkgroupRoles.some((preset) => preset.handle === role.handle)
+          ? "preset"
+          : "user_defined",
+        enabled: role.enabled
+      })
+    );
+}
+
+function executorReference(role: WorkgroupRole): string {
+  return role.executor.kind === "agent_adapter"
+    ? `agent_adapter/${role.executor.adapterKind}`
+    : `${role.executor.kind}/reserved`;
+}
+
+function roleCapabilities(role: WorkgroupRole): string[] {
+  const explicit = String(role.metadata?.capabilities ?? "")
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+  if (explicit.length > 0) {
+    return explicit;
+  }
+  const defaults: Record<string, string[]> = {
+    analyst: ["analysis", "planning"],
+    operator: ["operations", "local_execution"],
+    reviewer: ["review", "risk"],
+    researcher: ["research", "context"],
+    writer: ["writing", "documentation"],
+    engineer: ["implementation", "local_execution"],
+    memory: ["memory", "knowledge"]
+  };
+  return defaults[role.handle] ?? [role.handle];
+}
+
+function rolePermissions(role: WorkgroupRole): RoleDefinition["permissions"] {
+  const permissionSet = new Set(role.permissions);
+  const canRunCommands =
+    permissionSet.has("run_commands") ||
+    permissionSet.has("local_execution") ||
+    permissionSet.has("write_isolated_worktree");
+  const canEditFiles =
+    permissionSet.has("write_files") || permissionSet.has("write_isolated_worktree");
+  return {
+    canReadFiles:
+      permissionSet.has("read_project_context") ||
+      permissionSet.has("read_thread_context") ||
+      permissionSet.has("read_run_evidence"),
+    canEditFiles,
+    canRunCommands,
+    canUseNetwork: permissionSet.has("network"),
+    canAskUser: permissionSet.has("ask_user"),
+    requiresApprovalForShell: true,
+    requiresApprovalForFileWrite: true
+  };
+}
+
+function roleDelegationPolicy(role: WorkgroupRole): RoleDefinition["delegationPolicy"] {
+  if (role.handle === "analyst") {
+    return {
+      canInitiateRoleCalls: true,
+      allowedIntentTypes: ["delegate", "request_analysis", "request_review", "request_evidence"],
+      allowedTargetRoles: ["operator", "reviewer", "researcher", "writer"],
+      requiresApprovalForTargets: ["engineer"]
+    };
+  }
+  if (role.handle === "operator") {
+    return {
+      canInitiateRoleCalls: true,
+      allowedIntentTypes: ["delegate", "request_review", "request_evidence"],
+      allowedTargetRoles: ["reviewer", "researcher"],
+      requiresApprovalForTargets: ["engineer"]
+    };
+  }
+  if (role.handle === "engineer") {
+    return {
+      canInitiateRoleCalls: true,
+      allowedIntentTypes: ["request_review", "request_evidence"],
+      allowedTargetRoles: ["reviewer", "operator"]
+    };
+  }
+  return {
+    canInitiateRoleCalls: false,
+    allowedIntentTypes: [],
+    allowedTargetRoles: [],
+    allowedTargetCapabilities: [],
+    requiresApprovalForTargets: ["operator", "engineer"]
+  };
+}
+
+function roleIntakePolicy(role: WorkgroupRole): RoleDefinition["intakePolicy"] {
+  const acceptedIntentTypes: RoleDefinition["intakePolicy"]["acceptedIntentTypes"] =
+    role.handle === "reviewer"
+      ? ["delegate", "request_review"]
+      : role.handle === "operator"
+        ? ["delegate", "request_evidence"]
+        : role.handle === "analyst"
+          ? ["delegate", "request_analysis", "request_review"]
+          : ["delegate", "request_analysis", "request_review", "request_evidence"];
+  return {
+    acceptsRoleCalls: true,
+    acceptedIntentTypes,
+    canReject: true,
+    canDefer: true
+  };
+}
+
+function roleExecutor(role: WorkgroupRole): RoleDefinition["executor"] {
+  if (role.executor.kind === "agent_adapter") {
+    return {
+      kind: "agent_adapter",
+      adapter: role.executor.adapterKind
+    };
+  }
+  if (role.executor.kind === "workflow") {
+    return {
+      kind: "local_workflow",
+      workflowId: role.executor.configRef ?? role.handle
+    };
+  }
+  if (role.executor.kind === "llm_api") {
+    return {
+      kind: "llm_api",
+      modelRef: role.executor.configRef ?? role.handle
+    };
+  }
+  return {
+    kind: "human",
+    configRef: role.executor.configRef,
+    unavailableReason: role.executor.unavailableReason
+  };
+}
+
 function toThreadSummary(thread: ThreadDetail): ThreadSummary {
   const runMessages = thread.messages.filter(
     (message): message is AgentRunMessage => message.type === "agent_run"
@@ -2562,13 +2889,29 @@ function metadataAssignment(
   return assignment;
 }
 
+function metadataRoleRun(
+  metadata: ConversationMessage["metadata"]
+): WorkgroupRoleRunMetadata | undefined {
+  const value = metadata?.role;
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  const role = value as WorkgroupRoleRunMetadata;
+  if (
+    typeof role.roleId !== "string" ||
+    typeof role.roleHandle !== "string" ||
+    typeof role.displayName !== "string" ||
+    typeof role.executorKind !== "string"
+  ) {
+    return undefined;
+  }
+  return role;
+}
+
 function runCardRoleHandle(message: ConversationMessage): string | undefined {
-  const role = message.metadata?.role;
-  if (role && typeof role === "object" && !Array.isArray(role)) {
-    const roleHandle = (role as WorkgroupRoleRunMetadata).roleHandle;
-    if (typeof roleHandle === "string" && roleHandle.trim().length > 0) {
-      return roleHandle;
-    }
+  const role = metadataRoleRun(message.metadata);
+  if (role?.roleHandle.trim()) {
+    return role.roleHandle;
   }
   const assignment = metadataAssignment(message.metadata);
   return typeof assignment?.roleHandle === "string" &&

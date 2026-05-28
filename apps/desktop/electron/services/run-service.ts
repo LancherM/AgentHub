@@ -983,7 +983,11 @@ function roleUserConstraints(role?: WorkgroupRoleRunMetadata): string[] | undefi
     `Role persona: ${role.persona}`,
     `Role instructions: ${role.defaultInstructions}`,
     `Role permissions: ${role.permissions.join(", ") || "none"}`,
-    `Role approval policy: ${role.approvalPolicy.summary}`
+    `Role approval policy: ${role.approvalPolicy.summary}`,
+    "Agent Hub owns role delegation. Do not simulate subagents, worker roles, or hidden role chats inside your response.",
+    "To delegate to another Agent Hub role, emit a separate line-start role call in the form '@role bounded task'. Agent Hub will parse and orchestrate it.",
+    "Delegation-only requests do not require repository reconnaissance; emit the role call first and let Agent Hub schedule the callee.",
+    "Use the injected available_role_calls directory for role names; do not inspect the repository merely to discover roles or delegation syntax."
   ];
 }
 
