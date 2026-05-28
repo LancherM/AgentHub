@@ -12,6 +12,11 @@ import {
   validateMemoryItem,
   validateProject,
   validateRiskReport,
+  validateRoleCall,
+  validateRoleCallEvent,
+  validateRoleCallStatusTransition,
+  validateRoleTodo,
+  validateRoleTodoStatusTransition,
   validateRunArtifact,
   validateRunEvent,
   validateSetting,
@@ -32,6 +37,11 @@ import {
   type Project,
   type RiskReport,
   type RiskLevel,
+  type RoleCall,
+  type RoleCallEvent,
+  type RoleCallStatus,
+  type RoleTodo,
+  type RoleTodoStatus,
   type RunArtifact,
   type RunEvent,
   type RunEventType,
@@ -54,6 +64,11 @@ import {
   type MemoryItemRepository,
   type ProjectRepository,
   type RiskReportRepository,
+  type RoleCallEventRepository,
+  type RoleCallListFilter,
+  type RoleCallRepository,
+  type RoleTodoListFilter,
+  type RoleTodoRepository,
   type RunArtifactRepository,
   type RunEventRepository,
   type RunMetadata,
@@ -88,6 +103,9 @@ export interface SqliteRepositories {
   comparisonReportRepository: ComparisonReportRepository;
   skillRepository: SkillRepository;
   settingsRepository: SettingsRepository;
+  roleCallRepository: RoleCallRepository;
+  roleCallEventRepository: RoleCallEventRepository;
+  roleTodoRepository: RoleTodoRepository;
 }
 
 export const SQLITE_MIGRATIONS: Array<{
@@ -665,6 +683,137 @@ ALTER TABLE run_metadata
 ALTER TABLE tasks
   ADD COLUMN metadata_json TEXT CHECK (metadata_json IS NULL OR json_valid(metadata_json));
 `
+  },
+  {
+    version: 12,
+    sql: `
+CREATE TABLE IF NOT EXISTS role_calls (
+  id TEXT PRIMARY KEY,
+  thread_id TEXT NOT NULL,
+  parent_message_id TEXT,
+  parent_role_call_id TEXT,
+  caller_role TEXT NOT NULL,
+  callee_role TEXT NOT NULL,
+  task TEXT NOT NULL,
+  reason TEXT,
+  context_json TEXT NOT NULL CHECK (json_valid(context_json) AND json_type(context_json) = 'object'),
+  permissions_json TEXT NOT NULL CHECK (json_valid(permissions_json) AND json_type(permissions_json) = 'object'),
+  expected_output_json TEXT NOT NULL CHECK (json_valid(expected_output_json) AND json_type(expected_output_json) = 'object'),
+  priority TEXT NOT NULL CHECK (priority IN ('low', 'normal', 'high', 'urgent')),
+  depth INTEGER NOT NULL CHECK (depth >= 0),
+  status TEXT NOT NULL CHECK (
+    status IN (
+      'proposed',
+      'assessing',
+      'accepted',
+      'queued',
+      'running',
+      'deferred',
+      'rejected',
+      'waiting_context',
+      'waiting_approval',
+      'succeeded',
+      'failed',
+      'cancelled'
+    )
+  ),
+  decision_json TEXT CHECK (decision_json IS NULL OR (json_valid(decision_json) AND json_type(decision_json) = 'object')),
+  result_json TEXT CHECK (result_json IS NULL OR (json_valid(result_json) AND json_type(result_json) = 'object')),
+  task_run_id TEXT,
+  todo_id TEXT,
+  error TEXT,
+  created_at TEXT NOT NULL,
+  started_at TEXT,
+  completed_at TEXT,
+  FOREIGN KEY (thread_id) REFERENCES conversation_threads(id) ON DELETE CASCADE,
+  FOREIGN KEY (parent_message_id) REFERENCES conversation_messages(id) ON DELETE SET NULL,
+  FOREIGN KEY (parent_role_call_id) REFERENCES role_calls(id) ON DELETE SET NULL,
+  FOREIGN KEY (task_run_id) REFERENCES task_runs(id) ON DELETE SET NULL,
+  FOREIGN KEY (todo_id) REFERENCES role_todos(id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_role_calls_thread_created
+  ON role_calls(thread_id, created_at, id);
+CREATE INDEX IF NOT EXISTS idx_role_calls_caller_role
+  ON role_calls(caller_role);
+CREATE INDEX IF NOT EXISTS idx_role_calls_callee_role
+  ON role_calls(callee_role);
+CREATE INDEX IF NOT EXISTS idx_role_calls_parent
+  ON role_calls(parent_role_call_id);
+CREATE INDEX IF NOT EXISTS idx_role_calls_status
+  ON role_calls(status);
+CREATE INDEX IF NOT EXISTS idx_role_calls_task_run
+  ON role_calls(task_run_id);
+CREATE INDEX IF NOT EXISTS idx_role_calls_todo
+  ON role_calls(todo_id);
+
+CREATE TABLE IF NOT EXISTS role_todos (
+  id TEXT PRIMARY KEY,
+  thread_id TEXT NOT NULL,
+  role TEXT NOT NULL,
+  source_role_call_id TEXT,
+  parent_todo_id TEXT,
+  title TEXT NOT NULL,
+  description TEXT,
+  status TEXT NOT NULL CHECK (
+    status IN ('open', 'in_progress', 'deferred', 'blocked', 'done', 'rejected', 'cancelled')
+  ),
+  priority TEXT NOT NULL CHECK (priority IN ('low', 'normal', 'high', 'urgent')),
+  reason TEXT,
+  blocked_by_json TEXT CHECK (blocked_by_json IS NULL OR (json_valid(blocked_by_json) AND json_type(blocked_by_json) = 'array')),
+  related_role_call_ids_json TEXT NOT NULL CHECK (json_valid(related_role_call_ids_json) AND json_type(related_role_call_ids_json) = 'array'),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  completed_at TEXT,
+  FOREIGN KEY (thread_id) REFERENCES conversation_threads(id) ON DELETE CASCADE,
+  FOREIGN KEY (source_role_call_id) REFERENCES role_calls(id) ON DELETE SET NULL,
+  FOREIGN KEY (parent_todo_id) REFERENCES role_todos(id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_role_todos_thread_role
+  ON role_todos(thread_id, role, status);
+CREATE INDEX IF NOT EXISTS idx_role_todos_status
+  ON role_todos(status);
+CREATE INDEX IF NOT EXISTS idx_role_todos_source_call
+  ON role_todos(source_role_call_id);
+
+CREATE TABLE IF NOT EXISTS role_call_events (
+  id TEXT PRIMARY KEY,
+  role_call_id TEXT NOT NULL,
+  thread_id TEXT NOT NULL,
+  type TEXT NOT NULL CHECK (
+    type IN (
+      'created',
+      'assessment_started',
+      'accepted',
+      'deferred',
+      'rejected',
+      'context_requested',
+      'approval_requested',
+      'queued',
+      'started',
+      'todo_created',
+      'todo_updated',
+      'result_reported',
+      'failed',
+      'cancelled'
+    )
+  ),
+  actor_role TEXT,
+  message TEXT NOT NULL,
+  metadata_json TEXT CHECK (metadata_json IS NULL OR (json_valid(metadata_json) AND json_type(metadata_json) = 'object')),
+  created_at TEXT NOT NULL,
+  FOREIGN KEY (role_call_id) REFERENCES role_calls(id) ON DELETE CASCADE,
+  FOREIGN KEY (thread_id) REFERENCES conversation_threads(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_role_call_events_call_created
+  ON role_call_events(role_call_id, created_at, id);
+CREATE INDEX IF NOT EXISTS idx_role_call_events_thread_created
+  ON role_call_events(thread_id, created_at, id);
+CREATE INDEX IF NOT EXISTS idx_role_call_events_type
+  ON role_call_events(type);
+`
   }
 ];
 
@@ -692,7 +841,10 @@ export function createSqliteRepositories(
     memoryItemRepository: new SQLiteMemoryItemRepository(database),
     comparisonReportRepository: new SQLiteComparisonReportRepository(database),
     skillRepository: new SQLiteSkillRepository(database),
-    settingsRepository: new SQLiteSettingsRepository(database)
+    settingsRepository: new SQLiteSettingsRepository(database),
+    roleCallRepository: new SQLiteRoleCallRepository(database),
+    roleCallEventRepository: new SQLiteRoleCallEventRepository(database),
+    roleTodoRepository: new SQLiteRoleTodoRepository(database)
   };
 }
 
@@ -2170,6 +2322,279 @@ ORDER BY key ASC;
   }
 }
 
+export class SQLiteRoleCallRepository implements RoleCallRepository {
+  constructor(private readonly database: SqliteDatabase) {}
+
+  async create(call: RoleCall): Promise<RoleCall> {
+    const validCall = validateRoleCall(call);
+    await this.database.execute(roleCallInsertSql(validCall));
+    return cloneRoleCall(validCall);
+  }
+
+  async update(call: RoleCall): Promise<RoleCall> {
+    const validCall = validateRoleCall(call);
+    const existing = await this.get(validCall.id);
+    if (!existing) {
+      throw new Error(`role call ${validCall.id} not found`);
+    }
+    validateRoleCallStatusTransition(existing.status, validCall.status);
+    await this.database.execute(roleCallUpdateSql(validCall));
+    return cloneRoleCall(validCall);
+  }
+
+  async updateStatus(
+    roleCallId: string,
+    status: RoleCallStatus,
+    at: string
+  ): Promise<RoleCall> {
+    const existing = await this.get(roleCallId);
+    if (!existing) {
+      throw new Error(`role call ${roleCallId} not found`);
+    }
+    validateRoleCallStatusTransition(existing.status, status);
+    return this.update({
+      ...existing,
+      status,
+      startedAt: status === "running" ? existing.startedAt ?? at : existing.startedAt,
+      completedAt: isTerminalRoleCallStatus(status)
+        ? at
+        : existing.completedAt
+    });
+  }
+
+  async linkTaskRun(
+    roleCallId: string,
+    taskRunId: string | undefined
+  ): Promise<RoleCall> {
+    const existing = await this.get(roleCallId);
+    if (!existing) {
+      throw new Error(`role call ${roleCallId} not found`);
+    }
+    return this.update({ ...existing, taskRunId });
+  }
+
+  async get(roleCallId: string): Promise<RoleCall | undefined> {
+    const rows = await this.database.query<RoleCallRow>(`
+SELECT
+  rc.id,
+  rc.thread_id AS threadId,
+  rc.parent_message_id AS parentMessageId,
+  rc.parent_role_call_id AS parentRoleCallId,
+  rc.caller_role AS callerRole,
+  rc.callee_role AS calleeRole,
+  rc.task,
+  rc.reason,
+  rc.context_json AS contextJson,
+  rc.permissions_json AS permissionsJson,
+  rc.expected_output_json AS expectedOutputJson,
+  rc.priority,
+  rc.depth,
+  rc.status,
+  rc.decision_json AS decisionJson,
+  rc.result_json AS resultJson,
+  rc.task_run_id AS taskRunId,
+  rc.todo_id AS todoId,
+  rc.error,
+  rc.created_at AS createdAt,
+  rc.started_at AS startedAt,
+  rc.completed_at AS completedAt
+FROM role_calls rc
+WHERE rc.id = ${sqlString(roleCallId)}
+LIMIT 1;
+`);
+    const row = rows[0];
+    return row ? roleCallFromRow(row) : undefined;
+  }
+
+  async list(filter: RoleCallListFilter = {}): Promise<RoleCall[]> {
+    const where = roleCallWhereClause(filter);
+    const todoJoin =
+      filter.todoStatus === undefined
+        ? ""
+        : "LEFT JOIN role_todos rt ON rt.id = rc.todo_id";
+    const rows = await this.database.query<RoleCallRow>(`
+SELECT
+  rc.id,
+  rc.thread_id AS threadId,
+  rc.parent_message_id AS parentMessageId,
+  rc.parent_role_call_id AS parentRoleCallId,
+  rc.caller_role AS callerRole,
+  rc.callee_role AS calleeRole,
+  rc.task,
+  rc.reason,
+  rc.context_json AS contextJson,
+  rc.permissions_json AS permissionsJson,
+  rc.expected_output_json AS expectedOutputJson,
+  rc.priority,
+  rc.depth,
+  rc.status,
+  rc.decision_json AS decisionJson,
+  rc.result_json AS resultJson,
+  rc.task_run_id AS taskRunId,
+  rc.todo_id AS todoId,
+  rc.error,
+  rc.created_at AS createdAt,
+  rc.started_at AS startedAt,
+  rc.completed_at AS completedAt
+FROM role_calls rc
+${todoJoin}
+${where}
+ORDER BY rc.created_at ASC, rc.id ASC;
+`);
+    return rows.map(roleCallFromRow);
+  }
+}
+
+export class SQLiteRoleCallEventRepository
+  implements RoleCallEventRepository
+{
+  constructor(private readonly database: SqliteDatabase) {}
+
+  async create(event: RoleCallEvent): Promise<RoleCallEvent> {
+    const validEvent = validateRoleCallEvent(event);
+    await this.database.execute(roleCallEventInsertSql(validEvent));
+    return cloneRoleCallEvent(validEvent);
+  }
+
+  async createMany(events: RoleCallEvent[]): Promise<RoleCallEvent[]> {
+    if (events.length === 0) {
+      return [];
+    }
+    await this.database.execute(
+      events.map((event) => roleCallEventInsertSql(event)).join("\n")
+    );
+    return events.map((event) => cloneRoleCallEvent(validateRoleCallEvent(event)));
+  }
+
+  async listByRoleCallId(roleCallId: string): Promise<RoleCallEvent[]> {
+    const rows = await this.database.query<RoleCallEventRow>(`
+SELECT
+  id,
+  role_call_id AS roleCallId,
+  thread_id AS threadId,
+  type,
+  actor_role AS actorRole,
+  message,
+  metadata_json AS metadataJson,
+  created_at AS createdAt
+FROM role_call_events
+WHERE role_call_id = ${sqlString(roleCallId)}
+ORDER BY created_at ASC, id ASC;
+`);
+    return rows.map(roleCallEventFromRow);
+  }
+
+  async listByThreadId(threadId: string): Promise<RoleCallEvent[]> {
+    const rows = await this.database.query<RoleCallEventRow>(`
+SELECT
+  id,
+  role_call_id AS roleCallId,
+  thread_id AS threadId,
+  type,
+  actor_role AS actorRole,
+  message,
+  metadata_json AS metadataJson,
+  created_at AS createdAt
+FROM role_call_events
+WHERE thread_id = ${sqlString(threadId)}
+ORDER BY created_at ASC, id ASC;
+`);
+    return rows.map(roleCallEventFromRow);
+  }
+}
+
+export class SQLiteRoleTodoRepository implements RoleTodoRepository {
+  constructor(private readonly database: SqliteDatabase) {}
+
+  async create(todo: RoleTodo): Promise<RoleTodo> {
+    const validTodo = validateRoleTodo(todo);
+    await this.database.execute(roleTodoInsertSql(validTodo));
+    return cloneRoleTodo(validTodo);
+  }
+
+  async update(todo: RoleTodo): Promise<RoleTodo> {
+    const validTodo = validateRoleTodo(todo);
+    const existing = await this.get(validTodo.id);
+    if (!existing) {
+      throw new Error(`role todo ${validTodo.id} not found`);
+    }
+    validateRoleTodoStatusTransition(existing.status, validTodo.status);
+    await this.database.execute(roleTodoUpdateSql(validTodo));
+    return cloneRoleTodo(validTodo);
+  }
+
+  async updateStatus(
+    todoId: string,
+    status: RoleTodoStatus,
+    updatedAt: string
+  ): Promise<RoleTodo> {
+    const existing = await this.get(todoId);
+    if (!existing) {
+      throw new Error(`role todo ${todoId} not found`);
+    }
+    validateRoleTodoStatusTransition(existing.status, status);
+    return this.update({
+      ...existing,
+      status,
+      updatedAt,
+      completedAt: isTerminalRoleTodoStatus(status)
+        ? updatedAt
+        : existing.completedAt
+    });
+  }
+
+  async get(todoId: string): Promise<RoleTodo | undefined> {
+    const rows = await this.database.query<RoleTodoRow>(`
+SELECT
+  id,
+  thread_id AS threadId,
+  role,
+  source_role_call_id AS sourceRoleCallId,
+  parent_todo_id AS parentTodoId,
+  title,
+  description,
+  status,
+  priority,
+  reason,
+  blocked_by_json AS blockedByJson,
+  related_role_call_ids_json AS relatedRoleCallIdsJson,
+  created_at AS createdAt,
+  updated_at AS updatedAt,
+  completed_at AS completedAt
+FROM role_todos
+WHERE id = ${sqlString(todoId)}
+LIMIT 1;
+`);
+    const row = rows[0];
+    return row ? roleTodoFromRow(row) : undefined;
+  }
+
+  async list(filter: RoleTodoListFilter = {}): Promise<RoleTodo[]> {
+    const rows = await this.database.query<RoleTodoRow>(`
+SELECT
+  id,
+  thread_id AS threadId,
+  role,
+  source_role_call_id AS sourceRoleCallId,
+  parent_todo_id AS parentTodoId,
+  title,
+  description,
+  status,
+  priority,
+  reason,
+  blocked_by_json AS blockedByJson,
+  related_role_call_ids_json AS relatedRoleCallIdsJson,
+  created_at AS createdAt,
+  updated_at AS updatedAt,
+  completed_at AS completedAt
+FROM role_todos
+${roleTodoWhereClause(filter)}
+ORDER BY created_at ASC, id ASC;
+`);
+    return rows.map(roleTodoFromRow);
+  }
+}
+
 interface ProjectRow extends Record<string, unknown> {
   id: string;
   name: string;
@@ -2352,6 +2777,60 @@ interface SettingRow extends Record<string, unknown> {
   key: string;
   valueJson: string;
   updatedAt: string;
+}
+
+interface RoleCallRow extends Record<string, unknown> {
+  id: string;
+  threadId: string;
+  parentMessageId: string | null;
+  parentRoleCallId: string | null;
+  callerRole: string;
+  calleeRole: string;
+  task: string;
+  reason: string | null;
+  contextJson: string;
+  permissionsJson: string;
+  expectedOutputJson: string;
+  priority: string;
+  depth: number;
+  status: string;
+  decisionJson: string | null;
+  resultJson: string | null;
+  taskRunId: string | null;
+  todoId: string | null;
+  error: string | null;
+  createdAt: string;
+  startedAt: string | null;
+  completedAt: string | null;
+}
+
+interface RoleCallEventRow extends Record<string, unknown> {
+  id: string;
+  roleCallId: string;
+  threadId: string;
+  type: string;
+  actorRole: string | null;
+  message: string;
+  metadataJson: string | null;
+  createdAt: string;
+}
+
+interface RoleTodoRow extends Record<string, unknown> {
+  id: string;
+  threadId: string;
+  role: string;
+  sourceRoleCallId: string | null;
+  parentTodoId: string | null;
+  title: string;
+  description: string | null;
+  status: string;
+  priority: string;
+  reason: string | null;
+  blockedByJson: string | null;
+  relatedRoleCallIdsJson: string;
+  createdAt: string;
+  updatedAt: string;
+  completedAt: string | null;
 }
 
 function projectFromRow(row: ProjectRow): Project {
@@ -2570,6 +3049,66 @@ function settingFromRow(row: SettingRow): Setting {
   });
 }
 
+function roleCallFromRow(row: RoleCallRow): RoleCall {
+  return validateRoleCall({
+    id: row.id,
+    threadId: row.threadId,
+    parentMessageId: nullToUndefined(row.parentMessageId),
+    parentRoleCallId: nullToUndefined(row.parentRoleCallId),
+    callerRole: row.callerRole,
+    calleeRole: row.calleeRole,
+    task: row.task,
+    reason: nullToUndefined(row.reason),
+    context: parseJson(row.contextJson) as RoleCall["context"],
+    permissions: parseJson(row.permissionsJson) as RoleCall["permissions"],
+    expectedOutput: parseJson(row.expectedOutputJson) as RoleCall["expectedOutput"],
+    priority: row.priority as RoleCall["priority"],
+    depth: row.depth,
+    status: row.status as RoleCallStatus,
+    decision: parseJson(row.decisionJson),
+    result: parseJson(row.resultJson),
+    taskRunId: nullToUndefined(row.taskRunId),
+    todoId: nullToUndefined(row.todoId),
+    error: nullToUndefined(row.error),
+    createdAt: row.createdAt,
+    startedAt: nullToUndefined(row.startedAt),
+    completedAt: nullToUndefined(row.completedAt)
+  });
+}
+
+function roleCallEventFromRow(row: RoleCallEventRow): RoleCallEvent {
+  return validateRoleCallEvent({
+    id: row.id,
+    roleCallId: row.roleCallId,
+    threadId: row.threadId,
+    type: row.type as RoleCallEvent["type"],
+    actorRole: nullToUndefined(row.actorRole),
+    message: row.message,
+    metadata: parseJson(row.metadataJson),
+    createdAt: row.createdAt
+  });
+}
+
+function roleTodoFromRow(row: RoleTodoRow): RoleTodo {
+  return validateRoleTodo({
+    id: row.id,
+    threadId: row.threadId,
+    role: row.role,
+    sourceRoleCallId: nullToUndefined(row.sourceRoleCallId),
+    parentTodoId: nullToUndefined(row.parentTodoId),
+    title: row.title,
+    description: nullToUndefined(row.description),
+    status: row.status as RoleTodoStatus,
+    priority: row.priority as RoleTodo["priority"],
+    reason: nullToUndefined(row.reason),
+    blockedBy: parseJson(row.blockedByJson),
+    relatedRoleCallIds: parseJson(row.relatedRoleCallIdsJson) ?? [],
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+    completedAt: nullToUndefined(row.completedAt)
+  });
+}
+
 function conversationMessageInsertSql(message: ConversationMessage): string {
   const validMessage = validateConversationMessage(message);
   return `
@@ -2626,6 +3165,216 @@ INSERT INTO verification_results (
   ${sqlNullableString(validResult.completedAt)},
   ${sqlString(validResult.createdAt)}
 );`;
+}
+
+function roleCallInsertSql(call: RoleCall): string {
+  const validCall = validateRoleCall(call);
+  return `
+INSERT INTO role_calls (
+  id,
+  thread_id,
+  parent_message_id,
+  parent_role_call_id,
+  caller_role,
+  callee_role,
+  task,
+  reason,
+  context_json,
+  permissions_json,
+  expected_output_json,
+  priority,
+  depth,
+  status,
+  decision_json,
+  result_json,
+  task_run_id,
+  todo_id,
+  error,
+  created_at,
+  started_at,
+  completed_at
+) VALUES (
+  ${sqlString(validCall.id)},
+  ${sqlString(validCall.threadId)},
+  ${sqlNullableString(validCall.parentMessageId)},
+  ${sqlNullableString(validCall.parentRoleCallId)},
+  ${sqlString(validCall.callerRole)},
+  ${sqlString(validCall.calleeRole)},
+  ${sqlString(validCall.task)},
+  ${sqlNullableString(validCall.reason)},
+  ${sqlJson(validCall.context)},
+  ${sqlJson(validCall.permissions)},
+  ${sqlJson(validCall.expectedOutput)},
+  ${sqlString(validCall.priority)},
+  ${validCall.depth},
+  ${sqlString(validCall.status)},
+  ${sqlJson(validCall.decision)},
+  ${sqlJson(validCall.result)},
+  ${sqlNullableString(validCall.taskRunId)},
+  ${sqlNullableString(validCall.todoId)},
+  ${sqlNullableString(validCall.error)},
+  ${sqlString(validCall.createdAt)},
+  ${sqlNullableString(validCall.startedAt)},
+  ${sqlNullableString(validCall.completedAt)}
+);`;
+}
+
+function roleCallUpdateSql(call: RoleCall): string {
+  const validCall = validateRoleCall(call);
+  return `
+UPDATE role_calls
+SET
+  thread_id = ${sqlString(validCall.threadId)},
+  parent_message_id = ${sqlNullableString(validCall.parentMessageId)},
+  parent_role_call_id = ${sqlNullableString(validCall.parentRoleCallId)},
+  caller_role = ${sqlString(validCall.callerRole)},
+  callee_role = ${sqlString(validCall.calleeRole)},
+  task = ${sqlString(validCall.task)},
+  reason = ${sqlNullableString(validCall.reason)},
+  context_json = ${sqlJson(validCall.context)},
+  permissions_json = ${sqlJson(validCall.permissions)},
+  expected_output_json = ${sqlJson(validCall.expectedOutput)},
+  priority = ${sqlString(validCall.priority)},
+  depth = ${validCall.depth},
+  status = ${sqlString(validCall.status)},
+  decision_json = ${sqlJson(validCall.decision)},
+  result_json = ${sqlJson(validCall.result)},
+  task_run_id = ${sqlNullableString(validCall.taskRunId)},
+  todo_id = ${sqlNullableString(validCall.todoId)},
+  error = ${sqlNullableString(validCall.error)},
+  created_at = ${sqlString(validCall.createdAt)},
+  started_at = ${sqlNullableString(validCall.startedAt)},
+  completed_at = ${sqlNullableString(validCall.completedAt)}
+WHERE id = ${sqlString(validCall.id)};`;
+}
+
+function roleCallEventInsertSql(event: RoleCallEvent): string {
+  const validEvent = validateRoleCallEvent(event);
+  return `
+INSERT INTO role_call_events (
+  id,
+  role_call_id,
+  thread_id,
+  type,
+  actor_role,
+  message,
+  metadata_json,
+  created_at
+) VALUES (
+  ${sqlString(validEvent.id)},
+  ${sqlString(validEvent.roleCallId)},
+  ${sqlString(validEvent.threadId)},
+  ${sqlString(validEvent.type)},
+  ${sqlNullableString(validEvent.actorRole)},
+  ${sqlString(validEvent.message)},
+  ${sqlJson(validEvent.metadata)},
+  ${sqlString(validEvent.createdAt)}
+);`;
+}
+
+function roleTodoInsertSql(todo: RoleTodo): string {
+  const validTodo = validateRoleTodo(todo);
+  return `
+INSERT INTO role_todos (
+  id,
+  thread_id,
+  role,
+  source_role_call_id,
+  parent_todo_id,
+  title,
+  description,
+  status,
+  priority,
+  reason,
+  blocked_by_json,
+  related_role_call_ids_json,
+  created_at,
+  updated_at,
+  completed_at
+) VALUES (
+  ${sqlString(validTodo.id)},
+  ${sqlString(validTodo.threadId)},
+  ${sqlString(validTodo.role)},
+  ${sqlNullableString(validTodo.sourceRoleCallId)},
+  ${sqlNullableString(validTodo.parentTodoId)},
+  ${sqlString(validTodo.title)},
+  ${sqlNullableString(validTodo.description)},
+  ${sqlString(validTodo.status)},
+  ${sqlString(validTodo.priority)},
+  ${sqlNullableString(validTodo.reason)},
+  ${sqlJson(validTodo.blockedBy)},
+  ${sqlJson(validTodo.relatedRoleCallIds)},
+  ${sqlString(validTodo.createdAt)},
+  ${sqlString(validTodo.updatedAt)},
+  ${sqlNullableString(validTodo.completedAt)}
+);`;
+}
+
+function roleTodoUpdateSql(todo: RoleTodo): string {
+  const validTodo = validateRoleTodo(todo);
+  return `
+UPDATE role_todos
+SET
+  thread_id = ${sqlString(validTodo.threadId)},
+  role = ${sqlString(validTodo.role)},
+  source_role_call_id = ${sqlNullableString(validTodo.sourceRoleCallId)},
+  parent_todo_id = ${sqlNullableString(validTodo.parentTodoId)},
+  title = ${sqlString(validTodo.title)},
+  description = ${sqlNullableString(validTodo.description)},
+  status = ${sqlString(validTodo.status)},
+  priority = ${sqlString(validTodo.priority)},
+  reason = ${sqlNullableString(validTodo.reason)},
+  blocked_by_json = ${sqlJson(validTodo.blockedBy)},
+  related_role_call_ids_json = ${sqlJson(validTodo.relatedRoleCallIds)},
+  created_at = ${sqlString(validTodo.createdAt)},
+  updated_at = ${sqlString(validTodo.updatedAt)},
+  completed_at = ${sqlNullableString(validTodo.completedAt)}
+WHERE id = ${sqlString(validTodo.id)};`;
+}
+
+function roleCallWhereClause(filter: RoleCallListFilter): string {
+  const conditions: string[] = [];
+  if (filter.threadId !== undefined) {
+    conditions.push(`rc.thread_id = ${sqlString(filter.threadId)}`);
+  }
+  if (filter.role !== undefined) {
+    conditions.push(
+      `(rc.caller_role = ${sqlString(filter.role)} OR rc.callee_role = ${sqlString(filter.role)})`
+    );
+  }
+  if (filter.callerRole !== undefined) {
+    conditions.push(`rc.caller_role = ${sqlString(filter.callerRole)}`);
+  }
+  if (filter.calleeRole !== undefined) {
+    conditions.push(`rc.callee_role = ${sqlString(filter.calleeRole)}`);
+  }
+  if (filter.parentRoleCallId !== undefined) {
+    conditions.push(`rc.parent_role_call_id = ${sqlString(filter.parentRoleCallId)}`);
+  }
+  if (filter.status !== undefined) {
+    conditions.push(`rc.status = ${sqlString(filter.status)}`);
+  }
+  if (filter.todoStatus !== undefined) {
+    conditions.push(`rt.status = ${sqlString(filter.todoStatus)}`);
+  }
+  return conditions.length === 0 ? "" : `WHERE ${conditions.join(" AND ")}`;
+}
+
+function roleTodoWhereClause(filter: RoleTodoListFilter): string {
+  const conditions: string[] = [];
+  if (filter.threadId !== undefined) {
+    conditions.push(`thread_id = ${sqlString(filter.threadId)}`);
+  }
+  if (filter.role !== undefined) {
+    conditions.push(`role = ${sqlString(filter.role)}`);
+  }
+  if (filter.sourceRoleCallId !== undefined) {
+    conditions.push(`source_role_call_id = ${sqlString(filter.sourceRoleCallId)}`);
+  }
+  if (filter.status !== undefined) {
+    conditions.push(`status = ${sqlString(filter.status)}`);
+  }
+  return conditions.length === 0 ? "" : `WHERE ${conditions.join(" AND ")}`;
 }
 
 function cloneRunEvent(event: RunEvent): RunEvent {
@@ -2688,6 +3437,18 @@ function cloneSetting(setting: Setting): Setting {
   };
 }
 
+function cloneRoleCall(call: RoleCall): RoleCall {
+  return cloneJsonValue(call) as RoleCall;
+}
+
+function cloneRoleCallEvent(event: RoleCallEvent): RoleCallEvent {
+  return cloneJsonValue(event) as RoleCallEvent;
+}
+
+function cloneRoleTodo(todo: RoleTodo): RoleTodo {
+  return cloneJsonValue(todo) as RoleTodo;
+}
+
 function cloneJsonObject<T extends Record<string, unknown>>(value: T): T {
   return cloneJsonValue(value) as T;
 }
@@ -2741,6 +3502,19 @@ function sqlNullableInteger(value: number | undefined): string {
 
 function sqlJson(value: unknown | undefined): string {
   return value === undefined ? "NULL" : sqlString(JSON.stringify(value));
+}
+
+function isTerminalRoleCallStatus(status: RoleCallStatus): boolean {
+  return (
+    status === "succeeded" ||
+    status === "failed" ||
+    status === "cancelled" ||
+    status === "rejected"
+  );
+}
+
+function isTerminalRoleTodoStatus(status: RoleTodoStatus): boolean {
+  return status === "done" || status === "cancelled" || status === "rejected";
 }
 
 class SqliteCliDriver {

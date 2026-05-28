@@ -14,6 +14,11 @@ import {
   validateMemoryItem,
   validateProject,
   validateRiskReport,
+  validateRoleCall,
+  validateRoleCallEvent,
+  validateRoleCallStatusTransition,
+  validateRoleTodo,
+  validateRoleTodoStatusTransition,
   validateRunArtifact,
   validateRunEvent,
   validateSetting,
@@ -32,6 +37,11 @@ import {
   type MemoryItem,
   type Project,
   type RiskReport,
+  type RoleCall,
+  type RoleCallEvent,
+  type RoleCallStatus,
+  type RoleTodo,
+  type RoleTodoStatus,
   type RunArtifact,
   type RunEvent,
   type Setting,
@@ -176,6 +186,55 @@ export interface SettingsRepository {
   set(setting: Setting): Promise<Setting>;
   get(key: string): Promise<Setting | undefined>;
   list(): Promise<Setting[]>;
+}
+
+export interface RoleCallListFilter {
+  threadId?: string;
+  role?: string;
+  callerRole?: string;
+  calleeRole?: string;
+  parentRoleCallId?: string;
+  status?: RoleCallStatus;
+  todoStatus?: RoleTodoStatus;
+}
+
+export interface RoleTodoListFilter {
+  threadId?: string;
+  role?: string;
+  sourceRoleCallId?: string;
+  status?: RoleTodoStatus;
+}
+
+export interface RoleCallRepository {
+  create(call: RoleCall): Promise<RoleCall>;
+  update(call: RoleCall): Promise<RoleCall>;
+  updateStatus(
+    roleCallId: string,
+    status: RoleCallStatus,
+    at: string
+  ): Promise<RoleCall>;
+  linkTaskRun(roleCallId: string, taskRunId: string | undefined): Promise<RoleCall>;
+  get(roleCallId: string): Promise<RoleCall | undefined>;
+  list(filter?: RoleCallListFilter): Promise<RoleCall[]>;
+}
+
+export interface RoleCallEventRepository {
+  create(event: RoleCallEvent): Promise<RoleCallEvent>;
+  createMany(events: RoleCallEvent[]): Promise<RoleCallEvent[]>;
+  listByRoleCallId(roleCallId: string): Promise<RoleCallEvent[]>;
+  listByThreadId(threadId: string): Promise<RoleCallEvent[]>;
+}
+
+export interface RoleTodoRepository {
+  create(todo: RoleTodo): Promise<RoleTodo>;
+  update(todo: RoleTodo): Promise<RoleTodo>;
+  updateStatus(
+    todoId: string,
+    status: RoleTodoStatus,
+    updatedAt: string
+  ): Promise<RoleTodo>;
+  get(todoId: string): Promise<RoleTodo | undefined>;
+  list(filter?: RoleTodoListFilter): Promise<RoleTodo[]>;
 }
 
 export class InMemoryProjectRepository implements ProjectRepository {
@@ -751,8 +810,209 @@ export class InMemorySettingsRepository implements SettingsRepository {
   }
 }
 
+export class InMemoryRoleCallRepository implements RoleCallRepository {
+  private readonly calls = new Map<string, RoleCall>();
+
+  constructor(private readonly todoRepository?: RoleTodoRepository) {}
+
+  async create(call: RoleCall): Promise<RoleCall> {
+    const validCall = validateRoleCall(call);
+    const existing = this.calls.get(validCall.id);
+    if (existing) {
+      validateRoleCallStatusTransition(existing.status, validCall.status);
+    }
+    this.calls.set(validCall.id, cloneRoleCall(validCall));
+    return cloneRoleCall(validCall);
+  }
+
+  async update(call: RoleCall): Promise<RoleCall> {
+    const validCall = validateRoleCall(call);
+    const existing = this.calls.get(validCall.id);
+    if (!existing) {
+      throw new Error(`role call ${validCall.id} not found`);
+    }
+    validateRoleCallStatusTransition(existing.status, validCall.status);
+    this.calls.set(validCall.id, cloneRoleCall(validCall));
+    return cloneRoleCall(validCall);
+  }
+
+  async updateStatus(
+    roleCallId: string,
+    status: RoleCallStatus,
+    at: string
+  ): Promise<RoleCall> {
+    const call = this.calls.get(roleCallId);
+    if (!call) {
+      throw new Error(`role call ${roleCallId} not found`);
+    }
+    validateRoleCallStatusTransition(call.status, status);
+    const updated = validateRoleCall({
+      ...call,
+      status,
+      startedAt: status === "running" ? call.startedAt ?? at : call.startedAt,
+      completedAt: isTerminalRoleCallStatus(status) ? at : call.completedAt
+    });
+    this.calls.set(roleCallId, cloneRoleCall(updated));
+    return cloneRoleCall(updated);
+  }
+
+  async linkTaskRun(
+    roleCallId: string,
+    taskRunId: string | undefined
+  ): Promise<RoleCall> {
+    const call = this.calls.get(roleCallId);
+    if (!call) {
+      throw new Error(`role call ${roleCallId} not found`);
+    }
+    const updated = validateRoleCall({ ...call, taskRunId });
+    this.calls.set(roleCallId, cloneRoleCall(updated));
+    return cloneRoleCall(updated);
+  }
+
+  async get(roleCallId: string): Promise<RoleCall | undefined> {
+    const call = this.calls.get(roleCallId);
+    return call ? cloneRoleCall(call) : undefined;
+  }
+
+  async list(filter: RoleCallListFilter = {}): Promise<RoleCall[]> {
+    const matches: RoleCall[] = [];
+    for (const call of this.calls.values()) {
+      const linkedTodo =
+        filter.todoStatus !== undefined && call.todoId && this.todoRepository
+          ? await this.todoRepository.get(call.todoId)
+          : undefined;
+      if (roleCallMatchesFilter(call, filter, linkedTodo)) {
+        matches.push(call);
+      }
+    }
+    return matches
+      .sort((left, right) =>
+        left.createdAt === right.createdAt
+          ? left.id.localeCompare(right.id)
+          : left.createdAt.localeCompare(right.createdAt)
+      )
+      .map(cloneRoleCall);
+  }
+}
+
+export class InMemoryRoleCallEventRepository
+  implements RoleCallEventRepository
+{
+  private readonly events = new Map<string, RoleCallEvent>();
+
+  async create(event: RoleCallEvent): Promise<RoleCallEvent> {
+    const validEvent = validateRoleCallEvent(event);
+    this.events.set(validEvent.id, cloneRoleCallEvent(validEvent));
+    return cloneRoleCallEvent(validEvent);
+  }
+
+  async createMany(events: RoleCallEvent[]): Promise<RoleCallEvent[]> {
+    const created: RoleCallEvent[] = [];
+    for (const event of events) {
+      created.push(await this.create(event));
+    }
+    return created;
+  }
+
+  async listByRoleCallId(roleCallId: string): Promise<RoleCallEvent[]> {
+    return [...this.events.values()]
+      .filter((event) => event.roleCallId === roleCallId)
+      .sort((left, right) =>
+        left.createdAt === right.createdAt
+          ? left.id.localeCompare(right.id)
+          : left.createdAt.localeCompare(right.createdAt)
+      )
+      .map(cloneRoleCallEvent);
+  }
+
+  async listByThreadId(threadId: string): Promise<RoleCallEvent[]> {
+    return [...this.events.values()]
+      .filter((event) => event.threadId === threadId)
+      .sort((left, right) =>
+        left.createdAt === right.createdAt
+          ? left.id.localeCompare(right.id)
+          : left.createdAt.localeCompare(right.createdAt)
+      )
+      .map(cloneRoleCallEvent);
+  }
+}
+
+export class InMemoryRoleTodoRepository implements RoleTodoRepository {
+  private readonly todos = new Map<string, RoleTodo>();
+
+  async create(todo: RoleTodo): Promise<RoleTodo> {
+    const validTodo = validateRoleTodo(todo);
+    const existing = this.todos.get(validTodo.id);
+    if (existing) {
+      validateRoleTodoStatusTransition(existing.status, validTodo.status);
+    }
+    this.todos.set(validTodo.id, cloneRoleTodo(validTodo));
+    return cloneRoleTodo(validTodo);
+  }
+
+  async update(todo: RoleTodo): Promise<RoleTodo> {
+    const validTodo = validateRoleTodo(todo);
+    const existing = this.todos.get(validTodo.id);
+    if (!existing) {
+      throw new Error(`role todo ${validTodo.id} not found`);
+    }
+    validateRoleTodoStatusTransition(existing.status, validTodo.status);
+    this.todos.set(validTodo.id, cloneRoleTodo(validTodo));
+    return cloneRoleTodo(validTodo);
+  }
+
+  async updateStatus(
+    todoId: string,
+    status: RoleTodoStatus,
+    updatedAt: string
+  ): Promise<RoleTodo> {
+    const todo = this.todos.get(todoId);
+    if (!todo) {
+      throw new Error(`role todo ${todoId} not found`);
+    }
+    validateRoleTodoStatusTransition(todo.status, status);
+    const updated = validateRoleTodo({
+      ...todo,
+      status,
+      updatedAt,
+      completedAt: isTerminalRoleTodoStatus(status) ? updatedAt : todo.completedAt
+    });
+    this.todos.set(todoId, cloneRoleTodo(updated));
+    return cloneRoleTodo(updated);
+  }
+
+  async get(todoId: string): Promise<RoleTodo | undefined> {
+    const todo = this.todos.get(todoId);
+    return todo ? cloneRoleTodo(todo) : undefined;
+  }
+
+  async list(filter: RoleTodoListFilter = {}): Promise<RoleTodo[]> {
+    return [...this.todos.values()]
+      .filter((todo) => roleTodoMatchesFilter(todo, filter))
+      .sort((left, right) =>
+        left.createdAt === right.createdAt
+          ? left.id.localeCompare(right.id)
+          : left.createdAt.localeCompare(right.createdAt)
+      )
+      .map(cloneRoleTodo);
+  }
+}
+
 function isTerminalRunStatus(status: RunStatus): boolean {
   return status === "succeeded" || status === "failed" || status === "cancelled";
+}
+
+function isTerminalRoleCallStatus(status: RoleCallStatus): boolean {
+  return (
+    status === "succeeded" ||
+    status === "failed" ||
+    status === "cancelled" ||
+    status === "rejected"
+  );
+}
+
+function isTerminalRoleTodoStatus(status: RoleTodoStatus): boolean {
+  return status === "done" || status === "cancelled" || status === "rejected";
 }
 
 export function cloneRunMetadata(metadata: RunMetadata): RunMetadata {
@@ -875,6 +1135,50 @@ function cloneSetting(setting: Setting): Setting {
     ...setting,
     value: cloneJsonValue(setting.value)
   };
+}
+
+function cloneRoleCall(call: RoleCall): RoleCall {
+  return cloneJsonValue(call) as RoleCall;
+}
+
+function cloneRoleCallEvent(event: RoleCallEvent): RoleCallEvent {
+  return cloneJsonValue(event) as RoleCallEvent;
+}
+
+function cloneRoleTodo(todo: RoleTodo): RoleTodo {
+  return cloneJsonValue(todo) as RoleTodo;
+}
+
+function roleCallMatchesFilter(
+  call: RoleCall,
+  filter: RoleCallListFilter,
+  linkedTodo?: RoleTodo
+): boolean {
+  return (
+    (filter.threadId === undefined || call.threadId === filter.threadId) &&
+    (filter.role === undefined ||
+      call.callerRole === filter.role ||
+      call.calleeRole === filter.role) &&
+    (filter.callerRole === undefined || call.callerRole === filter.callerRole) &&
+    (filter.calleeRole === undefined || call.calleeRole === filter.calleeRole) &&
+    (filter.parentRoleCallId === undefined ||
+      call.parentRoleCallId === filter.parentRoleCallId) &&
+    (filter.status === undefined || call.status === filter.status) &&
+    (filter.todoStatus === undefined || linkedTodo?.status === filter.todoStatus)
+  );
+}
+
+function roleTodoMatchesFilter(
+  todo: RoleTodo,
+  filter: RoleTodoListFilter
+): boolean {
+  return (
+    (filter.threadId === undefined || todo.threadId === filter.threadId) &&
+    (filter.role === undefined || todo.role === filter.role) &&
+    (filter.sourceRoleCallId === undefined ||
+      todo.sourceRoleCallId === filter.sourceRoleCallId) &&
+    (filter.status === undefined || todo.status === filter.status)
+  );
 }
 
 function cloneJsonObject<T extends Record<string, unknown>>(value: T): T {

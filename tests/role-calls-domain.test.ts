@@ -5,6 +5,9 @@ import {
   conservativeDelegationPolicy,
   conservativeIntakePolicy,
   conservativePermissionSet,
+  InMemoryRoleCallEventRepository,
+  InMemoryRoleCallRepository,
+  InMemoryRoleTodoRepository,
   validateRoleCall,
   validateRoleCallDecision,
   validateRoleCallEvent,
@@ -278,5 +281,40 @@ describe("adaptive role call domain contracts", () => {
     expect(() =>
       validateRoleTodoStatusTransition("done", "open")
     ).toThrow(DomainStateTransitionError);
+  });
+
+  it("provides in-memory role call repositories for orchestrator tests", async () => {
+    const todos = new InMemoryRoleTodoRepository();
+    const calls = new InMemoryRoleCallRepository(todos);
+    const events = new InMemoryRoleCallEventRepository();
+
+    await calls.create(baseRoleCall());
+    await todos.create(baseRoleTodo());
+    const existing = await calls.get("call_1");
+    if (!existing) {
+      throw new Error("missing call");
+    }
+    await calls.update({ ...existing, todoId: "todo_1" });
+    await events.create({
+      id: "event_1",
+      roleCallId: "call_1",
+      threadId: "thread_1",
+      type: "created",
+      message: "Created role call.",
+      createdAt
+    });
+
+    await expect(calls.list({ role: "operator" })).resolves.toEqual([
+      expect.objectContaining({ id: "call_1", calleeRole: "operator" })
+    ]);
+    await expect(calls.list({ todoStatus: "open" })).resolves.toEqual([
+      expect.objectContaining({ id: "call_1", todoId: "todo_1" })
+    ]);
+    await expect(todos.list({ role: "operator", status: "open" })).resolves.toEqual([
+      expect.objectContaining({ id: "todo_1" })
+    ]);
+    await expect(events.listByRoleCallId("call_1")).resolves.toEqual([
+      expect.objectContaining({ id: "event_1", type: "created" })
+    ]);
   });
 });

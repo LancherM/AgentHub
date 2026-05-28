@@ -393,6 +393,9 @@ The implementation sequence is tracked in
 The first implementation slice adds shared/core Adaptive Role Call contracts and
 runtime validators for role definitions, intents, calls, decisions, todos,
 events, results, and state transitions without changing run behavior yet.
+The persistence slice stores RoleCalls, RoleCallEvents, and RoleTodos as
+first-class local SQLite audit records with thread, message, run, parent-call,
+role, status, and todo-state queries.
 
 The companion interaction optimization plan lives in
 `docs/interaction-optimization-roadmap.md`. It records the near-term

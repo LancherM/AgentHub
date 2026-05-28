@@ -969,6 +969,11 @@ and validators for role definitions, intents, calls, decisions, todos, events,
 results, and status transitions. This keeps parser, persistence, orchestrator,
 CLI, and desktop phases aligned while leaving runtime execution behavior
 unchanged until later slices.
+RoleCall persistence is first-class SQLite storage rather than message metadata:
+`role_calls`, `role_call_events`, and `role_todos` keep JSON payloads validated
+at the database edge, link back to threads/messages/task runs where available,
+and expose repository queries by thread, role, parent call, lifecycle status,
+and todo state.
 
 The interaction simplification and post-MVP UX phases are documented in
 `docs/interaction-optimization-roadmap.md`. Those phases should remain layered
