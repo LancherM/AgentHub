@@ -388,6 +388,8 @@ intake policy, project-level limits, and explicit approval state. The main
 conversation must stay concise: RoleCall DAGs, todo lists, events, commands,
 and evidence are available through collapsed review surfaces rather than shown
 inline by default.
+The implementation sequence is tracked in
+`docs/adaptive-role-calls-implementation-roadmap.md`.
 
 The companion interaction optimization plan lives in
 `docs/interaction-optimization-roadmap.md`. It records the near-term
