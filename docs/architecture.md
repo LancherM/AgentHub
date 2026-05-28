@@ -958,6 +958,10 @@ workflow template. The Orchestrator hardcodes validation and scheduling
 algorithms, not concrete role relationships: custom-role calls are authorized
 only when caller delegation policy, callee intake policy, project limits,
 executor capabilities, and approval state all permit the requested intent.
+Renderer surfaces should keep RoleCall graph, todo, event, command, file, and
+risk evidence behind collapsed inspector or detail views; the default
+conversation transcript should expose only compact status affordances and
+blocking approvals.
 
 The interaction simplification and post-MVP UX phases are documented in
 `docs/interaction-optimization-roadmap.md`. Those phases should remain layered

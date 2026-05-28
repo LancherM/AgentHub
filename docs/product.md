@@ -381,7 +381,10 @@ per-role todo lists, and complete work through an auditable RoleCall graph
 without turning role mentions into free-form multi-agent chat or fixed workflow
 templates. Custom roles do not receive ambient delegation rights; the
 Orchestrator determines call authority from role delegation policy, callee
-intake policy, project-level limits, and explicit approval state.
+intake policy, project-level limits, and explicit approval state. The main
+conversation must stay concise: RoleCall DAGs, todo lists, events, commands,
+and evidence are available through collapsed review surfaces rather than shown
+inline by default.
 
 The companion interaction optimization plan lives in
 `docs/interaction-optimization-roadmap.md`. It records the near-term

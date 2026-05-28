@@ -558,8 +558,16 @@ interface RoleCallContext {
 
 UI 应提供两层视图：
 
-1. 用户默认视图：清晰最终回答、当前协作状态、需要用户审批的事项。
+1. 用户默认视图：清晰最终回答、当前协作状态、需要用户审批的事项。主对话页面必须
+   保持清爽简明，不默认展示 RoleCall DAG、完整 todo 列表、事件流、命令输出、
+   文件列表、风险明细或原始证据。
 2. 审计视图：RoleCall 图、RoleTodo 列表、事件、证据、命令、文件、风险、错误。
+
+主对话只应透出少量折叠入口，例如 `3 role calls · 1 deferred · review needed`、
+`Open role graph` 或 `View delegation details`。RoleCall DAG、RoleTodoPanel、
+RoleCallEvent、RoleResult 原始 JSON、命令记录和文件/风险证据必须默认折叠在
+inspector、drawer、modal 或详情页中。用户展开前，主 transcript 应优先显示人类可读的
+最终总结、阻塞审批和少量状态 chip。
 
 RoleCallCard 显示：
 

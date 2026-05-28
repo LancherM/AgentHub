@@ -592,9 +592,19 @@ Context requirements:
 The UI should offer two levels:
 
 1. Default user view: final answer, current collaboration state, and required
-   user approvals.
+   user approvals. The main conversation page must stay clean and concise. It
+   must not show the RoleCall DAG, full todo lists, event streams, command
+   output, file lists, risk details, or raw evidence by default.
 2. Audit view: RoleCall graph, RoleTodo lists, events, evidence, commands,
    files, risks, and errors.
+
+The main conversation should expose only compact collapsed entry points, such
+as `3 role calls · 1 deferred · review needed`, `Open role graph`, or
+`View delegation details`. The RoleCall DAG, RoleTodoPanel, RoleCallEvent
+stream, raw RoleResult JSON, command records, and file/risk evidence must be
+collapsed by default inside an inspector, drawer, modal, or detail page. Until
+the user expands those details, the main transcript should prioritize the
+human-readable final summary, blocking approvals, and a few status chips.
 
 RoleCallCard displays:
 
