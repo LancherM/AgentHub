@@ -878,6 +878,8 @@ export class TaskRunner {
       }
     }
 
+    status = finalRunStatus(status, finalizationFailed);
+
     try {
       workspaceCleanup = await workspaceSession.cleanup({
         successful: status === "succeeded"
