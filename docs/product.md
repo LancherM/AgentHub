@@ -373,6 +373,14 @@ configurable roles, executor backends, workflow templates, artifact and
 knowledge models, pack metadata, and optional sync/collaboration surfaces while
 preserving local-first operation as the default.
 
+The Adaptive Role Calls product specification is documented in
+`docs/adaptive-role-calls.en.md` and `docs/adaptive-role-calls.zh.md`. It
+extends the workgroup direction with dynamic, orchestrator-owned role
+collaboration: roles may request help, reject or defer requests, maintain
+per-role todo lists, and complete work through an auditable RoleCall graph
+without turning role mentions into free-form multi-agent chat or fixed workflow
+templates.
+
 The companion interaction optimization plan lives in
 `docs/interaction-optimization-roadmap.md`. It records the near-term
 experience corrections for reducing visible complexity: quiet room transcripts,

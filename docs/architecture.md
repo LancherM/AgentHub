@@ -947,6 +947,15 @@ roles, executors, workflows, artifacts, knowledge, packs, and optional
 sync/collaboration should evolve through stable local contracts rather than
 short-lived MVP-only enums or UI assumptions.
 
+Adaptive Role Calls are specified in `docs/adaptive-role-calls.en.md` and
+`docs/adaptive-role-calls.zh.md`. Architecturally, the Orchestrator is a local
+runtime control-plane service rather than a role persona. It owns RoleIntent
+parsing, RoleCall policy validation, compact role-call context construction,
+RoleTodo updates, RoleCallEvent persistence, execution scheduling, result
+schema validation, and caller-context reinjection. Role-to-role collaboration
+must remain a dynamic audited graph, not direct role chat and not a fixed
+workflow template.
+
 The interaction simplification and post-MVP UX phases are documented in
 `docs/interaction-optimization-roadmap.md`. Those phases should remain layered
 over the same local boundaries: the renderer stays sandboxed, room shared
