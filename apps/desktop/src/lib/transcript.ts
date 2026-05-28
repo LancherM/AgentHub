@@ -71,6 +71,9 @@ function shouldHideRunCard(
   message: AgentRunMessage,
   runDetails: Record<string, RunDetail>
 ): boolean {
+  if (message.roleCallId) {
+    return false;
+  }
   const detail = runDetails[message.runId];
   if (!detail) {
     return false;
@@ -87,6 +90,9 @@ function shouldQuietRunCard(
   message: AgentRunMessage,
   runDetails: Record<string, RunDetail>
 ): boolean {
+  if (message.roleCallId) {
+    return false;
+  }
   if (!isTerminalRunStatus(effectiveRunStatus(message, runDetails))) {
     return false;
   }

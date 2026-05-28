@@ -250,6 +250,7 @@ export interface AgentRunMessage extends BaseThreadMessage {
   status: RunStatus;
   taskId?: string;
   taskTitle?: string;
+  roleCallId?: string;
   assignment?: WorkgroupTaskAssignmentMetadata;
 }
 

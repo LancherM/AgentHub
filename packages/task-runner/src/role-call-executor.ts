@@ -45,6 +45,8 @@ export interface ExecuteRoleCallInput {
       | "deliveryMode"
       | "workspaceCleanupPolicy"
       | "dryRun"
+      | "onEvent"
+      | "signal"
     >
   >;
 }
@@ -142,6 +144,8 @@ export class RoleCallTaskRunnerExecutor {
       agentAvailability: input.taskRunnerOptions?.agentAvailability,
       agentHubHome: input.taskRunnerOptions?.agentHubHome,
       dryRun: input.taskRunnerOptions?.dryRun,
+      onEvent: input.taskRunnerOptions?.onEvent,
+      signal: input.taskRunnerOptions?.signal,
       userConstraints: [
         "Run only inside the isolated TaskRunner worktree.",
         "Do not push, merge, export repository context, or approve memory.",

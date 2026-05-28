@@ -28,6 +28,7 @@ import {
   defaultAgentKind,
   isAgentKindEnabled,
   presetWorkgroupRoles,
+  toWorkgroupRoleRunMetadata,
   type AgentAvailabilityOptions
 } from "@agent-hub/shared";
 import type {
@@ -164,6 +165,7 @@ interface AgentRunTaskMetadata {
   taskId: string;
   taskTitle: string;
   assignment: WorkgroupTaskAssignmentMetadata;
+  roleCallId?: string;
   workflowState?: CollaborationWorkflowState;
 }
 
@@ -383,6 +385,7 @@ class RepositoryThreadService implements ThreadService {
             : undefined,
           taskId: taskMetadata?.taskId,
           taskTitle: taskMetadata?.taskTitle,
+          roleCallId: taskMetadata?.roleCallId,
           assignment: taskMetadata?.assignment,
           workflowState: taskMetadata?.workflowState,
           timelineEvent: timelineEvent({
@@ -1091,7 +1094,8 @@ class RepositoryThreadService implements ThreadService {
     runId: string,
     agentId: AgentId,
     role?: WorkgroupRoleRunMetadata,
-    assignment?: WorkgroupTaskAssignmentMetadata
+    assignment?: WorkgroupTaskAssignmentMetadata,
+    roleCallId?: string
   ): Promise<void> {
     const thread = await this.requireThread(threadId);
     const now = this.dependencies.context.now();
@@ -1110,6 +1114,7 @@ class RepositoryThreadService implements ThreadService {
           agentId,
           role,
           taskId: assignment?.taskId,
+          roleCallId,
           assignment,
           assistantOutput: true,
           pending: true
@@ -1465,8 +1470,9 @@ class RepositoryThreadService implements ThreadService {
       parentMessageId: message.id,
       currentPlan: message.content
     });
-    const executionWarnings = await this.executeAcceptedRoleCalls(
+    const executionWarnings = await this.startAcceptedRoleCalls(
       thread,
+      roles,
       roleDefinitions,
       message.id
     );
@@ -1495,8 +1501,9 @@ class RepositoryThreadService implements ThreadService {
     );
   }
 
-  private async executeAcceptedRoleCalls(
+  private async startAcceptedRoleCalls(
     thread: ConversationThread,
+    workgroupRoles: readonly WorkgroupRole[],
     roles: readonly RoleDefinition[],
     parentMessageId: string
   ): Promise<string[]> {
@@ -1516,14 +1523,40 @@ class RepositoryThreadService implements ThreadService {
       );
     for (const call of calls) {
       try {
-        const result = await this.dependencies.runs.executeRoleCall({
+        const started = await this.dependencies.runs.startRoleCall({
           roleCallId: call.id,
           projectId: thread.projectId,
           roles
         });
-        if (!result.ok && result.error) {
-          warnings.push(`@${call.calleeRole} execution failed: ${result.error}`);
-        }
+        const role = workgroupRoles.find((entry) => entry.handle === call.calleeRole);
+        const roleMetadata = role ? toWorkgroupRoleRunMetadata(role) : undefined;
+        const assignment = roleCallAssignment({
+          roleCall: call,
+          role: roleMetadata,
+          agentId: started.agentId,
+          runId: started.runId,
+          nextId: (prefix) => this.dependencies.context.nextId(prefix)
+        });
+        await this.appendAgentRunMessage(
+          thread.id,
+          started.runId,
+          started.agentId,
+          roleMetadata,
+          {
+            taskId: call.id,
+            taskTitle: `Role call: @${call.calleeRole} ${call.task}`,
+            assignment,
+            roleCallId: call.id
+          }
+        );
+        await this.appendAssistantOutputPlaceholder(
+          thread.id,
+          started.runId,
+          started.agentId,
+          roleMetadata,
+          assignment,
+          call.id
+        );
       } catch (error) {
         warnings.push(`@${call.calleeRole} execution failed: ${errorMessage(error)}`);
       }
@@ -1992,6 +2025,30 @@ function createTaskAssignments(input: {
   }
 
   return assignments;
+}
+
+function roleCallAssignment(input: {
+  roleCall: RoleCall;
+  role?: WorkgroupRoleRunMetadata;
+  agentId: AgentId;
+  runId: string;
+  nextId(prefix: string): string;
+}): WorkgroupTaskAssignmentMetadata {
+  return {
+    assignmentId: input.nextId("assignment"),
+    taskId: input.roleCall.id,
+    threadId: input.roleCall.threadId,
+    sourceMessageId: input.roleCall.parentMessageId ?? input.roleCall.id,
+    assignmentRole: "role",
+    agentId: input.agentId,
+    roleHandle: input.roleCall.calleeRole,
+    displayName: input.role?.displayName ?? `@${input.roleCall.calleeRole}`,
+    executorKind: input.role?.executorKind ?? "agent_adapter",
+    adapterKind: input.role?.adapterKind ?? toCoreAgentKind(input.agentId),
+    executable: true,
+    runId: input.runId,
+    status: "running"
+  };
 }
 
 function assignmentForParticipant(
@@ -2867,6 +2924,7 @@ function toAgentRunMessage(
       toDesktopRunStatus(message.status ?? "queued"),
     taskId: metadataString(message.metadata, "taskId"),
     taskTitle: metadataString(message.metadata, "taskTitle"),
+    roleCallId: metadataString(message.metadata, "roleCallId"),
     assignment: metadataAssignment(message.metadata),
     timelineEvent: metadataTimelineEvent(message.metadata),
     createdAt: message.createdAt
@@ -2887,8 +2945,8 @@ function toAssistantMessage(
     status: message.status ? toDesktopRunStatus(message.status) : undefined,
     assignment: metadataAssignment(message.metadata),
     roleCallSummary:
-      roleCallSummaryFromMetadata(message.metadata?.roleCallSummary) ??
-      roleCallSummary,
+      roleCallSummary ??
+      roleCallSummaryFromMetadata(message.metadata?.roleCallSummary),
     timelineEvent: metadataTimelineEvent(message.metadata),
     createdAt: message.createdAt
   };

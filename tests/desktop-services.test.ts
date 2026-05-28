@@ -3506,7 +3506,14 @@ describe("desktop services", () => {
         [
           {
             type: "stdout",
-            data: "{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"@operator output exactly 123\"}}\n"
+            data: "{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"@researcher output exactly 123\\n@reviewer output exactly 123\"}}\n"
+          },
+          { type: "exit", exitCode: 0, signal: null }
+        ],
+        [
+          {
+            type: "stdout",
+            data: "{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"123\"}}\n"
           },
           { type: "exit", exitCode: 0, signal: null }
         ],
@@ -3524,7 +3531,9 @@ describe("desktop services", () => {
       }))
     );
     const roles = presetWorkgroupRoles.map((role) =>
-      role.handle === "analyst" || role.handle === "operator"
+      role.handle === "analyst" ||
+      role.handle === "researcher" ||
+      role.handle === "reviewer"
         ? { ...role, executor: { kind: "agent_adapter" as const, adapterKind: "codex" as const } }
         : role
     );
@@ -3551,6 +3560,23 @@ describe("desktop services", () => {
       throw new Error("expected analyst run card");
     }
     await waitForRun(runs, runMessage.runId, "completed");
+    const withDelegatedRun = await threads.getThread(detail.id);
+    const delegatedRunMessages = withDelegatedRun.messages.filter(
+      (message): message is AgentRunMessage =>
+        message.type === "agent_run" &&
+        message.roleCallId !== undefined
+    );
+    expect(delegatedRunMessages.map((message) => message.assignment?.roleHandle).sort()).toEqual([
+      "researcher",
+      "reviewer"
+    ]);
+    expect(delegatedRunMessages.map((message) => message.taskTitle).sort()).toEqual([
+      "Role call: @researcher output exactly 123",
+      "Role call: @reviewer output exactly 123"
+    ]);
+    for (const delegatedRunMessage of delegatedRunMessages) {
+      await waitForRun(runs, delegatedRunMessage.runId, "completed");
+    }
     const refreshed = await threads.getThread(detail.id);
 
     const brief =
@@ -3569,34 +3595,80 @@ describe("desktop services", () => {
     expect(roleCalls).toEqual([
       expect.objectContaining({
         callerRole: "analyst",
-        calleeRole: "operator",
+        calleeRole: "researcher",
+        task: "output exactly 123",
+        status: "succeeded",
+        taskRunId: expect.any(String),
+        result: expect.objectContaining({ summary: "123" })
+      }),
+      expect.objectContaining({
+        callerRole: "analyst",
+        calleeRole: "reviewer",
         task: "output exactly 123",
         status: "succeeded",
         taskRunId: expect.any(String),
         result: expect.objectContaining({ summary: "123" })
       })
     ]);
-    const assistant = refreshed.messages.find(
-      (message) => message.type === "assistant"
+    const analystAssistant = refreshed.messages.find(
+      (message): message is Extract<(typeof refreshed.messages)[number], { type: "assistant" }> =>
+        message.type === "assistant" &&
+        message.assignment?.roleHandle === "analyst"
     );
-    expect(assistant?.roleCallSummary?.counts.total).toBe(1);
-    expect(assistant?.roleCallSummary?.calls[0]).toEqual(
-      expect.objectContaining({
-        callerRole: "analyst",
-        calleeRole: "operator",
-        status: "succeeded",
-        resultSummary: "123",
-        taskRunId: expect.any(String)
-      })
+    expect(analystAssistant?.roleCallSummary?.counts.total).toBe(2);
+    expect(analystAssistant?.roleCallSummary?.calls).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          callerRole: "analyst",
+          calleeRole: "researcher",
+          status: "succeeded",
+          resultSummary: "123",
+          taskRunId: expect.any(String)
+        }),
+        expect.objectContaining({
+          callerRole: "analyst",
+          calleeRole: "reviewer",
+          status: "succeeded",
+          resultSummary: "123",
+          taskRunId: expect.any(String)
+        })
+      ])
     );
-    expect(assistant?.roleCallSummary?.counts.running).toBe(0);
-    expect(assistant?.roleCallSummary?.counts.succeeded).toBe(1);
-    expect(assistant?.roleCallSummary?.counts.todosOpen).toBe(0);
+    expect(analystAssistant?.roleCallSummary?.counts.running).toBe(0);
+    expect(analystAssistant?.roleCallSummary?.counts.succeeded).toBe(2);
+    expect(analystAssistant?.roleCallSummary?.counts.todosOpen).toBe(0);
+    for (const roleCall of roleCalls) {
+      expect(
+        refreshed.messages.find(
+          (message) =>
+            message.type === "agent_run" &&
+            message.roleCallId === roleCall.id &&
+            message.assignment?.roleHandle === roleCall.calleeRole
+        )
+      ).toEqual(expect.objectContaining({ runId: roleCall.taskRunId }));
+      expect(
+        refreshed.messages.find(
+          (message) =>
+            message.type === "assistant" &&
+            message.assignment?.roleHandle === roleCall.calleeRole
+        )
+      ).toEqual(
+        expect.objectContaining({
+          text: "123",
+          runId: roleCall.taskRunId
+        })
+      );
+    }
     await expect(
-      fixture.repositories.roleTodoRepository.list({ threadId: detail.id, role: "operator" })
+      fixture.repositories.roleTodoRepository.list({ threadId: detail.id })
     ).resolves.toEqual([
       expect.objectContaining({
-        role: "operator",
+        role: "researcher",
+        status: "done",
+        title: "output exactly 123"
+      }),
+      expect.objectContaining({
+        role: "reviewer",
         status: "done",
         title: "output exactly 123"
       })

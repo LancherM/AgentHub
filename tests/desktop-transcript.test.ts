@@ -4,7 +4,11 @@ import {
   quietRunCardIds,
   visibleTranscriptMessages
 } from "../apps/desktop/src/lib/transcript";
-import type { RunDetail, ThreadMessage } from "../apps/desktop/src/lib/types";
+import type {
+  AgentRunMessage,
+  RunDetail,
+  ThreadMessage
+} from "../apps/desktop/src/lib/types";
 
 describe("quietRunCardIds", () => {
   it("marks terminal run cards quiet only when a durable assistant answer exists", () => {
@@ -41,6 +45,18 @@ describe("quietRunCardIds", () => {
 
     expect([...quietRunCardIds(messages, {})]).toEqual(["run_1"]);
   });
+
+  it("keeps delegated role-call run cards expanded beside their assistant result", () => {
+    const messages: ThreadMessage[] = [
+      {
+        ...runMessage("run_role", "completed"),
+        roleCallId: "role_call_1"
+      },
+      assistantMessage("run_role")
+    ];
+
+    expect([...quietRunCardIds(messages, {})]).toEqual([]);
+  });
 });
 
 describe("hiddenRunCardIds", () => {
@@ -58,6 +74,22 @@ describe("hiddenRunCardIds", () => {
         run_2: runDetail("run_2", ["src/index.ts"])
       })
     ]).toEqual(["run_1"]);
+  });
+
+  it("does not hide delegated role-call run cards after assistant output is available", () => {
+    const messages: ThreadMessage[] = [
+      {
+        ...runMessage("run_role", "completed"),
+        roleCallId: "role_call_1"
+      },
+      assistantMessage("run_role")
+    ];
+
+    expect([
+      ...hiddenRunCardIds(messages, {
+        run_role: runDetail("run_role", [])
+      })
+    ]).toEqual([]);
   });
 });
 
@@ -100,7 +132,7 @@ describe("visibleTranscriptMessages", () => {
 function runMessage(
   runId: string,
   status: "queued" | "running" | "verifying" | "completed" | "failed" | "cancelled"
-): ThreadMessage {
+): AgentRunMessage {
   return {
     type: "agent_run",
     id: `message_${runId}`,
