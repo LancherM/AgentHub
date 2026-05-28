@@ -323,18 +323,21 @@ renderer must not directly access Node.js, shell, filesystem, SQLite, or git.
 It must not duplicate task orchestration logic.
 
 Current desktop runs are TaskRunner-backed through the Electron main process
-and persist SQLite task/run/event, conversation, and review records. `@fake`
-uses `FakeAgentAdapter` in an isolated worktree, while `@codex` and `@claude`
-use process-backed adapter preflight and fail inspectably when the local CLI is
-unavailable or unauthenticated. Desktop runs must not write Agent Hub context
-files to target repository roots, export context, merge, push, create pull
-requests, approve memory, or apply code automatically. Explicit desktop memory
-approval writes to the Agent Hub-owned context store, comparison review remains
-read-only, and retained-worktree handoff only exposes local review evidence
-behind the same IPC boundary. Worktree lifecycle cleanup and local apply are
-explicit, audited, confirmation-gated IPC workflows; merge, push, pull request
-creation, branch deletion, repository context export, and automatic acceptance
-remain outside desktop apply.
+and persist SQLite task/run/event, conversation, and review records. Normal
+desktop surfaces expose Codex and Claude Code when enabled and hide the
+deterministic fake adapter; when the internal debug/development availability
+policy enables it, `@fake` uses `FakeAgentAdapter` in an isolated worktree.
+`@codex` and `@claude` use process-backed adapter preflight and fail
+inspectably when the local CLI is unavailable or unauthenticated. Desktop runs
+must not write Agent Hub context files to target repository roots, export
+context, merge, push, create pull requests, approve memory, or apply code
+automatically. Explicit desktop memory approval writes to the Agent Hub-owned
+context store, comparison review remains read-only, and retained-worktree
+handoff only exposes local review evidence behind the same IPC boundary.
+Worktree lifecycle cleanup and local apply are explicit, audited,
+confirmation-gated IPC workflows; merge, push, pull request creation, branch
+deletion, repository context export, and automatic acceptance remain outside
+desktop apply.
 
 ### packages/core
 

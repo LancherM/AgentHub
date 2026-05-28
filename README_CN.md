@@ -18,7 +18,7 @@ packages/core            领域校验和仓储接口
 packages/db              SQLite schema、迁移和仓储实现
 packages/context-compiler 上下文存储、上下文包、任务 brief 和导出
 packages/task-runner     worktree、验证、diff、风险报告编排
-packages/agent-adapters  Fake、Codex、Claude Code 适配器
+packages/agent-adapters  Codex/Claude Code 适配器和调试用 Fake 适配器
 packages/safety          危险命令、敏感路径和风险扫描
 tests                    跨包 Vitest 覆盖
 ```
@@ -30,7 +30,7 @@ tests                    跨包 Vitest 覆盖
 ## 命令
 
 ```sh
-agent-hub [--project <path>] [--agent fake|codex|claude-code]
+agent-hub [--project <path>] [--agent codex|claude-code]
 agent-hub [--db <path>] project add --name <name> --root <path>
 agent-hub [--db <path>] project list
 agent-hub [--db <path>] task create --project-id <project-id> --title <title> [--description <text>]
@@ -40,8 +40,8 @@ agent-hub context init --project-root <path> --project-id <project-id>
 agent-hub context show --project-root <path> --project-id <project-id>
 agent-hub context build --project-root <path> --project-id <project-id> --task-id <task-id> --title <title> --prompt <prompt>
 agent-hub context export --project-root <path> --project-id <project-id> --dry-run|--write
-agent-hub [--db <path>] run --task <task-id> --agent fake|codex|claude-code
-agent-hub run [--repo <path>] [--workspace-base <path>] [--retain-on-failure] "@fake|@codex|@claude-code <task>"
+agent-hub [--db <path>] run --task <task-id> --agent codex|claude-code
+agent-hub run [--repo <path>] [--workspace-base <path>] [--retain-on-failure] "@codex|@claude-code <task>"
 agent-hub [--db <path>] run event add --run-id <run-id> --type <type> --message <message>
 agent-hub tasks list
 agent-hub runs list
@@ -56,16 +56,21 @@ agent-hub [--db <path>] memory reject --memory-id <memory-id>
 agent-hub [--db <path>] compare --task-id <task-id> --baseline <run-id> --candidate <run-id>
 ```
 
+调试、开发和测试模式可以通过 `--debug`、`AGENT_HUB_DEBUG=1` 或隐藏的按代理
+可用性配置启用确定性的 Fake 适配器。
+
 ## 当前能力
 
-- 提供第一版桌面 shell，包括 project/run 导航、run timeline、New Run modal，
-  以及 Summary/Diff/Tests/Risk/Memory review tabs。
+- 提供 room-based 桌面 shell，包括项目与房间导航、内联 run card、assistant
+  输出消息、Team/Knowledge 工作区、检查器面板、本地对比、显式 memory 审批、
+  retained-worktree handoff、生命周期清理和人工确认的本地 apply。
 - 默认使用 SQLite 在本地持久化 project、task、run、event、artifact、
   verification、risk、memory、comparison、skill 和 settings。
 - 保留内存仓储，便于注入式测试和聚焦的 runner 验证。
 - 从 Agent Hub 自有上下文存储构建非侵入式任务上下文和任务 brief。
 - 支持显式仓库上下文导出，包含 dry-run 预览和 managed block。
-- 在隔离 worktree 内运行 Fake、Codex 和 Claude Code 适配器。
+- 普通模式在隔离 worktree 内运行 Codex 和 Claude Code；确定性的 Fake 适配器
+  只在调试、开发、测试或隐藏可用性配置启用时暴露。
 - 默认通过 runtime injection 注入任务 brief 和上下文；可选 worktree overlay
   只写入隔离 worktree。
 - 捕获运行事件、验证结果、Git diff、运行 artifact 和风险报告。
@@ -79,10 +84,11 @@ agent-hub [--db <path>] compare --task-id <task-id> --baseline <run-id> --candid
 
 ## 当前缺口
 
-- 桌面端仍需更完整的流式事件与取消体验、保留 worktree 的 diff review，
-  以及 approved-memory 写回确认。
-- 从已完成 run 自动生成 memory proposal。
-- 比当前持久化文本 summary 更丰富的 comparison scoring。
+- 更丰富的 Codex/Claude 结构化事件映射。
+- 当 metadata-backed 模型不再满足查询、生命周期或治理需要时，再引入额外本地
+  executor backend 和一等 schema 拆分。
+- desktop local apply 之外的显式 merge、push 和 pull request 工作流。
+- 专门的桌面 skills 管理界面。
 
 ## 验证
 
