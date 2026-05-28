@@ -211,7 +211,9 @@ generation, artifact persistence, metadata persistence, or workspace cleanup
 are converted into diagnostic run events and warnings. The task run is
 finalized as `failed`, the task is returned to `open`, partial structured
 outputs are returned when available, and workspace cleanup is still attempted
-according to the selected cleanup policy. Dangerous verification commands are
+according to the selected cleanup policy. Finalization failures are classified
+as failed before cleanup policy evaluation, so `retain_on_failure` preserves
+the inspectable worktree. Dangerous verification commands are
 reported as failed verification results instead of bypassing finalization;
 verification commands receive a 10-minute default timeout unless an explicit
 command timeout is configured, and timeout or process signal details are

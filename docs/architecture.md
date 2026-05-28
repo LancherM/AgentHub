@@ -472,7 +472,9 @@ persistence, and workspace cleanup into diagnostic error events and run
 warnings. The runner uses synthetic failed diff or verification results when a
 stage cannot produce its normal output, marks the run `failed`, returns the
 task to `open`, persists every available partial record, and still attempts
-workspace cleanup according to policy. Event persistence is the last best-effort
+workspace cleanup according to policy. Finalization failures are downgraded
+before cleanup policy evaluation so `retain_on_failure` keeps the worktree
+available for inspection. Event persistence is the last best-effort
 write; if it fails after an otherwise successful run, the run is downgraded to
 `failed` so it is not reported as cleanly complete without its event stream.
 

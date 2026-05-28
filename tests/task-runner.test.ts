@@ -1377,12 +1377,18 @@ describe("task runner", () => {
 
     const result = await runner.run({
       projectRoot,
-      rawPrompt: "@fake persist artifact failure"
+      rawPrompt: "@fake persist artifact failure",
+      workspaceCleanupPolicy: "retain_on_failure"
     });
 
     expect(result.ok).toBe(false);
     expect(result.status).toBe("failed");
     expect(result.error).toBe("diff artifact persistence failed: artifact disk full");
+    expect(result.workspaceCleanup).toMatchObject({
+      cleaned: false,
+      retained: true,
+      reason: "test retain on failure"
+    });
     await expect(runEventRepository.listByRunId(result.run.id)).resolves.toEqual(
       expect.arrayContaining([
         expect.objectContaining({
