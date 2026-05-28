@@ -986,6 +986,12 @@ validated intents, delegates authorization to an injected policy validator,
 persists RoleCall/RoleCallEvent/RoleTodo records, records accepted/deferred/
 rejected/context/approval decisions, and returns compact caller-visible
 summaries without running adapters or starting autonomous background loops.
+RoleCall context building is compact and role-scoped: it includes the user goal,
+current plan, constraints, relevant files, selected prior RoleResults, caller
+and callee todo state, and repo state while stripping valid raw output and
+excluding unrelated role chatter. Structured output helpers parse and validate
+RoleResult JSON, persist success as structured data, and store bounded raw
+output only on invalid-result failure events.
 
 The interaction simplification and post-MVP UX phases are documented in
 `docs/interaction-optimization-roadmap.md`. Those phases should remain layered

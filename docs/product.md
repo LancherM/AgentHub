@@ -403,6 +403,10 @@ The ledger-runtime slice introduces a local RoleCall Orchestrator service that
 turns authorized intents into persisted RoleCalls, intake decisions, events,
 and callee todos with deterministic test intake, but still does not execute
 Codex, Claude, or other role workers.
+The context/protocol slice builds compact RoleCallContext payloads from
+relevant role results, todos, constraints, files, and repo state; role prompts
+require strict RoleResult JSON, and invalid output stores only bounded raw
+audit evidence.
 
 The companion interaction optimization plan lives in
 `docs/interaction-optimization-roadmap.md`. It records the near-term
