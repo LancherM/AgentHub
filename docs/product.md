@@ -407,6 +407,10 @@ The context/protocol slice builds compact RoleCallContext payloads from
 relevant role results, todos, constraints, files, and repo state; role prompts
 require strict RoleResult JSON, and invalid output stores only bounded raw
 audit evidence.
+The execution slice can run accepted agent-adapter RoleCalls through the local
+TaskRunner, link the RoleCall to the resulting task run, and persist structured
+RoleResult summaries, verification, diff, risk, and failure evidence without
+adding remote execution or automatic push/merge behavior.
 
 The companion interaction optimization plan lives in
 `docs/interaction-optimization-roadmap.md`. It records the near-term

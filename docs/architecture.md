@@ -992,6 +992,11 @@ and callee todo state, and repo state while stripping valid raw output and
 excluding unrelated role chatter. Structured output helpers parse and validate
 RoleResult JSON, persist success as structured data, and store bounded raw
 output only on invalid-result failure events.
+TaskRunner-backed RoleCall execution is implemented as a local executor adapter
+around the existing TaskRunner. Accepted `agent_adapter` calls move through
+queued/running/succeeded/failed/cancelled RoleCall states, run inside isolated
+TaskRunner worktrees, link back to `task_runs`, and reuse existing run
+metadata, verification, diff, risk, and adapter preflight evidence.
 
 The interaction simplification and post-MVP UX phases are documented in
 `docs/interaction-optimization-roadmap.md`. Those phases should remain layered
