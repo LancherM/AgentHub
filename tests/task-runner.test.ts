@@ -35,6 +35,8 @@ import {
   InMemoryVerificationResultRepository,
   InMemoryMemoryItemRepository,
   extractAgentFacingOutput,
+  type RunEvent,
+  type RunMetadata,
   validateTask,
   validateRunEvent
 } from "@agent-hub/core";
@@ -1399,6 +1401,106 @@ describe("task runner", () => {
     );
   });
 
+  it("retains failed worktrees when pre-cleanup event persistence throws", async () => {
+    const projectRoot = await createTestDirectory("agent-hub-project");
+    const runRoot = await createTestDirectory("agent-hub-runs");
+    const runner = new TaskRunner({
+      defaultRunRoot: runRoot,
+      workspaceManager: new TestWorkspaceManager(runRoot),
+      diffCollector: new StaticDiffCollector(),
+      verificationRunner: new VerificationRunner(new MockShellExecutor()),
+      runEventRepository: new ThrowingNthRunEventRepository(1, "event store down"),
+      idGenerator: new SequenceIdGenerator(),
+      clock: new FixedClock("2026-01-01T00:00:00.000Z")
+    });
+
+    const result = await runner.run({
+      projectRoot,
+      rawPrompt: "@fake persist event failure",
+      workspaceCleanupPolicy: "retain_on_failure"
+    });
+
+    expect(result.status).toBe("failed");
+    expect(result.error).toBe("run event persistence failed: event store down");
+    expect(result.workspaceCleanup).toMatchObject({
+      cleaned: false,
+      retained: true,
+      reason: "test retain on failure"
+    });
+  });
+
+  it("does not downgrade a run after cleanup metadata persistence throws", async () => {
+    const projectRoot = await createTestDirectory("agent-hub-project");
+    const runRoot = await createTestDirectory("agent-hub-runs");
+    const taskRepository = new InMemoryTaskRepository();
+    const runner = new TaskRunner({
+      taskRepository,
+      defaultRunRoot: runRoot,
+      workspaceManager: new TestWorkspaceManager(runRoot),
+      diffCollector: new StaticDiffCollector(),
+      verificationRunner: new VerificationRunner(new MockShellExecutor()),
+      runMetadataRepository: new ThrowingNthRunMetadataRepository(3, "cleanup metadata store down"),
+      idGenerator: new SequenceIdGenerator(),
+      clock: new FixedClock("2026-01-01T00:00:00.000Z")
+    });
+
+    const result = await runner.run({
+      projectRoot,
+      rawPrompt: "@fake persist cleanup metadata failure",
+      workspaceCleanupPolicy: "retain_on_failure"
+    });
+
+    expect(result.status).toBe("succeeded");
+    expect(result.task.status).toBe("completed");
+    expect(result.workspaceCleanup).toMatchObject({
+      cleaned: true,
+      retained: false,
+      reason: "test cleanup"
+    });
+    expect(result.warnings).toContain(
+      "workspace cleanup metadata persistence failed: cleanup metadata store down"
+    );
+    await expect(taskRepository.get(result.task.id)).resolves.toMatchObject({
+      status: "completed"
+    });
+  });
+
+  it("does not downgrade a run when only final event persistence throws", async () => {
+    const projectRoot = await createTestDirectory("agent-hub-project");
+    const runRoot = await createTestDirectory("agent-hub-runs");
+    const taskRepository = new InMemoryTaskRepository();
+    const runner = new TaskRunner({
+      taskRepository,
+      defaultRunRoot: runRoot,
+      workspaceManager: new TestWorkspaceManager(runRoot),
+      diffCollector: new StaticDiffCollector(),
+      verificationRunner: new VerificationRunner(new MockShellExecutor()),
+      runEventRepository: new ThrowingNthRunEventRepository(2, "final event store down"),
+      idGenerator: new SequenceIdGenerator(),
+      clock: new FixedClock("2026-01-01T00:00:00.000Z")
+    });
+
+    const result = await runner.run({
+      projectRoot,
+      rawPrompt: "@fake persist final event failure",
+      workspaceCleanupPolicy: "retain_on_failure"
+    });
+
+    expect(result.status).toBe("succeeded");
+    expect(result.task.status).toBe("completed");
+    expect(result.workspaceCleanup).toMatchObject({
+      cleaned: true,
+      retained: false,
+      reason: "test cleanup"
+    });
+    expect(result.warnings).toContain(
+      "final run event persistence failed: final event store down"
+    );
+    await expect(taskRepository.get(result.task.id)).resolves.toMatchObject({
+      status: "completed"
+    });
+  });
+
   it("returns a structured failed run when workspace cleanup throws", async () => {
     const projectRoot = await createTestDirectory("agent-hub-project");
     const runRoot = await createTestDirectory("agent-hub-runs");
@@ -1783,5 +1885,43 @@ class ThrowingRunArtifactRepository extends InMemoryRunArtifactRepository {
 
   async create(): Promise<never> {
     throw new Error(this.message);
+  }
+}
+
+class ThrowingNthRunMetadataRepository extends InMemoryRunMetadataRepository {
+  private saveCount = 0;
+
+  constructor(
+    private readonly throwOnSave: number,
+    private readonly message: string
+  ) {
+    super();
+  }
+
+  async save(metadata: RunMetadata): Promise<RunMetadata> {
+    this.saveCount += 1;
+    if (this.saveCount === this.throwOnSave) {
+      throw new Error(this.message);
+    }
+    return super.save(metadata);
+  }
+}
+
+class ThrowingNthRunEventRepository extends InMemoryRunEventRepository {
+  private createManyCount = 0;
+
+  constructor(
+    private readonly throwOnCreateMany: number,
+    private readonly message: string
+  ) {
+    super();
+  }
+
+  async createMany(events: RunEvent[]): Promise<RunEvent[]> {
+    this.createManyCount += 1;
+    if (this.createManyCount === this.throwOnCreateMany) {
+      throw new Error(this.message);
+    }
+    return super.createMany(events);
   }
 }
