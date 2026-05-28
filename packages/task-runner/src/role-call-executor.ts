@@ -1,5 +1,6 @@
 import {
   buildRoleSystemPrompt,
+  extractAgentFacingOutput,
   parseRoleResultJson,
   summarizeRoleResult,
   type RoleCall,
@@ -7,6 +8,7 @@ import {
   type RoleCallEvent,
   type RoleCallEventRepository,
   type RoleCallRepository,
+  type RoleTodoRepository,
   type RoleDefinition,
   type RoleResult
 } from "@agent-hub/core";
@@ -15,6 +17,7 @@ import { TaskRunner, type RunTaskInput, type TaskRunResult } from "./task-runner
 export interface RoleCallExecutionRepositories {
   roleCallRepository: RoleCallRepository;
   roleCallEventRepository: RoleCallEventRepository;
+  roleTodoRepository?: RoleTodoRepository;
 }
 
 export interface RoleCallTaskRunnerExecutorOptions {
@@ -27,6 +30,7 @@ export interface RoleCallTaskRunnerExecutorOptions {
 
 export interface ExecuteRoleCallInput {
   roleCallId: string;
+  projectId?: string;
   projectRoot: string;
   context?: RoleCallContext;
   taskRunnerOptions?: Partial<
@@ -37,6 +41,7 @@ export interface ExecuteRoleCallInput {
       | "verificationCommands"
       | "environmentOverrides"
       | "agentAvailability"
+      | "agentHubHome"
       | "deliveryMode"
       | "workspaceCleanupPolicy"
       | "dryRun"
@@ -119,6 +124,7 @@ export class RoleCallTaskRunnerExecutor {
 
     const run = await this.taskRunner.run({
       projectRoot: input.projectRoot,
+      projectId: input.projectId,
       taskId: roleCall.id,
       title: `Role call: @${roleCall.calleeRole} ${roleCall.task}`,
       taskPrompt: buildRoleExecutionPrompt({
@@ -134,6 +140,7 @@ export class RoleCallTaskRunnerExecutor {
       verificationCommands: input.taskRunnerOptions?.verificationCommands,
       environmentOverrides: input.taskRunnerOptions?.environmentOverrides,
       agentAvailability: input.taskRunnerOptions?.agentAvailability,
+      agentHubHome: input.taskRunnerOptions?.agentHubHome,
       dryRun: input.taskRunnerOptions?.dryRun,
       userConstraints: [
         "Run only inside the isolated TaskRunner worktree.",
@@ -168,6 +175,7 @@ export class RoleCallTaskRunnerExecutor {
         metadata: { taskRunId: run.run.id },
         createdAt: this.now()
       });
+      await this.updateLinkedTodo(failed, status === "cancelled" ? "cancelled" : "blocked");
       return { ok: false, roleCall: failed, run, error: failed.error };
     }
 
@@ -187,6 +195,7 @@ export class RoleCallTaskRunnerExecutor {
       metadata: { taskRunId: run.run.id },
       createdAt: this.now()
     });
+    await this.updateLinkedTodo(succeeded, "done");
     return { ok: true, roleCall: succeeded, run, result };
   }
 
@@ -216,7 +225,31 @@ export class RoleCallTaskRunnerExecutor {
       message,
       createdAt: this.now()
     });
+    await this.updateLinkedTodo(failed, "blocked");
     return { ok: false, roleCall: failed, error: message };
+  }
+
+  private async updateLinkedTodo(
+    roleCall: RoleCall,
+    status: "blocked" | "cancelled" | "done"
+  ): Promise<void> {
+    if (!roleCall.todoId || !this.repositories.roleTodoRepository) {
+      return;
+    }
+    await this.repositories.roleTodoRepository.updateStatus(
+      roleCall.todoId,
+      status,
+      this.now()
+    );
+    await this.createEvent({
+      roleCallId: roleCall.id,
+      threadId: roleCall.threadId,
+      type: "todo_updated",
+      actorRole: roleCall.calleeRole,
+      message: `Updated linked todo ${roleCall.todoId} to ${status}.`,
+      metadata: { todoId: roleCall.todoId, todoStatus: status },
+      createdAt: this.now()
+    });
   }
 
   private findRole(handle: string): RoleDefinition | undefined {
@@ -275,8 +308,20 @@ export function extractRoleResultFromRun(
   if (structured) {
     return structured;
   }
+  const agentOutput = extractAgentFacingOutput(
+    {
+      events: run.events.map((event) => ({
+        type: event.type,
+        message: event.message,
+        metadata: event.metadata
+      }))
+    },
+    { includeRawStreams: false, includeTerminalSummaries: false }
+  ).trim();
   return {
-    summary: `@${roleCall.calleeRole} completed role call ${roleCall.id} through TaskRunner run ${run.run.id}.`,
+    summary:
+      agentOutput ||
+      `@${roleCall.calleeRole} completed role call ${roleCall.id} through TaskRunner run ${run.run.id}.`,
     evidence: [
       `task_run:${run.run.id}`,
       run.verification?.summary ?? "verification not available",

@@ -3506,7 +3506,14 @@ describe("desktop services", () => {
         [
           {
             type: "stdout",
-            data: "{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"@operator Verify that delegation was routed through Agent Hub and report the evidence.\"}}\n"
+            data: "{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"@operator output exactly 123\"}}\n"
+          },
+          { type: "exit", exitCode: 0, signal: null }
+        ],
+        [
+          {
+            type: "stdout",
+            data: "{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"123\"}}\n"
           },
           { type: "exit", exitCode: 0, signal: null }
         ]
@@ -3517,7 +3524,7 @@ describe("desktop services", () => {
       }))
     );
     const roles = presetWorkgroupRoles.map((role) =>
-      role.handle === "analyst"
+      role.handle === "analyst" || role.handle === "operator"
         ? { ...role, executor: { kind: "agent_adapter" as const, adapterKind: "codex" as const } }
         : role
     );
@@ -3563,8 +3570,10 @@ describe("desktop services", () => {
       expect.objectContaining({
         callerRole: "analyst",
         calleeRole: "operator",
-        task: "Verify that delegation was routed through Agent Hub and report the evidence.",
-        status: "accepted"
+        task: "output exactly 123",
+        status: "succeeded",
+        taskRunId: expect.any(String),
+        result: expect.objectContaining({ summary: "123" })
       })
     ]);
     const assistant = refreshed.messages.find(
@@ -3575,16 +3584,21 @@ describe("desktop services", () => {
       expect.objectContaining({
         callerRole: "analyst",
         calleeRole: "operator",
-        status: "accepted"
+        status: "succeeded",
+        resultSummary: "123",
+        taskRunId: expect.any(String)
       })
     );
+    expect(assistant?.roleCallSummary?.counts.running).toBe(0);
+    expect(assistant?.roleCallSummary?.counts.succeeded).toBe(1);
+    expect(assistant?.roleCallSummary?.counts.todosOpen).toBe(0);
     await expect(
       fixture.repositories.roleTodoRepository.list({ threadId: detail.id, role: "operator" })
     ).resolves.toEqual([
       expect.objectContaining({
         role: "operator",
-        status: "in_progress",
-        title: "Verify that delegation was routed through Agent Hub and report the evidence."
+        status: "done",
+        title: "output exactly 123"
       })
     ]);
   });

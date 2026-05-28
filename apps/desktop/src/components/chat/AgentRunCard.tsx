@@ -43,6 +43,7 @@ export function AgentRunCard({
   onContinueFromRun
 }: AgentRunCardProps): JSX.Element {
   const cardRef = useRef<HTMLElement>(null);
+  const previousRunIdRef = useRef(message.runId);
   const [run, setRun] = useState<RunDetail | undefined>(initialRun);
   const [events, setEvents] = useState<RunEvent[]>(initialRun?.events ?? []);
   const [status, setStatus] = useState<RunStatus>(initialRun?.status ?? message.status);
@@ -55,9 +56,16 @@ export function AgentRunCard({
   const [cancelError, setCancelError] = useState<string | undefined>();
 
   useEffect(() => {
+    const runChanged = previousRunIdRef.current !== message.runId;
+    previousRunIdRef.current = message.runId;
+    const nextStatus = initialRun?.status ?? message.status;
     setRun(initialRun);
     setEvents(initialRun?.events ?? []);
-    setStatus(initialRun?.status ?? message.status);
+    setStatus((current) =>
+      !runChanged && isTerminalRunStatus(current) && !isTerminalRunStatus(nextStatus)
+        ? current
+        : nextStatus
+    );
     setReviewSummary(undefined);
     setReviewArtifacts([]);
     setShouldHydrateTerminalRun(initialRun !== undefined);
@@ -131,6 +139,16 @@ export function AgentRunCard({
       };
     }
   }, [loadRun, message.runId, message.status]);
+
+  useEffect(() => {
+    if (!isActiveRunStatus(status)) {
+      return undefined;
+    }
+    const interval = window.setInterval(() => {
+      void loadRun();
+    }, 2000);
+    return () => window.clearInterval(interval);
+  }, [loadRun, status]);
 
   useEffect(() => {
     if (!isTerminalRunStatus(status) || shouldHydrateTerminalRun) {

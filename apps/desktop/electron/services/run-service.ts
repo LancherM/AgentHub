@@ -17,9 +17,11 @@ import {
 } from "@agent-hub/core";
 import {
   TaskRunner,
+  RoleCallTaskRunnerExecutor,
   type AgentRunEvent,
   type Clock,
   type IdGenerator,
+  type RoleCallExecutionResult,
   type TaskRunnerDependencies
 } from "@agent-hub/task-runner";
 import {
@@ -30,6 +32,7 @@ import {
   type WorkgroupAgentAdapterKind,
   type AgentKind as CoreAgentKind,
   type JsonObject,
+  type RoleDefinition,
   type RunEventType as CoreRunEventType,
   type TaskRunStatus as CoreRunStatus,
   type WorkgroupRoleRunMetadata,
@@ -52,6 +55,7 @@ import type { SettingsService } from "./settings-service";
 
 export interface RunService {
   createRun(input: CreateDesktopRunInput): Promise<RunSummary>;
+  executeRoleCall(input: ExecuteDesktopRoleCallInput): Promise<RoleCallExecutionResult>;
   getRun(runId: string): Promise<RunDetail>;
   getConversationRunSnapshot(runId: string): Promise<ConversationRunSnapshot>;
   listRuns(projectId?: string): Promise<RunSummary[]>;
@@ -73,6 +77,12 @@ export interface CreateDesktopRunInput extends CreateRunInput {
   assignment?: WorkgroupTaskAssignmentMetadata;
   conversationBrief?: string | ConversationContextBrief;
   startImmediately?: boolean;
+}
+
+export interface ExecuteDesktopRoleCallInput {
+  roleCallId: string;
+  projectId: string;
+  roles: readonly RoleDefinition[];
 }
 
 export interface ConversationRunSnapshot {
@@ -301,6 +311,42 @@ class RepositoryRunService implements RunService {
     }
 
     return await this.toRunSummary(run, task, project);
+  }
+
+  async executeRoleCall(
+    input: ExecuteDesktopRoleCallInput
+  ): Promise<RoleCallExecutionResult> {
+    const project = await this.projects.get(input.projectId);
+    if (!project) {
+      throw new Error(`project ${input.projectId} not found`);
+    }
+    const verificationCommands =
+      await this.dependencies.settingsService?.verificationCommandsForProject(project.id);
+    const runId = this.context.nextId("run");
+    const executor = new RoleCallTaskRunnerExecutor({
+      taskRunner: this.createTaskRunner(runId),
+      repositories: {
+        roleCallRepository: this.context.repositories.roleCallRepository,
+        roleCallEventRepository: this.context.repositories.roleCallEventRepository,
+        roleTodoRepository: this.context.repositories.roleTodoRepository
+      },
+      roles: input.roles,
+      idFactory: (prefix) => this.context.nextId(prefix),
+      now: () => this.context.now()
+    });
+    return executor.execute({
+      roleCallId: input.roleCallId,
+      projectId: project.id,
+      projectRoot: project.rootPath,
+      taskRunnerOptions: {
+        agentAvailability: this.context.agentAvailability,
+        agentHubHome: this.context.agentHubHome,
+        deliveryMode: "runtime_injection",
+        verificationCommands,
+        workspaceBasePath: this.desktopWorkspaceBasePath(),
+        workspaceCleanupPolicy: "never"
+      }
+    });
   }
 
   async startRun(runId: string): Promise<void> {
@@ -728,7 +774,11 @@ class RepositoryRunService implements RunService {
   }
 
   private currentDesktopStatus(run: TaskRun): RunStatus {
-    return this.activeRuns.get(run.id)?.status ?? toDesktopRunStatus(run.status);
+    const persistedStatus = toDesktopRunStatus(run.status);
+    if (isTerminalStatus(persistedStatus)) {
+      return persistedStatus;
+    }
+    return this.activeRuns.get(run.id)?.status ?? persistedStatus;
   }
 
   private async failActiveRun(runId: string, error: unknown): Promise<void> {

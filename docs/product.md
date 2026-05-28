@@ -425,9 +425,11 @@ Desktop role-backed agent runs also receive an injected role-call protocol and
 available-role directory. When a completed role response emits line-start
 delegation syntax such as `@operator investigate the failed check`, the Electron
 main process parses that output with the dedicated RoleCall parser and persists
-the resulting Orchestrator-owned RoleCall, RoleCallEvent, and RoleTodo records.
-The role must not simulate hidden subagents or discover role syntax by reading
-the repository; Agent Hub owns delegation and audit state.
+the resulting Orchestrator-owned RoleCall, RoleCallEvent, and RoleTodo records;
+accepted executable calls are then run through the same local TaskRunner path
+and linked back to the RoleCall evidence. The role must not simulate hidden
+subagents or discover role syntax by reading the repository; Agent Hub owns
+delegation and audit state.
 CLI audit parity now exposes the same local records without requiring the
 desktop: `agent-hub role-calls list/show`, `agent-hub role-todos list`, and
 `agent-hub role-events list` provide concise human output plus `--json` for

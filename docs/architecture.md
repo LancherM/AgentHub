@@ -1018,9 +1018,12 @@ main process parses its output with the dedicated RoleCall parser, converts
 valid intents through `RoleCallOrchestrator`, applies deterministic policy
 validation over generated RoleDefinition projections, and persists RoleCall,
 RoleCallEvent, and RoleTodo records with the assistant message as
-`parentMessageId`. This bridge does not create renderer-side SQLite access,
-direct role chat, automatic repository export, automatic merge/push/PR, or
-memory approval.
+`parentMessageId`. Accepted executable RoleCalls are then handed back to the
+desktop run service, which uses `RoleCallTaskRunnerExecutor` and the existing
+TaskRunner adapter path to create an isolated local run, link its `task_run`
+row to the RoleCall, persist result evidence, and close the linked todo. This
+bridge does not create renderer-side SQLite access, direct role chat, automatic
+repository export, automatic merge/push/PR, or memory approval.
 CLI audit parity is read-only over the same repositories. The CLI runtime owns
 RoleCall, RoleCallEvent, and RoleTodo repositories alongside existing task/run
 repositories, and `role-calls`, `role-todos`, and `role-events` commands render

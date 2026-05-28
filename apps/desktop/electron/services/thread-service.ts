@@ -1465,6 +1465,11 @@ class RepositoryThreadService implements ThreadService {
       parentMessageId: message.id,
       currentPlan: message.content
     });
+    const executionWarnings = await this.executeAcceptedRoleCalls(
+      thread,
+      roleDefinitions,
+      message.id
+    );
     const summary = (await this.roleCallSummariesByParentMessage(thread.id)).get(message.id);
     await this.messages.update(
       validateConversationMessage({
@@ -1473,7 +1478,10 @@ class RepositoryThreadService implements ThreadService {
           ...(message.metadata ?? {}),
           roleCallProcessed: true,
           roleCallProcessedAt: this.dependencies.context.now(),
-          roleCallParseWarnings: parsed.warnings.map((warning) => warning.message),
+          roleCallParseWarnings: [
+            ...parsed.warnings.map((warning) => warning.message),
+            ...executionWarnings
+          ],
           roleCallLedgerSummaries: summaries.map((entry) => ({
             roleCallId: entry.roleCallId,
             targetRole: entry.targetRole,
@@ -1485,6 +1493,42 @@ class RepositoryThreadService implements ThreadService {
         }
       })
     );
+  }
+
+  private async executeAcceptedRoleCalls(
+    thread: ConversationThread,
+    roles: readonly RoleDefinition[],
+    parentMessageId: string
+  ): Promise<string[]> {
+    const warnings: string[] = [];
+    const executableRoles = new Set(
+      roles
+        .filter((role) => role.executor.kind === "agent_adapter")
+        .map((role) => role.handle)
+    );
+    const calls = (await this.roleCalls.list({ threadId: thread.id }))
+      .filter(
+        (call) =>
+          call.parentMessageId === parentMessageId &&
+          call.status === "accepted" &&
+          !call.taskRunId &&
+          executableRoles.has(call.calleeRole)
+      );
+    for (const call of calls) {
+      try {
+        const result = await this.dependencies.runs.executeRoleCall({
+          roleCallId: call.id,
+          projectId: thread.projectId,
+          roles
+        });
+        if (!result.ok && result.error) {
+          warnings.push(`@${call.calleeRole} execution failed: ${result.error}`);
+        }
+      } catch (error) {
+        warnings.push(`@${call.calleeRole} execution failed: ${errorMessage(error)}`);
+      }
+    }
+    return warnings;
   }
 
   private async rolesForProject(projectId: string): Promise<readonly WorkgroupRole[]> {
