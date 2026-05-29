@@ -147,8 +147,8 @@ Implemented:
 - CLI commands for project registration/listing, context store init/show,
   context pack build, optional repo export, task creation/listing/history, task
   runs, manual run-event recording, threaded chat, metadata-backed rooms, team
-  role management, global skill create/list workflows, memory workflows, and
-  run comparison.
+  role management, RoleCall audit workflows, global skill create/list
+  workflows, memory workflows, and run comparison.
 - Interactive CLI with `@agent` prompts, `/agents`, `/use`, `/context`,
   `/context init`, `/clear`, `/exit`, and `/quit`.
 - Git worktree creation for task runs.
@@ -174,20 +174,21 @@ Implemented:
   structured comparison details and deterministic review scoring.
 - Local AI workgroup metadata for preset/custom roles, built-in workgroup
   packs, metadata-backed rooms, shared-task role fan-out, bounded workflows,
-  timeline events, participant-scoped context, artifact review, knowledge
-  browsing, and lifecycle audit records without adding a cloud service or broad
-  schema split.
+  timeline events, participant-scoped context, Adaptive RoleCall records,
+  todos, events, artifact review, knowledge browsing, and lifecycle audit
+  records without adding a cloud service or broad schema split.
 - `apps/desktop` Electron + React shell with a room-based project layout, safe
   `window.agentHub` preload API, Electron main-process IPC handlers,
   SQLite-backed project/thread/message/run/review/memory/team/knowledge
   service facades, sidebar room/project navigation, inline run cards, bounded
   role-attributed assistant output messages, participant-scoped conversation
   brief artifacts, TaskRunner-backed fake/Codex/Claude desktop runs in isolated
-  worktrees, live run event replay, desktop cancellation, retained-worktree
-  handoff, local run comparison, explicit memory writeback, lifecycle cleanup
-  controls, human-gated local apply, and a workgroup inspector with Brief,
-  Evidence, Artifacts, Memory, and Audit surfaces covering context, checks,
-  risks, lifecycle, and logs.
+  worktrees, Adaptive RoleCall parsing and delegated run summaries, live run
+  event replay, desktop cancellation, retained-worktree handoff, local run
+  comparison, explicit memory writeback, lifecycle cleanup controls,
+  human-gated local apply, and a workgroup inspector with Brief, Evidence,
+  Artifacts, Memory, and Audit surfaces covering context, checks, risks,
+  lifecycle, and logs.
 - Per-project desktop verification command configuration through validated IPC
   and local SQLite settings, with configured commands passed to TaskRunner for
   isolated-worktree execution.
@@ -282,6 +283,10 @@ Implemented commands:
 - `agent-hub team roles show`
 - `agent-hub team roles save`
 - `agent-hub team roles executor`
+- `agent-hub role-calls list`
+- `agent-hub role-calls show`
+- `agent-hub role-todos list`
+- `agent-hub role-events list`
 - `agent-hub tasks list`
 - `agent-hub runs list`
 - `agent-hub runs events`
@@ -352,6 +357,9 @@ Contains:
 - RunEvent
 - VerificationResult
 - ComparisonReport
+- RoleCall
+- RoleTodo
+- RoleCallEvent
 - MemoryItem
 - RiskReport
 - Skill
@@ -439,11 +447,14 @@ Responsible for:
 - Collecting git diffs
 - Producing task run summaries
 - Producing comparison reports
+- Executing accepted RoleCalls through the same isolated TaskRunner path
 
 Current status:
 
 - Worktree creation, adapter execution, verification commands, diff collection,
   and task run summaries are implemented.
+- Accepted `agent_adapter` RoleCalls can be linked to TaskRunner runs and
+  persisted back to local RoleCall evidence.
 - Automatic proposed-memory generation and comparison report aggregation run
   from persisted local run evidence. Comparison remains review-only and local;
   do not accept, merge, or push changes.
@@ -456,16 +467,21 @@ Responsible for:
 - Sensitive file detection
 - Diff scanning
 - Risk report generation
+- RoleCall policy validation
 
 Current status:
 
 - Safety scanners and risk report generation are implemented for sensitive file
   paths, dangerous command text, risky diffs, large deletion volume, and binary
   file changes.
+- RoleCall policy validation is implemented for delegation permissions,
+  bounded graph limits, duplicate suppression, todo capacity, executor
+  capability, and dangerous command text.
 
 ### packages/shared
 
-Shared TypeScript types and utilities that do not depend on app-specific code.
+Shared TypeScript types, role/workgroup contracts, RoleCall contracts, and
+utilities that do not depend on app-specific code.
 
 ## Technical Defaults
 
