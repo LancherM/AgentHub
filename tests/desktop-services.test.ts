@@ -1768,9 +1768,11 @@ describe("desktop services", () => {
     await waitForEvent(liveEvents, "agent_output");
 
     await runs.cancelRun(run.id);
-    const cancelled = await waitForRun(runs, run.id, "cancelled");
+    await waitForRun(runs, run.id, "cancelled");
+    const cancelled = await waitForPersistedRunEvent(runs, run.id, "run_cancelled");
     unsubscribe();
 
+    expect(cancelled.status).toBe("cancelled");
     expect(processRunner.runCalls[0].signal?.aborted).toBe(true);
     expect(cancelled.events).toEqual(
       expect.arrayContaining([
