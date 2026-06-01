@@ -39,6 +39,11 @@ const h = React.createElement;
 const defaultTuiOperationTimeoutMs = 10 * 60 * 1000;
 const defaultTuiPollIntervalMs = 2_500;
 const defaultTuiModelRefreshTimeoutMs = 30_000;
+const activeRunSpinnerFrames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+const activeRunAnimationIntervalMs = 80;
+const runFeedbackDurationMs = 200;
+
+type RunFeedbackKind = "success" | "failure";
 
 export interface TuiInkTerminalSize {
   columns: number;
@@ -73,6 +78,8 @@ export interface TuiInkFrameProps {
   model: TuiCurrentContextModel;
   state?: TuiInkState;
   terminal: TuiInkTerminalSize;
+  animationTick?: number;
+  feedbackByRunId?: Partial<Record<string, RunFeedbackKind>>;
 }
 
 export interface TuiInkAppProps extends TuiInkFrameProps {
@@ -499,16 +506,39 @@ export function TuiInkApp(props: TuiInkAppProps): React.ReactElement {
 export function TuiInkFrame({
   model,
   state = createInitialInkState(),
-  terminal
+  terminal,
+  animationTick: providedAnimationTick,
+  feedbackByRunId: providedFeedbackByRunId = {}
 }: TuiInkFrameProps): React.ReactElement {
   const width = terminal.columns;
+  const [animationTick, setAnimationTick] = useState(0);
+  useEffect(() => {
+    if (model.activeRuns.length === 0) {
+      return undefined;
+    }
+    const interval = setInterval(() => {
+      setAnimationTick((current) => current + 1);
+    }, activeRunAnimationIntervalMs);
+    return () => clearInterval(interval);
+  }, [model.activeRuns.length]);
+  const transientFeedbackByRunId = useTerminalRunFeedback(model);
+  const effectiveFeedbackByRunId = {
+    ...transientFeedbackByRunId,
+    ...providedFeedbackByRunId
+  };
   return h(
     Box,
     { flexDirection: "column", width },
     h(HeaderBar, { model, state, terminal }),
     ...model.warnings.map((warning) => line(`! ${warning}`, { color: "yellow" })),
     ...(state.statusMessage ? [line(`Status: ${state.statusMessage}`, { color: "green" })] : []),
-    h(MainView, { model, state, terminal }),
+    h(MainView, {
+      model,
+      state,
+      terminal,
+      animationTick: providedAnimationTick ?? animationTick,
+      feedbackByRunId: effectiveFeedbackByRunId
+    }),
     h(StatusBar, { model, state }),
     h(Composer, { model, state }),
     h(FocusTabs, { state })
@@ -577,6 +607,53 @@ interface HeaderPart {
   bold?: boolean;
 }
 
+function useTerminalRunFeedback(
+  model: TuiCurrentContextModel
+): Partial<Record<string, RunFeedbackKind>> {
+  const [feedbackByRunId, setFeedbackByRunId] = useState<Partial<Record<string, RunFeedbackKind>>>({});
+  const previousActiveRunIdsRef = useRef<Set<string>>(new Set(model.activeRuns.map((run) => run.runId)));
+  const timeoutRef = useRef<ReturnType<typeof setTimeout>[]>([]);
+
+  useEffect(() => {
+    const previousActiveRunIds = previousActiveRunIdsRef.current;
+    const currentActiveRunIds = new Set(model.activeRuns.map((run) => run.runId));
+    const endedRunIds = [...previousActiveRunIds].filter((runId) => !currentActiveRunIds.has(runId));
+    if (endedRunIds.length > 0) {
+      const nextFeedback: Partial<Record<string, RunFeedbackKind>> = {};
+      for (const runId of endedRunIds) {
+        const entry = model.conversation.find((item) => item.runId === runId);
+        if (entry?.type === "agent_failed") {
+          nextFeedback[runId] = "failure";
+        } else if (entry?.type === "agent_completed" || entry?.type === "review_pending") {
+          nextFeedback[runId] = "success";
+        }
+      }
+      if (Object.keys(nextFeedback).length > 0) {
+        setFeedbackByRunId((current) => ({ ...current, ...nextFeedback }));
+        const timeout = setTimeout(() => {
+          setFeedbackByRunId((current) => {
+            const updated = { ...current };
+            for (const runId of Object.keys(nextFeedback)) {
+              delete updated[runId];
+            }
+            return updated;
+          });
+        }, runFeedbackDurationMs);
+        timeoutRef.current.push(timeout);
+      }
+    }
+    previousActiveRunIdsRef.current = currentActiveRunIds;
+  }, [model.activeRuns, model.conversation]);
+
+  useEffect(() => () => {
+    for (const timeout of timeoutRef.current) {
+      clearTimeout(timeout);
+    }
+  }, []);
+
+  return feedbackByRunId;
+}
+
 function FocusTabs({ state }: { state: TuiInkState }): React.ReactElement {
   const tabs: Array<{ focus: TuiInkFocus; shortcut: string; suffix: string; prefix?: string }> = [
     { focus: "work", shortcut: "W", suffix: "ork", prefix: "[" },
@@ -622,7 +699,15 @@ function FocusTab({
   );
 }
 
-function MainView(props: TuiInkFrameProps): React.ReactElement {
+interface TuiInkRenderProps {
+  model: TuiCurrentContextModel;
+  state: TuiInkState;
+  terminal: TuiInkTerminalSize;
+  animationTick: number;
+  feedbackByRunId: Partial<Record<string, RunFeedbackKind>>;
+}
+
+function MainView(props: TuiInkRenderProps): React.ReactElement {
   const { model, state = createInitialInkState(), terminal } = props;
   if (state.commandPaletteOpen) {
     return h(CommandPalette, { model, state });
@@ -648,39 +733,55 @@ function MainView(props: TuiInkFrameProps): React.ReactElement {
   if (state.focus === "memory") {
     return h(MemoryPane, { model });
   }
-  return h(WorkView, { model, state, terminal });
+  return h(WorkView, {
+    model,
+    state,
+    terminal,
+    animationTick: props.animationTick,
+    feedbackByRunId: props.feedbackByRunId
+  });
 }
 
-function WorkView({ model, state, terminal }: Required<TuiInkFrameProps>): React.ReactElement {
+function WorkView({
+  model,
+  state,
+  terminal,
+  animationTick,
+  feedbackByRunId
+}: TuiInkRenderProps): React.ReactElement {
   const { collapsedBoxes, fullBoxes } = activeRunLayout(model.activeRuns, terminal);
   const activeLineCost = collapsedBoxes.length + fullBoxes.length * activeRunBoxLineCount(terminal);
   const conversationLines = conversationWindowSize(terminal, activeLineCost);
   return h(
     Box,
     { flexDirection: "column" },
-    h(ConversationFlow, { model, state, visibleLines: conversationLines }),
+    h(ConversationFlow, { model, state, visibleLines: conversationLines, feedbackByRunId }),
     ...(collapsedBoxes.length > 0
       ? collapsedBoxes.map((box) =>
-          line(`${activeRunTitle(box)} ...`, { color: "green" })
+          line(`${activeRunTitle(box, animationTick)} ...`, { color: "green" })
         )
       : []),
-    ...fullBoxes.map((box) => h(ActiveRunBoxView, { key: box.runId, box, terminal }))
+    ...fullBoxes.map((box) => h(ActiveRunBoxView, { key: box.runId, box, terminal, animationTick }))
   );
 }
 
 function ConversationFlow({
   model,
   state,
-  visibleLines
+  visibleLines,
+  feedbackByRunId
 }: {
   model: TuiCurrentContextModel;
   state: TuiInkState;
   visibleLines: number;
+  feedbackByRunId: Partial<Record<string, RunFeedbackKind>>;
 }): React.ReactElement {
   if (model.conversation.length === 0) {
     return block(line("No messages in the current context.", { dimColor: true }));
   }
-  const renderedLines = model.conversation.flatMap((entry) => conversationEntryLines(entry));
+  const renderedLines = model.conversation.flatMap((entry) =>
+    conversationEntryLines(entry, feedbackByRunId)
+  );
   const maxOffset = Math.max(0, renderedLines.length - visibleLines);
   const offsetFromBottom = Math.min(state.conversationScrollOffset, maxOffset);
   const start = Math.max(0, renderedLines.length - visibleLines - offsetFromBottom);
@@ -690,15 +791,20 @@ function ConversationFlow({
   );
 }
 
-function conversationEntryLines(entry: TuiConversationEntry): React.ReactElement[] {
+function conversationEntryLines(
+  entry: TuiConversationEntry,
+  feedbackByRunId: Partial<Record<string, RunFeedbackKind>>
+): React.ReactElement[] {
   if (entry.type === "agent_completed" || entry.type === "agent_failed") {
     const statusIcon = entry.type === "agent_failed" ? "✗" : "✓";
     const tone = entry.type === "agent_failed" ? "red" : "cyan";
+    const feedback = entry.runId ? feedbackByRunId[entry.runId] : undefined;
     return [
       agentEntryHeaderLine(
         `${conversationEntryHandle(entry)} ${entry.runId ? compactId(entry.runId) : ""} ${statusIcon} ${entry.statusLabel ?? ""}`.trim(),
         entry,
-        tone
+        tone,
+        feedback
       ),
       ...conversationContentLines(entry.outputLines ?? entry.content, { prefix: "┃   ", agent: true, tone, keyPrefix: entry.id }),
       ...(entry.verificationLine ? [conversationRichLine(`~ ${entry.verificationLine}`, { prefix: "┃   ", agent: true, tone })] : []),
@@ -707,11 +813,13 @@ function conversationEntryLines(entry: TuiConversationEntry): React.ReactElement
   }
   if (entry.type === "review_pending") {
     const tone = "yellow";
+    const feedback = entry.runId ? feedbackByRunId[entry.runId] : undefined;
     return [
       agentEntryHeaderLine(
         `${conversationEntryHandle(entry)} ${entry.runId ? compactId(entry.runId) : ""} △ ${entry.statusLabel ?? "awaiting review"}`.trim(),
         entry,
-        tone
+        tone,
+        feedback
       ),
       ...conversationContentLines(entry.outputLines ?? entry.content, { prefix: "┃   ", agent: true, tone, keyPrefix: entry.id }),
       ...(entry.verificationLine ? [conversationRichLine(`~ ${entry.verificationLine}`, { prefix: "┃   ", agent: true, tone })] : []),
@@ -733,19 +841,26 @@ function conversationEntryLines(entry: TuiConversationEntry): React.ReactElement
 function agentEntryHeaderLine(
   title: string,
   entry: TuiConversationEntry,
-  tone: string
+  tone: string,
+  feedback?: RunFeedbackKind
 ): React.ReactElement {
   const metadata = [
     entry.elapsedLabel,
     entry.usageLabel,
     formatConversationTimestamp(entry.timestamp)
   ].filter((value): value is string => Boolean(value));
+  const backgroundColor = feedback === "success"
+    ? "green"
+    : feedback === "failure"
+      ? "red"
+      : undefined;
+  const feedbackPrefix = feedback === "failure" ? "!! " : "";
   return h(
     Text,
-    { wrap: "truncate" },
+    { wrap: "truncate", backgroundColor },
     h(Text, { color: tone, bold: true }, "┃"),
     " ",
-    h(Text, { color: tone, bold: true }, title),
+    h(Text, { color: tone, bold: true }, `${feedbackPrefix}${title}`),
     ...(metadata.length > 0
       ? [
           h(Text, { key: "metadata", dimColor: true }, `  ${metadata.join("  ")}`)
@@ -924,36 +1039,107 @@ function conversationEntryHandle(entry: TuiConversationEntry): string {
 
 function ActiveRunBoxView({
   box,
-  terminal
+  terminal,
+  animationTick
 }: {
   box: TuiActiveRunBox;
   terminal: TuiInkTerminalSize;
+  animationTick: number;
 }): React.ReactElement {
   const width = activeRunBoxWidth(terminal);
   const innerWidth = Math.max(12, width - 2);
-  const title = activeRunTitle(box);
-  const top = borderedTitle(title, innerWidth);
+  const title = activeRunTitle(box, animationTick);
+  const top = roundedBorderedTitle(title, innerWidth);
   const contentHeight = activeRunContentHeight(terminal);
   const contentLines = box.outputLines.slice(-contentHeight);
   const paddedLines = [
     ...contentLines,
     ...Array.from({ length: Math.max(0, contentHeight - contentLines.length) }, () => "")
   ];
+  const progress = activeRunProgress(box.outputLines);
   return block(
     line(top, { color: "green" }),
     ...paddedLines.map((value) => line(`│ ${truncateText(value, innerWidth - 2).padEnd(innerWidth - 2)} │`, { color: "green" })),
-    line(`│ ${"▍".padEnd(innerWidth - 2)} │`, { color: "green" }),
-    line(`└${"─".repeat(innerWidth)}┘`, { color: "green" })
+    line(`│ ${activeRunFooter(progress, innerWidth - 2)} │`, { color: "green" }),
+    line(`╰${"─".repeat(innerWidth)}╯`, { color: "green" })
   );
 }
 
-function activeRunTitle(box: TuiActiveRunBox): string {
-  return `@${box.displayHandle ?? box.agent} ${compactId(box.runId)} ● running`;
+function activeRunTitle(box: TuiActiveRunBox, animationTick: number): string {
+  const metadata = [
+    activeRunSpinnerFrame(animationTick),
+    "running",
+    activeRunElapsedLabel(box),
+    box.usageLabel
+  ].filter((value): value is string => Boolean(value));
+  return `@${box.displayHandle ?? box.agent} ${compactId(box.runId)} ${metadata.join(" ")}`;
 }
 
-function borderedTitle(title: string, innerWidth: number): string {
+function activeRunSpinnerFrame(animationTick: number): string {
+  return activeRunSpinnerFrames[animationTick % activeRunSpinnerFrames.length] ?? activeRunSpinnerFrames[0];
+}
+
+function activeRunElapsedLabel(box: TuiActiveRunBox): string | undefined {
+  if (!box.startedAt) {
+    return box.elapsedLabel;
+  }
+  const startedAt = Date.parse(box.startedAt);
+  if (!Number.isFinite(startedAt)) {
+    return box.elapsedLabel;
+  }
+  const elapsed = Date.now() - startedAt;
+  if (elapsed < 0) {
+    return box.elapsedLabel;
+  }
+  return formatDuration(elapsed);
+}
+
+function roundedBorderedTitle(title: string, innerWidth: number): string {
   const decorated = `─ ${truncateText(title, Math.max(8, innerWidth - 4))} `;
-  return `┌${decorated}${"─".repeat(Math.max(0, innerWidth - decorated.length))}┐`;
+  return `╭${decorated}${"─".repeat(Math.max(0, innerWidth - decorated.length))}╮`;
+}
+
+interface ActiveRunProgress {
+  ratio: number;
+  label: string;
+}
+
+function activeRunProgress(lines: string[]): ActiveRunProgress | undefined {
+  for (const lineText of [...lines].reverse()) {
+    const percentage = /\b(\d{1,3})\s*%/.exec(lineText);
+    if (percentage) {
+      const value = Number(percentage[1]);
+      if (value >= 0 && value <= 100) {
+        return {
+          ratio: value / 100,
+          label: `${value}%`
+        };
+      }
+    }
+    const fraction = /\b(?:step\s*)?(\d{1,4})\s*\/\s*(\d{1,4})\b/i.exec(lineText);
+    if (fraction) {
+      const current = Number(fraction[1]);
+      const total = Number(fraction[2]);
+      if (total > 0 && current >= 0 && current <= total) {
+        return {
+          ratio: current / total,
+          label: `${current}/${total}`
+        };
+      }
+    }
+  }
+  return undefined;
+}
+
+function activeRunFooter(progress: ActiveRunProgress | undefined, width: number): string {
+  if (!progress) {
+    return "▍".padEnd(width);
+  }
+  const label = ` ${progress.label}`;
+  const barWidth = Math.max(4, width - label.length);
+  const filled = Math.min(barWidth, Math.max(0, Math.round(progress.ratio * barWidth)));
+  const bar = `${"█".repeat(filled)}${"░".repeat(Math.max(0, barWidth - filled))}`;
+  return truncateText(`${bar}${label}`, width).padEnd(width);
 }
 
 function RunsPane({
@@ -1354,7 +1540,14 @@ function formatDuration(milliseconds: number): string {
   if (seconds < 60) {
     return `${seconds}s`;
   }
-  return `${Math.round(seconds / 60)}m`;
+  const minutes = Math.floor(seconds / 60);
+  const remainingSeconds = seconds % 60;
+  if (minutes < 60) {
+    return remainingSeconds === 0 ? `${minutes}m` : `${minutes}m${remainingSeconds}s`;
+  }
+  const hours = Math.floor(minutes / 60);
+  const remainingMinutes = minutes % 60;
+  return remainingMinutes === 0 ? `${hours}h` : `${hours}h${remainingMinutes}m`;
 }
 
 function formatHeaderClock(date: Date): string {

@@ -66,6 +66,9 @@ describe("TUI current-context read model", () => {
     expect(model.activeRuns.find((run) => run.runId === "run_active")).toMatchObject({
       title: "@reviewer run_active ● running",
       displayHandle: "reviewer",
+      startedAt: "2026-05-29T10:03:00.000Z",
+      elapsedLabel: "1m",
+      usageLabel: "42k tok",
       outputLines: ["adapter started", "verification started"]
     });
     expect(model.conversation.map((entry) => entry.id)).toEqual([
@@ -548,7 +551,9 @@ async function seedCurrentContext(runtime: ReturnType<typeof createCliRuntime>) 
   });
   await runtime.runEventRepository.createMany([
     event("event_1", "run_active", 0, "status", "adapter started"),
-    event("event_2", "run_active", 1, "status", "verification started"),
+    event("event_2", "run_active", 1, "status", "verification started", {
+      usage: { totalTokens: 42000 }
+    }),
     event("event_3", "run_done", 0, "message", "Cleanup summary updated.")
   ]);
   await runtime.verificationResultRepository.createMany([

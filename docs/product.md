@@ -91,6 +91,14 @@ timestamp. User messages stay plain with a timestamp. Conversation content
 keeps file paths underlined and blue with safe OSC 8 file links when the
 terminal supports them, shell-command lines bold, and fenced code blocks lightly
 highlighted for keywords, strings, and comments.
+Active run boxes use rounded fixed-height frames so the layout does not jump
+while output streams. Titles show the compact run identity, role/agent handle,
+braille spinner, running status, elapsed time, and live token usage when the
+run emits usage metadata. The footer keeps an active cursor when no reliable
+progress exists, or a best-effort progress bar when recent output includes an
+obvious percentage or `N/M` pattern. At most three active runs render as full
+boxes; older active runs collapse to one-line titles. Completion and failure
+feedback is transient renderer state only and never writes persistence records.
 The default tab bar matches the conversation-terminal scheme: Work, Runs, View,
 Graph, Tasks, Memory, Team, and Help stay one key away instead of being
 embedded into the first screen.

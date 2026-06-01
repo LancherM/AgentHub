@@ -138,6 +138,10 @@ export interface TuiActiveRunBox {
   agent: string;
   displayHandle?: string;
   title: string;
+  startedAt?: string;
+  elapsedLabel?: string;
+  usageLabel?: string;
+  usage?: TuiRunUsageSummary;
   outputLines: string[];
 }
 
@@ -594,6 +598,10 @@ async function summarizeActiveRunBox(
     agent: run.agentKind,
     displayHandle,
     title: `@${renderedHandle} ${run.id} ● running`,
+    startedAt: run.startedAt,
+    elapsedLabel: run.elapsedLabel,
+    usageLabel: run.usageLabel,
+    usage: run.usage,
     outputLines: recentAgentRunOutputLines(events, run)
   };
 }

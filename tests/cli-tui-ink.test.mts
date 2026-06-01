@@ -204,7 +204,7 @@ describe("Ink TUI renderer", () => {
       { columns: 78 }
     );
 
-    expect(output).toContain("@codex run_active ● running");
+    expect(output).toContain("@codex run_active ⠋ running");
     expect(output).toContain("Reading logout.ts");
     expect(output).not.toContain("checks 1/0/0");
     expect(output).toContain("▍");
@@ -239,7 +239,99 @@ describe("Ink TUI renderer", () => {
     expect(output).toContain("@implementer run_27984312 △ awaiting review");
     expect(output).toContain("Patched auth.ts");
     expect(output).toContain("△ awaiting review");
-    expect(output).toContain("@reviewer run_active ● running");
+    expect(output).toContain("@reviewer run_active ⠋ running");
+  });
+
+  it("renders active run liveliness with spinner, fixed rounded box, metadata, and progress", () => {
+    const output = renderToString(
+      React.createElement(TuiInkFrame, {
+        model: {
+          ...baseModel,
+          conversation: [],
+          activeRuns: [
+            {
+              runId: "run_live",
+              agent: "codex",
+              displayHandle: "engineer",
+              title: "@engineer run_live ● running",
+              elapsedLabel: "12s",
+              usageLabel: "42k tok",
+              outputLines: [
+                "Reading src/auth.ts",
+                "Running pnpm test",
+                "Step 2/5",
+                "Still checking"
+              ]
+            }
+          ]
+        },
+        state: createInitialInkState(),
+        terminal: { columns: 78, rows: 32 },
+        animationTick: 4
+      }),
+      { columns: 78 }
+    );
+
+    expect(output).toContain("╭─ @engineer run_live ⠼ running 12s 42k tok");
+    expect(output).toContain("│ Reading src/auth.ts");
+    expect(output).toContain("│ Running pnpm test");
+    expect(output).toContain("2/5");
+    expect(output).toContain("╰");
+    const boxLines = output
+      .split("\n")
+      .filter((value) => value.startsWith("╭") || value.startsWith("│") || value.startsWith("╰"));
+    expect(boxLines).toHaveLength(8);
+  });
+
+  it("collapses older active runs and keeps at most three full boxes", () => {
+    const output = renderToString(
+      React.createElement(TuiInkFrame, {
+        model: {
+          ...baseModel,
+          conversation: [],
+          activeRuns: Array.from({ length: 5 }, (_value, index) => ({
+            runId: `run_active_${index}`,
+            agent: "codex",
+            title: `@codex run_active_${index} ● running`,
+            outputLines: [`active ${index}`]
+          }))
+        },
+        state: createInitialInkState(),
+        terminal: { columns: 100, rows: 60 }
+      }),
+      { columns: 100 }
+    );
+
+    expect(output.match(/\.\.\./g)?.length).toBe(2);
+    expect(output.match(/╭─ @codex run_active_/g)?.length).toBe(3);
+  });
+
+  it("renders transient failure feedback when supplied by renderer state", () => {
+    const output = renderToString(
+      React.createElement(TuiInkFrame, {
+        model: {
+          ...baseModel,
+          conversation: [
+            {
+              id: "run:run_fail",
+              type: "agent_failed",
+              timestamp: "2026-05-29T12:06:00.000Z",
+              author: "@codex",
+              agent: "codex",
+              runId: "run_fail",
+              statusLabel: "failed",
+              outputLines: ["tests failed"]
+            }
+          ]
+        },
+        state: createInitialInkState(),
+        terminal: { columns: 100, rows: 32 },
+        feedbackByRunId: { run_fail: "failure" }
+      }),
+      { columns: 100 }
+    );
+
+    expect(output).toContain("┃ !! @codex run_fail ✗ failed");
   });
 
   it("renders Phase 5A terminal visual grammar in the conversation flow", () => {
