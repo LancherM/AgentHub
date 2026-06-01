@@ -1,5 +1,6 @@
-import readline from "node:readline";
+import { existsSync } from "node:fs";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import {
   buildTuiCurrentContextModel,
   defaultAgentKind,
@@ -9,15 +10,13 @@ import {
   type ProjectRepository,
   type TuiCurrentContextInput,
   type TuiCurrentContextModel,
-  type TuiRoleCallNodeSummary,
-  type TuiRunSummary,
-  type TuiTaskSummary,
   type TuiReadModelRepositories
 } from "@agent-hub/core";
 
 export interface TuiCliIO {
   stdin?: NodeJS.ReadableStream;
-  stdout: Pick<NodeJS.WriteStream, "write"> & Partial<Pick<NodeJS.WriteStream, "columns" | "rows" | "isTTY">>;
+  stdout: Pick<NodeJS.WriteStream, "write"> &
+    Partial<Pick<NodeJS.WriteStream, "columns" | "rows" | "isTTY">>;
   stderr: Pick<NodeJS.WriteStream, "write">;
 }
 
@@ -98,34 +97,6 @@ export interface TuiShellState {
   statusMessage?: string;
 }
 
-export type TuiKey =
-  | "tab"
-  | "shift_tab"
-  | "up"
-  | "down"
-  | "left"
-  | "right"
-  | "enter"
-  | "escape"
-  | "help"
-  | "review"
-  | "memory"
-  | "skills"
-  | "hide_done"
-  | "continue_loop"
-  | "cancel"
-  | "accept_review"
-  | "reject_review"
-  | "print_commands"
-  | "palette"
-  | "exit"
-  | "other";
-
-export interface TuiKeyResult {
-  state: TuiShellState;
-  exit: boolean;
-}
-
 interface ParsedTuiArgs {
   threadId?: string;
   roomRef?: string;
@@ -157,22 +128,30 @@ interface TuiFailureModelInput {
   projectRoot: string;
 }
 
-const focusModes: TuiFocusMode[] = [
-  "work",
-  "graph",
-  "runs",
-  "review",
-  "tasks",
-  "memory",
-  "help"
-];
-
-const riskRank = new Map([
-  ["low", 0],
-  ["medium", 1],
-  ["high", 2],
-  ["blocking", 3]
-]);
+interface InkTuiEntry {
+  runInkTui(input: {
+    model: TuiCurrentContextModel;
+    state: TuiShellState;
+    terminal: { columns: number; rows: number };
+    io: TuiCliIO;
+    interactive: boolean;
+    loadModel?: (state: TuiShellState) => Promise<TuiCurrentContextModel>;
+    submitPrompt?: (input: {
+      prompt: string;
+      projectId?: string;
+      threadId?: string;
+    }) => Promise<{
+      ok: boolean;
+      message: string;
+      model?: TuiCurrentContextModel;
+    }>;
+    recordReviewDecision?: (input: TuiReviewDecisionInput) => Promise<{
+      ok: boolean;
+      message: string;
+      model?: TuiCurrentContextModel;
+    }>;
+  }): Promise<void>;
+}
 
 export async function runTuiCommand(options: RunTuiCommandOptions): Promise<number> {
   let parsed: ParsedTuiArgs;
@@ -209,16 +188,7 @@ export async function runTuiCommand(options: RunTuiCommandOptions): Promise<numb
     };
   }
 
-  const state: TuiShellState = {
-    focus: "work",
-    selectedRunIndex: 0,
-    selectedRoleCallIndex: 0,
-    selectedTaskIndex: 0,
-    hideCompletedRoleCalls: false,
-    collapsedRoleCallIds: [],
-    composer: parsed.submitPrompt ?? "",
-    commandPaletteOpen: false
-  };
+  const state = createInitialTuiShellState(parsed.submitPrompt ?? "");
   if (parsed.submitPrompt) {
     if (!options.submitPrompt) {
       options.io.stderr.write("error: TUI prompt submission is unavailable\n");
@@ -247,6 +217,7 @@ export async function runTuiCommand(options: RunTuiCommandOptions): Promise<numb
       options.io.stderr.write(`error: ${submission.message}\n`);
     }
   }
+
   if (parsed.acceptRunId || parsed.rejectRunId) {
     if (!options.recordReviewDecision) {
       options.io.stderr.write("error: TUI review decisions are unavailable\n");
@@ -265,6 +236,7 @@ export async function runTuiCommand(options: RunTuiCommandOptions): Promise<numb
       }
     }
   }
+
   const modelInput: TuiCurrentContextInput = {
     projectId: launch.projectId,
     threadId: launch.threadId,
@@ -279,31 +251,73 @@ export async function runTuiCommand(options: RunTuiCommandOptions): Promise<numb
     launchWarnings: launch.warnings,
     projectRoot: options.projectRoot
   });
-  const rendered = renderTuiWorkbench(model, state, terminalSize(options.io.stdout));
 
-  if (parsed.once || !isInteractiveTerminal(options.io)) {
-    options.io.stdout.write(rendered);
-    return 0;
-  }
+  let activeModelInput = { ...modelInput };
+  const interactive =
+    !parsed.once &&
+    isInteractiveTerminal(options.io) &&
+    hasRawMode(options.io.stdin ?? process.stdin);
 
-  return runInteractiveTui({
+  await renderInkTui({
     io: options.io,
     runtime: options.runtime,
-    modelInput,
-    initialState: state,
+    model,
+    state,
+    getModelInput: () => activeModelInput,
     launchWarnings: launch.warnings,
-    submitPrompt: options.submitPrompt,
-    recordReviewDecision: options.recordReviewDecision,
-    submitInput: {
-      projectRoot: options.projectRoot,
-      roomRef: parsed.roomRef,
-      selectedAgent,
-      debug: parsed.debug || options.debug === true,
-      dryRun: parsed.dryRun,
-      retainOnFailure: parsed.retainOnFailure,
-      workspaceBasePath: parsed.workspaceBasePath
-    }
+    projectRoot: options.projectRoot,
+    interactive,
+    submitPrompt: options.submitPrompt
+      ? async (input) => {
+          const submission = await safeSubmitPrompt(options.submitPrompt as TuiPromptSubmitter, {
+            prompt: input.prompt,
+            projectRoot: options.projectRoot,
+            projectId: input.projectId ?? activeModelInput.projectId,
+            threadId: input.threadId ?? activeModelInput.threadId,
+            roomRef: parsed.roomRef,
+            selectedAgent,
+            debug: parsed.debug || options.debug === true,
+            dryRun: parsed.dryRun,
+            retainOnFailure: parsed.retainOnFailure,
+            workspaceBasePath: parsed.workspaceBasePath
+          });
+          activeModelInput = {
+            ...activeModelInput,
+            projectId: submission.projectId ?? input.projectId ?? activeModelInput.projectId,
+            threadId: submission.threadId ?? input.threadId ?? activeModelInput.threadId
+          };
+          return {
+            ok: submission.ok,
+            message: submitStatusMessage(submission, selectedAgent),
+            model: await buildRenderableTuiModel({
+              runtime: options.runtime,
+              modelInput: activeModelInput,
+              launchWarnings: launch.warnings,
+              projectRoot: options.projectRoot
+            })
+          };
+        }
+      : undefined,
+    recordReviewDecision: options.recordReviewDecision
+      ? async (input) => {
+          const decision = await safeRecordReviewDecision(
+            options.recordReviewDecision as TuiReviewDecisionRecorder,
+            input
+          );
+          return {
+            ok: decision.ok,
+            message: decision.message,
+            model: await buildRenderableTuiModel({
+              runtime: options.runtime,
+              modelInput: activeModelInput,
+              launchWarnings: launch.warnings,
+              projectRoot: options.projectRoot
+            })
+          };
+        }
+      : undefined
   });
+  return 0;
 }
 
 export function tuiHelpText(): string {
@@ -333,7 +347,7 @@ export function tuiHelpText(): string {
   ].join("\n");
 }
 
-export function createInitialTuiShellState(): TuiShellState {
+export function createInitialTuiShellState(composer = ""): TuiShellState {
   return {
     focus: "work",
     selectedRunIndex: 0,
@@ -341,279 +355,74 @@ export function createInitialTuiShellState(): TuiShellState {
     selectedTaskIndex: 0,
     hideCompletedRoleCalls: false,
     collapsedRoleCallIds: [],
-    composer: "",
+    composer,
     commandPaletteOpen: false
   };
 }
 
-export function reduceTuiKey(
-  state: TuiShellState,
-  key: TuiKey,
-  model: TuiCurrentContextModel
-): TuiKeyResult {
-  const next: TuiShellState = {
-    ...state,
-    collapsedRoleCallIds: [...state.collapsedRoleCallIds],
-    statusMessage: undefined
-  };
-  if (key === "exit") {
-    return { state: next, exit: true };
-  }
-  if (key === "tab" || key === "shift_tab") {
-    next.focus = nextFocus(state.focus, key === "tab" ? 1 : -1);
-    return { state: next, exit: false };
-  }
-  if (key === "help") {
-    next.focus = next.focus === "help" ? "work" : "help";
-    return { state: next, exit: false };
-  }
-  if (key === "review") {
-    next.focus = "review";
-    return { state: next, exit: false };
-  }
-  if (key === "memory") {
-    next.focus = "memory";
-    return { state: next, exit: false };
-  }
-  if (key === "skills") {
-    next.focus = "memory";
-    next.statusMessage = "Skills are shown with memory and context indicators.";
-    return { state: next, exit: false };
-  }
-  if (key === "hide_done") {
-    next.hideCompletedRoleCalls = !next.hideCompletedRoleCalls;
-    next.statusMessage = next.hideCompletedRoleCalls
-      ? "Completed RoleCalls hidden."
-      : "Completed RoleCalls visible.";
-    return { state: next, exit: false };
-  }
-  if (key === "continue_loop") {
-    applyContinuePrompt(next, model);
-    return { state: next, exit: false };
-  }
-  if (key === "cancel") {
-    next.statusMessage =
-      "Cancellation is unavailable for this CLI TUI context; use the owning run service when supported.";
-    return { state: next, exit: false };
-  }
-  if (key === "accept_review" || key === "reject_review") {
-    next.statusMessage = "Review decision shortcut is available in the interactive TUI.";
-    return { state: next, exit: false };
-  }
-  if (key === "print_commands") {
-    next.statusMessage = commandHintForFocus(model, next);
-    return { state: next, exit: false };
-  }
-  if (key === "palette") {
-    next.commandPaletteOpen = !next.commandPaletteOpen;
-    return { state: next, exit: false };
-  }
-  if (key === "escape") {
-    next.focus = "work";
-    return { state: next, exit: false };
-  }
-  if (key === "enter") {
-    next.focus = "review";
-    return { state: next, exit: false };
-  }
-  if (key === "up" || key === "down") {
-    moveSelection(next, key, model);
-    return { state: next, exit: false };
-  }
-  if (key === "left" || key === "right") {
-    toggleSelectedRoleCallCollapse(next, model, key === "left");
-    return { state: next, exit: false };
-  }
-  return { state: next, exit: false };
-}
-
-export function renderTuiWorkbench(
-  model: TuiCurrentContextModel,
-  state: TuiShellState,
-  size: { columns: number; rows: number }
-): string {
-  const narrow = size.columns < 92;
-  const lines = [
-    ...renderHeaderLines(model),
-    renderFocusBar(state),
-    ...renderWarnings(model),
-    ...(state.statusMessage ? [`Status: ${state.statusMessage}`] : []),
-    ""
-  ];
-
-  if (state.commandPaletteOpen) {
-    lines.push(...renderCommandPalettePanel(model, state));
-  } else if (state.focus === "help") {
-    lines.push(...renderHelpPanel());
-  } else if (state.focus === "graph") {
-    lines.push(...renderGraphPanel(model, state, { includeTitle: true }));
-  } else if (state.focus === "runs") {
-    lines.push(...renderRunsPanel(model, state, { includeTitle: true }));
-  } else if (state.focus === "review") {
-    lines.push(...renderReviewPanel(model));
-  } else if (state.focus === "tasks") {
-    lines.push(...renderTasksPanel(model, state, { includeTitle: true }));
-  } else if (state.focus === "memory") {
-    lines.push(...renderMemoryPanel(model));
-  } else {
-    lines.push(...renderWorkPanel(model, state, { columns: size.columns, narrow }));
-  }
-
-  lines.push("", ...renderActionHints(), renderComposerPlaceholder(model, state));
-  return fitLines(lines, size.columns, size.rows).join("\n") + "\n";
-}
-
-async function runInteractiveTui(input: {
+async function renderInkTui(input: {
   io: TuiCliIO;
   runtime: TuiCliRuntime;
-  modelInput: TuiCurrentContextInput;
-  initialState: TuiShellState;
+  model: TuiCurrentContextModel;
+  state: TuiShellState;
+  getModelInput: () => TuiCurrentContextInput;
   launchWarnings: string[];
-  submitPrompt?: TuiPromptSubmitter;
-  recordReviewDecision?: TuiReviewDecisionRecorder;
-  submitInput: Omit<TuiPromptSubmissionInput, "prompt" | "projectId" | "threadId">;
-}): Promise<number> {
-  const stdin = input.io.stdin ?? process.stdin;
-  const stdout = input.io.stdout;
-  if (!hasRawMode(stdin)) {
-    const model = await buildRenderableTuiModel({
-      runtime: input.runtime,
-      modelInput: input.modelInput,
-      launchWarnings: input.launchWarnings,
-      projectRoot: input.submitInput.projectRoot
-    });
-    stdout.write(renderTuiWorkbench(model, input.initialState, terminalSize(stdout)));
-    return 0;
-  }
-
-  let state = input.initialState;
-  let modelInput = { ...input.modelInput };
-  let rendering = Promise.resolve();
-
-  return new Promise((resolve) => {
-    const cleanup = () => {
-      stdin.off("keypress", onKeypress);
-      stdin.setRawMode(false);
-      stdin.pause();
-      stdout.write("\n");
-    };
-    const rerender = () => {
-      rendering = rendering
-        .then(async () => {
-          modelInput = {
-            ...modelInput,
-            hideCompletedRoleCalls: state.hideCompletedRoleCalls,
-            selectedRunId: undefined,
-            selectedRoleCallId: undefined
-          };
-          const model = await buildRenderableTuiModel({
-            runtime: input.runtime,
-            modelInput,
-            launchWarnings: input.launchWarnings,
-            projectRoot: input.submitInput.projectRoot
-          });
-          stdout.write("\x1b[2J\x1b[H");
-          stdout.write(renderTuiWorkbench(model, state, terminalSize(stdout)));
-        })
-        .catch((error) => {
-          stdout.write(`\nerror: ${errorMessage(error)}\n`);
-        });
-    };
-    const onKeypress = async (chunk: string, key: readline.Key) => {
-      await rendering;
-      if (key.name === "a" || key.name === "j") {
-        if (!input.recordReviewDecision) {
-          state = { ...state, statusMessage: "Review decisions are unavailable." };
-          rerender();
-          return;
-        }
-        const model = await buildRenderableTuiModel({
-          runtime: input.runtime,
-          modelInput,
-          launchWarnings: input.launchWarnings,
-          projectRoot: input.submitInput.projectRoot
-        });
-        const runId = selectedReviewRunId(model);
-        if (!runId) {
-          state = { ...state, statusMessage: "No linked run is selected for review." };
-          rerender();
-          return;
-        }
-        const decision = await safeRecordReviewDecision(input.recordReviewDecision, {
-          runId,
-          status: key.name === "a" ? "accepted" : "rejected",
-          reason: key.name === "j" ? "Rejected from TUI review shortcut." : undefined
-        });
-        state = { ...state, statusMessage: decision.message };
-        rerender();
-        return;
-      }
-      if (isSubmitKey(key)) {
-        if (!state.composer.trim()) {
-          state = { ...state, statusMessage: "Composer is empty." };
-          rerender();
-          return;
-        }
-        if (!input.submitPrompt) {
-          state = { ...state, statusMessage: "Prompt submission is unavailable." };
-          rerender();
-          return;
-        }
-        const submission = await safeSubmitPrompt(input.submitPrompt, {
-          ...input.submitInput,
-          prompt: state.composer,
-          projectId: modelInput.projectId,
-          threadId: modelInput.threadId
-        });
-        modelInput = {
-          ...modelInput,
-          projectId: submission.projectId ?? modelInput.projectId,
-          threadId: submission.threadId ?? modelInput.threadId
-        };
-        state = {
-          ...state,
-          composer: "",
-          statusMessage: submitStatusMessage(submission, input.submitInput.selectedAgent)
-        };
-        rerender();
-        return;
-      }
-      if (key.name === "backspace" || key.name === "delete") {
-        state = { ...state, composer: state.composer.slice(0, -1) };
-        rerender();
-        return;
-      }
-      if (isPrintableChunk(chunk, key)) {
-        state = { ...state, composer: `${state.composer}${chunk}` };
-        rerender();
-        return;
-      }
-      const model = await buildRenderableTuiModel({
+  projectRoot: string;
+  interactive: boolean;
+  submitPrompt?: (input: {
+    prompt: string;
+    projectId?: string;
+    threadId?: string;
+  }) => Promise<{
+    ok: boolean;
+    message: string;
+    model?: TuiCurrentContextModel;
+  }>;
+  recordReviewDecision?: (input: TuiReviewDecisionInput) => Promise<{
+    ok: boolean;
+    message: string;
+    model?: TuiCurrentContextModel;
+  }>;
+}): Promise<void> {
+  const entry = await loadInkTuiEntry();
+  await entry.runInkTui({
+    model: input.model,
+    state: input.state,
+    terminal: terminalSize(input.io.stdout),
+    io: input.io,
+    interactive: input.interactive,
+    loadModel: async (state) =>
+      buildRenderableTuiModel({
         runtime: input.runtime,
-        modelInput,
+        modelInput: {
+          ...input.getModelInput(),
+          hideCompletedRoleCalls: state.hideCompletedRoleCalls
+        },
         launchWarnings: input.launchWarnings,
-        projectRoot: input.submitInput.projectRoot
-      });
-      const result = reduceTuiKey(
-        state,
-        tuiKeyFromReadlineKey(key),
-        model
-      );
-      state = result.state;
-      if (result.exit) {
-        cleanup();
-        resolve(0);
-        return;
-      }
-      rerender();
-    };
-
-    readline.emitKeypressEvents(stdin);
-    stdin.setRawMode(true);
-    stdin.resume();
-    stdin.on("keypress", onKeypress);
-    rerender();
+        projectRoot: input.projectRoot
+      }),
+    submitPrompt: input.submitPrompt,
+    recordReviewDecision: input.recordReviewDecision
   });
+}
+
+async function loadInkTuiEntry(): Promise<InkTuiEntry> {
+  const nativeImport = new Function("specifier", "return import(specifier)") as (
+    specifier: string
+  ) => Promise<unknown>;
+  const entryPath = [
+    path.join(__dirname, "tui-ink", "entry.mjs"),
+    path.resolve(__dirname, "..", "dist", "tui-ink", "entry.mjs"),
+    path.resolve(process.cwd(), "apps", "cli", "dist", "tui-ink", "entry.mjs")
+  ].find((candidate) => existsSync(candidate));
+  if (!entryPath) {
+    throw new Error("Ink TUI entrypoint is not built; run pnpm build first.");
+  }
+  const entryUrl = pathToFileURL(entryPath).href;
+  if (process.env.VITEST) {
+    return import(entryUrl) as Promise<InkTuiEntry>;
+  }
+  return nativeImport(entryUrl) as Promise<InkTuiEntry>;
 }
 
 function parseTuiArgs(args: string[]): ParsedTuiArgs {
@@ -906,684 +715,6 @@ function agentAvailabilityCommand(agent: AgentKind): string {
   return "agent-hub tui --debug --agent fake --once";
 }
 
-function renderHeaderLines(model: TuiCurrentContextModel): string[] {
-  const project = model.context.projectName ?? model.context.projectId ?? "unregistered";
-  const room = model.context.roomHandle
-    ? `#${model.context.roomHandle}`
-    : model.context.threadTitle ?? model.context.threadId ?? "no-thread";
-  const agent = model.context.selectedAgent ? `@${model.context.selectedAgent}` : "@agent";
-  const risk = highestRisk(model);
-  const loop = model.roleCalls.loop.maxIterations === undefined
-    ? `iter ${model.roleCalls.loop.iteration}`
-    : `iter ${model.roleCalls.loop.iteration}/${model.roleCalls.loop.maxIterations}`;
-  return [
-    ["Agent Hub", project, room].join(" | "),
-    [`agent ${agent}`, `ctx ${model.context.contextMode}`, loop, `risk ${risk}`].join(" | ")
-  ];
-}
-
-function renderFocusBar(state: TuiShellState): string {
-  return focusModes
-    .map((mode) => (mode === state.focus ? `[${label(mode)}]` : label(mode)))
-    .join(" ");
-}
-
-function renderWarnings(model: TuiCurrentContextModel): string[] {
-  return model.warnings.map((warning) => `! ${warning}`);
-}
-
-function renderWorkPanel(
-  model: TuiCurrentContextModel,
-  state: TuiShellState,
-  options: { columns: number; narrow: boolean }
-): string[] {
-  const visibleNodes = graphNodesForState(model.roleCalls.nodes, state);
-  const runsAndReview = [
-    ...renderRunsPanel(model, state, { includeTitle: true, includeDetail: false }),
-    "",
-    ...renderSelectedSummary(model)
-  ];
-  const graphAndTranscript = [
-    ...(visibleNodes.length > 0
-      ? renderGraphPanel(model, state, { includeTitle: true })
-      : renderCompactEmptyGraph(model)),
-    "",
-    ...renderTranscriptPanel(model, { includeTitle: true })
-  ];
-  if (options.narrow) {
-    return [
-      ...runsAndReview,
-      "",
-      ...graphAndTranscript
-    ];
-  }
-  return renderColumns(runsAndReview, graphAndTranscript, options.columns);
-}
-
-function renderTranscriptPanel(
-  model: TuiCurrentContextModel,
-  options: { includeTitle: boolean }
-): string[] {
-  const lines = options.includeTitle ? ["== Transcript =="] : [];
-  if (model.transcript.length === 0) {
-    return [...lines, "  No messages in the current context."];
-  }
-  return [
-    ...lines,
-    ...model.transcript.flatMap((message) => [
-      `${message.author}${message.runId ? ` ${message.runId}` : ""}`,
-      `  ${message.content || "(empty)"}`
-    ])
-  ];
-}
-
-function renderGraphPanel(
-  model: TuiCurrentContextModel,
-  state: TuiShellState,
-  options: { includeTitle: boolean }
-): string[] {
-  const visibleNodes = graphNodesForState(model.roleCalls.nodes, state);
-  const counts = model.roleCalls.counts;
-  const lines = options.includeTitle
-    ? [
-        `== RoleCalls ==  active ${counts.active}  waiting ${counts.waiting}  pending ${counts.pending}  stop ${model.roleCalls.loop.stopReason}`
-      ]
-    : [];
-  if (visibleNodes.length === 0) {
-    return [...lines, "  No RoleCalls in the current context."];
-  }
-  return [
-    ...lines,
-    ...visibleNodes.map((node, index) => {
-      const selected = index === boundedIndex(state.selectedRoleCallIndex, visibleNodes.length)
-        ? ">"
-        : " ";
-      const branch = node.depth > 0 ? `${"  ".repeat(node.depth)}|-- ` : "";
-      const collapsed = state.collapsedRoleCallIds.includes(node.id) ? " [+]" : "";
-      const run = node.linkedRunId ? ` ${compactId(node.linkedRunId)}` : "";
-      const waiting = node.evidence.waitingReason ? ` ${node.evidence.waitingReason}` : "";
-      return `${selected} ${branch}@${node.callerRole} -> @${node.calleeRole} [${node.statusLabel}]${run}${collapsed} ${node.task}${waiting}`;
-    }),
-    "",
-    ...renderLoopDetail(model)
-  ];
-}
-
-function renderCompactEmptyGraph(model: TuiCurrentContextModel): string[] {
-  return [
-    "== RoleCalls ==",
-    `  none | loop stop ${model.roleCalls.loop.stopReason} | pending ${model.roleCalls.loop.pendingRoleCallIds.length}`
-  ];
-}
-
-function renderLoopDetail(model: TuiCurrentContextModel): string[] {
-  const loop = model.roleCalls.loop;
-  const iteration = loop.maxIterations === undefined
-    ? `${loop.iteration}`
-    : `${loop.iteration}/${loop.maxIterations}`;
-  return [
-    "Loop",
-    `  iteration ${iteration}`,
-    `  active ${loop.activeRoleCallIds.length}`,
-    `  pending ${loop.pendingRoleCallIds.length}`,
-    `  waiting ${loop.waitingRoleCallIds.length}`,
-    `  stop ${loop.stopReason}`,
-    `  convergence ${loop.convergenceReason}`
-  ];
-}
-
-function renderRunsPanel(
-  model: TuiCurrentContextModel,
-  state: TuiShellState,
-  options: { includeTitle: boolean; includeDetail?: boolean }
-): string[] {
-  const lines = options.includeTitle ? [`== Runs ==  ${model.runs.length}`] : [];
-  if (model.runs.length === 0) {
-    return [...lines, "  No runs in the current context."];
-  }
-  const selectedRun = model.runs[boundedIndex(state.selectedRunIndex, model.runs.length)];
-  return [
-    ...lines,
-    ...model.runs.map((run, index) =>
-      renderRunLine(
-        run,
-        index === boundedIndex(state.selectedRunIndex, model.runs.length)
-      )
-    ),
-    ...(options.includeDetail === false
-      ? []
-      : [
-          "",
-          ...renderRunOperatingDetail(selectedRun)
-        ])
-  ];
-}
-
-function renderRunLine(run: TuiRunSummary, selectedRun: boolean): string {
-  const selected = selectedRun ? ">" : " ";
-  const checks = run.evidence.checks
-    ? ` checks ${run.evidence.checks.passed}/${run.evidence.checks.failed}/${run.evidence.checks.skipped}`
-    : "";
-  const risk = run.evidence.risk ? ` risk ${run.evidence.risk.level}` : "";
-  const diff = run.evidence.diff ? ` files ${run.evidence.diff.changedFiles}` : "";
-  const stage = run.stage !== run.status ? ` ${run.stage}` : "";
-  return `${selected} ${compactId(run.id)} @${run.agentKind} ${runStatusLabel(run.status)}${stage}${checks}${risk}${diff}`;
-}
-
-function renderRunOperatingDetail(run: TuiRunSummary | undefined): string[] {
-  if (!run) {
-    return [];
-  }
-  return [
-    `Run ${compactId(run.id)}`,
-    `  ${run.taskTitle ?? run.taskId}`,
-    `  status ${runStatusLabel(run.status)} | stage ${run.stage} | retained ${run.retainedWorktree ? "yes" : "no"} | review ${run.reviewDecision.status}`,
-    ...evidenceLines(run.evidence),
-    ...commandLines(run.commands)
-  ];
-}
-
-function renderSelectedSummary(model: TuiCurrentContextModel): string[] {
-  return [
-    "== Review ==",
-    model.review.selectedId
-      ? `${model.review.title} (${compactId(model.review.selectedId)})`
-      : model.review.title,
-    `  ${model.review.summary}`,
-    ...evidenceLines(model.review.evidence),
-    ...commandLines(model.review.commands)
-  ];
-}
-
-function renderReviewPanel(model: TuiCurrentContextModel): string[] {
-  return [
-    `== Review ==  ${model.review.selectedId ? compactId(model.review.selectedId) : "none"}`,
-    model.review.title,
-    `  ${model.review.summary}`,
-    ...evidenceLines(model.review.evidence),
-    ...commandLines(model.review.commands)
-  ];
-}
-
-function renderTasksPanel(
-  model: TuiCurrentContextModel,
-  state: TuiShellState,
-  options: { includeTitle: boolean }
-): string[] {
-  const lines = options.includeTitle ? [`== Tasks ==  ${model.tasks.length}`] : [];
-  if (model.tasks.length === 0) {
-    return [...lines, "  No current-context tasks."];
-  }
-  const selectedTask = model.tasks[boundedIndex(state.selectedTaskIndex, model.tasks.length)];
-  return [
-    ...lines,
-    ...model.tasks.map((task, index) =>
-      renderTaskLine(
-        task,
-        index,
-        index === boundedIndex(state.selectedTaskIndex, model.tasks.length)
-      )
-    ),
-    "",
-    ...renderTaskOperatingDetail(model, selectedTask)
-  ];
-}
-
-function renderTaskLine(
-  task: TuiTaskSummary,
-  index: number,
-  selectedTask: boolean
-): string {
-  const selected = selectedTask ? ">" : " ";
-  const assignments = task.assignments
-    .map((assignment) => `${assignment.label}:${assignment.status}`)
-    .join(", ");
-  return `${selected} ${task.id} ${task.status} ${task.title} assignments ${task.assignmentCount}${task.nextAction ? ` next ${task.nextAction}` : ""}${assignments ? ` (${assignments})` : ""}`;
-}
-
-function renderTaskOperatingDetail(
-  model: TuiCurrentContextModel,
-  task: TuiTaskSummary | undefined
-): string[] {
-  if (!task) {
-    return [];
-  }
-  const unavailableExecutorCommands = unavailableRoleExecutorCommands(
-    model.context.projectId,
-    task
-  );
-  return [
-    `Selected Task ${task.id}`,
-    `  goal ${task.title}`,
-    `  status ${task.status}`,
-    `  next ${task.nextAction ?? "wait"}`,
-    "  assignments:",
-    ...(task.assignments.length === 0
-      ? ["    none"]
-      : task.assignments.map((assignment) =>
-          `    ${assignment.label} ${assignment.status}${assignment.runId ? ` ${assignment.runId}` : ""}${assignment.executable ? "" : " executor_unavailable"}`
-        )),
-    ...(unavailableExecutorCommands.length === 0
-      ? []
-      : [
-          "  executor_recovery:",
-          ...unavailableExecutorCommands.map((command) => `    ${command}`)
-        ]),
-    "  role_todos:",
-    ...(task.roleTodos.length === 0
-      ? ["    none"]
-      : task.roleTodos.map((todo) => `    @${todo.role} ${todo.status}: ${todo.title}`)),
-    "  follow_ups:",
-    ...(task.followUps.length === 0
-      ? ["    none"]
-      : task.followUps.map((item) => `    ${item}`))
-  ];
-}
-
-function unavailableRoleExecutorCommands(
-  projectId: string | undefined,
-  task: TuiTaskSummary
-): string[] {
-  if (!projectId) {
-    return [];
-  }
-  return task.assignments
-    .filter((assignment) => !assignment.executable && assignment.role)
-    .map((assignment) => `agent-hub team roles executor --project-id ${projectId} --role ${assignment.role}`);
-}
-
-function renderMemoryPanel(model: TuiCurrentContextModel): string[] {
-  const selectedSkills =
-    model.skills.selected.length === 0
-      ? "none"
-      : model.skills.selected.map((skill) => `${skill.scope}:${skill.id}`).join(", ");
-  const availableSkills =
-    model.skills.available.length === 0
-      ? "none"
-      : model.skills.available.map((skill) => `${skill.scope}:${skill.id}`).join(", ");
-  return [
-    "== Memory ==",
-    `  proposed ${model.memory.counts.proposed}`,
-    `  approved ${model.memory.counts.approved}`,
-    `  rejected ${model.memory.counts.rejected}`,
-    `  approved_source ${model.memory.approvedSource}`,
-    `  reminder ${model.memory.approvalReminder}`,
-    `  next ${model.memory.command ?? "register a project before listing memory"}`,
-    "  commands:",
-    ...(model.memory.approvalCommands.length === 0
-      ? ["    none"]
-      : model.memory.approvalCommands.map((command) => `    ${command}`)),
-    "== Skills ==",
-    `  selected ${selectedSkills}`,
-    `  available ${availableSkills}`,
-    `  source ${model.skills.runtimeSource}`,
-    "== Context ==",
-    `  mode ${model.skills.contextMode}`
-  ];
-}
-
-function renderCommandPalettePanel(
-  model: TuiCurrentContextModel,
-  state: TuiShellState
-): string[] {
-  const selectedRun = model.runs[boundedIndex(state.selectedRunIndex, model.runs.length)];
-  const visibleNodes = graphNodesForState(model.roleCalls.nodes, state);
-  const selectedNode = visibleNodes[boundedIndex(state.selectedRoleCallIndex, visibleNodes.length)];
-  return [
-    "== Command Palette ==",
-    "  Current context",
-    `    focus ${state.focus}`,
-    `    command ${commandHintForFocus(model, state)}`,
-    "  Runs",
-    ...(selectedRun
-      ? selectedRun.commands.map((command) => `    ${command}`)
-      : ["    no run selected"]),
-    "  RoleCalls",
-    selectedNode ? `    agent-hub role-calls show ${selectedNode.id}` : "    no RoleCall selected",
-    "  Review",
-    ...(model.review.commands.length === 0
-      ? ["    no review command available"]
-      : model.review.commands.map((command) => `    ${command}`)),
-    "  Memory",
-    ...(model.memory.approvalCommands.length === 0
-      ? ["    no memory command available"]
-      : model.memory.approvalCommands.map((command) => `    ${command}`)),
-    "  Keys",
-    "    : close palette",
-    "    p print focused command",
-    "    ctrl+j submit composer"
-  ];
-}
-
-function renderHelpPanel(): string[] {
-  return [
-    "== Help ==",
-    "  tab / shift-tab   switch focus",
-    "  up/down           move selection",
-    "  left/right        collapse or expand selected RoleCall subtree",
-    "  enter             open selected review summary",
-    "  c                 prepare bounded continuation prompt",
-    "  k                 cancel selected running item when supported",
-    "  a / j             accept or reject selected run for record only",
-    "  p                 print focused CLI command hint",
-    "  :                 command palette",
-    "  ctrl+j            submit composer prompt",
-    "  r                 review summary",
-    "  h                 toggle completed RoleCalls",
-    "  m                 memory summary",
-    "  s                 skills/context summary",
-    "  ?                 help",
-    "  esc               work view",
-    "  x or ctrl+c       exit",
-    "",
-    "Commands",
-    "  agent-hub runs show <run-id>",
-    "  agent-hub runs diff <run-id> --stat",
-    "  agent-hub risks show <run-id>",
-    "  agent-hub role-calls show <role-call-id>",
-    "  agent-hub memory list --project-id <project-id>"
-  ];
-}
-
-function renderActionHints(): string[] {
-  return [
-    "tab focus | enter review | : palette | c continue | p command | ? help | x exit"
-  ];
-}
-
-function renderComposerPlaceholder(
-  model: TuiCurrentContextModel,
-  state: TuiShellState
-): string {
-  const agent = model.context.selectedAgent ? `@${model.context.selectedAgent}` : "@agent";
-  return `> ${state.composer || `${agent} prompt`}`;
-}
-
-function evidenceLines(evidence: TuiCurrentContextModel["review"]["evidence"]): string[] {
-  const lines: string[] = [];
-  if (evidence.linkedRunId) {
-    lines.push(`  linked run ${compactId(evidence.linkedRunId)}`);
-  }
-  if (evidence.latestEvent) {
-    lines.push(`  latest ${evidence.latestEvent}`);
-  }
-  if (evidence.waitingReason) {
-    lines.push(`  waiting ${evidence.waitingReason}`);
-  }
-  if (evidence.checks) {
-    lines.push(
-      `  checks ${evidence.checks.passed} passed / ${evidence.checks.failed} failed / ${evidence.checks.skipped} skipped`
-    );
-  }
-  if (evidence.risk) {
-    lines.push(`  risk ${evidence.risk.level}${evidence.risk.primaryReason ? ` - ${evidence.risk.primaryReason}` : ""}`);
-  }
-  if (evidence.diff) {
-    lines.push(
-      `  files ${evidence.diff.changedFiles}  +${evidence.diff.insertions ?? 0} -${evidence.diff.deletions ?? 0}`
-    );
-  }
-  return lines;
-}
-
-function commandLines(commands: string[]): string[] {
-  if (commands.length === 0) {
-    return [];
-  }
-  return ["  commands:", ...commands.map((command) => `    ${command}`)];
-}
-
-function renderColumns(left: string[], right: string[], columns: number): string[] {
-  const gap = "  |  ";
-  const available = Math.max(40, columns - gap.length);
-  const leftWidth = Math.max(34, Math.floor(available * 0.52));
-  const rightWidth = Math.max(24, available - leftWidth);
-  const lineCount = Math.max(left.length, right.length);
-  const lines: string[] = [];
-  for (let index = 0; index < lineCount; index += 1) {
-    const leftLine = fitLine(left[index] ?? "", leftWidth).padEnd(leftWidth);
-    const rightLine = fitLine(right[index] ?? "", rightWidth);
-    lines.push(`${leftLine}${gap}${rightLine}`.trimEnd());
-  }
-  return lines;
-}
-
-function compactId(id: string): string {
-  const match = /^(run|task|call|message|thread)_([0-9a-f]{8})[0-9a-f-]*/i.exec(id);
-  if (match) {
-    return `${match[1]}_${match[2]}`;
-  }
-  if (id.length > 18) {
-    return `${id.slice(0, 15)}...`;
-  }
-  return id;
-}
-
-function runStatusLabel(status: TuiRunSummary["status"]): string {
-  if (status === "succeeded") {
-    return "ok";
-  }
-  if (status === "failed") {
-    return "failed";
-  }
-  if (status === "running") {
-    return "running";
-  }
-  if (status === "queued") {
-    return "queued";
-  }
-  return "cancelled";
-}
-
-function selectedReviewRunId(model: TuiCurrentContextModel): string | undefined {
-  if (model.review.kind === "run") {
-    return model.review.selectedId;
-  }
-  return model.review.evidence.linkedRunId;
-}
-
-function moveSelection(
-  state: TuiShellState,
-  key: "up" | "down",
-  model: TuiCurrentContextModel
-): void {
-  const delta = key === "down" ? 1 : -1;
-  if (state.focus === "runs") {
-    state.selectedRunIndex = clampIndex(state.selectedRunIndex + delta, model.runs.length);
-    return;
-  }
-  if (state.focus === "tasks") {
-    state.selectedTaskIndex = clampIndex(state.selectedTaskIndex + delta, model.tasks.length);
-    return;
-  }
-  state.selectedRoleCallIndex = clampIndex(
-    state.selectedRoleCallIndex + delta,
-    graphNodesForState(model.roleCalls.nodes, state).length
-  );
-}
-
-function toggleSelectedRoleCallCollapse(
-  state: TuiShellState,
-  model: TuiCurrentContextModel,
-  collapse: boolean
-): void {
-  const nodes = graphNodesForState(model.roleCalls.nodes, state);
-  const selected = nodes[boundedIndex(state.selectedRoleCallIndex, nodes.length)];
-  if (!selected) {
-    return;
-  }
-  const collapsed = new Set(state.collapsedRoleCallIds);
-  if (collapse) {
-    collapsed.add(selected.id);
-    state.statusMessage = `Collapsed ${selected.id}.`;
-  } else {
-    collapsed.delete(selected.id);
-    state.statusMessage = `Expanded ${selected.id}.`;
-  }
-  state.collapsedRoleCallIds = [...collapsed];
-}
-
-function graphNodesForState(
-  nodes: TuiRoleCallNodeSummary[],
-  state: TuiShellState
-): TuiRoleCallNodeSummary[] {
-  if (state.collapsedRoleCallIds.length === 0) {
-    return nodes;
-  }
-  const collapsed = new Set(state.collapsedRoleCallIds);
-  const byId = new Map(nodes.map((node) => [node.id, node]));
-  return nodes.filter((node) => {
-    let parentId = node.parentRoleCallId;
-    while (parentId) {
-      if (collapsed.has(parentId)) {
-        return false;
-      }
-      parentId = byId.get(parentId)?.parentRoleCallId;
-    }
-    return true;
-  });
-}
-
-function nextFocus(current: TuiFocusMode, delta: number): TuiFocusMode {
-  const index = focusModes.indexOf(current);
-  const next = (index + delta + focusModes.length) % focusModes.length;
-  return focusModes[next];
-}
-
-function highestRisk(model: TuiCurrentContextModel): string {
-  const levels = [
-    ...model.runs.map((run) => run.evidence.risk?.level),
-    ...model.roleCalls.nodes.map((node) => node.evidence.risk?.level)
-  ].filter((level): level is NonNullable<typeof level> => level !== undefined);
-  if (levels.length === 0) {
-    return "unknown";
-  }
-  return levels.sort(
-    (left, right) => (riskRank.get(right) ?? -1) - (riskRank.get(left) ?? -1)
-  )[0];
-}
-
-function tuiKeyFromReadlineKey(key: readline.Key): TuiKey {
-  if (key.ctrl && key.name === "c") {
-    return "exit";
-  }
-  if (key.name === "x" || key.name === "q") {
-    return "exit";
-  }
-  if (key.name === "tab") {
-    return key.shift ? "shift_tab" : "tab";
-  }
-  if (key.name === "up") {
-    return "up";
-  }
-  if (key.name === "down") {
-    return "down";
-  }
-  if (key.name === "left") {
-    return "left";
-  }
-  if (key.name === "right") {
-    return "right";
-  }
-  if (key.name === "return") {
-    return "enter";
-  }
-  if (key.name === "escape") {
-    return "escape";
-  }
-  if (key.sequence === "?") {
-    return "help";
-  }
-  if (key.name === "r") {
-    return "review";
-  }
-  if (key.name === "m") {
-    return "memory";
-  }
-  if (key.name === "s") {
-    return "skills";
-  }
-  if (key.name === "h") {
-    return "hide_done";
-  }
-  if (key.name === "c") {
-    return "continue_loop";
-  }
-  if (key.name === "k") {
-    return "cancel";
-  }
-  if (key.name === "a") {
-    return "accept_review";
-  }
-  if (key.name === "j") {
-    return "reject_review";
-  }
-  if (key.name === "p") {
-    return "print_commands";
-  }
-  if (key.sequence === ":") {
-    return "palette";
-  }
-  return "other";
-}
-
-function commandHintForFocus(
-  model: TuiCurrentContextModel,
-  state: TuiShellState
-): string {
-  if (state.focus === "memory") {
-    return model.memory.command ?? "Register a project before listing memory.";
-  }
-  if (state.focus === "runs") {
-    const run = model.runs[boundedIndex(state.selectedRunIndex, model.runs.length)];
-    return run?.commands[0] ?? "No run command is available.";
-  }
-  if (state.focus === "review") {
-    return model.review.commands[0] ?? "No review command is available.";
-  }
-  if (state.focus === "tasks") {
-    const task = model.tasks[boundedIndex(state.selectedTaskIndex, model.tasks.length)];
-    const command = task
-      ? unavailableRoleExecutorCommands(model.context.projectId, task)[0]
-      : undefined;
-    return command ?? "No task recovery command is available.";
-  }
-  const nodes = graphNodesForState(model.roleCalls.nodes, state);
-  const node = nodes[boundedIndex(state.selectedRoleCallIndex, nodes.length)];
-  return node ? `agent-hub role-calls show ${node.id}` : "No RoleCall command is available.";
-}
-
-function applyContinuePrompt(
-  state: TuiShellState,
-  model: TuiCurrentContextModel
-): void {
-  const stopReason = model.roleCalls.loop.stopReason;
-  if (stopReason !== "terminal" && stopReason !== "none") {
-    state.statusMessage = `Cannot continue: ${stopReason}.`;
-    return;
-  }
-  const nodes = graphNodesForState(model.roleCalls.nodes, state);
-  const selected = nodes[boundedIndex(state.selectedRoleCallIndex, nodes.length)];
-  state.composer = selected
-    ? `Continue @${selected.calleeRole} on RoleCall ${selected.id}: ${selected.task}`
-    : "Continue the current task with the selected agent.";
-  state.statusMessage = "Continuation prompt prepared; press ctrl+j to submit.";
-}
-
-function isSubmitKey(key: readline.Key): boolean {
-  return Boolean(key.ctrl && (key.name === "j" || key.name === "return"));
-}
-
-function isPrintableChunk(chunk: string, key: readline.Key): boolean {
-  return (
-    chunk.length === 1 &&
-    !key.ctrl &&
-    !key.meta &&
-    chunk >= " " &&
-    chunk !== "\u007f"
-  );
-}
-
 function mergeLaunchWarnings(
   model: TuiCurrentContextModel,
   warnings: string[]
@@ -1612,35 +743,6 @@ function terminalSize(stdout: TuiCliIO["stdout"]): { columns: number; rows: numb
   };
 }
 
-function fitLines(lines: string[], columns: number, rows: number): string[] {
-  const fitted = lines.map((line) => fitLine(line, columns));
-  if (fitted.length <= rows) {
-    return fitted;
-  }
-  return [...fitted.slice(0, Math.max(0, rows - 1)), "-- more hidden --"];
-}
-
-function fitLine(line: string, columns: number): string {
-  if (columns <= 0 || line.length <= columns) {
-    return line;
-  }
-  return `${line.slice(0, Math.max(0, columns - 3))}...`;
-}
-
-function boundedIndex(index: number, length: number): number {
-  if (length <= 0) {
-    return 0;
-  }
-  return Math.min(Math.max(index, 0), length - 1);
-}
-
-function clampIndex(index: number, length: number): number {
-  if (length <= 0) {
-    return 0;
-  }
-  return Math.min(Math.max(index, 0), length - 1);
-}
-
 function requiredArgValue(args: string[], index: number, flag: string): string {
   const value = args[index + 1];
   if (!value) {
@@ -1664,10 +766,6 @@ function roomHandleForThread(thread: ConversationThread): string | undefined {
 
 function stripHash(value: string): string {
   return value.startsWith("#") ? value.slice(1) : value;
-}
-
-function label(mode: TuiFocusMode): string {
-  return mode[0].toUpperCase() + mode.slice(1);
 }
 
 function errorMessage(error: unknown): string {

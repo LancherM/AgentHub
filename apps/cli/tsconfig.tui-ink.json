@@ -1,0 +1,22 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "rootDir": "src/tui-ink",
+    "outDir": "dist/tui-ink",
+    "declaration": true,
+    "composite": true,
+    "tsBuildInfoFile": "dist/tui-ink/tsconfig.tsbuildinfo",
+    "types": ["node"]
+  },
+  "include": ["src/tui-ink/**/*.mts"],
+  "references": [
+    { "path": "../../packages/shared" },
+    { "path": "../../packages/core" }
+  ]
+}

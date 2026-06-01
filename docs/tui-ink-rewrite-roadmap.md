@@ -1,6 +1,6 @@
 # TUI Ink Rewrite Roadmap
 
-Status: proposed
+Status: implementation in progress
 Last updated: 2026-06-01
 
 This document replaces the current hand-rendered TUI implementation plan with a
@@ -30,22 +30,23 @@ governance boundaries, but replace the rendering layer.
 
 ## Framework Decision
 
-Use Ink for the rewrite, pinned to the current project runtime constraints:
+Use Ink for the rewrite, with the CLI/TUI runtime moved to Node 22+:
 
 ```json
 {
-  "ink": "5.2.1",
+  "ink": "7.0.5",
   "ink-testing-library": "4.x",
-  "react": "18.x",
-  "@types/react": "18.x"
+  "react": "19.2.x",
+  "@types/react": "19.2.x",
+  "react-devtools-core": "7.x"
 }
 ```
 
-Do not use latest Ink yet. As of 2026-06-01, `ink@7.0.5` requires Node
-`>=22`, React `>=19.2`, and ESM. Agent Hub currently runs on Node `20.18.0`,
-uses TypeScript `module: "CommonJS"` for the CLI, and already uses React 18 in
-the desktop package. `ink@5.2.1` supports Node `>=18`, React 18, and ESM, which
-makes it the lowest-risk fit.
+As of 2026-06-01, `ink@7.0.5` requires Node `>=22`, React `>=19.2`, and ESM.
+Agent Hub now treats Node 22+ as the supported CLI/TUI runtime line so the TUI
+can use the current Ink API instead of pinning to the older Node 20-compatible
+Ink 5 line. The desktop package remains a separate Electron/React surface; the
+TUI dependency does not move desktop orchestration or renderer policy.
 
 ### Why Ink
 
@@ -81,28 +82,39 @@ The Ink layer must not directly access SQLite, filesystem, git, shell, or agent
 adapters. It receives `TuiCurrentContextModel` plus callback props for explicit
 actions.
 
-The first rewrite should add a small ESM island for Ink rather than converting
-the whole CLI package to ESM:
+The first rewrite uses a small ESM island for Ink rather than converting the
+whole CLI package to ESM:
 
 ```text
 apps/cli/src/tui.ts                  current CommonJS command boundary
-apps/cli/src/tui-ink/entry.tsx       dynamic Ink entrypoint
-apps/cli/src/tui-ink/App.tsx         top-level TUI state and layout
-apps/cli/src/tui-ink/components/
-apps/cli/src/tui-ink/state.ts
-apps/cli/src/tui-ink/theme.ts
-apps/cli/tsconfig.tui-ink.json       NodeNext + react-jsx build target
+apps/cli/src/tui-ink/entry.mts       dynamic Ink entrypoint
+apps/cli/src/tui-ink/App.mts         top-level TUI state and layout
+apps/cli/src/tui-ink/state.mts       focus and selection reducer
+apps/cli/src/tui-ink/format.mts      compact ids and evidence labels
+apps/cli/tsconfig.tui-ink.json       NodeNext ESM build target
 ```
 
-`apps/cli/src/tui.ts` remains the CLI command boundary while the rewrite is
-underway. It resolves launch options, builds the read model, dynamically loads
-the Ink entrypoint, and preserves a non-interactive fallback until Ink snapshots
-cover the replacement.
+`apps/cli/src/tui.ts` remains the CLI command boundary. It resolves launch
+options, builds the read model, dynamically loads the Ink entrypoint, and
+passes explicit callback props for prompt submission and review decisions.
+There is no hand-rendered string fallback.
 
 The Ink build target should compile to ESM under `apps/cli/dist/tui-ink/`.
 The existing CommonJS CLI can then load it with dynamic `import()` at runtime.
 This avoids a whole-package ESM migration in the first phase while still using
 Ink's ESM package format correctly.
+
+Current implementation status:
+
+- `agent-hub tui` renders through Ink for both `--once` and interactive
+  terminal launches.
+- `--once` uses Ink `renderToString` and exits after printing the current
+  workbench.
+- The legacy string workbench renderer and its snapshots have been removed.
+- The renderer receives read models and action callbacks only; it does not
+  access SQLite, filesystem, git, shell, or agent adapters directly.
+- Focus, selection, command palette, composer, and review-decision shortcuts
+  exist in the Ink reducer, with scroll offsets still pending.
 
 ## Product Layout
 
@@ -178,11 +190,11 @@ Core components:
 
 State modules:
 
-- `state.ts`: focus, selection, scroll offsets, palette, composer, status.
-- `selectors.ts`: selected run, selected RoleCall, visible panes, key command.
-- `format.ts`: short ids, risk labels, check labels, bounded text.
-- `layout.ts`: terminal width breakpoints and pane ordering.
-- `theme.ts`: ASCII-first visual tokens, optional color when TTY supports it.
+- `state.mts`: focus, selection, palette, composer, status, and command hints.
+- `format.mts`: short ids, risk labels, check labels, bounded text.
+- `App.mts`: terminal width breakpoints and pane ordering.
+- future `layout.mts` / `theme.mts`: extract only if the component tree grows
+  enough to justify them.
 
 ## Interaction Rules
 
@@ -206,15 +218,17 @@ where full ids and long commands dominate screen space.
 
 ### Phase Ink-0: Spike And Dependency Boundary
 
+Status: done
+
 Goal: prove Ink can run inside the current CLI without migrating the whole CLI
 package to ESM.
 
 Tasks:
 
-- Add a minimal Ink entrypoint behind an internal flag or development command.
+- Add an Ink entrypoint behind the `agent-hub tui` command boundary.
 - Verify `node apps/cli/dist/cli.js tui --once` exits cleanly.
 - Verify TypeScript build output and dynamic import behavior.
-- Keep the old renderer as fallback.
+- Remove the old renderer as a fallback once Ink owns `--once`.
 
 Acceptance:
 
@@ -222,6 +236,8 @@ Acceptance:
 - A one-screen Ink render can display a static current-context model.
 
 ### Phase Ink-1: Read-Only Work View
+
+Status: done for the initial Work view; polish remains
 
 Goal: replace the current Work view with Ink components.
 
@@ -240,6 +256,8 @@ Acceptance:
 
 ### Phase Ink-2: Focus, Selection, And Scrolling
 
+Status: partially implemented
+
 Goal: make the app feel like a real TUI instead of a static dashboard.
 
 Tasks:
@@ -256,6 +274,8 @@ Acceptance:
 
 ### Phase Ink-3: Composer And Refresh
 
+Status: partially implemented
+
 Goal: restore prompt submission with a component composer.
 
 Tasks:
@@ -271,6 +291,8 @@ Acceptance:
 - Unavailable Codex/Claude CLI failures are visible and inspectable.
 
 ### Phase Ink-4: Review, Memory, And Command Palette
+
+Status: partially implemented
 
 Goal: restore governed actions without adding side effects.
 
@@ -289,6 +311,8 @@ Acceptance:
 
 ### Phase Ink-5: Remove String Renderer
 
+Status: done for runtime removal; final parity hardening remains
+
 Goal: delete the legacy rendering path after parity is proven.
 
 Tasks:
@@ -305,7 +329,9 @@ Acceptance:
 
 ## Testing Strategy
 
-Use `ink-testing-library` for component tests and snapshots:
+Use Ink's `renderToString` for one-shot layout tests and
+`ink-testing-library` for interactive keyboard tests as those interactions
+grow:
 
 - render snapshots at 80, 100, and 140 columns;
 - keyboard tests for focus, selection, palette, composer, and exit;
@@ -330,9 +356,8 @@ logic.
 
 ## Open Questions
 
-- Whether the current `apps/cli` package should remain CommonJS with an ESM
-  Ink island, or move to NodeNext in a later dedicated package-modernization
-  task.
+- Whether scroll offsets should be pane-local state only or selection-derived
+  state that follows refreshed run and RoleCall ids.
 - Whether color should be enabled by default or only when `stdout.isTTY` and
   color support are detected.
 - Whether mouse support is worth adding later. It is not required for MVP.

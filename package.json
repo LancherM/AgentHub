@@ -3,6 +3,9 @@
   "version": "0.0.0",
   "private": true,
   "description": "Local-first CLI for orchestrating coding agents.",
+  "engines": {
+    "node": ">=22"
+  },
   "bin": {
     "agent-hub": "./apps/cli/dist/cli.js"
   },
@@ -10,12 +13,12 @@
     "build": "tsc -b tsconfig.build.json",
     "desktop:build": "pnpm --filter desktop build",
     "desktop:dist:mac": "bash scripts/build-macos-dmg.sh",
-    "typecheck": "tsc --noEmit --pretty false -p tsconfig.json && pnpm --filter desktop typecheck",
-    "test": "vitest run",
-    "lint": "tsc --noEmit --pretty false -p tsconfig.json && pnpm --filter desktop lint"
+    "typecheck": "tsc --noEmit --pretty false -p tsconfig.json && tsc --noEmit --pretty false -p apps/cli/tsconfig.tui-ink.json && pnpm --filter desktop typecheck",
+    "test": "tsc -b apps/cli/tsconfig.tui-ink.json --pretty false && vitest run",
+    "lint": "tsc --noEmit --pretty false -p tsconfig.json && tsc --noEmit --pretty false -p apps/cli/tsconfig.tui-ink.json && pnpm --filter desktop lint"
   },
   "devDependencies": {
-    "@types/node": "20.19.0",
+    "@types/node": "22.19.19",
     "pnpm": "10.10.0",
     "typescript": "5.7.2",
     "vitest": "1.6.0"
@@ -25,7 +28,10 @@
     "packages/*"
   ],
   "pnpm": {
-    "onlyBuiltDependencies": ["esbuild", "electron"]
+    "onlyBuiltDependencies": [
+      "esbuild",
+      "electron"
+    ]
   },
   "packageManager": "pnpm@10.10.0"
 }

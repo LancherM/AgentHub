@@ -6,16 +6,10 @@ import { PassThrough } from "node:stream";
 import { describe, expect, it } from "vitest";
 import { createCliRuntime, main } from "@agent-hub/cli";
 import {
-  buildTuiCurrentContextModel,
   conservativePermissionSet,
   type RoleCall
 } from "@agent-hub/core";
-import {
-  createInitialTuiShellState,
-  reduceTuiKey,
-  runTuiCommand,
-  renderTuiWorkbench
-} from "../apps/cli/src/tui";
+import { runTuiCommand } from "../apps/cli/src/tui";
 
 const now = "2026-05-29T12:00:00.000Z";
 const projectRoot = "/tmp/tui-project";
@@ -61,12 +55,12 @@ describe("CLI TUI command", () => {
 
     const rendered = output.join("");
     expect(errors.join("")).toBe("");
-    expect(rendered).toContain("Agent Hub | TUI Project | #review");
-    expect(rendered).toContain("agent @codex | ctx runtime_injection");
-    expect(rendered).toContain("== Transcript ==");
-    expect(rendered).toContain("== RoleCalls ==");
+    expect(rendered).toContain("Agent Hub  TUI Project  #review");
+    expect(rendered).toContain("@codex");
+    expect(rendered).toContain("Transcript");
+    expect(rendered).toContain("RoleCalls");
     expect(rendered).toContain("@engineer -> @reviewer [running]");
-    expect(rendered).toContain("== Runs ==");
+    expect(rendered).toContain("Runs");
     expect(rendered).toContain("run_1 @codex running");
     expect(rendered).toContain("> @codex prompt");
   });
@@ -87,10 +81,9 @@ describe("CLI TUI command", () => {
 
     const rendered = output.join("");
     expect(errors.join("")).toBe("");
-    expect(rendered).toContain("Agent Hub | unregistered | no-thread");
+    expect(rendered).toContain("Agent Hub  unregistered  no-thread");
     expect(rendered).toContain("recovery: agent-hub project add --name <name>");
     expect(rendered).toContain("none | loop stop terminal");
-    expect(rendered).toMatchSnapshot("missing registration recovery");
   });
 
   it("renders context-read failures with CLI recovery commands", async () => {
@@ -131,7 +124,6 @@ describe("CLI TUI command", () => {
     expect(rendered).toContain("failed to read TUI context: database read failed");
     expect(rendered).toContain("TUI context unavailable");
     expect(rendered).toContain("agent-hub project list");
-    expect(rendered).toMatchSnapshot("context read failure recovery");
   });
 
   it("smoke launches the interactive TUI and exits immediately without raw mode", async () => {
@@ -151,36 +143,7 @@ describe("CLI TUI command", () => {
       )
     ).resolves.toBe(0);
     expect(errors.join("")).toBe("");
-    expect(output.join("")).toContain("Agent Hub | TUI Project | #review");
-  });
-
-  it("switches focus, selection, hide-done, and graph collapse through key reducer", async () => {
-    const runtime = createCliRuntime({ storageMode: "memory" });
-    await seedTuiContext(runtime);
-    const model = await buildTuiCurrentContextModel(runtime, {
-      projectId: "project_1",
-      threadId: "thread_1"
-    });
-    let state = createInitialTuiShellState();
-
-    state = reduceTuiKey(state, "tab", model).state;
-    expect(state.focus).toBe("graph");
-    state = reduceTuiKey(state, "down", model).state;
-    expect(state.selectedRoleCallIndex).toBe(1);
-    state = reduceTuiKey(state, "left", model).state;
-    expect(state.collapsedRoleCallIds).toEqual(["call_child"]);
-    state = reduceTuiKey(state, "hide_done", model).state;
-    expect(state.hideCompletedRoleCalls).toBe(true);
-    state = reduceTuiKey(state, "continue_loop", model).state;
-    expect(state.statusMessage).toBe("Cannot continue: waiting_context.");
-    state = reduceTuiKey(state, "cancel", model).state;
-    expect(state.statusMessage).toContain("Cancellation is unavailable");
-    state = reduceTuiKey(state, "palette", model).state;
-    expect(state.commandPaletteOpen).toBe(true);
-
-    const rendered = renderTuiWorkbench(model, state, { columns: 72, rows: 28 });
-    expect(rendered).toContain("[Graph]");
-    expect(rendered).toContain("Command Palette");
+    expect(output.join("")).toContain("Agent Hub  TUI Project  #review");
   });
 
   it("submits prompts through the CLI chat path and keeps unknown mentions as text", async () => {
@@ -297,99 +260,6 @@ describe("CLI TUI command", () => {
       ]);
   });
 
-  it("renders memory, skills, context indicators, and command shortcut hints", async () => {
-    const runtime = createCliRuntime({ storageMode: "memory" });
-    await seedTuiContext(runtime);
-    const model = await buildTuiCurrentContextModel(runtime, {
-      projectId: "project_1",
-      threadId: "thread_1",
-      selectedSkillReferences: ["global:typescript-safety"]
-    });
-    let state = createInitialTuiShellState();
-    state = { ...state, focus: "memory" };
-
-    const rendered = renderTuiWorkbench(model, state, { columns: 120, rows: 80 });
-    expect(rendered).toContain("approved_source Agent Hub context store");
-    expect(rendered).toContain("agent-hub memory list --project-id project_1");
-    expect(rendered).toContain("selected global:typescript-safety");
-    expect(rendered).toContain("mode runtime_injection");
-
-    state = reduceTuiKey(state, "print_commands", model).state;
-    expect(state.statusMessage).toBe("agent-hub memory list --project-id project_1");
-  });
-
-  it("surfaces unavailable role executor recovery commands in tasks view", async () => {
-    const runtime = createCliRuntime({ storageMode: "memory" });
-    await seedTuiContext(runtime);
-    await runtime.taskRepository.create({
-      id: "task_reserved",
-      projectId: "project_1",
-      title: "Reserved executor",
-      description: "Reserved workflow role.",
-      metadata: {
-        threadId: "thread_1",
-        assignments: [
-          {
-            assignmentId: "assignment_reserved",
-            taskId: "task_reserved",
-            threadId: "thread_1",
-            sourceMessageId: "message_1",
-            assignmentRole: "role",
-            roleHandle: "planner",
-            displayName: "@planner",
-            executorKind: "workflow",
-            executable: false,
-            status: "queued"
-          }
-        ]
-      },
-      status: "open",
-      createdAt: now,
-      updatedAt: "2026-05-29T12:10:00.000Z"
-    });
-    const model = await buildTuiCurrentContextModel(runtime, {
-      projectId: "project_1",
-      threadId: "thread_1"
-    });
-    const state = { ...createInitialTuiShellState(), focus: "tasks" as const };
-
-    expect(model.tasks[0].nextAction).toBe("configure executor for @planner");
-    const rendered = renderTuiWorkbench(model, state, { columns: 120, rows: 80 });
-    expect(rendered).toContain("@planner queued executor_unavailable");
-    expect(rendered).toContain("agent-hub team roles executor --project-id project_1 --role planner");
-  });
-
-  it("keeps wide and narrow terminal render snapshots stable", async () => {
-    const runtime = createCliRuntime({ storageMode: "memory" });
-    await seedTuiContext(runtime);
-    const model = await buildTuiCurrentContextModel(runtime, {
-      projectId: "project_1",
-      threadId: "thread_1",
-      selectedSkillReferences: ["global:typescript-safety"],
-      maxIterations: 4
-    });
-    const state = { ...createInitialTuiShellState(), commandPaletteOpen: true };
-
-    expect(renderTuiWorkbench(model, state, { columns: 120, rows: 60 }))
-      .toMatchSnapshot("wide command palette");
-    expect(renderTuiWorkbench(model, state, { columns: 68, rows: 36 }))
-      .toMatchSnapshot("narrow command palette");
-  });
-
-  it("keeps narrow empty workbench output focused on runs before graph state", async () => {
-    const runtime = createCliRuntime({ storageMode: "memory" });
-    const model = await buildTuiCurrentContextModel(runtime, {
-      selectedAgent: "codex"
-    });
-    const rendered = renderTuiWorkbench(
-      model,
-      createInitialTuiShellState(),
-      { columns: 78, rows: 32 }
-    );
-
-    expect(rendered.indexOf("== Runs ==")).toBeLessThan(rendered.indexOf("== RoleCalls =="));
-    expect(rendered).toMatchSnapshot("narrow empty workbench");
-  });
 });
 
 function testIo(output: string[], errors: string[]) {

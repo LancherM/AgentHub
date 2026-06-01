@@ -402,15 +402,15 @@ metadata; no executor backend, database table, daemon, or desktop behavior is
 added for the TUI.
 Terminal polish is also contained in the CLI renderer. It compacts identifiers,
 groups Work-view runs and review evidence ahead of empty graph state on narrow
-terminals, and uses deterministic ASCII layout helpers so snapshots cover the
-presentation without adding a curses/React dependency.
+terminals, and uses Ink components for terminal layout instead of hand-wrapped
+string panels.
 The direct CLI entrypoint exits after command completion, so one-shot TUI smoke
 renders do not leave local SQLite helper processes holding the terminal open.
-The hand-rendered string layout is now treated as an interim implementation.
-The planned renderer replacement is documented in
+The hand-rendered string layout has been removed from the TUI runtime path.
+The current renderer direction is documented in
 `docs/tui-ink-rewrite-roadmap.md`: keep the core read model and CLI action
-callbacks, introduce an Ink component tree in the CLI boundary, pin the first
-implementation to the Node 20-compatible Ink 5 line, and avoid migrating the
-whole CLI package to ESM in the first spike. Because the current CLI build is
-CommonJS, the Ink work should use a separate NodeNext/TSX build target that
-emits an ESM entrypoint loaded by the existing CLI with dynamic `import()`.
+callbacks, use a Node 22+ Ink 7 / React 19 component tree inside the CLI
+boundary, and keep the ESM-only Ink code in a separate `apps/cli/src/tui-ink`
+build target. The CommonJS CLI command boundary dynamically imports the
+compiled `apps/cli/dist/tui-ink/entry.mjs` entrypoint; the renderer still does
+not access SQLite, filesystem, git, shell, or agent adapters directly.
