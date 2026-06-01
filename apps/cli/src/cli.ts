@@ -1874,7 +1874,9 @@ async function submitTuiPrompt(
       dryRun: input.dryRun,
       debug: input.debug
     };
-    const exitCode = await runChatTurn(input.prompt, io, runtime, state);
+    const capturedIo = createBufferedCliIO(io);
+    const exitCode = await runChatTurn(input.prompt, capturedIo.io, runtime, state);
+    const capturedError = firstLine(capturedIo.stderr.join(""));
     return {
       ok: exitCode === 0,
       exitCode,
@@ -1883,7 +1885,7 @@ async function submitTuiPrompt(
       message:
         exitCode === 0
           ? `Submitted prompt to ${state.roomHandle ? `#${state.roomHandle}` : state.threadId ?? "new thread"}.`
-          : `Submitted prompt failed with exit code ${exitCode}.`
+          : `Submitted prompt failed with exit code ${exitCode}${capturedError ? `: ${capturedError}` : ""}.`
     };
   } catch (error) {
     return {
@@ -1894,6 +1896,31 @@ async function submitTuiPrompt(
       message: errorMessage(error)
     };
   }
+}
+
+function createBufferedCliIO(source: CliIO): {
+  io: CliIO;
+  stdout: string[];
+  stderr: string[];
+} {
+  const stdout: string[] = [];
+  const stderr: string[] = [];
+  return {
+    io: {
+      stdin: source.stdin,
+      stdout: { write: bufferedWrite(stdout) },
+      stderr: { write: bufferedWrite(stderr) }
+    },
+    stdout,
+    stderr
+  };
+}
+
+function bufferedWrite(buffer: string[]): (chunk: string) => boolean {
+  return (chunk: string) => {
+    buffer.push(String(chunk));
+    return true;
+  };
 }
 
 async function recordTuiReviewDecision(

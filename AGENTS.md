@@ -751,6 +751,30 @@ or visible user workflow:
 - Include the UI test summary file path and the manual UI verification result
   in the final task summary.
 
+### TUI Verification Requirements
+
+For every change that modifies `agent-hub tui`, `apps/cli/src/tui.ts`,
+`apps/cli/src/tui-ink/`, terminal renderer behavior, keyboard handling, or any
+visible terminal workflow:
+
+- Rebuild the CLI and TUI output before judging the change.
+- Run automated TUI coverage, including focused CLI/TUI tests where practical.
+- Manually launch the rebuilt TUI in a real terminal or PTY, not only through
+  `--once`.
+- Manually verify the affected workflow plus the core TUI loop: launch,
+  `--once`, exit, help, command palette, focus navigation, selection movement,
+  composer typing, composer clear/cancel, prompt submission path when safe,
+  review shortcuts when safe, and Runs/Review/RoleCalls/Tasks/Memory views
+  relevant to the change.
+- Write a concise manual TUI test summary to a local untracked verification
+  note before finishing. The summary must include the launch command, tested
+  workflows, observed results, and any remaining risks or gaps.
+- Include the manual TUI verification result and summary file path in the final
+  task summary.
+
+Manual TUI verification notes are manual verification records. Keep them
+untracked unless the user explicitly asks to publish them.
+
 ## Implementation Style
 
 - Prefer small vertical slices.

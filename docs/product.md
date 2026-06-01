@@ -74,6 +74,14 @@ same shared read models and action callbacks. The legacy hand-rendered string
 workbench has been removed as a runtime path; the remaining TUI roadmap work is
 interaction polish, scroll behavior, and broader state coverage without
 changing the governance boundaries above.
+The TUI composer is prompt-first while editing: printable keys append to the
+prompt, `Esc` clears the in-progress prompt, `ctrl+j` submits when a submission
+callback is available, and the status bar switches to composer-specific hints
+so exit shortcuts are not advertised while a prompt is being edited.
+Prompt submission keeps the terminal workbench in control of the screen: agent
+stdout, run debug details, and raw adapter text are persisted through the normal
+chat/run records and then shown through TUI panes, not dumped directly into the
+Ink alternate screen during an interactive submit.
 
 ## Core Concepts
 

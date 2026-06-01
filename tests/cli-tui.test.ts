@@ -181,7 +181,6 @@ describe("CLI TUI command", () => {
           "fake",
           "--workspace-base",
           workspaceBase,
-          "--dry-run",
           "--submit",
           "@fake summarize @unknown mention",
           "--once"
@@ -200,8 +199,11 @@ describe("CLI TUI command", () => {
     const userMessage = messages.find((message) => message.role === "user");
     expect(userMessage?.content).toBe("summarize @unknown mention");
     expect(userMessage?.metadata?.source).toBe("cli_chat");
-    expect(output.join("")).toContain("Submitted prompt to #submit.");
-    expect(output.join("")).toContain("run_");
+    const rendered = output.join("");
+    expect(rendered).toContain("Submitted prompt to #submit.");
+    expect(rendered).toContain("run_");
+    expect(rendered).not.toContain("run_summary:");
+    expect(rendered).not.toContain("## Context");
   });
 
   it("records audit-only review decisions from CLI and TUI without changing run state", async () => {

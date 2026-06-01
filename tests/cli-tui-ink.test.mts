@@ -209,6 +209,35 @@ describe("Ink TUI renderer", () => {
     instance.unmount();
   });
 
+  it("shows composer-specific hints and clears composer with escape", async () => {
+    const instance = render(
+      React.createElement(TuiInkApp, {
+        model: baseModel,
+        state: createInitialInkState(),
+        terminal: { columns: 120, rows: 40 },
+        interactive: true
+      })
+    );
+
+    for (const character of "exit") {
+      instance.stdin.write(character);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+    await new Promise((resolve) => setTimeout(resolve, 25));
+
+    expect(instance.lastFrame()).toContain("> exit");
+    expect(instance.lastFrame()).toContain("esc clear");
+    expect(instance.lastFrame()).toContain("ctrl+c exit");
+
+    instance.stdin.write("\u001b");
+    await new Promise((resolve) => setTimeout(resolve, 25));
+
+    expect(instance.lastFrame()).toContain("Composer cleared.");
+    expect(instance.lastFrame()).toContain("> @codex prompt");
+    expect(instance.lastFrame()).toContain("x exit");
+    instance.unmount();
+  });
+
   it("records governed review decisions from the selected run", async () => {
     const decisions = [];
     const acceptedModel = {

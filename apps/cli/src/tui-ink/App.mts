@@ -185,6 +185,14 @@ export function TuiInkApp(props: TuiInkAppProps): React.ReactElement {
         applyKey(input === ":" ? "palette" : "help");
         return;
       }
+      if (key.escape && state.composer.length > 0) {
+        setState((current) => ({
+          ...current,
+          composer: "",
+          statusMessage: "Composer cleared."
+        }));
+        return;
+      }
       if (isPrintableInput(input, key) && (state.focus === "work" || state.composer.length > 0)) {
         setState((current) => ({ ...current, composer: `${current.composer}${input}` }));
         return;
@@ -544,8 +552,11 @@ function Composer({ model, state }: { model: TuiCurrentContextModel; state: TuiI
 }
 
 function StatusBar({ model, state }: { model: TuiCurrentContextModel; state: TuiInkState }): React.ReactElement {
+  const hints = state.composer
+    ? "ctrl+j submit | esc clear | ctrl+c exit"
+    : "tab focus | enter review | : palette | p command | ? help | x exit";
   return line(
-    `tab focus | enter review | : palette | p command | ? help | x exit | ${commandHintForFocus(model, state)}`,
+    `${hints} | ${commandHintForFocus(model, state)}`,
     { dimColor: true }
   );
 }
