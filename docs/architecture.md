@@ -387,7 +387,12 @@ Audit-only review decision recording lives in `packages/task-runner` so CLI,
 TUI, and desktop-facing services can share the same `review_decision` artifact
 shape. Recording a decision writes a run artifact only and does not mutate task
 run status, workspace cleanup, repository files, branches, memory, or lifecycle
-state.
+state. The interactive TUI resolves accept/reject shortcuts from the current
+focus selection first, so highlighted runs and linked RoleCall runs map to the
+same artifact recorder used by explicit `reviews accept|reject` commands. Raw
+keypress dispatch keeps printable input in the composer while Work focus is
+active, and reserves plain-letter review shortcuts for non-Work focus unless a
+composer draft is already in progress.
 Memory, skill, and context indicators are rendered from core read-model
 summaries. The TUI may show command hints such as `agent-hub memory list`, but
 memory approval and skill editing remain explicit CLI/context-store workflows.

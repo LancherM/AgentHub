@@ -14,7 +14,9 @@ import {
   createInitialTuiShellState,
   reduceTuiKey,
   runTuiCommand,
-  renderTuiWorkbench
+  renderTuiWorkbench,
+  selectedReviewRunId,
+  shouldCaptureComposerInput
 } from "../apps/cli/src/tui";
 
 const now = "2026-05-29T12:00:00.000Z";
@@ -180,6 +182,60 @@ describe("CLI TUI command", () => {
     const rendered = renderTuiWorkbench(model, state, { columns: 72, rows: 28 });
     expect(rendered).toContain("[Graph]");
     expect(rendered).toContain("Command Palette");
+  });
+
+  it("targets review shortcuts at the selected run in runs focus", async () => {
+    const runtime = createCliRuntime({ storageMode: "memory" });
+    await seedTuiContext(runtime);
+    await runtime.taskRepository.create({
+      id: "task_2",
+      projectId: "project_1",
+      title: "Check second run",
+      description: "Check second run.",
+      metadata: { threadId: "thread_1" },
+      status: "running",
+      createdAt: now,
+      updatedAt: "2026-05-29T12:10:00.000Z"
+    });
+    await runtime.taskRunRepository.create({
+      id: "run_2",
+      taskId: "task_2",
+      agentKind: "codex",
+      status: "running",
+      startedAt: now,
+      createdAt: now,
+      updatedAt: "2026-05-29T12:10:00.000Z"
+    });
+    const model = await buildTuiCurrentContextModel(runtime, {
+      projectId: "project_1",
+      threadId: "thread_1"
+    });
+    const state = {
+      ...createInitialTuiShellState(),
+      focus: "runs" as const,
+      selectedRunIndex: 1
+    };
+
+    expect(model.runs.map((run) => run.id)).toEqual(["run_2", "run_1"]);
+    expect(selectedReviewRunId(model, { ...state, selectedRunIndex: 0 })).toBe("run_2");
+    expect(selectedReviewRunId(model, state)).toBe("run_1");
+  });
+
+  it("keeps printable review shortcut letters available to the composer in work focus", () => {
+    expect(shouldCaptureComposerInput(createInitialTuiShellState())).toBe(true);
+    expect(
+      shouldCaptureComposerInput({
+        ...createInitialTuiShellState(),
+        focus: "runs"
+      })
+    ).toBe(false);
+    expect(
+      shouldCaptureComposerInput({
+        ...createInitialTuiShellState(),
+        focus: "runs",
+        composer: "adjust"
+      })
+    ).toBe(true);
   });
 
   it("submits prompts through the CLI chat path and keeps unknown mentions as text", async () => {

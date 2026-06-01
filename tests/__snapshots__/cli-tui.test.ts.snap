@@ -55,7 +55,7 @@ Command Palette
     p print focused command
     ctrl+j submit composer
 
-Actions: tab focus  enter open  : palette  c continue  k cancel  a accept  j reject  p commands  ctrl+j submit  r rev...
+Actions: tab focus  enter open  : palette  c continue  k cancel  a/j review outside Work  p commands  ctrl+j submit  ...
 > @agent prompt
 "
 `;
@@ -86,7 +86,7 @@ TUI context unavailable
     agent-hub rooms list --project-id project_broken
     agent-hub tui --help
 
-Actions: tab focus  enter open  : palette  c continue  k cancel  a accept  j reject  p commands  ctrl+j submit  r rev...
+Actions: tab focus  enter open  : palette  c continue  k cancel  a/j review outside Work  p commands  ctrl+j submit  ...
 > @fake prompt
 "
 `;
@@ -110,7 +110,7 @@ Selected
 No current context
   No local review evidence is available yet.
 
-Actions: tab focus  enter open  : palette  c continue  k cancel  a accept  j reject  p commands  ctrl+j submit  r rev...
+Actions: tab focus  enter open  : palette  c continue  k cancel  a/j review outside Work  p commands  ctrl+j submit  ...
 > @fake prompt
 "
 `;

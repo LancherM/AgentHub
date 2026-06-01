@@ -537,33 +537,6 @@ async function runInteractiveTui(input: {
     };
     const onKeypress = async (chunk: string, key: readline.Key) => {
       await rendering;
-      if (key.name === "a" || key.name === "j") {
-        if (!input.recordReviewDecision) {
-          state = { ...state, statusMessage: "Review decisions are unavailable." };
-          rerender();
-          return;
-        }
-        const model = await buildRenderableTuiModel({
-          runtime: input.runtime,
-          modelInput,
-          launchWarnings: input.launchWarnings,
-          projectRoot: input.submitInput.projectRoot
-        });
-        const runId = selectedReviewRunId(model);
-        if (!runId) {
-          state = { ...state, statusMessage: "No linked run is selected for review." };
-          rerender();
-          return;
-        }
-        const decision = await safeRecordReviewDecision(input.recordReviewDecision, {
-          runId,
-          status: key.name === "a" ? "accepted" : "rejected",
-          reason: key.name === "j" ? "Rejected from TUI review shortcut." : undefined
-        });
-        state = { ...state, statusMessage: decision.message };
-        rerender();
-        return;
-      }
       if (isSubmitKey(key)) {
         if (!state.composer.trim()) {
           state = { ...state, statusMessage: "Composer is empty." };
@@ -599,8 +572,35 @@ async function runInteractiveTui(input: {
         rerender();
         return;
       }
-      if (isPrintableChunk(chunk, key)) {
+      if (isPrintableChunk(chunk, key) && shouldCaptureComposerInput(state)) {
         state = { ...state, composer: `${state.composer}${chunk}` };
+        rerender();
+        return;
+      }
+      if (key.name === "a" || key.name === "j") {
+        if (!input.recordReviewDecision) {
+          state = { ...state, statusMessage: "Review decisions are unavailable." };
+          rerender();
+          return;
+        }
+        const model = await buildRenderableTuiModel({
+          runtime: input.runtime,
+          modelInput,
+          launchWarnings: input.launchWarnings,
+          projectRoot: input.submitInput.projectRoot
+        });
+        const runId = selectedReviewRunId(model, state);
+        if (!runId) {
+          state = { ...state, statusMessage: "No linked run is selected for review." };
+          rerender();
+          return;
+        }
+        const decision = await safeRecordReviewDecision(input.recordReviewDecision, {
+          runId,
+          status: key.name === "a" ? "accepted" : "rejected",
+          reason: key.name === "j" ? "Rejected from TUI review shortcut." : undefined
+        });
+        state = { ...state, statusMessage: decision.message };
         rerender();
         return;
       }
@@ -1241,7 +1241,7 @@ function renderHelpPanel(): string[] {
     "  enter             open selected review summary",
     "  c                 prepare bounded continuation prompt",
     "  k                 cancel selected running item when supported",
-    "  a / j             accept or reject selected run for record only",
+    "  a / j             accept or reject selected run outside Work focus",
     "  p                 print focused CLI command hint",
     "  :                 command palette",
     "  ctrl+j            submit composer prompt",
@@ -1264,7 +1264,7 @@ function renderHelpPanel(): string[] {
 
 function renderActionHints(): string[] {
   return [
-    "Actions: tab focus  enter open  : palette  c continue  k cancel  a accept  j reject  p commands  ctrl+j submit  r review  h hide done  m memory  ? help  x exit"
+    "Actions: tab focus  enter open  : palette  c continue  k cancel  a/j review outside Work  p commands  ctrl+j submit  r review  h hide done  m memory  ? help  x exit"
   ];
 }
 
@@ -1310,7 +1310,17 @@ function commandLines(commands: string[]): string[] {
   return ["  commands:", ...commands.map((command) => `    ${command}`)];
 }
 
-function selectedReviewRunId(model: TuiCurrentContextModel): string | undefined {
+export function selectedReviewRunId(
+  model: TuiCurrentContextModel,
+  state?: TuiShellState
+): string | undefined {
+  if (state?.focus === "runs") {
+    return model.runs[boundedIndex(state.selectedRunIndex, model.runs.length)]?.id;
+  }
+  if (state?.focus === "graph") {
+    const nodes = graphNodesForState(model.roleCalls.nodes, state);
+    return nodes[boundedIndex(state.selectedRoleCallIndex, nodes.length)]?.linkedRunId;
+  }
   if (model.review.kind === "run") {
     return model.review.selectedId;
   }
@@ -1517,6 +1527,10 @@ function isPrintableChunk(chunk: string, key: readline.Key): boolean {
     chunk >= " " &&
     chunk !== "\u007f"
   );
+}
+
+export function shouldCaptureComposerInput(state: TuiShellState): boolean {
+  return state.focus === "work" || state.composer.length > 0;
 }
 
 function mergeLaunchWarnings(
