@@ -130,13 +130,16 @@ Build rules:
 - Exclude runs represented in `activeRuns` from folded `agent_completed` or
   `agent_failed` entries to prevent duplicate first-screen state.
 - Treat running task runs as active boxes.
-- Fold terminal runs with pending review into a one-line `review_pending`
-  conversation entry pointing to `[V]iew`; accept/reject shortcuts remain in
-  the Review pane so Work stays prompt-first.
+- Fold terminal runs with pending review and changed files into a
+  `review_pending` conversation entry containing the completed output,
+  verification/risk summaries, and a final `[V]iew` hint; accept/reject
+  shortcuts remain in the Review pane so Work stays prompt-first. Terminal runs
+  without changed files render as completed output without a review prompt.
 - Populate active `outputLines` from recent structured assistant output, with
-  persisted lifecycle, adapter, stdout, and stderr lines as the fallback.
-  Filter raw JSON protocol frames from the fallback stream. Verification, risk,
-  and diff evidence do not render inside active boxes.
+  persisted adapter, stdout, and stderr lines as the fallback. Filter raw JSON
+  protocol frames, setup lifecycle lines, internal agent protocol summaries,
+  runtime warnings, and skill activation noise from the fallback stream.
+  Verification, risk, and diff evidence do not render inside active boxes.
 - Populate terminal completed/failed entries with agent-facing output plus
   verification and risk summary lines.
 

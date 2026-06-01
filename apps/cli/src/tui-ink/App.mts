@@ -672,7 +672,7 @@ function conversationEntryLines(entry: TuiConversationEntry): React.ReactElement
   if (entry.type === "agent_completed" || entry.type === "agent_failed") {
     const statusIcon = entry.type === "agent_failed" ? "✗" : "✓";
     return [
-      line(`${entry.agent ? `@${entry.agent}` : entry.author} ${entry.runId ? compactId(entry.runId) : ""} ${statusIcon} ${entry.statusLabel ?? ""}`.trim(), {
+      line(`${conversationEntryHandle(entry)} ${entry.runId ? compactId(entry.runId) : ""} ${statusIcon} ${entry.statusLabel ?? ""}`.trim(), {
         color: entry.type === "agent_failed" ? "red" : "cyan"
       }),
       ...conversationContentLines(entry.outputLines ?? entry.content),
@@ -682,9 +682,13 @@ function conversationEntryLines(entry: TuiConversationEntry): React.ReactElement
   }
   if (entry.type === "review_pending") {
     return [
-      line(`${entry.agent ? `@${entry.agent}` : entry.author} ${entry.runId ? compactId(entry.runId) : ""} △ ${entry.content ?? "awaiting review"}`.trim(), {
+      line(`${conversationEntryHandle(entry)} ${entry.runId ? compactId(entry.runId) : ""} △ ${entry.statusLabel ?? "awaiting review"}`.trim(), {
         color: "yellow"
-      })
+      }),
+      ...conversationContentLines(entry.outputLines ?? entry.content),
+      ...(entry.verificationLine ? [line(`  ~ ${entry.verificationLine}`)] : []),
+      ...(entry.riskLine ? [line(`  ⚠ ${entry.riskLine}`, { color: "yellow" })] : []),
+      line(`  △ ${entry.content ?? "切换到 [V]iew 查看详情"}`, { color: "yellow" })
     ];
   }
   if (entry.type === "delegation") {
@@ -707,6 +711,13 @@ function conversationContentLines(content: string[] | string | undefined): React
         .filter(Boolean);
   const visible = lines.length > 0 ? lines : ["(empty)"];
   return visible.map((value) => line(`  ${value}`));
+}
+
+function conversationEntryHandle(entry: TuiConversationEntry): string {
+  if (entry.displayHandle) {
+    return `@${entry.displayHandle}`;
+  }
+  return entry.agent ? `@${entry.agent}` : entry.author;
 }
 
 function ActiveRunBoxView({
@@ -735,7 +746,7 @@ function ActiveRunBoxView({
 }
 
 function activeRunTitle(box: TuiActiveRunBox): string {
-  return `@${box.agent} ${compactId(box.runId)} ● running`;
+  return `@${box.displayHandle ?? box.agent} ${compactId(box.runId)} ● running`;
 }
 
 function borderedTitle(title: string, innerWidth: number): string {

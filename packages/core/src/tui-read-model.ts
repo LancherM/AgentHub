@@ -118,6 +118,7 @@ export interface TuiConversationEntry {
   type: TuiConversationEntryType;
   timestamp: string;
   author: string;
+  displayHandle?: string;
   content?: string;
   agent?: string;
   runId?: string;
@@ -133,6 +134,7 @@ export interface TuiConversationEntry {
 export interface TuiActiveRunBox {
   runId: string;
   agent: string;
+  displayHandle?: string;
   title: string;
   outputLines: string[];
 }
@@ -166,6 +168,7 @@ export interface TuiRunSummary {
   taskId: string;
   taskTitle?: string;
   agentKind: AgentKind;
+  roleHandle?: string;
   status: TaskRunStatus;
   stage: string;
   startedAt?: string;
@@ -459,7 +462,13 @@ export async function buildTuiCurrentContextModel(
     runs.map((run) => summarizeRun(repositories, run, taskById(contextTasks, run.taskId)))
   );
   const boundedRuns = sortRuns(runSummaries).slice(0, input.maxRuns ?? defaultLimits.runs);
-  const activeRuns = await summarizeActiveRunBoxes(repositories, boundedRuns);
+  const runDisplayHandles = displayHandlesForRuns({
+    runs: boundedRuns,
+    messages,
+    tasks: contextTasks,
+    roleCalls
+  });
+  const activeRuns = await summarizeActiveRunBoxes(repositories, boundedRuns, runDisplayHandles);
   const roleCallNodes = await Promise.all(
     sortRoleCalls(roleCalls).map((call) =>
       summarizeRoleCall(repositories, call, roleEvents, input.hideCompletedRoleCalls === true)
@@ -474,6 +483,7 @@ export async function buildTuiCurrentContextModel(
     runs: boundedRuns,
     roleCalls,
     activeRuns,
+    runDisplayHandles,
     limit: Math.max(input.maxMessages ?? defaultLimits.messages, defaultLimits.messages)
   });
 
@@ -550,23 +560,28 @@ function summarizeTranscript(
 
 async function summarizeActiveRunBoxes(
   repositories: TuiReadModelRepositories,
-  runs: TuiRunSummary[]
+  runs: TuiRunSummary[],
+  runDisplayHandles: Map<string, string>
 ): Promise<TuiActiveRunBox[]> {
   const sorted = runs
     .filter((run) => activeRunStatuses.has(run.status))
     .sort((left, right) => activeRunCreatedAt(left).localeCompare(activeRunCreatedAt(right)));
-  return Promise.all(sorted.map((run) => summarizeActiveRunBox(repositories, run)));
+  return Promise.all(sorted.map((run) => summarizeActiveRunBox(repositories, run, runDisplayHandles)));
 }
 
 async function summarizeActiveRunBox(
   repositories: TuiReadModelRepositories,
-  run: TuiRunSummary
+  run: TuiRunSummary,
+  runDisplayHandles: Map<string, string>
 ): Promise<TuiActiveRunBox> {
   const events = await repositories.runEventRepository.listByRunId(run.id);
+  const displayHandle = runDisplayHandles.get(run.id) ?? run.roleHandle;
+  const renderedHandle = displayHandle ?? run.agentKind;
   return {
     runId: run.id,
     agent: run.agentKind,
-    title: `@${run.agentKind} ${run.id} ● running`,
+    displayHandle,
+    title: `@${renderedHandle} ${run.id} ● running`,
     outputLines: recentAgentRunOutputLines(events, run)
   };
 }
@@ -578,6 +593,7 @@ async function summarizeConversation(
   runs: TuiRunSummary[];
   roleCalls: RoleCall[];
   activeRuns: TuiActiveRunBox[];
+  runDisplayHandles: Map<string, string>;
   limit: number;
 }
 ): Promise<TuiConversationEntry[]> {
@@ -621,6 +637,7 @@ async function summarizeConversation(
       type: "agent_completed",
       timestamp: message.createdAt,
       author: messageAuthor(message),
+      displayHandle: displayHandleFromMessage(message),
       outputLines: outputTextLines(message.content),
       agent: message.agentKind,
       runId: message.runId,
@@ -633,16 +650,31 @@ async function summarizeConversation(
     if (!terminalRunStatuses.has(run.status) || activeRunIds.has(run.id)) {
       return [];
     }
-    if (run.status === "succeeded" && run.reviewDecision.status === "pending") {
+    const displayHandle = input.runDisplayHandles.get(run.id) ?? run.roleHandle;
+    const renderedHandle = displayHandle ?? run.agentKind;
+    const outputLines = await terminalRunOutputLines(
+      repositories,
+      run,
+      runLinkedMessages.get(run.id)
+    );
+    if (
+      run.status === "succeeded" &&
+      run.reviewDecision.status === "pending" &&
+      runHasChangedFiles(run)
+    ) {
       return [{
         id: `review-pending:${run.id}`,
         type: "review_pending" as const,
         timestamp: run.completedAt ?? run.updatedAt,
-        author: `@${run.agentKind}`,
+        author: `@${renderedHandle}`,
+        displayHandle,
         content: "awaiting review — 切换到 [V]iew 查看详情",
+        outputLines,
         agent: run.agentKind,
         runId: run.id,
         statusLabel: "awaiting review",
+        verificationLine: conversationVerificationLine(run.evidence),
+        riskLine: conversationRiskLine(run.evidence),
         sortRank: 30
       }];
     }
@@ -651,12 +683,9 @@ async function summarizeConversation(
       id: `run:${run.id}`,
       type: entryType as "agent_completed" | "agent_failed",
       timestamp: run.completedAt ?? run.updatedAt,
-      author: `@${run.agentKind}`,
-      outputLines: await terminalRunOutputLines(
-        repositories,
-        run,
-        runLinkedMessages.get(run.id)
-      ),
+      author: `@${renderedHandle}`,
+      displayHandle,
+      outputLines,
       agent: run.agentKind,
       runId: run.id,
       statusLabel: terminalRunStatusLabel(run),
@@ -695,11 +724,13 @@ async function summarizeRun(
 ): Promise<TuiRunSummary> {
   const evidence = await summarizeRunEvidence(repositories, run);
   const reviewDecision = await summarizeRunReviewDecision(repositories, run.id);
+  const metadata = await repositories.runMetadataRepository.get(run.id);
   return {
     id: run.id,
     taskId: run.taskId,
     taskTitle: task?.title,
     agentKind: run.agentKind,
+    roleHandle: metadata?.role?.roleHandle,
     status: run.status,
     stage: runStage(run, evidence.latestEvent),
     startedAt: run.startedAt,
@@ -707,7 +738,7 @@ async function summarizeRun(
     updatedAt: run.updatedAt,
     parentRunId: run.parentRunId,
     parentMessageId: run.parentMessageId,
-    retainedWorktree: Boolean((await repositories.runMetadataRepository.get(run.id))?.workspaceCleanup?.retained),
+    retainedWorktree: Boolean(metadata?.workspaceCleanup?.retained),
     evidence,
     reviewDecision,
     commands: [
@@ -823,11 +854,15 @@ function recentAgentRunOutputLines(events: RunEvent[], run: TuiRunSummary): stri
 }
 
 function outputTextLines(value: string): string[] {
+  return visibleTuiOutputLines(value)
+    .map((line) => truncate(line, 120));
+}
+
+function visibleTuiOutputLines(value: string): string[] {
   return value
     .split(/\r?\n/)
     .map((line) => line.trim())
-    .filter(Boolean)
-    .map((line) => truncate(line, 120));
+    .filter((line) => line.length > 0 && !isTuiOutputNoiseLine(line));
 }
 
 function toAgentOutputEvent(event: RunEvent): {
@@ -867,11 +902,7 @@ function activeRunEventLines(event: RunEvent): string[] {
     return [];
   }
   const prefix = event.type === "error" ? "error: " : event.type === "exit" ? "exit: " : "";
-  return runEventDisplayText(event)
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .map((line) => `${prefix}${line}`);
+  return visibleTuiOutputLines(runEventDisplayText(event)).map((line) => `${prefix}${line}`);
 }
 
 function runEventDisplayText(event: RunEvent): string {
@@ -887,10 +918,23 @@ function runEventDisplayText(event: RunEvent): string {
 }
 
 function humanReadableStreamLines(value: string): string[] {
-  return value
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0 && !isJsonObjectLine(line));
+  return visibleTuiOutputLines(value);
+}
+
+function isTuiOutputNoiseLine(value: string): boolean {
+  return (
+    isJsonObjectLine(value) ||
+    /^Context compiled/i.test(value) ||
+    /^TaskRunner execution started\.?$/i.test(value) ||
+    /^Isolated worktree is ready\.?$/i.test(value) ||
+    /^starting (Codex|Claude Code|Claude|Fake Agent)/i.test(value) ||
+    /^(Codex|Claude Code|Claude) preflight passed/i.test(value) ||
+    /^(Codex|Claude Code|Claude) (thread|turn|session|item)\.[A-Za-z_]+/i.test(value) ||
+    /^Using [`'"].+[`'"] to satisfy/i.test(value) ||
+    /\bExperimentalWarning\b/.test(value) ||
+    /Unsupported engine: wanted:/i.test(value) ||
+    /Vite's Node API is deprecated/i.test(value)
+  );
 }
 
 function isJsonObjectLine(value: string): boolean {
@@ -917,6 +961,10 @@ function activeRunEvidenceLines(run: TuiRunSummary): string[] {
 
 function activeRunCreatedAt(run: TuiRunSummary): string {
   return run.startedAt ?? run.completedAt ?? run.updatedAt;
+}
+
+function runHasChangedFiles(run: TuiRunSummary): boolean {
+  return (run.evidence.diff?.changedFiles ?? 0) > 0;
 }
 
 function terminalRunStatusLabel(run: TuiRunSummary): string {
@@ -1619,6 +1667,39 @@ function taskAssignments(task: Task): WorkgroupTaskAssignmentMetadata[] {
   return assignments.filter(isTaskAssignment);
 }
 
+function displayHandlesForRuns(input: {
+  runs: TuiRunSummary[];
+  messages: ConversationMessage[];
+  tasks: Task[];
+  roleCalls: RoleCall[];
+}): Map<string, string> {
+  const handles = new Map<string, string>();
+  for (const task of input.tasks) {
+    for (const assignment of taskAssignments(task)) {
+      if (assignment.runId && assignment.roleHandle) {
+        handles.set(assignment.runId, assignment.roleHandle);
+      }
+    }
+  }
+  for (const message of input.messages) {
+    const displayHandle = displayHandleFromMessage(message);
+    if (message.runId && displayHandle) {
+      handles.set(message.runId, displayHandle);
+    }
+  }
+  for (const run of input.runs) {
+    if (run.roleHandle) {
+      handles.set(run.id, run.roleHandle);
+    }
+  }
+  for (const call of input.roleCalls) {
+    if (call.taskRunId) {
+      handles.set(call.taskRunId, call.calleeRole);
+    }
+  }
+  return handles;
+}
+
 function isTaskAssignment(value: unknown): value is WorkgroupTaskAssignmentMetadata {
   if (!isObject(value)) {
     return false;
@@ -1663,16 +1744,24 @@ function nextTaskAction(
 }
 
 function messageAuthor(message: ConversationMessage): string {
-  if (message.metadata?.role && isObject(message.metadata.role)) {
-    const roleHandle = message.metadata.role.roleHandle;
-    if (typeof roleHandle === "string") {
-      return `@${roleHandle}`;
-    }
+  const displayHandle = displayHandleFromMessage(message);
+  if (displayHandle) {
+    return `@${displayHandle}`;
   }
   if (message.agentKind) {
     return `@${message.agentKind}`;
   }
   return message.role;
+}
+
+function displayHandleFromMessage(message: ConversationMessage): string | undefined {
+  if (message.metadata?.role && isObject(message.metadata.role)) {
+    const roleHandle = message.metadata.role.roleHandle;
+    if (typeof roleHandle === "string") {
+      return roleHandle;
+    }
+  }
+  return undefined;
 }
 
 function roleCallStatusLabel(status: RoleCallStatus): string {

@@ -69,14 +69,18 @@ equivalent CLI recovery commands instead of opening broad browsers or applying
 side effects.
 The Work focus is a conversation terminal. User messages, RoleCall
 delegations, completed or failed terminal run output, verification summaries,
-and risk summaries are folded into a chronological conversation flow. Running
-runs appear as stable fixed-height active-run boxes with only the latest
-agent-facing output or observable runtime events plus the active cursor
-indicator. When an adapter has not emitted assistant text yet, the active box
-shows recent lifecycle, adapter, stdout, and stderr lines while filtering raw
-JSON protocol frames. Runs awaiting local review leave the active box and
-become a single awaiting-review conversation line pointing at `[V]iew`, so the
-Review pane can handle accept/reject without stealing prompt text.
+and risk summaries are folded into a chronological conversation flow. Role
+backed runs display the role handle from linked RoleCalls, run/message metadata,
+or task assignments before falling back to the adapter kind. Running runs appear
+as stable fixed-height active-run boxes with only the latest agent-facing output
+or observable runtime events plus the active cursor indicator. When an adapter
+has not emitted assistant text yet, the active box shows recent adapter, stdout,
+and stderr lines while filtering raw JSON protocol frames, setup lifecycle
+noise, internal agent protocol summaries, runtime warnings, and skill activation
+noise. Runs awaiting local review with changed files leave the active box and
+render their completed output plus verification/risk summaries and a final
+`[V]iew` review hint. Runs with no changed files render as completed output
+without an awaiting-review prompt.
 The default tab bar matches the conversation-terminal scheme: Work, Runs, View,
 Graph, Tasks, Memory, Team, and Help stay one key away instead of being
 embedded into the first screen.

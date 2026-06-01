@@ -210,6 +210,38 @@ describe("Ink TUI renderer", () => {
     expect(output).toContain("▍");
   });
 
+  it("renders role display handles for active and review-pending runs", () => {
+    const output = renderToString(
+      React.createElement(TuiInkFrame, {
+        model: {
+          ...modelWithActiveRun(),
+          conversation: [
+            {
+              ...baseModel.conversation[1],
+              displayHandle: "implementer",
+              outputLines: ["Patched auth.ts"],
+              verificationLine: "verification passed (1 checks)"
+            }
+          ],
+          activeRuns: [
+            {
+              ...modelWithActiveRun().activeRuns[0],
+              displayHandle: "reviewer"
+            }
+          ]
+        },
+        state: createInitialInkState(),
+        terminal: { columns: 100, rows: 32 }
+      }),
+      { columns: 100 }
+    );
+
+    expect(output).toContain("@implementer run_27984312 △ awaiting review");
+    expect(output).toContain("Patched auth.ts");
+    expect(output).toContain("△ awaiting review");
+    expect(output).toContain("@reviewer run_active ● running");
+  });
+
   it("keeps full ids and governed commands inside the command palette", () => {
     const output = renderToString(
       React.createElement(TuiInkFrame, {

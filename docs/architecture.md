@@ -412,19 +412,23 @@ metadata; no executor backend, database table, daemon, or desktop behavior is
 added for the TUI.
 Terminal polish is also contained in the CLI renderer. It compacts identifiers,
 renders the Work view as a conversation flow plus bounded active-run boxes,
-moves the shortcut-labelled Work/Runs/View/Graph/Tasks/Memory/Help tabs below
-the composer, and uses Ink components for terminal layout instead of
+moves the shortcut-labelled Work/Runs/View/Graph/Tasks/Memory/Team/Help tabs
+below the composer, and uses Ink components for terminal layout instead of
 hand-wrapped string panels.
 Active-run boxes cover running runs only. They use a fixed eight-line shape:
 title border, five output/progress lines, cursor indicator, and bottom border.
-They prefer structured assistant output, then fall back to recent lifecycle,
-adapter, stdout, and stderr events while filtering raw JSON protocol frames.
-Verification, risk, diff, and review evidence stay out of active boxes.
-Terminal pending-review runs fold into the conversation projection as a single
-awaiting-review line pointing to the View pane, while completed or failed runs
-with a recorded review decision render their agent-facing output plus
-verification and risk summary lines. The Work view remains prompt-first, and
-printable keys do not trigger audit mutations.
+They prefer structured assistant output, then fall back to recent adapter,
+stdout, and stderr events while filtering raw JSON protocol frames, setup
+lifecycle lines, internal agent protocol summaries, runtime warnings, and skill
+activation noise. Verification, risk, diff, and review evidence stay out of
+active boxes. Role-backed run display is resolved in the core read model from
+linked RoleCalls, run/message role metadata, and task assignment metadata before
+falling back to adapter kind. Terminal pending-review runs with changed files
+fold into the conversation projection with their agent-facing output,
+verification/risk summaries, and a final View-pane review hint. Terminal runs
+without changed files render as completed output instead of awaiting review.
+The Work view remains prompt-first, and printable keys do not trigger audit
+mutations.
 The direct CLI entrypoint exits after command completion, so one-shot TUI smoke
 renders do not leave local SQLite helper processes holding the terminal open.
 For interactive launches, the CLI default IO includes `process.stdin`, and the

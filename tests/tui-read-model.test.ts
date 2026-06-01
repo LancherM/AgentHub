@@ -64,7 +64,8 @@ describe("TUI current-context read model", () => {
     ]);
     expect(model.activeRuns.map((run) => run.runId)).toEqual(["run_active"]);
     expect(model.activeRuns.find((run) => run.runId === "run_active")).toMatchObject({
-      title: "@fake run_active ● running",
+      title: "@reviewer run_active ● running",
+      displayHandle: "reviewer",
       outputLines: ["adapter started", "verification started"]
     });
     expect(model.conversation.map((entry) => entry.id)).toEqual([
@@ -79,7 +80,9 @@ describe("TUI current-context read model", () => {
     ]);
     expect(model.conversation.find((entry) => entry.id === "review-pending:run_done")).toMatchObject({
       type: "review_pending",
-      content: "awaiting review — 切换到 [V]iew 查看详情"
+      displayHandle: "engineer",
+      content: "awaiting review — 切换到 [V]iew 查看详情",
+      outputLines: ["Cleanup summary updated."]
     });
     expect(model.runs.map((run) => run.id)).toEqual(["run_active", "run_done"]);
     expect(model.runs[0]).toMatchObject({
@@ -216,10 +219,11 @@ describe("TUI current-context read model", () => {
       outputLines: ["tests failed"]
     });
     expect(model.conversation.map((entry) => entry.id)).toContain("run:run_completed");
-    expect(model.conversation.map((entry) => entry.id)).toContain("review-pending:run_no_change");
-    expect(model.conversation.find((entry) => entry.id === "review-pending:run_no_change")).toMatchObject({
-      type: "review_pending",
-      content: "awaiting review — 切换到 [V]iew 查看详情"
+    expect(model.conversation.map((entry) => entry.id)).toContain("run:run_no_change");
+    expect(model.conversation.map((entry) => entry.id)).not.toContain("review-pending:run_no_change");
+    expect(model.conversation.find((entry) => entry.id === "run:run_no_change")).toMatchObject({
+      type: "agent_completed",
+      statusLabel: "completed"
     });
     expect(model.conversation.map((entry) => entry.id)).not.toContain("review:run_completed:accepted");
   });
@@ -277,7 +281,8 @@ describe("TUI current-context read model", () => {
       event("event_session", "run_live", 6, "status", "Codex session.created", {
         adapterEvent: { type: "session.created" }
       }),
-      event("event_stderr", "run_live", 7, "stderr", "waiting for network\n")
+      event("event_skill", "run_live", 7, "message", "Using `noisy-skill` to satisfy setup."),
+      event("event_stderr", "run_live", 8, "stderr", "waiting for network\n")
     ]);
 
     const model = await buildTuiCurrentContextModel(runtime, {
@@ -288,17 +293,12 @@ describe("TUI current-context read model", () => {
     expect(model.activeRuns).toEqual([
       expect.objectContaining({
         runId: "run_live",
-        outputLines: [
-          "TaskRunner execution started.",
-          "Isolated worktree is ready.",
-          "Codex preflight passed",
-          "starting Codex",
-          "Codex session.created",
-          "stderr: waiting for network"
-        ]
+        outputLines: ["stderr: waiting for network"]
       })
     ]);
     expect(model.activeRuns[0]?.outputLines.join("\n")).not.toContain("{\"type\"");
+    expect(model.activeRuns[0]?.outputLines.join("\n")).not.toContain("Codex session.created");
+    expect(model.activeRuns[0]?.outputLines.join("\n")).not.toContain("Using `");
   });
 
   it("reports bounded loop stop reasons for terminal, pending, waiting, blocking, and limits", async () => {
@@ -498,6 +498,17 @@ async function seedCurrentContext(runtime: ReturnType<typeof createCliRuntime>) 
     metadata: {
       changedFiles: ["src/a.ts", "src/b.ts"],
       stat: { filesChanged: 2, insertions: 12, deletions: 4 }
+    },
+    createdAt: now
+  });
+  await runtime.runArtifactRepository.create({
+    id: "artifact_diff_done",
+    taskRunId: "run_done",
+    kind: "git_diff",
+    content: "diff --git a/src/done.ts b/src/done.ts",
+    metadata: {
+      changedFiles: ["src/done.ts"],
+      stat: { filesChanged: 1, insertions: 3, deletions: 1 }
     },
     createdAt: now
   });
