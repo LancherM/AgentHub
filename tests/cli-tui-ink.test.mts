@@ -260,9 +260,53 @@ describe("Ink TUI renderer", () => {
 
     await waitForFrame(instance, "Prompt submission timed out after 5ms.");
 
-    instance.stdin.write("\u001b");
+    for (const character of "retry") {
+      instance.stdin.write(character);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
 
-    await waitForFrame(instance, "Composer cleared.");
+    await waitForFrame(instance, "> retry");
+    instance.unmount();
+  });
+
+  it("keeps navigation and composer input available during prompt submission", async () => {
+    let resolveSubmission;
+    const instance = render(
+      React.createElement(TuiInkApp, {
+        model: baseModel,
+        state: createInitialInkState(),
+        terminal: { columns: 120, rows: 40 },
+        interactive: true,
+        operationTimeoutMs: 1_000,
+        submitPrompt: async () =>
+          new Promise((resolve) => {
+            resolveSubmission = resolve;
+          })
+      })
+    );
+
+    for (const character of "long task") {
+      instance.stdin.write(character);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+    instance.stdin.write("\r");
+
+    await waitForFrame(instance, "Submitting prompt...");
+    await waitForFrame(instance, "> @codex prompt");
+
+    instance.stdin.write("\t");
+    for (const character of "next") {
+      instance.stdin.write(character);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+
+    await waitForFrame(instance, "[Graph]");
+    await waitForFrame(instance, "> next");
+
+    resolveSubmission({ ok: true, message: "Submitted prompt.", model: baseModel });
+
+    await waitForFrame(instance, "Submitted prompt.");
+    expect(instance.lastFrame()).toContain("> next");
     instance.unmount();
   });
 

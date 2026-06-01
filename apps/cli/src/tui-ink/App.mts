@@ -89,6 +89,8 @@ export function TuiInkApp(props: TuiInkAppProps): React.ReactElement {
   const [busyMessage, setBusyMessage] = useState<string | undefined>();
   const stateRef = useRef(state);
   const modelRef = useRef(model);
+  const busyRef = useRef(busy);
+  const busyMessageRef = useRef(busyMessage);
   const operationTimeoutMs = props.operationTimeoutMs ?? defaultTuiOperationTimeoutMs;
   const modelRefreshTimeoutMs = props.modelRefreshTimeoutMs ?? defaultTuiModelRefreshTimeoutMs;
 
@@ -99,6 +101,14 @@ export function TuiInkApp(props: TuiInkAppProps): React.ReactElement {
   useEffect(() => {
     modelRef.current = model;
   }, [model]);
+
+  useEffect(() => {
+    busyRef.current = busy;
+  }, [busy]);
+
+  useEffect(() => {
+    busyMessageRef.current = busyMessage;
+  }, [busyMessage]);
 
   useEffect(() => {
     if (!props.interactive || !props.loadModel) {
@@ -168,6 +178,18 @@ export function TuiInkApp(props: TuiInkAppProps): React.ReactElement {
     setState(nextState);
   };
 
+  const setStateNow = (nextState: TuiInkState) => {
+    stateRef.current = nextState;
+    setState(nextState);
+  };
+
+  const showBusyInputMessage = () => {
+    setState((current) => ({
+      ...current,
+      statusMessage: `${busyMessageRef.current ?? "An action is still running."} Wait for it to finish before submitting again.`
+    }));
+  };
+
   const submitComposer = async () => {
     const currentState = stateRef.current;
     const currentModel = modelRef.current;
@@ -180,7 +202,19 @@ export function TuiInkApp(props: TuiInkAppProps): React.ReactElement {
       setState({ ...currentState, statusMessage: "Prompt submission is unavailable." });
       return;
     }
+    if (busyRef.current) {
+      showBusyInputMessage();
+      return;
+    }
+    const submittingState = {
+      ...currentState,
+      composer: "",
+      statusMessage: "Submitting prompt..."
+    };
+    setStateNow(submittingState);
     setBusyMessage("Submitting prompt...");
+    busyMessageRef.current = "Submitting prompt...";
+    busyRef.current = true;
     setBusy(true);
     try {
       const result = await withTimeout(
@@ -194,10 +228,9 @@ export function TuiInkApp(props: TuiInkAppProps): React.ReactElement {
       );
       const nextState = {
         ...stateRef.current,
-        composer: "",
         statusMessage: result.message
       };
-      setState(nextState);
+      setStateNow(nextState);
       if (result.model) {
         setModel(result.model);
       } else {
@@ -209,6 +242,8 @@ export function TuiInkApp(props: TuiInkAppProps): React.ReactElement {
         statusMessage: errorMessage(error)
       });
     } finally {
+      busyRef.current = false;
+      busyMessageRef.current = undefined;
       setBusy(false);
       setBusyMessage(undefined);
     }
@@ -224,7 +259,13 @@ export function TuiInkApp(props: TuiInkAppProps): React.ReactElement {
       setState({ ...stateRef.current, statusMessage: "No linked run is selected for review." });
       return;
     }
+    if (busyRef.current) {
+      showBusyInputMessage();
+      return;
+    }
     setBusyMessage(`Recording review ${status}...`);
+    busyMessageRef.current = `Recording review ${status}...`;
+    busyRef.current = true;
     setBusy(true);
     try {
       const result = await withTimeout(
@@ -241,7 +282,7 @@ export function TuiInkApp(props: TuiInkAppProps): React.ReactElement {
         focus: "review" as const,
         statusMessage: result.message
       };
-      setState(nextState);
+      setStateNow(nextState);
       if (result.model) {
         setModel(result.model);
       } else {
@@ -253,6 +294,8 @@ export function TuiInkApp(props: TuiInkAppProps): React.ReactElement {
         statusMessage: errorMessage(error)
       });
     } finally {
+      busyRef.current = false;
+      busyMessageRef.current = undefined;
       setBusy(false);
       setBusyMessage(undefined);
     }
@@ -264,26 +307,24 @@ export function TuiInkApp(props: TuiInkAppProps): React.ReactElement {
         app.exit();
         return;
       }
-      if (busy) {
-        if (key.escape && state.composer.length > 0) {
-          setState((current) => ({
-            ...current,
-            composer: "",
-            statusMessage: "Composer cleared."
-          }));
-        }
-        return;
-      }
       const wantsSubmit =
         input === "\n" ||
         input === "\r" ||
         key.return ||
         (key.ctrl && (input === "j" || input === "J"));
       if (wantsSubmit && state.composer.length > 0) {
+        if (busy) {
+          showBusyInputMessage();
+          return;
+        }
         void submitComposer();
         return;
       }
       if (key.ctrl && (input === "j" || input === "J")) {
+        if (busy) {
+          showBusyInputMessage();
+          return;
+        }
         void submitComposer();
         return;
       }
@@ -292,10 +333,18 @@ export function TuiInkApp(props: TuiInkAppProps): React.ReactElement {
         return;
       }
       if (input === "a" && state.focus === "review" && state.composer.length === 0) {
+        if (busy) {
+          showBusyInputMessage();
+          return;
+        }
         void recordDecision("accepted");
         return;
       }
       if (input === "R" && state.focus === "review" && state.composer.length === 0) {
+        if (busy) {
+          showBusyInputMessage();
+          return;
+        }
         void recordDecision("rejected");
         return;
       }

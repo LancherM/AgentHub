@@ -79,8 +79,11 @@ prompt, `Enter` submits non-empty prompts when a submission callback is
 available, `Esc` clears the in-progress prompt, and `Tab` remains available for
 focus navigation. The status bar switches to composer-specific hints so exit
 shortcuts are not advertised while a prompt is being edited. Interactive
-submit and review-decision actions show bounded busy states and time out back
-to keyboard control instead of trapping the terminal indefinitely.
+submit and review-decision actions show bounded busy states without locking the
+keyboard: users can still switch focus, open command hints, and draft the next
+prompt while the current local action is running. The TUI only blocks duplicate
+submits or duplicate review-decision writes until that action finishes or times
+out.
 Prompt submission keeps the terminal workbench in control of the screen: agent
 stdout, run debug details, and raw adapter text are persisted through the normal
 chat/run records and then shown through TUI panes, not dumped directly into the
