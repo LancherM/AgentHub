@@ -427,9 +427,12 @@ boundary, wraps interactive submit/review callbacks in bounded UI timeouts, and
 uses a lightweight polling interval to reload the same read model for live-ish
 terminal updates. Polling is a renderer refresh of persisted local evidence; it
 does not add an event daemon, remote worker, or incremental orchestration path.
-Scrollable transcript state and terminal-height list windows remain local Ink
-state, while selected runs, tasks, and RoleCalls continue to resolve through
-the existing read-model summaries.
+Busy submit/review state remains local Ink state too: the renderer keeps
+keyboard navigation and composer editing active, but gates additional submit or
+review-decision writes until the in-flight callback finishes. Scrollable
+transcript state and terminal-height list windows remain local Ink state, while
+selected runs, tasks, and RoleCalls continue to resolve through the existing
+read-model summaries.
 The command hint helper falls back from an absent selected RoleCall to
 `agent-hub team roles list --project-id <project-id>`, and the command palette
 includes the same role-list command beside run, review, and memory commands.
