@@ -30,11 +30,12 @@ renderer stays sandboxed behind `window.agentHub`; orchestration, filesystem,
 SQLite, shell, git, and agent execution remain in Electron main-process services
 or shared local packages.
 
-`agent-hub tui` is a read-only current-context terminal workbench shell. It
-renders bounded transcript, run, RoleCall, review, task, memory, and skill
-summaries from shared read models, supports launch by thread or room, and keeps
-prompt submission, loop continuation, review writes, memory approval, apply,
-merge, push, and PR creation outside the TUI.
+`agent-hub tui` is a current-context terminal workbench shell. It renders
+bounded transcript, run, RoleCall, review, task, memory, and skill summaries
+from shared read models, supports launch by thread or room, and submits
+composer prompts through the same local CLI chat path. Loop continuation,
+review writes, memory approval, apply, merge, push, and PR creation stay
+outside the TUI.
 
 ## Core Concepts
 
@@ -241,8 +242,8 @@ Not implemented as product behavior today:
   current metadata-backed model;
 - richer Codex/Claude structured event mapping beyond the current persisted
   stdout/status/message/error model.
-- terminal prompt submission, bounded loop continuation, and TUI review
-  decision writes beyond the current read-only workbench shell.
+- bounded loop continuation and TUI review decision writes beyond the current
+  workbench shell.
 
 Roadmaps for future work live in `docs/local-ai-workgroup-roadmap.md`,
 `docs/interaction-optimization-roadmap.md`, `docs/tui-roadmap.md`, and the

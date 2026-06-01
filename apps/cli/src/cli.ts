@@ -81,7 +81,7 @@ import {
 } from "@agent-hub/task-runner";
 import { scanSensitivePaths } from "@agent-hub/safety";
 import { createSqliteRepositories } from "@agent-hub/db";
-import { runTuiCommand } from "./tui";
+import { runTuiCommand, type TuiPromptSubmissionInput } from "./tui";
 import {
   InMemoryAgentProfileRepository,
   InMemoryComparisonReportRepository,
@@ -463,7 +463,8 @@ export async function main(
       runtime: activeRuntime,
       projectRoot: global.projectRoot ?? cwd,
       selectedAgent: global.agentKind ?? defaultCliAgent(debug),
-      debug
+      debug,
+      submitPrompt: (input) => submitTuiPrompt(input, io, cwd, activeRuntime)
     });
   }
 
@@ -1818,6 +1819,62 @@ async function sendRoomMessage(
   } catch (error) {
     io.stderr.write(`error: ${error instanceof Error ? error.message : String(error)}\n`);
     return 1;
+  }
+}
+
+async function submitTuiPrompt(
+  input: TuiPromptSubmissionInput,
+  io: CliIO,
+  cwd: string,
+  runtime: CliRuntime
+): Promise<{
+  ok: boolean;
+  exitCode: number;
+  projectId?: string;
+  threadId?: string;
+  message: string;
+}> {
+  try {
+    const project = input.threadId
+      ? await projectForThread(runtime, input.threadId)
+      : input.projectId
+        ? await requireProject(runtime, input.projectId)
+        : await ensureProjectForRoot(runtime, input.projectRoot);
+    const roomThread = input.roomRef
+      ? await resolveRoomThread(runtime, project.id, input.roomRef)
+      : undefined;
+    const state: ChatState = {
+      projectRoot: project.rootPath,
+      project,
+      selectedAgent: input.selectedAgent,
+      threadId: input.threadId ?? roomThread?.id,
+      roomHandle: roomThread ? roomHandleForThread(roomThread) : undefined,
+      workspaceBasePath: input.workspaceBasePath
+        ? path.resolve(cwd, input.workspaceBasePath)
+        : undefined,
+      retainOnFailure: input.retainOnFailure,
+      dryRun: input.dryRun,
+      debug: input.debug
+    };
+    const exitCode = await runChatTurn(input.prompt, io, runtime, state);
+    return {
+      ok: exitCode === 0,
+      exitCode,
+      projectId: state.project.id,
+      threadId: state.threadId,
+      message:
+        exitCode === 0
+          ? `Submitted prompt to ${state.roomHandle ? `#${state.roomHandle}` : state.threadId ?? "new thread"}.`
+          : `Submitted prompt failed with exit code ${exitCode}.`
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      exitCode: 1,
+      projectId: input.projectId,
+      threadId: input.threadId,
+      message: errorMessage(error)
+    };
   }
 }
 

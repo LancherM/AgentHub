@@ -1,3 +1,7 @@
+import { execFileSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { createCliRuntime, main } from "@agent-hub/cli";
 import {
@@ -61,7 +65,7 @@ describe("CLI TUI command", () => {
     expect(rendered).toContain("@engineer -> @reviewer [running]");
     expect(rendered).toContain("Runs");
     expect(rendered).toContain("run_1 @codex running");
-    expect(rendered).toContain("> @codex read-only TUI; prompt submission arrives in TUI-3");
+    expect(rendered).toContain("> @codex prompt");
   });
 
   it("switches focus, selection, hide-done, and graph collapse through key reducer", async () => {
@@ -85,6 +89,64 @@ describe("CLI TUI command", () => {
     const rendered = renderTuiWorkbench(model, state, { columns: 72, rows: 28 });
     expect(rendered).toContain("[Graph]");
     expect(rendered).toContain("Completed RoleCalls hidden.");
+  });
+
+  it("submits prompts through the CLI chat path and keeps unknown mentions as text", async () => {
+    const runtime = createCliRuntime({ storageMode: "memory" });
+    const root = createGitFixture();
+    const workspaceBase = fs.mkdtempSync(path.join(os.tmpdir(), "agent-hub-tui-worktrees-"));
+    await runtime.projectRepository.create({
+      id: "project_submit",
+      name: "Submit Project",
+      rootPath: root,
+      createdAt: now,
+      updatedAt: now
+    });
+    await runtime.conversationThreadRepository.create({
+      id: "thread_submit",
+      projectId: "project_submit",
+      title: "Submit Room",
+      metadata: { roomHandle: "submit" },
+      createdAt: now,
+      updatedAt: now
+    });
+    const output: string[] = [];
+    const errors: string[] = [];
+
+    await expect(
+      main(
+        [
+          "--project",
+          root,
+          "tui",
+          "--room",
+          "submit",
+          "--debug",
+          "--agent",
+          "fake",
+          "--workspace-base",
+          workspaceBase,
+          "--dry-run",
+          "--submit",
+          "@fake summarize @unknown mention",
+          "--once"
+        ],
+        testIo(output, errors),
+        process.cwd(),
+        runtime
+      )
+    ).resolves.toBe(0);
+
+    expect(errors.join("")).toBe("");
+    const messages = await runtime.conversationMessageRepository.listByThreadId(
+      "thread_submit"
+    );
+    expect(messages.map((message) => message.role)).toContain("user");
+    const userMessage = messages.find((message) => message.role === "user");
+    expect(userMessage?.content).toBe("summarize @unknown mention");
+    expect(userMessage?.metadata?.source).toBe("cli_chat");
+    expect(output.join("")).toContain("Submitted prompt to #submit.");
+    expect(output.join("")).toContain("run_");
   });
 });
 
@@ -235,4 +297,25 @@ function roleCall(input: Partial<RoleCall>): RoleCall {
     startedAt: input.startedAt,
     completedAt: input.completedAt
   };
+}
+
+function createGitFixture(): string {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "agent-hub-tui-project-"));
+  fs.writeFileSync(path.join(root, "README.md"), "# fixture\n");
+  execFileSync("git", ["init"], { cwd: root, stdio: "ignore" });
+  execFileSync("git", ["add", "README.md"], { cwd: root, stdio: "ignore" });
+  execFileSync(
+    "git",
+    [
+      "-c",
+      "user.email=tui@example.com",
+      "-c",
+      "user.name=TUI Test",
+      "commit",
+      "-m",
+      "init"
+    ],
+    { cwd: root, stdio: "ignore" }
+  );
+  return root;
 }

@@ -33,7 +33,33 @@ export interface RunTuiCommandOptions {
   runtime: TuiCliRuntime;
   selectedAgent?: AgentKind;
   debug?: boolean;
+  submitPrompt?: TuiPromptSubmitter;
 }
+
+export interface TuiPromptSubmissionInput {
+  prompt: string;
+  projectRoot: string;
+  projectId?: string;
+  threadId?: string;
+  roomRef?: string;
+  selectedAgent: AgentKind;
+  debug: boolean;
+  dryRun: boolean;
+  retainOnFailure: boolean;
+  workspaceBasePath?: string;
+}
+
+export interface TuiPromptSubmissionResult {
+  ok: boolean;
+  exitCode: number;
+  projectId?: string;
+  threadId?: string;
+  message: string;
+}
+
+export type TuiPromptSubmitter = (
+  input: TuiPromptSubmissionInput
+) => Promise<TuiPromptSubmissionResult>;
 
 export type TuiFocusMode =
   | "work"
@@ -51,6 +77,7 @@ export interface TuiShellState {
   selectedTaskIndex: number;
   hideCompletedRoleCalls: boolean;
   collapsedRoleCallIds: string[];
+  composer: string;
   statusMessage?: string;
 }
 
@@ -81,6 +108,10 @@ interface ParsedTuiArgs {
   roomRef?: string;
   agentKind?: AgentKind;
   maxIterations?: number;
+  submitPrompt?: string;
+  workspaceBasePath?: string;
+  dryRun: boolean;
+  retainOnFailure: boolean;
   debug: boolean;
   once: boolean;
   help: boolean;
@@ -146,8 +177,37 @@ export async function runTuiCommand(options: RunTuiCommandOptions): Promise<numb
     selectedRoleCallIndex: 0,
     selectedTaskIndex: 0,
     hideCompletedRoleCalls: false,
-    collapsedRoleCallIds: []
+    collapsedRoleCallIds: [],
+    composer: parsed.submitPrompt ?? ""
   };
+  if (parsed.submitPrompt) {
+    if (!options.submitPrompt) {
+      options.io.stderr.write("error: TUI prompt submission is unavailable\n");
+      return 1;
+    }
+    const submission = await options.submitPrompt({
+      prompt: parsed.submitPrompt,
+      projectRoot: options.projectRoot,
+      projectId: launch.projectId,
+      threadId: launch.threadId,
+      roomRef: parsed.roomRef,
+      selectedAgent,
+      debug: parsed.debug || options.debug === true,
+      dryRun: parsed.dryRun,
+      retainOnFailure: parsed.retainOnFailure,
+      workspaceBasePath: parsed.workspaceBasePath
+    });
+    launch = {
+      projectId: submission.projectId ?? launch.projectId,
+      threadId: submission.threadId ?? launch.threadId,
+      warnings: launch.warnings
+    };
+    state.composer = "";
+    state.statusMessage = submission.message;
+    if (!submission.ok) {
+      options.io.stderr.write(`error: ${submission.message}\n`);
+    }
+  }
   const modelInput: TuiCurrentContextInput = {
     projectId: launch.projectId,
     threadId: launch.threadId,
@@ -172,7 +232,17 @@ export async function runTuiCommand(options: RunTuiCommandOptions): Promise<numb
     runtime: options.runtime,
     modelInput,
     initialState: state,
-    launchWarnings: launch.warnings
+    launchWarnings: launch.warnings,
+    submitPrompt: options.submitPrompt,
+    submitInput: {
+      projectRoot: options.projectRoot,
+      roomRef: parsed.roomRef,
+      selectedAgent,
+      debug: parsed.debug || options.debug === true,
+      dryRun: parsed.dryRun,
+      retainOnFailure: parsed.retainOnFailure,
+      workspaceBasePath: parsed.workspaceBasePath
+    }
   });
 }
 
@@ -188,6 +258,10 @@ export function tuiHelpText(): string {
     "  --room <handle-or-id>      Start from a room in the current registered project.",
     "  --agent <agent>            Select the default prompt target.",
     "  --max-iterations <n>       Display the bounded loop limit.",
+    "  --submit <prompt>          Submit a prompt through the TUI composer path, then render.",
+    "  --workspace-base <path>    Workspace base for submitted runs.",
+    "  --retain-on-failure        Keep failed submitted-run worktrees.",
+    "  --dry-run                  Create submitted runs without adapter execution.",
     "  --debug                    Include debug-available agent choices.",
     "  --once                     Render once and exit, useful for smoke tests.",
     "  --help                     Show this help.",
@@ -202,7 +276,8 @@ export function createInitialTuiShellState(): TuiShellState {
     selectedRoleCallIndex: 0,
     selectedTaskIndex: 0,
     hideCompletedRoleCalls: false,
-    collapsedRoleCallIds: []
+    collapsedRoleCallIds: [],
+    composer: ""
   };
 }
 
@@ -312,7 +387,7 @@ export function renderTuiWorkbench(
     );
   }
 
-  lines.push("", ...renderActionHints(), renderComposerPlaceholder(model));
+  lines.push("", ...renderActionHints(), renderComposerPlaceholder(model, state));
   return fitLines(lines, size.columns, size.rows).join("\n") + "\n";
 }
 
@@ -322,6 +397,8 @@ async function runInteractiveTui(input: {
   modelInput: TuiCurrentContextInput;
   initialState: TuiShellState;
   launchWarnings: string[];
+  submitPrompt?: TuiPromptSubmitter;
+  submitInput: Omit<TuiPromptSubmissionInput, "prompt" | "projectId" | "threadId">;
 }): Promise<number> {
   const stdin = input.io.stdin ?? process.stdin;
   const stdout = input.io.stdout;
@@ -365,8 +442,48 @@ async function runInteractiveTui(input: {
           stdout.write(`\nerror: ${errorMessage(error)}\n`);
         });
     };
-    const onKeypress = async (_chunk: string, key: readline.Key) => {
+    const onKeypress = async (chunk: string, key: readline.Key) => {
       await rendering;
+      if (isSubmitKey(key)) {
+        if (!state.composer.trim()) {
+          state = { ...state, statusMessage: "Composer is empty." };
+          rerender();
+          return;
+        }
+        if (!input.submitPrompt) {
+          state = { ...state, statusMessage: "Prompt submission is unavailable." };
+          rerender();
+          return;
+        }
+        const submission = await input.submitPrompt({
+          ...input.submitInput,
+          prompt: state.composer,
+          projectId: modelInput.projectId,
+          threadId: modelInput.threadId
+        });
+        modelInput = {
+          ...modelInput,
+          projectId: submission.projectId ?? modelInput.projectId,
+          threadId: submission.threadId ?? modelInput.threadId
+        };
+        state = {
+          ...state,
+          composer: "",
+          statusMessage: submission.message
+        };
+        rerender();
+        return;
+      }
+      if (key.name === "backspace" || key.name === "delete") {
+        state = { ...state, composer: state.composer.slice(0, -1) };
+        rerender();
+        return;
+      }
+      if (isPrintableChunk(chunk, key)) {
+        state = { ...state, composer: `${state.composer}${chunk}` };
+        rerender();
+        return;
+      }
       const model = await buildTuiCurrentContextModel(input.runtime, modelInput);
       const result = reduceTuiKey(
         state,
@@ -393,6 +510,8 @@ async function runInteractiveTui(input: {
 function parseTuiArgs(args: string[]): ParsedTuiArgs {
   const parsed: ParsedTuiArgs = {
     debug: false,
+    dryRun: false,
+    retainOnFailure: false,
     once: false,
     help: false
   };
@@ -420,6 +539,24 @@ function parseTuiArgs(args: string[]): ParsedTuiArgs {
     if (arg === "--max-iterations") {
       parsed.maxIterations = parsePositiveInteger(requiredArgValue(args, index, arg), arg);
       index += 1;
+      continue;
+    }
+    if (arg === "--submit") {
+      parsed.submitPrompt = requiredArgValue(args, index, arg);
+      index += 1;
+      continue;
+    }
+    if (arg === "--workspace-base") {
+      parsed.workspaceBasePath = requiredArgValue(args, index, arg);
+      index += 1;
+      continue;
+    }
+    if (arg === "--retain-on-failure") {
+      parsed.retainOnFailure = true;
+      continue;
+    }
+    if (arg === "--dry-run") {
+      parsed.dryRun = true;
       continue;
     }
     if (arg === "--debug") {
@@ -671,6 +808,7 @@ function renderHelpPanel(): string[] {
     "  up/down           move selection",
     "  left/right        collapse or expand selected RoleCall subtree",
     "  enter             open selected review summary",
+    "  ctrl+j            submit composer prompt",
     "  r                 review summary",
     "  h                 toggle completed RoleCalls",
     "  m                 memory summary",
@@ -690,13 +828,16 @@ function renderHelpPanel(): string[] {
 
 function renderActionHints(): string[] {
   return [
-    "Actions: tab focus  enter open  r review  h hide done  m memory  ? help  x exit"
+    "Actions: tab focus  enter open  ctrl+j submit  r review  h hide done  m memory  ? help  x exit"
   ];
 }
 
-function renderComposerPlaceholder(model: TuiCurrentContextModel): string {
+function renderComposerPlaceholder(
+  model: TuiCurrentContextModel,
+  state: TuiShellState
+): string {
   const agent = model.context.selectedAgent ? `@${model.context.selectedAgent}` : "@agent";
-  return `> ${agent} read-only TUI; prompt submission arrives in TUI-3`;
+  return `> ${state.composer || `${agent} prompt`}`;
 }
 
 function evidenceLines(evidence: TuiCurrentContextModel["review"]["evidence"]): string[] {
@@ -858,6 +999,20 @@ function tuiKeyFromReadlineKey(key: readline.Key): TuiKey {
     return "hide_done";
   }
   return "other";
+}
+
+function isSubmitKey(key: readline.Key): boolean {
+  return Boolean(key.ctrl && (key.name === "j" || key.name === "return"));
+}
+
+function isPrintableChunk(chunk: string, key: readline.Key): boolean {
+  return (
+    chunk.length === 1 &&
+    !key.ctrl &&
+    !key.meta &&
+    chunk >= " " &&
+    chunk !== "\u007f"
+  );
 }
 
 function mergeLaunchWarnings(

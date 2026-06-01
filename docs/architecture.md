@@ -374,5 +374,6 @@ memory, skill, and review evidence while keeping deep audit in explicit CLI or
 desktop review commands. The first shared package boundary for that work is a
 core read-model layer; it adds no persistence tables and performs no terminal
 orchestration. The `agent-hub tui` command lives in `apps/cli`, renders those
-read models as a read-only terminal shell, and keeps prompt submission,
-continuation, review writes, and governance mutations out of the renderer.
+read models as a terminal shell, and delegates composer submission back to the
+existing CLI chat turn path. Continuation, review writes, and governance
+mutations remain outside the TUI renderer.
