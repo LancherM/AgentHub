@@ -370,6 +370,88 @@ describe("TUI current-context read model", () => {
     });
   });
 
+  it("adds quick reply suggestions only to the latest agent result", async () => {
+    const runtime = createCliRuntime({ storageMode: "memory" });
+    await runtime.projectRepository.create({
+      id: "project_suggestions",
+      name: "Suggestions",
+      rootPath: "/tmp/suggestions",
+      createdAt: now,
+      updatedAt: now
+    });
+    await runtime.conversationThreadRepository.create({
+      id: "thread_suggestions",
+      projectId: "project_suggestions",
+      title: "Suggestions",
+      createdAt: now,
+      updatedAt: now
+    });
+    await runtime.taskRepository.create({
+      id: "task_suggestions",
+      projectId: "project_suggestions",
+      title: "Suggest replies",
+      metadata: { threadId: "thread_suggestions" },
+      status: "completed",
+      createdAt: now,
+      updatedAt: now
+    });
+    await runtime.taskRunRepository.create({
+      id: "run_older",
+      taskId: "task_suggestions",
+      agentKind: "codex",
+      status: "succeeded",
+      startedAt: "2026-05-29T10:00:00.000Z",
+      completedAt: "2026-05-29T10:00:30.000Z",
+      createdAt: "2026-05-29T10:00:00.000Z",
+      updatedAt: "2026-05-29T10:00:30.000Z"
+    });
+    await runtime.taskRunRepository.create({
+      id: "run_newer",
+      taskId: "task_suggestions",
+      agentKind: "codex",
+      status: "failed",
+      startedAt: "2026-05-29T10:01:00.000Z",
+      completedAt: "2026-05-29T10:02:00.000Z",
+      createdAt: "2026-05-29T10:01:00.000Z",
+      updatedAt: "2026-05-29T10:02:00.000Z"
+    });
+    await runtime.runEventRepository.createMany([
+      event("event_older", "run_older", 0, "message", "older done"),
+      event("event_newer", "run_newer", 0, "error", "tests failed")
+    ]);
+    await runtime.verificationResultRepository.create(
+      verification("verification_newer", "run_newer", "pnpm test", "failed")
+    );
+    await runtime.riskReportRepository.create({
+      id: "risk_newer",
+      taskRunId: "run_newer",
+      level: "high",
+      summary: "Failed verification.",
+      changedFiles: ["src/fail.ts"],
+      verificationSummary: "failed",
+      failedChecks: ["pnpm test"],
+      riskFactors: ["failed checks"],
+      manualReviewChecklist: ["Inspect failed tests."],
+      acceptanceRecommendation: "Do not accept.",
+      findings: [],
+      createdAt: now
+    });
+
+    const model = await buildTuiCurrentContextModel(runtime, {
+      projectId: "project_suggestions",
+      threadId: "thread_suggestions"
+    });
+
+    expect(model.conversation.find((entry) => entry.id === "run:run_older")?.suggestions)
+      .toBeUndefined();
+    expect(model.conversation.find((entry) => entry.id === "run:run_newer")?.suggestions)
+      .toEqual([
+        expect.objectContaining({ key: "1", label: "Run more tests" }),
+        expect.objectContaining({ key: "2", label: "Fix verification" }),
+        expect.objectContaining({ key: "3", label: "Review changes" })
+      ]);
+  });
+
   it("reports bounded loop stop reasons for terminal, pending, waiting, blocking, and limits", async () => {
     await expect(loopStopReasonFor([roleCall({ id: "call_ok", status: "succeeded" })]))
       .resolves.toBe("terminal");

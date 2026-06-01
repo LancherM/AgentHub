@@ -383,6 +383,31 @@ describe("Ink TUI renderer", () => {
     expect(output).toContain("┃   const message = \"ok\"; // comment");
   });
 
+  it("renders quick reply suggestions and hides them while typing", () => {
+    const model = modelWithSuggestions();
+    const idleOutput = renderToString(
+      React.createElement(TuiInkFrame, {
+        model,
+        state: createInitialInkState(),
+        terminal: { columns: 100, rows: 32 }
+      }),
+      { columns: 100 }
+    );
+    const typingOutput = renderToString(
+      React.createElement(TuiInkFrame, {
+        model,
+        state: createInitialInkState("draft"),
+        terminal: { columns: 100, rows: 32 }
+      }),
+      { columns: 100 }
+    );
+
+    expect(idleOutput).toContain("┃   [1] Run more tests");
+    expect(idleOutput).toContain("┃   [2] Fix verification");
+    expect(idleOutput).toContain("┃   [3] Continue");
+    expect(typingOutput).not.toContain("[1] Run more tests");
+  });
+
   it("keeps full ids and governed commands inside the command palette", () => {
     const output = renderToString(
       React.createElement(TuiInkFrame, {
@@ -645,6 +670,88 @@ describe("Ink TUI renderer", () => {
     ]);
     expect(instance.lastFrame()).toContain("Submitted prompt.");
     expect(instance.lastFrame()).toContain("@codex run_12345678 ✓ completed");
+    instance.unmount();
+  });
+
+  it("submits visible quick replies through the normal prompt callback", async () => {
+    const submissions = [];
+    const model = modelWithSuggestions();
+    const instance = render(
+      React.createElement(TuiInkApp, {
+        model,
+        state: createInitialInkState(),
+        terminal: { columns: 120, rows: 40 },
+        interactive: true,
+        submitPrompt: async (input) => {
+          submissions.push(input);
+          return { ok: true, message: "Suggestion submitted.", model };
+        }
+      })
+    );
+
+    instance.stdin.write("1");
+    await waitForFrame(instance, "Suggestion submitted.");
+
+    expect(submissions).toEqual([
+      expect.objectContaining({
+        prompt: "Run more targeted tests for run run_suggest and summarize the failures."
+      })
+    ]);
+    instance.unmount();
+  });
+
+  it("keeps numeric keys as composer text when a prompt is being edited", async () => {
+    const submissions = [];
+    const instance = render(
+      React.createElement(TuiInkApp, {
+        model: modelWithSuggestions(),
+        state: createInitialInkState("draft"),
+        terminal: { columns: 120, rows: 40 },
+        interactive: true,
+        submitPrompt: async (input) => {
+          submissions.push(input);
+          return { ok: true, message: "Submitted prompt.", model: baseModel };
+        }
+      })
+    );
+
+    instance.stdin.write("1");
+    await waitForFrame(instance, "> draft1");
+
+    expect(submissions).toEqual([]);
+    instance.unmount();
+  });
+
+  it("prepares a continue prompt with c without submitting", async () => {
+    const submissions = [];
+    const model = {
+      ...baseModel,
+      roleCalls: {
+        ...baseModel.roleCalls,
+        loop: {
+          ...baseModel.roleCalls.loop,
+          stopReason: "none"
+        }
+      }
+    };
+    const instance = render(
+      React.createElement(TuiInkApp, {
+        model,
+        state: createInitialInkState(),
+        terminal: { columns: 120, rows: 40 },
+        interactive: true,
+        submitPrompt: async (input) => {
+          submissions.push(input);
+          return { ok: true, message: "Submitted prompt.", model };
+        }
+      })
+    );
+
+    instance.stdin.write("c");
+    await waitForFrame(instance, "Continuation prompt prepared");
+
+    expect(submissions).toEqual([]);
+    expect(instance.lastFrame()).toContain("> Continue the current task with the selected agent.");
     instance.unmount();
   });
 
@@ -945,6 +1052,43 @@ function modelWithActiveRun() {
         outputLines: ["Reading logout.ts", "Running tests"]
       }
     ]
+  };
+}
+
+function modelWithSuggestions() {
+  return {
+    ...baseModel,
+    conversation: [
+      {
+        id: "run:run_suggest",
+        type: "agent_failed",
+        timestamp: "2026-05-29T12:06:00.000Z",
+        author: "@codex",
+        agent: "codex",
+        runId: "run_suggest",
+        statusLabel: "failed",
+        outputLines: ["tests failed"],
+        verificationLine: "verification failed (1 checks: pnpm test)",
+        suggestions: [
+          {
+            key: "1",
+            label: "Run more tests",
+            prompt: "Run more targeted tests for run run_suggest and summarize the failures."
+          },
+          {
+            key: "2",
+            label: "Fix verification",
+            prompt: "Fix the verification issues from run run_suggest, then report what changed."
+          },
+          {
+            key: "3",
+            label: "Continue",
+            prompt: "Continue from run run_suggest with the selected agent."
+          }
+        ]
+      }
+    ],
+    activeRuns: []
   };
 }
 

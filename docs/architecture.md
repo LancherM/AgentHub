@@ -460,6 +460,12 @@ verification/risk summaries, and a final View-pane review hint. Terminal runs
 without changed files render as completed output instead of awaiting review.
 The Work view remains prompt-first, and printable keys do not trigger audit
 mutations.
+Quick replies are derived in the core TUI read model for only the latest visible
+agent-result conversation entry. They are prompt templates, not actions:
+`1`/`2`/`3` route through the same CLI `submitPrompt` callback used by manual
+composer submissions, and they are disabled as soon as the composer contains
+text or the Work conversation is scrolled away from the bottom. The `c`
+shortcut only prepares a continuation prompt in local Ink state.
 The direct CLI entrypoint exits after command completion, so one-shot TUI smoke
 renders do not leave local SQLite helper processes holding the terminal open.
 For interactive launches, the CLI default IO includes `process.stdin`, and the

@@ -9,6 +9,7 @@ import {
 import type {
   TuiActiveRunBox,
   TuiConversationEntry,
+  TuiConversationSuggestion,
   TuiCurrentContextModel
 } from "@agent-hub/core";
 import {
@@ -28,6 +29,7 @@ import {
   selectedTask,
   selectedTaskIndex,
   unavailableRoleExecutorCommands,
+  visibleConversationSuggestions,
   visibleRoleCalls,
   selectedRoleCallIndex,
   type TuiInkFocus,
@@ -231,12 +233,28 @@ export function TuiInkApp(props: TuiInkAppProps): React.ReactElement {
 
   const submitComposer = async () => {
     const currentState = stateRef.current;
-    const currentModel = modelRef.current;
     const prompt = currentState.composer.trim();
     if (!prompt) {
       setState({ ...currentState, statusMessage: "Composer is empty." });
       return;
     }
+    await submitPromptText(prompt, currentState, "Submitting prompt...");
+  };
+
+  const submitSuggestion = async (suggestion: TuiConversationSuggestion) => {
+    await submitPromptText(
+      suggestion.prompt,
+      stateRef.current,
+      `Submitting suggestion: ${suggestion.label}...`
+    );
+  };
+
+  const submitPromptText = async (
+    prompt: string,
+    currentState: TuiInkState,
+    busyLabel: string
+  ) => {
+    const currentModel = modelRef.current;
     if (!props.submitPrompt) {
       setState({ ...currentState, statusMessage: "Prompt submission is unavailable." });
       return;
@@ -249,11 +267,11 @@ export function TuiInkApp(props: TuiInkAppProps): React.ReactElement {
       ...currentState,
       composer: "",
       composerCursorPosition: 0,
-      statusMessage: "Submitting prompt..."
+      statusMessage: busyLabel
     };
     setStateNow(submittingState);
-    setBusyMessage("Submitting prompt...");
-    busyMessageRef.current = "Submitting prompt...";
+    setBusyMessage(busyLabel);
+    busyMessageRef.current = busyLabel;
     busyRef.current = true;
     setBusy(true);
     try {
@@ -346,6 +364,19 @@ export function TuiInkApp(props: TuiInkAppProps): React.ReactElement {
       const isBusy = busyRef.current;
       if (key.ctrl && (input === "c" || input === "C")) {
         app.exit();
+        return;
+      }
+      const suggestion = suggestionForInput(input, modelRef.current, currentState);
+      if (suggestion) {
+        if (isBusy) {
+          showBusyInputMessage();
+          return;
+        }
+        void submitSuggestion(suggestion);
+        return;
+      }
+      if (input === "c" && currentState.focus === "work" && currentState.composer.length === 0) {
+        applyKey("continue_loop");
         return;
       }
       const wantsSubmit =
@@ -779,8 +810,9 @@ function ConversationFlow({
   if (model.conversation.length === 0) {
     return block(line("No messages in the current context.", { dimColor: true }));
   }
+  const showSuggestions = state.composer.length === 0 && state.conversationScrollOffset === 0;
   const renderedLines = model.conversation.flatMap((entry) =>
-    conversationEntryLines(entry, feedbackByRunId)
+    conversationEntryLines(entry, feedbackByRunId, showSuggestions)
   );
   const maxOffset = Math.max(0, renderedLines.length - visibleLines);
   const offsetFromBottom = Math.min(state.conversationScrollOffset, maxOffset);
@@ -793,7 +825,8 @@ function ConversationFlow({
 
 function conversationEntryLines(
   entry: TuiConversationEntry,
-  feedbackByRunId: Partial<Record<string, RunFeedbackKind>>
+  feedbackByRunId: Partial<Record<string, RunFeedbackKind>>,
+  showSuggestions: boolean
 ): React.ReactElement[] {
   if (entry.type === "agent_completed" || entry.type === "agent_failed") {
     const statusIcon = entry.type === "agent_failed" ? "✗" : "✓";
@@ -808,7 +841,8 @@ function conversationEntryLines(
       ),
       ...conversationContentLines(entry.outputLines ?? entry.content, { prefix: "┃   ", agent: true, tone, keyPrefix: entry.id }),
       ...(entry.verificationLine ? [conversationRichLine(`~ ${entry.verificationLine}`, { prefix: "┃   ", agent: true, tone })] : []),
-      ...(entry.riskLine ? [conversationRichLine(`⚠ ${entry.riskLine}`, { prefix: "┃   ", agent: true, tone, color: "yellow" })] : [])
+      ...(entry.riskLine ? [conversationRichLine(`⚠ ${entry.riskLine}`, { prefix: "┃   ", agent: true, tone, color: "yellow" })] : []),
+      ...conversationSuggestionLines(entry, showSuggestions, tone)
     ];
   }
   if (entry.type === "review_pending") {
@@ -824,7 +858,8 @@ function conversationEntryLines(
       ...conversationContentLines(entry.outputLines ?? entry.content, { prefix: "┃   ", agent: true, tone, keyPrefix: entry.id }),
       ...(entry.verificationLine ? [conversationRichLine(`~ ${entry.verificationLine}`, { prefix: "┃   ", agent: true, tone })] : []),
       ...(entry.riskLine ? [conversationRichLine(`⚠ ${entry.riskLine}`, { prefix: "┃   ", agent: true, tone, color: "yellow" })] : []),
-      conversationRichLine(`△ ${entry.content ?? "切换到 [V]iew 查看详情"}`, { prefix: "┃   ", agent: true, tone, color: "yellow" })
+      conversationRichLine(`△ ${entry.content ?? "切换到 [V]iew 查看详情"}`, { prefix: "┃   ", agent: true, tone, color: "yellow" }),
+      ...conversationSuggestionLines(entry, showSuggestions, tone)
     ];
   }
   if (entry.type === "delegation") {
@@ -903,6 +938,25 @@ function conversationContentLines(
   });
 }
 
+function conversationSuggestionLines(
+  entry: TuiConversationEntry,
+  showSuggestions: boolean,
+  tone: string
+): React.ReactElement[] {
+  if (!showSuggestions || !entry.suggestions || entry.suggestions.length === 0) {
+    return [];
+  }
+  return entry.suggestions.map((suggestion) =>
+    conversationRichLine(`[${suggestion.key}] ${suggestion.label}`, {
+      prefix: "┃   ",
+      agent: true,
+      tone,
+      dimColor: true,
+      key: `${entry.id}-suggestion-${suggestion.key}`
+    })
+  );
+}
+
 function conversationRichLine(
   value: string,
   options: {
@@ -910,6 +964,7 @@ function conversationRichLine(
     agent: boolean;
     tone?: string;
     color?: string;
+    dimColor?: boolean;
     code?: boolean;
     codeFence?: boolean;
     key?: string;
@@ -921,7 +976,7 @@ function conversationRichLine(
   const spacerText = options.agent ? options.prefix.slice(1) : "";
   return h(
     Text,
-    { key: options.key, wrap: "truncate", color: options.color },
+    { key: options.key, wrap: "truncate", color: options.color, dimColor: options.dimColor },
     prefixText,
     spacerText,
     ...richTextSegments(value, options)
@@ -1568,6 +1623,18 @@ function formatConversationTimestamp(value: string): string {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function suggestionForInput(
+  input: string,
+  model: TuiCurrentContextModel,
+  state: TuiInkState
+): TuiConversationSuggestion | undefined {
+  if (input !== "1" && input !== "2" && input !== "3") {
+    return undefined;
+  }
+  return visibleConversationSuggestions(model, state)
+    .find((suggestion) => suggestion.key === input);
 }
 
 function keyToAction(input: string, key: Key, focus: string): TuiInkKey | undefined {

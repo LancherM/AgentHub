@@ -99,6 +99,13 @@ progress exists, or a best-effort progress bar when recent output includes an
 obvious percentage or `N/M` pattern. At most three active runs render as full
 boxes; older active runs collapse to one-line titles. Completion and failure
 feedback is transient renderer state only and never writes persistence records.
+When the latest agent result is visible and the composer is empty, Work may show
+two or three dim quick replies such as running more tests, fixing verification,
+reviewing risk, continuing, or fixing similar issues. Pressing `1`, `2`, or `3`
+submits the selected suggestion through the same prompt callback as manual
+composer text; numeric keys remain normal text while the composer is non-empty.
+Typing hides suggestions, and `c` prepares a continuation prompt without
+submitting it.
 The default tab bar matches the conversation-terminal scheme: Work, Runs, View,
 Graph, Tasks, Memory, Team, and Help stay one key away instead of being
 embedded into the first screen.

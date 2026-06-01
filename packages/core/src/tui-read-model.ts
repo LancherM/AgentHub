@@ -131,6 +131,13 @@ export interface TuiConversationEntry {
   usageLabel?: string;
   delegatedTo?: string;
   delegationTask?: string;
+  suggestions?: TuiConversationSuggestion[];
+}
+
+export interface TuiConversationSuggestion {
+  key: "1" | "2" | "3";
+  label: string;
+  prompt: string;
 }
 
 export interface TuiActiveRunBox {
@@ -735,10 +742,11 @@ async function summarizeConversation(
     });
   }
 
-  return entries
+  const visibleEntries = entries
     .sort(compareConversationEntries)
     .slice(-input.limit)
     .map(({ sortRank: _sortRank, ...entry }) => entry);
+  return withLatestConversationSuggestions(visibleEntries);
 }
 
 async function summarizeRun(
@@ -992,6 +1000,98 @@ function activeRunEvidenceLines(run: TuiRunSummary): string[] {
 
 function activeRunCreatedAt(run: TuiRunSummary): string {
   return run.startedAt ?? run.completedAt ?? run.updatedAt;
+}
+
+function withLatestConversationSuggestions(
+  entries: TuiConversationEntry[]
+): TuiConversationEntry[] {
+  const suggestionIndex = findLastIndex(entries, isSuggestibleConversationEntry);
+  if (suggestionIndex < 0) {
+    return entries;
+  }
+  return entries.map((entry, index) =>
+    index === suggestionIndex
+      ? { ...entry, suggestions: suggestionsForConversationEntry(entry) }
+      : entry
+  );
+}
+
+function findLastIndex<T>(values: T[], predicate: (value: T) => boolean): number {
+  for (let index = values.length - 1; index >= 0; index -= 1) {
+    if (predicate(values[index])) {
+      return index;
+    }
+  }
+  return -1;
+}
+
+function isSuggestibleConversationEntry(entry: TuiConversationEntry): boolean {
+  return (
+    entry.type === "agent_completed" ||
+    entry.type === "agent_failed" ||
+    entry.type === "review_pending"
+  );
+}
+
+function suggestionsForConversationEntry(
+  entry: TuiConversationEntry
+): TuiConversationSuggestion[] {
+  const runLabel = entry.runId ? `run ${entry.runId}` : "the latest result";
+  if (entry.verificationLine && !/verification passed/i.test(entry.verificationLine)) {
+    return keyedSuggestions([
+      {
+        label: "Run more tests",
+        prompt: `Run more targeted tests for ${runLabel} and summarize the failures.`
+      },
+      {
+        label: "Fix verification",
+        prompt: `Fix the verification issues from ${runLabel}, then report what changed.`
+      },
+      {
+        label: "Review changes",
+        prompt: `Review the changes from ${runLabel} before continuing.`
+      }
+    ]);
+  }
+  if (entry.riskLine && /\brisk (medium|high|blocking)\b/i.test(entry.riskLine)) {
+    return keyedSuggestions([
+      {
+        label: "Review changes",
+        prompt: `Review the risk findings for ${runLabel} and identify the safest next step.`
+      },
+      {
+        label: "Run more tests",
+        prompt: `Run additional verification for ${runLabel} before accepting the result.`
+      },
+      {
+        label: "Continue",
+        prompt: `Continue from ${runLabel} with the selected agent.`
+      }
+    ]);
+  }
+  return keyedSuggestions([
+    {
+      label: "Continue",
+      prompt: `Continue from ${runLabel} with the selected agent.`
+    },
+    {
+      label: "Run tests",
+      prompt: `Run the relevant tests for ${runLabel} and summarize the result.`
+    },
+    {
+      label: "Fix similar",
+      prompt: `Look for similar issues related to ${runLabel} and fix the smallest safe set.`
+    }
+  ]);
+}
+
+function keyedSuggestions(
+  suggestions: Array<Omit<TuiConversationSuggestion, "key">>
+): TuiConversationSuggestion[] {
+  return suggestions.slice(0, 3).map((suggestion, index) => ({
+    key: String(index + 1) as TuiConversationSuggestion["key"],
+    ...suggestion
+  }));
 }
 
 function elapsedRunLabel(run: TaskRun): string | undefined {

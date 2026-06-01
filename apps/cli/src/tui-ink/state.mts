@@ -1,5 +1,6 @@
 import type {
   TuiConversationEntry,
+  TuiConversationSuggestion,
   TuiCurrentContextModel,
   TuiRoleCallNodeSummary,
   TuiRunSummary,
@@ -311,6 +312,24 @@ export function selectedPendingReviewRun(
   return pending[Math.min(Math.max(state.selectedActiveRunIndex, 0), pending.length - 1)];
 }
 
+export function visibleConversationSuggestions(
+  model: TuiCurrentContextModel,
+  state: TuiInkState
+): TuiConversationSuggestion[] {
+  if (
+    state.focus !== "work" ||
+    state.composer.length > 0 ||
+    state.conversationScrollOffset !== 0
+  ) {
+    return [];
+  }
+  const entry = findLast(
+    model.conversation,
+    (item) => (item.suggestions?.length ?? 0) > 0
+  );
+  return entry?.suggestions ?? [];
+}
+
 export function commandHintForFocus(
   model: TuiCurrentContextModel,
   state: TuiInkState
@@ -434,17 +453,23 @@ function conversationLineCount(entries: TuiConversationEntry[]): number {
 }
 
 function conversationEntryLineCount(entry: TuiConversationEntry): number {
-  if (entry.type === "review_pending" || entry.type === "delegation") {
+  if (entry.type === "delegation") {
     return 1;
   }
   const contentLines = Array.isArray(entry.outputLines)
     ? entry.outputLines.length
     : textLineCount(entry.content);
-  if (entry.type === "agent_completed" || entry.type === "agent_failed") {
+  if (
+    entry.type === "agent_completed" ||
+    entry.type === "agent_failed" ||
+    entry.type === "review_pending"
+  ) {
     return 1 +
       Math.max(1, contentLines) +
       (entry.verificationLine ? 1 : 0) +
-      (entry.riskLine ? 1 : 0);
+      (entry.riskLine ? 1 : 0) +
+      (entry.type === "review_pending" ? 1 : 0) +
+      (entry.suggestions?.length ?? 0);
   }
   return 1 + Math.max(1, contentLines);
 }
@@ -515,6 +540,15 @@ function selectedIndexById<T extends { id: string }>(
     }
   }
   return boundedIndex(fallbackIndex, items.length);
+}
+
+function findLast<T>(values: T[], predicate: (value: T) => boolean): T | undefined {
+  for (let index = values.length - 1; index >= 0; index -= 1) {
+    if (predicate(values[index])) {
+      return values[index];
+    }
+  }
+  return undefined;
 }
 
 function selectionDelta(
