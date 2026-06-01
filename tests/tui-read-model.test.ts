@@ -225,6 +225,45 @@ describe("TUI current-context read model", () => {
       })
     ).resolves.toBe("max_iterations");
   });
+
+  it("keeps RoleCall evidence readable when a linked run is missing", async () => {
+    const runtime = createCliRuntime({ storageMode: "memory" });
+    await runtime.projectRepository.create({
+      id: "project_missing_run",
+      name: "Missing Run",
+      rootPath: "/tmp/missing-run",
+      createdAt: now,
+      updatedAt: now
+    });
+    await runtime.conversationThreadRepository.create({
+      id: "thread_1",
+      projectId: "project_missing_run",
+      title: "Missing Run",
+      createdAt: now,
+      updatedAt: now
+    });
+    await runtime.roleCallRepository.create(
+      roleCall({
+        id: "call_missing_run",
+        status: "running",
+        taskRunId: "run_missing"
+      })
+    );
+
+    const model = await buildTuiCurrentContextModel(runtime, {
+      projectId: "project_missing_run",
+      threadId: "thread_1"
+    });
+
+    expect(model.roleCalls.nodes[0]).toMatchObject({
+      id: "call_missing_run",
+      evidence: {
+        linkedRunId: "run_missing",
+        latestEvent: "linked run evidence unavailable",
+        resultSummary: "Linked run no longer exists or could not be read."
+      }
+    });
+  });
 });
 
 async function seedCurrentContext(runtime: ReturnType<typeof createCliRuntime>) {

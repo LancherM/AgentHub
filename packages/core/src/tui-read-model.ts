@@ -549,10 +549,7 @@ async function summarizeRoleCall(
   hideCompleted: boolean
 ): Promise<TuiRoleCallNodeSummary> {
   const linkedRunEvidence: TuiEvidenceSummary = call.taskRunId
-    ? await summarizeRunEvidence(
-        repositories,
-        await requiredRunForEvidence(repositories, call.taskRunId)
-      ).catch(() => ({ linkedRunId: call.taskRunId }) satisfies TuiEvidenceSummary)
+    ? await summarizeLinkedRunEvidence(repositories, call.taskRunId)
     : {};
   const callEvents = threadEvents
     .filter((event) => event.roleCallId === call.id)
@@ -591,6 +588,24 @@ async function summarizeRoleCall(
           : undefined
     }
   };
+}
+
+async function summarizeLinkedRunEvidence(
+  repositories: TuiReadModelRepositories,
+  runId: string
+): Promise<TuiEvidenceSummary> {
+  try {
+    return await summarizeRunEvidence(
+      repositories,
+      await requiredRunForEvidence(repositories, runId)
+    );
+  } catch {
+    return {
+      linkedRunId: runId,
+      latestEvent: "linked run evidence unavailable",
+      resultSummary: "Linked run no longer exists or could not be read."
+    };
+  }
 }
 
 function summarizeTodos(todos: RoleTodo[], limit: number): TuiRoleTodoSummary[] {
@@ -1038,6 +1053,12 @@ function nextTaskAction(
   );
   if (runnable) {
     return `run ${runnable.displayName}`;
+  }
+  const unavailable = assignments.find(
+    (assignment) => !assignment.executable && assignment.status !== "completed"
+  );
+  if (unavailable) {
+    return `configure executor for ${unavailable.displayName}`;
   }
   if (task.status === "open") {
     return "continue";

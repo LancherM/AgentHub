@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { PassThrough } from "node:stream";
 import { describe, expect, it } from "vitest";
 import { createCliRuntime, main } from "@agent-hub/cli";
 import {
@@ -12,6 +13,7 @@ import {
 import {
   createInitialTuiShellState,
   reduceTuiKey,
+  runTuiCommand,
   renderTuiWorkbench
 } from "../apps/cli/src/tui";
 
@@ -66,6 +68,89 @@ describe("CLI TUI command", () => {
     expect(rendered).toContain("Runs");
     expect(rendered).toContain("run_1 @codex running");
     expect(rendered).toContain("> @codex prompt");
+  });
+
+  it("renders missing registration recovery instead of failing launch", async () => {
+    const runtime = createCliRuntime({ storageMode: "memory" });
+    const output: string[] = [];
+    const errors: string[] = [];
+
+    await expect(
+      main(
+        ["--project", "/tmp/unregistered-tui-project", "tui", "--once"],
+        testIo(output, errors),
+        process.cwd(),
+        runtime
+      )
+    ).resolves.toBe(0);
+
+    const rendered = output.join("");
+    expect(errors.join("")).toBe("");
+    expect(rendered).toContain("Agent Hub  unregistered  no-thread");
+    expect(rendered).toContain("recovery: agent-hub project add --name <name>");
+    expect(rendered).toContain("No RoleCalls in the current context.");
+    expect(rendered).toMatchSnapshot("missing registration recovery");
+  });
+
+  it("renders context-read failures with CLI recovery commands", async () => {
+    const runtime = createCliRuntime({ storageMode: "memory" });
+    await runtime.projectRepository.create({
+      id: "project_broken",
+      name: "Broken TUI",
+      rootPath: "/tmp/broken-tui",
+      createdAt: now,
+      updatedAt: now
+    });
+    const brokenRuntime = {
+      ...runtime,
+      conversationThreadRepository: {
+        create: runtime.conversationThreadRepository.create.bind(runtime.conversationThreadRepository),
+        update: runtime.conversationThreadRepository.update.bind(runtime.conversationThreadRepository),
+        get: runtime.conversationThreadRepository.get.bind(runtime.conversationThreadRepository),
+        list: async () => {
+          throw new Error("database read failed");
+        }
+      }
+    };
+    const output: string[] = [];
+    const errors: string[] = [];
+
+    await expect(
+      runTuiCommand({
+        args: ["--once"],
+        io: testIo(output, errors),
+        cwd: process.cwd(),
+        projectRoot: "/tmp/broken-tui",
+        runtime: brokenRuntime
+      })
+    ).resolves.toBe(0);
+
+    const rendered = output.join("");
+    expect(errors.join("")).toBe("");
+    expect(rendered).toContain("failed to read TUI context: database read failed");
+    expect(rendered).toContain("TUI context unavailable");
+    expect(rendered).toContain("agent-hub project list");
+    expect(rendered).toMatchSnapshot("context read failure recovery");
+  });
+
+  it("smoke launches the interactive TUI and exits immediately without raw mode", async () => {
+    const runtime = createCliRuntime({ storageMode: "memory" });
+    await seedTuiContext(runtime);
+    const input = new PassThrough() as PassThrough & { isTTY: boolean };
+    input.isTTY = true;
+    const output: string[] = [];
+    const errors: string[] = [];
+
+    await expect(
+      main(
+        ["--project", projectRoot, "tui"],
+        interactiveIo(input, output, errors),
+        process.cwd(),
+        runtime
+      )
+    ).resolves.toBe(0);
+    expect(errors.join("")).toBe("");
+    expect(output.join("")).toContain("Agent Hub  TUI Project  #review");
   });
 
   it("switches focus, selection, hide-done, and graph collapse through key reducer", async () => {
@@ -232,6 +317,47 @@ describe("CLI TUI command", () => {
     expect(state.statusMessage).toBe("agent-hub memory list --project-id project_1");
   });
 
+  it("surfaces unavailable role executor recovery commands in tasks view", async () => {
+    const runtime = createCliRuntime({ storageMode: "memory" });
+    await seedTuiContext(runtime);
+    await runtime.taskRepository.create({
+      id: "task_reserved",
+      projectId: "project_1",
+      title: "Reserved executor",
+      description: "Reserved workflow role.",
+      metadata: {
+        threadId: "thread_1",
+        assignments: [
+          {
+            assignmentId: "assignment_reserved",
+            taskId: "task_reserved",
+            threadId: "thread_1",
+            sourceMessageId: "message_1",
+            assignmentRole: "role",
+            roleHandle: "planner",
+            displayName: "@planner",
+            executorKind: "workflow",
+            executable: false,
+            status: "queued"
+          }
+        ]
+      },
+      status: "open",
+      createdAt: now,
+      updatedAt: "2026-05-29T12:10:00.000Z"
+    });
+    const model = await buildTuiCurrentContextModel(runtime, {
+      projectId: "project_1",
+      threadId: "thread_1"
+    });
+    const state = { ...createInitialTuiShellState(), focus: "tasks" as const };
+
+    expect(model.tasks[0].nextAction).toBe("configure executor for @planner");
+    const rendered = renderTuiWorkbench(model, state, { columns: 120, rows: 80 });
+    expect(rendered).toContain("@planner queued executor_unavailable");
+    expect(rendered).toContain("agent-hub team roles executor --project-id project_1 --role planner");
+  });
+
   it("keeps wide and narrow terminal render snapshots stable", async () => {
     const runtime = createCliRuntime({ storageMode: "memory" });
     await seedTuiContext(runtime);
@@ -256,6 +382,31 @@ function testIo(output: string[], errors: string[]) {
       isTTY: false,
       columns: 120,
       rows: 80,
+      write: (chunk: string) => {
+        output.push(chunk);
+        return true;
+      }
+    },
+    stderr: {
+      write: (chunk: string) => {
+        errors.push(chunk);
+        return true;
+      }
+    }
+  };
+}
+
+function interactiveIo(
+  stdin: NodeJS.ReadableStream,
+  output: string[],
+  errors: string[]
+) {
+  return {
+    stdin,
+    stdout: {
+      isTTY: true,
+      columns: 120,
+      rows: 40,
       write: (chunk: string) => {
         output.push(chunk);
         return true;

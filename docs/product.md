@@ -56,6 +56,11 @@ and the current context delivery mode.
 The command palette (`:`) collects current-context CLI command hints for runs,
 RoleCalls, review, and memory. It is a terminal aid only; it does not add
 project or room browsing.
+TUI hardening keeps failure states local and recoverable: missing project
+registration, failed context reads, unavailable agent CLIs, reserved role
+executors, and missing linked-run evidence render concise status text plus
+equivalent CLI recovery commands instead of opening broad browsers or applying
+side effects.
 
 ## Core Concepts
 

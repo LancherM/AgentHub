@@ -394,3 +394,9 @@ memory approval and skill editing remain explicit CLI/context-store workflows.
 The command palette is renderer state in `apps/cli`; it reuses the same
 current-context read model and does not add new repositories, project browsing,
 or background workers.
+TUI hardening stays at the CLI/read-model boundary. `apps/cli` converts launch
+and read failures into renderable fallback models with recovery commands, while
+`packages/core` keeps missing linked-run evidence readable in the RoleCall
+summary. Reserved role executors are surfaced from existing task assignment
+metadata; no executor backend, database table, daemon, or desktop behavior is
+added for the TUI.

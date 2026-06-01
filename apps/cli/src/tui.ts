@@ -150,6 +150,13 @@ interface TuiLaunchContext {
   warnings: string[];
 }
 
+interface TuiFailureModelInput {
+  modelInput: TuiCurrentContextInput;
+  launchWarnings: string[];
+  message: string;
+  projectRoot: string;
+}
+
 const focusModes: TuiFocusMode[] = [
   "work",
   "graph",
@@ -194,8 +201,12 @@ export async function runTuiCommand(options: RunTuiCommandOptions): Promise<numb
       roomRef: parsed.roomRef
     });
   } catch (error) {
-    options.io.stderr.write(`error: ${errorMessage(error)}\n`);
-    return 1;
+    launch = {
+      warnings: [
+        `failed to resolve TUI launch context: ${errorMessage(error)}`,
+        "recovery: agent-hub project list"
+      ]
+    };
   }
 
   const state: TuiShellState = {
@@ -213,7 +224,7 @@ export async function runTuiCommand(options: RunTuiCommandOptions): Promise<numb
       options.io.stderr.write("error: TUI prompt submission is unavailable\n");
       return 1;
     }
-    const submission = await options.submitPrompt({
+    const submission = await safeSubmitPrompt(options.submitPrompt, {
       prompt: parsed.submitPrompt,
       projectRoot: options.projectRoot,
       projectId: launch.projectId,
@@ -231,7 +242,7 @@ export async function runTuiCommand(options: RunTuiCommandOptions): Promise<numb
       warnings: launch.warnings
     };
     state.composer = "";
-    state.statusMessage = submission.message;
+    state.statusMessage = submitStatusMessage(submission, selectedAgent);
     if (!submission.ok) {
       options.io.stderr.write(`error: ${submission.message}\n`);
     }
@@ -243,7 +254,7 @@ export async function runTuiCommand(options: RunTuiCommandOptions): Promise<numb
     }
     const runId = parsed.acceptRunId ?? parsed.rejectRunId;
     if (runId) {
-      const decision = await options.recordReviewDecision({
+      const decision = await safeRecordReviewDecision(options.recordReviewDecision, {
         runId,
         status: parsed.acceptRunId ? "accepted" : "rejected",
         reason: parsed.rejectReason
@@ -262,12 +273,13 @@ export async function runTuiCommand(options: RunTuiCommandOptions): Promise<numb
     maxIterations: parsed.maxIterations,
     hideCompletedRoleCalls: state.hideCompletedRoleCalls
   };
-  const model = await buildTuiCurrentContextModel(options.runtime, modelInput);
-  const rendered = renderTuiWorkbench(
-    mergeLaunchWarnings(model, launch.warnings),
-    state,
-    terminalSize(options.io.stdout)
-  );
+  const model = await buildRenderableTuiModel({
+    runtime: options.runtime,
+    modelInput,
+    launchWarnings: launch.warnings,
+    projectRoot: options.projectRoot
+  });
+  const rendered = renderTuiWorkbench(model, state, terminalSize(options.io.stdout));
 
   if (parsed.once || !isInteractiveTerminal(options.io)) {
     options.io.stdout.write(rendered);
@@ -480,8 +492,13 @@ async function runInteractiveTui(input: {
   const stdin = input.io.stdin ?? process.stdin;
   const stdout = input.io.stdout;
   if (!hasRawMode(stdin)) {
-    const model = await buildTuiCurrentContextModel(input.runtime, input.modelInput);
-    stdout.write(renderTuiWorkbench(mergeLaunchWarnings(model, input.launchWarnings), input.initialState, terminalSize(stdout)));
+    const model = await buildRenderableTuiModel({
+      runtime: input.runtime,
+      modelInput: input.modelInput,
+      launchWarnings: input.launchWarnings,
+      projectRoot: input.submitInput.projectRoot
+    });
+    stdout.write(renderTuiWorkbench(model, input.initialState, terminalSize(stdout)));
     return 0;
   }
 
@@ -505,15 +522,14 @@ async function runInteractiveTui(input: {
             selectedRunId: undefined,
             selectedRoleCallId: undefined
           };
-          const model = await buildTuiCurrentContextModel(input.runtime, modelInput);
+          const model = await buildRenderableTuiModel({
+            runtime: input.runtime,
+            modelInput,
+            launchWarnings: input.launchWarnings,
+            projectRoot: input.submitInput.projectRoot
+          });
           stdout.write("\x1b[2J\x1b[H");
-          stdout.write(
-            renderTuiWorkbench(
-              mergeLaunchWarnings(model, input.launchWarnings),
-              state,
-              terminalSize(stdout)
-            )
-          );
+          stdout.write(renderTuiWorkbench(model, state, terminalSize(stdout)));
         })
         .catch((error) => {
           stdout.write(`\nerror: ${errorMessage(error)}\n`);
@@ -527,14 +543,19 @@ async function runInteractiveTui(input: {
           rerender();
           return;
         }
-        const model = await buildTuiCurrentContextModel(input.runtime, modelInput);
+        const model = await buildRenderableTuiModel({
+          runtime: input.runtime,
+          modelInput,
+          launchWarnings: input.launchWarnings,
+          projectRoot: input.submitInput.projectRoot
+        });
         const runId = selectedReviewRunId(model);
         if (!runId) {
           state = { ...state, statusMessage: "No linked run is selected for review." };
           rerender();
           return;
         }
-        const decision = await input.recordReviewDecision({
+        const decision = await safeRecordReviewDecision(input.recordReviewDecision, {
           runId,
           status: key.name === "a" ? "accepted" : "rejected",
           reason: key.name === "j" ? "Rejected from TUI review shortcut." : undefined
@@ -554,7 +575,7 @@ async function runInteractiveTui(input: {
           rerender();
           return;
         }
-        const submission = await input.submitPrompt({
+        const submission = await safeSubmitPrompt(input.submitPrompt, {
           ...input.submitInput,
           prompt: state.composer,
           projectId: modelInput.projectId,
@@ -568,7 +589,7 @@ async function runInteractiveTui(input: {
         state = {
           ...state,
           composer: "",
-          statusMessage: submission.message
+          statusMessage: submitStatusMessage(submission, input.submitInput.selectedAgent)
         };
         rerender();
         return;
@@ -583,11 +604,16 @@ async function runInteractiveTui(input: {
         rerender();
         return;
       }
-      const model = await buildTuiCurrentContextModel(input.runtime, modelInput);
+      const model = await buildRenderableTuiModel({
+        runtime: input.runtime,
+        modelInput,
+        launchWarnings: input.launchWarnings,
+        projectRoot: input.submitInput.projectRoot
+      });
       const result = reduceTuiKey(
         state,
         tuiKeyFromReadlineKey(key),
-        mergeLaunchWarnings(model, input.launchWarnings)
+        model
       );
       state = result.state;
       if (result.exit) {
@@ -717,9 +743,9 @@ async function resolveTuiLaunchContext(input: {
     path.resolve(input.projectRoot)
   );
   if (!project) {
-    warnings.push(
-      `project root ${path.resolve(input.projectRoot)} is not registered; run agent-hub project add first`
-    );
+    const root = path.resolve(input.projectRoot);
+    warnings.push(`project root ${root} is not registered`);
+    warnings.push(`recovery: agent-hub project add --name <name> --root ${root}`);
     return { warnings };
   }
   if (!input.roomRef) {
@@ -733,6 +759,107 @@ async function resolveTuiLaunchContext(input: {
   return { projectId: project.id, threadId: room.id, warnings };
 }
 
+async function buildRenderableTuiModel(input: {
+  runtime: TuiCliRuntime;
+  modelInput: TuiCurrentContextInput;
+  launchWarnings: string[];
+  projectRoot: string;
+}): Promise<TuiCurrentContextModel> {
+  try {
+    const model = await buildTuiCurrentContextModel(input.runtime, input.modelInput);
+    return mergeLaunchWarnings(model, input.launchWarnings);
+  } catch (error) {
+    return buildTuiFailureModel({
+      modelInput: input.modelInput,
+      launchWarnings: input.launchWarnings,
+      message: `failed to read TUI context: ${errorMessage(error)}`,
+      projectRoot: input.projectRoot
+    });
+  }
+}
+
+function buildTuiFailureModel(input: TuiFailureModelInput): TuiCurrentContextModel {
+  const commands = recoveryCommandsForFailure(input);
+  const warnings = [
+    ...input.launchWarnings,
+    input.message,
+    ...commands.map((command) => `recovery: ${command}`)
+  ];
+  return {
+    context: {
+      projectId: input.modelInput.projectId,
+      threadId: input.modelInput.threadId,
+      selectedAgent: input.modelInput.selectedAgent,
+      contextMode: input.modelInput.contextMode ?? "runtime_injection"
+    },
+    transcript: [],
+    runs: [],
+    roleCalls: {
+      nodes: [],
+      todos: [],
+      counts: {
+        total: 0,
+        visible: 0,
+        active: 0,
+        pending: 0,
+        waiting: 0,
+        failed: 0,
+        terminal: 0
+      },
+      loop: {
+        iteration: input.modelInput.iteration ?? 0,
+        maxIterations: input.modelInput.maxIterations,
+        pendingRoleCallIds: [],
+        waitingRoleCallIds: [],
+        activeRoleCallIds: [],
+        stopReason: "terminal",
+        convergenceReason: "idle"
+      }
+    },
+    review: {
+      kind: "none",
+      title: "TUI context unavailable",
+      summary: "The current local context could not be read.",
+      evidence: { latestEvent: input.message },
+      commands
+    },
+    tasks: [],
+    memory: {
+      projectId: input.modelInput.projectId,
+      counts: { proposed: 0, approved: 0, rejected: 0 },
+      command: input.modelInput.projectId
+        ? `agent-hub memory list --project-id ${input.modelInput.projectId}`
+        : undefined,
+      approvalCommands: input.modelInput.projectId
+        ? [`agent-hub memory list --project-id ${input.modelInput.projectId}`]
+        : [],
+      approvedSource: "Unavailable while the TUI context read failed.",
+      approvalReminder: "Retry after local database access is restored."
+    },
+    skills: {
+      contextMode: input.modelInput.contextMode ?? "runtime_injection",
+      runtimeSource: "Unavailable while the TUI context read failed.",
+      selected: [],
+      available: []
+    },
+    warnings
+  };
+}
+
+function recoveryCommandsForFailure(input: TuiFailureModelInput): string[] {
+  const commands = ["agent-hub project list"];
+  if (input.modelInput.projectId) {
+    commands.push(`agent-hub rooms list --project-id ${input.modelInput.projectId}`);
+  } else {
+    commands.push(`agent-hub project add --name <name> --root ${input.projectRoot}`);
+  }
+  if (input.modelInput.threadId) {
+    commands.push(`agent-hub threads show ${input.modelInput.threadId}`);
+  }
+  commands.push("agent-hub tui --help");
+  return commands;
+}
+
 async function findRoomThread(
   runtime: TuiCliRuntime,
   projectId: string,
@@ -742,6 +869,57 @@ async function findRoomThread(
   return threads.find(
     (thread) => thread.id === roomRef || roomHandleForThread(thread) === stripHash(roomRef)
   );
+}
+
+async function safeSubmitPrompt(
+  submitPrompt: TuiPromptSubmitter,
+  input: TuiPromptSubmissionInput
+): Promise<TuiPromptSubmissionResult> {
+  try {
+    return await submitPrompt(input);
+  } catch (error) {
+    return {
+      ok: false,
+      exitCode: 1,
+      projectId: input.projectId,
+      threadId: input.threadId,
+      message: errorMessage(error)
+    };
+  }
+}
+
+async function safeRecordReviewDecision(
+  recordReviewDecision: TuiReviewDecisionRecorder,
+  input: TuiReviewDecisionInput
+): Promise<TuiReviewDecisionResult> {
+  try {
+    return await recordReviewDecision(input);
+  } catch (error) {
+    return {
+      ok: false,
+      message: errorMessage(error)
+    };
+  }
+}
+
+function submitStatusMessage(
+  submission: TuiPromptSubmissionResult,
+  selectedAgent: AgentKind
+): string {
+  if (submission.ok) {
+    return submission.message;
+  }
+  return `${submission.message}; inspect runs with agent-hub runs list; check ${agentAvailabilityCommand(selectedAgent)}.`;
+}
+
+function agentAvailabilityCommand(agent: AgentKind): string {
+  if (agent === "codex") {
+    return "codex --version";
+  }
+  if (agent === "claude-code") {
+    return "claude --version";
+  }
+  return "agent-hub tui --debug --agent fake --once";
 }
 
 function renderHeader(model: TuiCurrentContextModel): string {
@@ -924,7 +1102,7 @@ function renderTasksPanel(
       )
     ),
     "",
-    ...renderTaskOperatingDetail(selectedTask)
+    ...renderTaskOperatingDetail(model, selectedTask)
   ];
 }
 
@@ -940,10 +1118,17 @@ function renderTaskLine(
   return `${selected} ${task.id} ${task.status} ${task.title} assignments ${task.assignmentCount}${task.nextAction ? ` next ${task.nextAction}` : ""}${assignments ? ` (${assignments})` : ""}`;
 }
 
-function renderTaskOperatingDetail(task: TuiTaskSummary | undefined): string[] {
+function renderTaskOperatingDetail(
+  model: TuiCurrentContextModel,
+  task: TuiTaskSummary | undefined
+): string[] {
   if (!task) {
     return [];
   }
+  const unavailableExecutorCommands = unavailableRoleExecutorCommands(
+    model.context.projectId,
+    task
+  );
   return [
     `Selected Task ${task.id}`,
     `  goal ${task.title}`,
@@ -953,8 +1138,14 @@ function renderTaskOperatingDetail(task: TuiTaskSummary | undefined): string[] {
     ...(task.assignments.length === 0
       ? ["    none"]
       : task.assignments.map((assignment) =>
-          `    ${assignment.label} ${assignment.status}${assignment.runId ? ` ${assignment.runId}` : ""}`
+          `    ${assignment.label} ${assignment.status}${assignment.runId ? ` ${assignment.runId}` : ""}${assignment.executable ? "" : " executor_unavailable"}`
         )),
+    ...(unavailableExecutorCommands.length === 0
+      ? []
+      : [
+          "  executor_recovery:",
+          ...unavailableExecutorCommands.map((command) => `    ${command}`)
+        ]),
     "  role_todos:",
     ...(task.roleTodos.length === 0
       ? ["    none"]
@@ -964,6 +1155,18 @@ function renderTaskOperatingDetail(task: TuiTaskSummary | undefined): string[] {
       ? ["    none"]
       : task.followUps.map((item) => `    ${item}`))
   ];
+}
+
+function unavailableRoleExecutorCommands(
+  projectId: string | undefined,
+  task: TuiTaskSummary
+): string[] {
+  if (!projectId) {
+    return [];
+  }
+  return task.assignments
+    .filter((assignment) => !assignment.executable && assignment.role)
+    .map((assignment) => `agent-hub team roles executor --project-id ${projectId} --role ${assignment.role}`);
 }
 
 function renderMemoryPanel(model: TuiCurrentContextModel): string[] {
@@ -1272,6 +1475,13 @@ function commandHintForFocus(
   }
   if (state.focus === "review") {
     return model.review.commands[0] ?? "No review command is available.";
+  }
+  if (state.focus === "tasks") {
+    const task = model.tasks[boundedIndex(state.selectedTaskIndex, model.tasks.length)];
+    const command = task
+      ? unavailableRoleExecutorCommands(model.context.projectId, task)[0]
+      : undefined;
+    return command ?? "No task recovery command is available.";
   }
   const nodes = graphNodesForState(model.roleCalls.nodes, state);
   const node = nodes[boundedIndex(state.selectedRoleCallIndex, nodes.length)];
