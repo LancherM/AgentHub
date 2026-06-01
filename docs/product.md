@@ -1,6 +1,6 @@
 # Product
 
-Last audited against `origin/main` at `6780688` on 2026-06-01.
+Last audited against `origin/main` at `1bf5455` on 2026-06-01.
 
 Agent Hub is a local-first, CLI-first tool for orchestrating coding agents on a
 developer machine. It manages local projects, task briefs, context packs,
@@ -320,6 +320,10 @@ Not implemented as product behavior today:
   workbench shell.
 
 Roadmaps for future work live in `docs/local-ai-workgroup-roadmap.md`,
-`docs/interaction-optimization-roadmap.md`, `docs/tui-roadmap.md`, and the
-Adaptive Role Calls specification documents. Those files describe direction;
-this document describes the current product state.
+`docs/interaction-optimization-roadmap.md`, `docs/tui-roadmap.md`,
+`docs/tui-conversation-terminal-roadmap.md`, and the Adaptive Role Calls
+specification documents. Those files describe direction; this document
+describes the current product state. The conversation-terminal TUI roadmap is a
+planned Work-view redesign, not current product behavior: it keeps the existing
+Ink/local read-model boundary while moving Runs, Review, Graph, Tasks, and
+Memory into auxiliary tabs behind a conversation-first Work surface.

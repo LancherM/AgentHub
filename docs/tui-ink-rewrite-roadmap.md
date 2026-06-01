@@ -116,6 +116,12 @@ Current implementation status:
 - Focus, id-stable selection, pane scroll offsets, command palette, composer,
   and review-decision shortcuts exist in the Ink reducer.
 
+Next direction: `docs/tui-conversation-terminal-roadmap.md` keeps this Ink and
+callback architecture, but changes the default Work surface from a multi-pane
+dashboard into a conversation-first terminal with active run boxes. Runs,
+Review, RoleCalls, Tasks, Memory, Help, and Palette remain auxiliary views over
+the same current-context read model.
+
 ## Product Layout
 
 The first screen must prioritize operating usefulness over model completeness.

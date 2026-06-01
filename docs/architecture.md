@@ -1,6 +1,6 @@
 # Architecture
 
-Last audited against `origin/main` at `6780688` on 2026-06-01.
+Last audited against `origin/main` at `1bf5455` on 2026-06-01.
 
 Agent Hub is a CLI-first local application built from shared TypeScript
 packages. The desktop app is an Electron shell over the same local services and
@@ -454,3 +454,9 @@ boundary, and keep the ESM-only Ink code in a separate `apps/cli/src/tui-ink`
 build target. The CommonJS CLI command boundary dynamically imports the
 compiled `apps/cli/dist/tui-ink/entry.mjs` entrypoint; the renderer still does
 not access SQLite, filesystem, git, shell, or agent adapters directly.
+The next Work-view architecture plan is documented in
+`docs/tui-conversation-terminal-roadmap.md`. It extends the same core read
+model with conversation and active-run projections, then rewrites only the Ink
+Work surface around `ConversationFlow` and `ActiveRunBox` components. Auxiliary
+Runs, Review, Graph, Tasks, Memory, Help, and Palette panes continue to use
+the existing local evidence and callback boundaries.
