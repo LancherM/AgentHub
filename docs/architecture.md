@@ -51,8 +51,9 @@ Desktop renderer
 - `packages/safety` owns dangerous-command detection, diff/event safety scans,
   risk report generation, and RoleCall policy validation.
 - `apps/cli` owns command parsing, interactive shell behavior, persistent chat
-  and room command UX, output rendering, debug rendering, and CLI-only
-  persistence operations such as manual run-event recording.
+  and room command UX, the read-only TUI renderer/key handling, output
+  rendering, debug rendering, and CLI-only persistence operations such as
+  manual run-event recording.
 - `apps/desktop` owns Electron main/preload, React renderer, desktop layout,
   local UI preferences, IPC service facades, and desktop-only presentation
   state. It does not own task orchestration.
@@ -372,4 +373,6 @@ should reuse persisted transcript, task, run, RoleCall, verification, risk,
 memory, skill, and review evidence while keeping deep audit in explicit CLI or
 desktop review commands. The first shared package boundary for that work is a
 core read-model layer; it adds no persistence tables and performs no terminal
-rendering or orchestration.
+orchestration. The `agent-hub tui` command lives in `apps/cli`, renders those
+read models as a read-only terminal shell, and keeps prompt submission,
+continuation, review writes, and governance mutations out of the renderer.

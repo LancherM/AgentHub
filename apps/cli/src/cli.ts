@@ -81,6 +81,7 @@ import {
 } from "@agent-hub/task-runner";
 import { scanSensitivePaths } from "@agent-hub/safety";
 import { createSqliteRepositories } from "@agent-hub/db";
+import { runTuiCommand } from "./tui";
 import {
   InMemoryAgentProfileRepository,
   InMemoryComparisonReportRepository,
@@ -454,6 +455,18 @@ export async function main(
     });
   }
 
+  if (command === "tui") {
+    return runTuiCommand({
+      args: rest,
+      io,
+      cwd,
+      runtime: activeRuntime,
+      projectRoot: global.projectRoot ?? cwd,
+      selectedAgent: global.agentKind ?? defaultCliAgent(debug),
+      debug
+    });
+  }
+
   if (
     (command === "team" && rest[0] === "roles" && rest[1] === "list") ||
     (command === "roles" && rest[0] === "list")
@@ -583,6 +596,7 @@ export function helpText(debug = isEnvironmentDebugEnabled()): string {
     "  agent-hub [--db <path>] rooms send --project-id <project-id> --room <handle-or-thread-id> --message <text>",
     "  agent-hub [--db <path>] rooms timeline --project-id <project-id> --room <handle-or-thread-id>",
     "  agent-hub [--db <path>] chat [--thread <thread-id>|--room <handle-or-thread-id>]",
+    "  agent-hub [--db <path>] tui [--thread <thread-id>|--room <handle-or-thread-id>] [--agent codex|claude-code] [--max-iterations <n>]",
     "  agent-hub [--db <path>] team roles list --project-id <project-id>",
     "  agent-hub [--db <path>] team roles show --project-id <project-id> --role <handle>",
     `  agent-hub [--db <path>] team roles save --project-id <project-id> --handle <handle> [--display-name <name>] [--executor ${agentChoices}|human|llm_api|workflow] [--skill [scope:]id]`,
