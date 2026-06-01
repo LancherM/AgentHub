@@ -229,6 +229,14 @@ export function TuiInkApp(props: TuiInkAppProps): React.ReactElement {
       });
       return true;
     }
+    if (command === "/search") {
+      setStateNow(openSearchState({
+        ...currentState,
+        composer: "",
+        composerCursorPosition: 0
+      }));
+      return true;
+    }
     return false;
   };
 
@@ -359,12 +367,153 @@ export function TuiInkApp(props: TuiInkAppProps): React.ReactElement {
     }
   };
 
+  const handleSearchInput = (input: string, key: Key) => {
+    if (key.escape) {
+      applyKey("escape");
+      return;
+    }
+    if (key.upArrow || input === "\u001B[A") {
+      moveSearchMatch(-1);
+      return;
+    }
+    if (key.downArrow || input === "\u001B[B" || input === "\n" || input === "\r" || key.return) {
+      moveSearchMatch(1);
+      return;
+    }
+    if (key.backspace) {
+      setState((current) => ({
+        ...current,
+        searchQuery: current.searchQuery.slice(0, -1),
+        searchMatchIndex: 0
+      }));
+      return;
+    }
+    if (isPrintableInput(input, key)) {
+      setState((current) => ({
+        ...current,
+        searchQuery: `${current.searchQuery}${input}`,
+        searchMatchIndex: 0
+      }));
+    }
+  };
+
+  const moveSearchMatch = (delta: number) => {
+    setState((current) => {
+      const count = conversationSearchMatches(modelRef.current, current.searchQuery).length;
+      if (count === 0) {
+        return current;
+      }
+      return {
+        ...current,
+        searchMatchIndex: (current.searchMatchIndex + delta + count) % count
+      };
+    });
+  };
+
+  const handlePaletteInput = (input: string, key: Key) => {
+    if (key.escape) {
+      applyKey("escape");
+      return;
+    }
+    if (key.upArrow || input === "k") {
+      movePaletteSelection(-1);
+      return;
+    }
+    if (key.downArrow || input === "j") {
+      movePaletteSelection(1);
+      return;
+    }
+    if (input === "\n" || input === "\r" || key.return) {
+      executeSelectedPaletteItem();
+      return;
+    }
+    if (key.backspace) {
+      setState((current) => ({
+        ...current,
+        paletteQuery: current.paletteQuery.slice(0, -1),
+        paletteSelectedIndex: 0
+      }));
+      return;
+    }
+    if (isPrintableInput(input, key)) {
+      setState((current) => ({
+        ...current,
+        paletteQuery: `${current.paletteQuery}${input}`,
+        paletteSelectedIndex: 0
+      }));
+    }
+  };
+
+  const movePaletteSelection = (delta: number) => {
+    setState((current) => {
+      const count = filteredPaletteItems(modelRef.current, current).length;
+      if (count === 0) {
+        return current;
+      }
+      return {
+        ...current,
+        paletteSelectedIndex: (current.paletteSelectedIndex + delta + count) % count
+      };
+    });
+  };
+
+  const executeSelectedPaletteItem = () => {
+    const currentState = stateRef.current;
+    const items = filteredPaletteItems(modelRef.current, currentState);
+    const item = items[Math.min(currentState.paletteSelectedIndex, Math.max(0, items.length - 1))];
+    if (!item) {
+      setStateNow({
+        ...currentState,
+        statusMessage: "No palette command matches."
+      });
+      return;
+    }
+    if (item.kind === "focus") {
+      const nextState = reduceInkState(
+        {
+          ...currentState,
+          commandPaletteOpen: false,
+          paletteQuery: "",
+          paletteSelectedIndex: 0
+        },
+        item.focus,
+        modelRef.current
+      );
+      setStateNow({
+        ...nextState,
+        statusMessage: `Opened ${item.label}.`
+      });
+      return;
+    }
+    setStateNow({
+      ...currentState,
+      commandPaletteOpen: false,
+      paletteQuery: "",
+      paletteSelectedIndex: 0,
+      composer: item.command,
+      composerCursorPosition: item.command.length,
+      statusMessage: "Command prepared in composer."
+    });
+  };
+
   useInput(
     (input, key) => {
       const currentState = stateRef.current;
       const isBusy = busyRef.current;
       if (key.ctrl && (input === "c" || input === "C")) {
         app.exit();
+        return;
+      }
+      if (currentState.searchOpen) {
+        handleSearchInput(input, key);
+        return;
+      }
+      if (currentState.commandPaletteOpen) {
+        handlePaletteInput(input, key);
+        return;
+      }
+      if (key.ctrl && (input === "f" || input === "F")) {
+        setStateNow(openSearchState(currentState));
         return;
       }
       const suggestion = suggestionForInput(input, modelRef.current, currentState);
@@ -749,6 +898,9 @@ interface TuiInkRenderProps {
 
 function MainView(props: TuiInkRenderProps): React.ReactElement {
   const { model, state = createInitialInkState(), terminal } = props;
+  if (state.searchOpen) {
+    return h(SearchPane, { model, state });
+  }
   if (state.commandPaletteOpen) {
     return h(CommandPalette, { model, state });
   }
@@ -1519,19 +1671,45 @@ function CommandPalette({
   model: TuiCurrentContextModel;
   state: TuiInkState;
 }): React.ReactElement {
-  const run = selectedRun(model, state);
-  const primaryCommand = commandHintForFocus(model, state);
-  const roleCommand = roleListCommand(model);
+  const items = filteredPaletteItems(model, state);
+  const selectedIndex = Math.min(state.paletteSelectedIndex, Math.max(0, items.length - 1));
   return h(
     Pane,
     { title: "Command Palette" },
-    line(`focus ${state.focus}`),
-    line(primaryCommand, { color: "green" }),
-    line(""),
-    ...(roleCommand && roleCommand !== primaryCommand ? [line(roleCommand)] : []),
-    ...(run ? run.commands.map((command) => line(command)) : [line("no run selected")]),
-    ...model.review.commands.map((command) => line(command)),
-    ...model.memory.approvalCommands.map((command) => line(command))
+    line(`:${state.paletteQuery}`, { color: "green" }),
+    line(`${items.length} matches  enter execute  esc close`, { dimColor: true }),
+    ...items.slice(0, 12).map((item, index) =>
+      paletteItemLine(item, state.paletteQuery, index === selectedIndex)
+    )
+  );
+}
+
+function SearchPane({
+  model,
+  state
+}: {
+  model: TuiCurrentContextModel;
+  state: TuiInkState;
+}): React.ReactElement {
+  const matches = conversationSearchMatches(model, state.searchQuery);
+  const selectedIndex = Math.min(state.searchMatchIndex, Math.max(0, matches.length - 1));
+  const selected = matches[selectedIndex];
+  return h(
+    Pane,
+    { title: "Search" },
+    line(`/${state.searchQuery}`, { color: "green" }),
+    line(
+      state.searchQuery
+        ? `${matches.length === 0 ? 0 : selectedIndex + 1}/${matches.length} matches  up/down jump  esc close`
+        : "type to search conversation text",
+      { dimColor: true }
+    ),
+    ...(selected
+      ? [
+          highlightedLine(selected.text, state.searchQuery),
+          line(`source ${selected.source}`, { dimColor: true })
+        ]
+      : [])
   );
 }
 
@@ -1543,6 +1721,139 @@ function HelpPane(): React.ReactElement {
     line(": commands   /team roles   a accept review   R reject in Review"),
     line("enter submit   esc clear   arrows/home/end edit composer   ctrl+u clear   ? help")
   );
+}
+
+type PaletteItem =
+  | { kind: "focus"; label: string; focus: TuiInkKey }
+  | { kind: "command"; label: string; command: string };
+
+function paletteItems(model: TuiCurrentContextModel, state: TuiInkState): PaletteItem[] {
+  const run = selectedRun(model, state);
+  const roleCommand = roleListCommand(model);
+  const commands = [
+    commandHintForFocus(model, state),
+    roleCommand,
+    ...(run?.commands ?? []),
+    ...model.review.commands,
+    ...model.memory.approvalCommands
+  ].filter((value, index, values): value is string =>
+    Boolean(value) && values.indexOf(value) === index
+  );
+  return [
+    { kind: "focus", label: "Open Work", focus: "work" },
+    { kind: "focus", label: "Open Runs", focus: "runs" },
+    { kind: "focus", label: "Open Review", focus: "review" },
+    { kind: "focus", label: "Open Team", focus: "team" },
+    { kind: "focus", label: "Open Memory", focus: "memory" },
+    ...commands.map((command) => ({ kind: "command" as const, label: command, command }))
+  ];
+}
+
+function filteredPaletteItems(model: TuiCurrentContextModel, state: TuiInkState): PaletteItem[] {
+  const query = state.paletteQuery.trim();
+  const items = paletteItems(model, state);
+  if (!query) {
+    return items;
+  }
+  return items
+    .map((item) => ({
+      item,
+      score: fuzzyScore(item.label, query)
+    }))
+    .filter((value) => value.score >= 0)
+    .sort((left, right) => left.score - right.score)
+    .map((value) => value.item);
+}
+
+function paletteItemLine(
+  item: PaletteItem,
+  query: string,
+  selected: boolean
+): React.ReactElement {
+  return h(
+    Text,
+    { wrap: "truncate", inverse: selected },
+    selected ? "> " : "  ",
+    ...highlightSegments(item.label, query, selected ? "black" : "cyan")
+  );
+}
+
+interface SearchMatch {
+  source: string;
+  text: string;
+}
+
+function conversationSearchMatches(
+  model: TuiCurrentContextModel,
+  query: string
+): SearchMatch[] {
+  const normalizedQuery = query.trim().toLowerCase();
+  if (!normalizedQuery) {
+    return [];
+  }
+  return conversationSearchDocuments(model.conversation)
+    .filter((item) => item.text.toLowerCase().includes(normalizedQuery));
+}
+
+function conversationSearchDocuments(entries: TuiConversationEntry[]): SearchMatch[] {
+  return entries.flatMap((entry) => {
+    const source = entry.runId ?? entry.id;
+    const values = [
+      conversationEntryHandle(entry),
+      entry.content,
+      ...(entry.outputLines ?? []),
+      entry.verificationLine,
+      entry.riskLine,
+      ...(entry.inlineDiff?.lines.map((lineItem) => lineItem.text) ?? []),
+      ...(entry.suggestions?.map((suggestion) => suggestion.label) ?? [])
+    ].filter((value): value is string => Boolean(value));
+    return values.map((text) => ({ source, text }));
+  });
+}
+
+function highlightedLine(value: string, query: string): React.ReactElement {
+  return h(Text, { wrap: "truncate" }, ...highlightSegments(value, query, "black"));
+}
+
+function highlightSegments(value: string, query: string, highlightColor: string): React.ReactNode[] {
+  const normalizedQuery = query.trim().toLowerCase();
+  if (!normalizedQuery) {
+    return [value];
+  }
+  const segments: React.ReactNode[] = [];
+  const lowerValue = value.toLowerCase();
+  let index = 0;
+  let matchIndex = lowerValue.indexOf(normalizedQuery);
+  while (matchIndex >= 0) {
+    if (matchIndex > index) {
+      segments.push(value.slice(index, matchIndex));
+    }
+    segments.push(
+      h(Text, { key: `match-${matchIndex}`, backgroundColor: "yellow", color: highlightColor }, value.slice(matchIndex, matchIndex + normalizedQuery.length))
+    );
+    index = matchIndex + normalizedQuery.length;
+    matchIndex = lowerValue.indexOf(normalizedQuery, index);
+  }
+  if (index < value.length) {
+    segments.push(value.slice(index));
+  }
+  return segments;
+}
+
+function fuzzyScore(value: string, query: string): number {
+  const haystack = value.toLowerCase();
+  const needle = query.toLowerCase();
+  let score = 0;
+  let position = -1;
+  for (const character of needle) {
+    const nextPosition = haystack.indexOf(character, position + 1);
+    if (nextPosition < 0) {
+      return -1;
+    }
+    score += nextPosition - position;
+    position = nextPosition;
+  }
+  return score;
 }
 
 function Composer({ model, state }: { model: TuiCurrentContextModel; state: TuiInkState }): React.ReactElement {
@@ -1743,6 +2054,19 @@ function suggestionForInput(
   }
   return visibleConversationSuggestions(model, state)
     .find((suggestion) => suggestion.key === input);
+}
+
+function openSearchState(state: TuiInkState): TuiInkState {
+  return {
+    ...state,
+    searchOpen: true,
+    searchQuery: "",
+    searchMatchIndex: 0,
+    commandPaletteOpen: false,
+    paletteQuery: "",
+    paletteSelectedIndex: 0,
+    statusMessage: "Search opened."
+  };
 }
 
 function keyToAction(input: string, key: Key, focus: string): TuiInkKey | undefined {

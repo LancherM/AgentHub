@@ -491,6 +491,90 @@ describe("Ink TUI renderer", () => {
     instance.unmount();
   });
 
+  it("renders search matches without consuming composer text", async () => {
+    const instance = render(
+      React.createElement(TuiInkApp, {
+        model: {
+          ...baseModel,
+          conversation: [
+            {
+              id: "message:search",
+              type: "user_message",
+              timestamp: "2026-05-29T12:00:00.000Z",
+              author: "user",
+              content: "Inspect src/auth.ts before continuing."
+            }
+          ]
+        },
+        state: createInitialInkState("draft"),
+        terminal: { columns: 120, rows: 40 },
+        interactive: true
+      })
+    );
+
+    instance.stdin.write("\u0006");
+    await waitForFrame(instance, "Search opened.");
+    for (const character of "auth") {
+      instance.stdin.write(character);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+    await waitForFrame(instance, "1/1 matches");
+    expect(instance.lastFrame()).toContain("Inspect src/auth.ts before continuing.");
+
+    instance.stdin.write("\u001b");
+    await waitForFrame(instance, "Search closed.");
+    expect(instance.lastFrame()).toContain("> draft");
+    instance.unmount();
+  });
+
+  it("opens search from the slash command and restores the prompt surface on escape", async () => {
+    const instance = render(
+      React.createElement(TuiInkApp, {
+        model: baseModel,
+        state: createInitialInkState(),
+        terminal: { columns: 120, rows: 40 },
+        interactive: true
+      })
+    );
+
+    for (const character of "/search") {
+      instance.stdin.write(character);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+    instance.stdin.write("\r");
+    await waitForFrame(instance, "Search opened.");
+    instance.stdin.write("\u001b");
+    await waitForFrame(instance, "Search closed.");
+
+    expect(instance.lastFrame()).toContain("> @codex prompt");
+    instance.unmount();
+  });
+
+  it("filters the command palette and executes safe focus commands", async () => {
+    const instance = render(
+      React.createElement(TuiInkApp, {
+        model: baseModel,
+        state: createInitialInkState(),
+        terminal: { columns: 120, rows: 40 },
+        interactive: true
+      })
+    );
+
+    instance.stdin.write(":");
+    await waitForFrame(instance, "Command Palette");
+    for (const character of "review") {
+      instance.stdin.write(character);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+    await waitForFrame(instance, ":review");
+    expect(instance.lastFrame()).toContain("Open Review");
+
+    instance.stdin.write("\r");
+    await waitForFrame(instance, "Opened Open Review.");
+    expect(instance.lastFrame()).toContain("Selected Run");
+    instance.unmount();
+  });
+
   it("keeps full ids and governed commands inside the command palette", () => {
     const output = renderToString(
       React.createElement(TuiInkFrame, {
@@ -502,6 +586,7 @@ describe("Ink TUI renderer", () => {
     );
 
     expect(output).toContain("Command Palette");
+    expect(output).toContain("Open Work");
     expect(output).toContain("agent-hub team roles list --project-id project_1");
     expect(output).toContain("agent-hub runs show run_27984312-fc9a-46bf-9ccf-c06997187091");
     expect(output).toContain("agent-hub memory list --project-id project_1");

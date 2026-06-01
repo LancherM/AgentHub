@@ -39,9 +39,14 @@ export interface TuiInkState {
   conversationScrollOffset: number;
   reviewDiffExpanded: boolean;
   reviewCompareMode: boolean;
+  searchOpen: boolean;
+  searchQuery: string;
+  searchMatchIndex: number;
   composer: string;
   composerCursorPosition: number;
   commandPaletteOpen: boolean;
+  paletteQuery: string;
+  paletteSelectedIndex: number;
   statusMessage?: string;
 }
 
@@ -105,9 +110,14 @@ export function createInitialInkState(composer = ""): TuiInkState {
     conversationScrollOffset: 0,
     reviewDiffExpanded: false,
     reviewCompareMode: false,
+    searchOpen: false,
+    searchQuery: "",
+    searchMatchIndex: 0,
     composer,
     composerCursorPosition: composer.length,
-    commandPaletteOpen: false
+    commandPaletteOpen: false,
+    paletteQuery: "",
+    paletteSelectedIndex: 0
   };
 }
 
@@ -133,10 +143,13 @@ export function reduceInkState(
   if (key === "work" || key === "graph" || key === "runs" || key === "tasks") {
     next.focus = key;
     next.commandPaletteOpen = false;
+    next.searchOpen = false;
     return next;
   }
   if (key === "team") {
     next.focus = "team";
+    next.commandPaletteOpen = false;
+    next.searchOpen = false;
     next.statusMessage = "Team roles shown.";
     return next;
   }
@@ -149,10 +162,14 @@ export function reduceInkState(
     }
     next.focus = "review";
     next.reviewCompareMode = false;
+    next.commandPaletteOpen = false;
+    next.searchOpen = false;
     return next;
   }
   if (key === "memory") {
     next.focus = "memory";
+    next.commandPaletteOpen = false;
+    next.searchOpen = false;
     return next;
   }
   if (key === "skills") {
@@ -195,9 +212,26 @@ export function reduceInkState(
   }
   if (key === "palette") {
     next.commandPaletteOpen = !next.commandPaletteOpen;
+    next.searchOpen = false;
+    next.paletteQuery = "";
+    next.paletteSelectedIndex = 0;
     return next;
   }
   if (key === "escape") {
+    if (next.searchOpen) {
+      next.searchOpen = false;
+      next.searchQuery = "";
+      next.searchMatchIndex = 0;
+      next.statusMessage = "Search closed.";
+      return next;
+    }
+    if (next.commandPaletteOpen) {
+      next.commandPaletteOpen = false;
+      next.paletteQuery = "";
+      next.paletteSelectedIndex = 0;
+      next.statusMessage = "Command palette closed.";
+      return next;
+    }
     if (next.focus === "review" && next.reviewDiffExpanded) {
       next.reviewDiffExpanded = false;
       next.statusMessage = "Review diff collapsed.";

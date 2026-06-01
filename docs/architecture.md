@@ -473,6 +473,12 @@ a stat summary. The Ink renderer can group dense adjacent pending-review
 entries, expand/collapse Review-pane diff lines, and show a read-only compare
 summary for tasks with multiple runs, but it does not generate comparison
 reports, apply patches, or mutate review decisions.
+Search and command-palette input are local Ink state. Conversation search reads
+only the rendered read-model text already present in memory, highlights matches,
+and never mutates composer contents. Palette filtering is fuzzy over safe focus
+items and existing CLI command hints; `Enter` either changes TUI focus or copies
+a command hint into the composer for explicit user submission. It never invokes
+shell commands directly.
 The direct CLI entrypoint exits after command completion, so one-shot TUI smoke
 renders do not leave local SQLite helper processes holding the terminal open.
 For interactive launches, the CLI default IO includes `process.stdin`, and the

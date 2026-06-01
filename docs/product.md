@@ -114,6 +114,12 @@ reviews collapse into a single Work line with a `[V]iew` hint. In Review,
 `Enter` or `Space` expands the selected run diff and `Esc` collapses it; `s`
 shows a read-only split compare summary only when the selected task has at
 least two runs.
+Search is local to the TUI renderer. `Ctrl+F` or `/search` opens a search
+overlay over rendered conversation text, shows match count/current match, and
+uses Up/Down to move between matches; `Esc` closes it without corrupting the
+composer. The command palette accepts input, fuzzy filters safe focus actions
+and existing local CLI command hints, highlights matches, and uses `Enter` to
+either switch focus or prepare the selected command in the composer.
 The default tab bar matches the conversation-terminal scheme: Work, Runs, View,
 Graph, Tasks, Memory, Team, and Help stay one key away instead of being
 embedded into the first screen.
