@@ -3,6 +3,7 @@ import { createCliRuntime } from "@agent-hub/cli";
 import {
   buildTuiCurrentContextModel,
   conservativePermissionSet,
+  type JsonObject,
   type RoleCall,
   type WorkgroupTaskAssignmentMetadata
 } from "@agent-hub/core";
@@ -19,6 +20,8 @@ describe("TUI current-context read model", () => {
     });
 
     expect(model.context.projectId).toBe("missing_project");
+    expect(model.conversation).toEqual([]);
+    expect(model.activeRuns).toEqual([]);
     expect(model.transcript).toEqual([]);
     expect(model.runs).toEqual([]);
     expect(model.roleCalls.counts.total).toBe(0);
@@ -59,6 +62,25 @@ describe("TUI current-context read model", () => {
       "message_2",
       "message_3"
     ]);
+    expect(model.activeRuns.map((run) => run.runId)).toEqual(["run_active"]);
+    expect(model.activeRuns.find((run) => run.runId === "run_active")).toMatchObject({
+      title: "@fake run_active ● running",
+      outputLines: ["adapter started", "verification started"]
+    });
+    expect(model.conversation.map((entry) => entry.id)).toEqual([
+      "message:message_1",
+      "delegation:call_deferred",
+      "delegation:call_failed",
+      "delegation:call_running",
+      "delegation:call_succeeded",
+      "delegation:call_waiting_approval",
+      "delegation:call_waiting_context",
+      "review-pending:run_done"
+    ]);
+    expect(model.conversation.find((entry) => entry.id === "review-pending:run_done")).toMatchObject({
+      type: "review_pending",
+      content: "awaiting review — 切换到 [V]iew 查看详情"
+    });
     expect(model.runs.map((run) => run.id)).toEqual(["run_active", "run_done"]);
     expect(model.runs[0]).toMatchObject({
       id: "run_active",
@@ -188,6 +210,95 @@ describe("TUI current-context read model", () => {
         diff: { changedFiles: 1, insertions: 4, deletions: 1 }
       }
     });
+    expect(model.activeRuns.map((run) => run.runId)).toEqual(["run_active"]);
+    expect(model.conversation.find((entry) => entry.id === "run:run_failed")).toMatchObject({
+      type: "agent_failed",
+      outputLines: ["tests failed"]
+    });
+    expect(model.conversation.map((entry) => entry.id)).toContain("run:run_completed");
+    expect(model.conversation.map((entry) => entry.id)).toContain("review-pending:run_no_change");
+    expect(model.conversation.find((entry) => entry.id === "review-pending:run_no_change")).toMatchObject({
+      type: "review_pending",
+      content: "awaiting review — 切换到 [V]iew 查看详情"
+    });
+    expect(model.conversation.map((entry) => entry.id)).not.toContain("review:run_completed:accepted");
+  });
+
+  it("fills active run boxes from persisted live runtime events", async () => {
+    const runtime = createCliRuntime({ storageMode: "memory" });
+    await runtime.projectRepository.create({
+      id: "project_live",
+      name: "Live Events",
+      rootPath: "/tmp/live-events",
+      createdAt: now,
+      updatedAt: now
+    });
+    await runtime.conversationThreadRepository.create({
+      id: "thread_live",
+      projectId: "project_live",
+      title: "Live Events",
+      createdAt: now,
+      updatedAt: now
+    });
+    await runtime.taskRepository.create({
+      id: "task_live",
+      projectId: "project_live",
+      title: "Watch a live run",
+      metadata: { threadId: "thread_live" },
+      status: "running",
+      createdAt: now,
+      updatedAt: now
+    });
+    await runtime.taskRunRepository.create({
+      id: "run_live",
+      taskId: "task_live",
+      agentKind: "codex",
+      status: "running",
+      startedAt: now,
+      createdAt: now,
+      updatedAt: now
+    });
+    await runtime.runEventRepository.createMany([
+      event("event_context", "run_live", 0, "status", "Context compiled.", {
+        phase: "context",
+        desktopEventType: "context_compiled"
+      }),
+      event("event_started", "run_live", 1, "status", "TaskRunner execution started.", {
+        phase: "lifecycle",
+        desktopEventType: "run_started"
+      }),
+      event("event_worktree", "run_live", 2, "status", "Isolated worktree is ready.", {
+        phase: "agent",
+        desktopEventType: "agent_step"
+      }),
+      event("event_preflight", "run_live", 3, "status", "Codex preflight passed"),
+      event("event_starting", "run_live", 4, "status", "starting Codex"),
+      event("event_json_stdout", "run_live", 5, "stdout", "{\"type\":\"session.created\"}\n"),
+      event("event_session", "run_live", 6, "status", "Codex session.created", {
+        adapterEvent: { type: "session.created" }
+      }),
+      event("event_stderr", "run_live", 7, "stderr", "waiting for network\n")
+    ]);
+
+    const model = await buildTuiCurrentContextModel(runtime, {
+      projectId: "project_live",
+      threadId: "thread_live"
+    });
+
+    expect(model.activeRuns).toEqual([
+      expect.objectContaining({
+        runId: "run_live",
+        outputLines: [
+          "TaskRunner execution started.",
+          "Isolated worktree is ready.",
+          "Codex preflight passed",
+          "starting Codex",
+          "Codex session.created",
+          "stderr: waiting for network"
+        ]
+      })
+    ]);
+    expect(model.activeRuns[0]?.outputLines.join("\n")).not.toContain("{\"type\"");
   });
 
   it("reports bounded loop stop reasons for terminal, pending, waiting, blocking, and limits", async () => {
@@ -537,7 +648,8 @@ function event(
   taskRunId: string,
   sequence: number,
   type: "stdout" | "stderr" | "message" | "status" | "error" | "exit",
-  messageText: string
+  messageText: string,
+  metadata: JsonObject = {}
 ) {
   return {
     id,
@@ -545,7 +657,7 @@ function event(
     sequence,
     type,
     message: messageText,
-    metadata: {},
+    metadata,
     createdAt: now
   };
 }
@@ -679,6 +791,17 @@ async function seedRunStates(runtime: ReturnType<typeof createCliRuntime>) {
       stat: { filesChanged: 1, insertions: 4, deletions: 1 }
     },
     createdAt: now
+  });
+  await runtime.runArtifactRepository.create({
+    id: "review_completed",
+    taskRunId: "run_completed",
+    kind: "review_decision",
+    content: "Accepted for record. No merge was performed.",
+    metadata: {
+      reviewStatus: "accepted",
+      acceptedAt: "2026-05-29T12:01:30.000Z"
+    },
+    createdAt: "2026-05-29T12:01:30.000Z"
   });
 }
 

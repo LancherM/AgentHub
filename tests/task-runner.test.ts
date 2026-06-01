@@ -341,6 +341,66 @@ describe("task runner", () => {
     expect(observed.at(-1)?.metadata?.desktopEventType).toBe("run_completed");
   });
 
+  it("persists live run events before the run completes", async () => {
+    const projectRoot = await createTestDirectory("agent-hub-project");
+    const runRoot = await createTestDirectory("agent-hub-runs");
+    const runEventRepository = new InMemoryRunEventRepository();
+    const taskRunRepository = new InMemoryTaskRunRepository();
+    const release = deferred();
+    const runner = new TaskRunner({
+      taskRunRepository,
+      runEventRepository,
+      defaultRunRoot: runRoot,
+      workspaceManager: new TestWorkspaceManager(runRoot),
+      diffCollector: new StaticDiffCollector(),
+      verificationRunner: new VerificationRunner(new MockShellExecutor()),
+      agentRegistry: new DefaultAgentRegistry([
+        new BlockingFakeAgentAdapter(release.promise)
+      ]),
+      idGenerator: new SequenceIdGenerator(),
+      clock: new FixedClock("2026-01-01T00:00:00.000Z")
+    });
+
+    const running = runner.run({
+      projectRoot,
+      rawPrompt: "@fake stream persisted events"
+    });
+    const inProgressEvents = await waitForPersistedRunEvent(
+      runEventRepository,
+      "run_0002",
+      (events) => events.some((event) => event.message === "blocking adapter entered")
+    );
+
+    expect(inProgressEvents).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          sequence: 0,
+          metadata: expect.objectContaining({ desktopEventType: "context_compiled" })
+        }),
+        expect.objectContaining({
+          metadata: expect.objectContaining({ desktopEventType: "run_started" })
+        }),
+        expect.objectContaining({ message: "blocking adapter entered" })
+      ])
+    );
+    await expect(taskRunRepository.get("run_0002")).resolves.toMatchObject({
+      status: "running"
+    });
+
+    release.resolve();
+    const result = await running;
+
+    expect(result.status).toBe("succeeded");
+    await expect(runEventRepository.listByRunId(result.run.id)).resolves.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ message: "blocking adapter released\n" }),
+        expect.objectContaining({
+          metadata: expect.objectContaining({ desktopEventType: "run_completed" })
+        })
+      ])
+    );
+  });
+
   it("backfills missing persisted run events by sequence without duplicating later events", async () => {
     const runEventRepository = new InMemoryRunEventRepository();
     let persistedEventId = 0;
@@ -1409,7 +1469,7 @@ describe("task runner", () => {
       workspaceManager: new TestWorkspaceManager(runRoot),
       diffCollector: new StaticDiffCollector(),
       verificationRunner: new VerificationRunner(new MockShellExecutor()),
-      runEventRepository: new ThrowingNthRunEventRepository(1, "event store down"),
+      runEventRepository: new ThrowingListRunEventRepository(1, "event store down"),
       idGenerator: new SequenceIdGenerator(),
       clock: new FixedClock("2026-01-01T00:00:00.000Z")
     });
@@ -1475,7 +1535,10 @@ describe("task runner", () => {
       workspaceManager: new TestWorkspaceManager(runRoot),
       diffCollector: new StaticDiffCollector(),
       verificationRunner: new VerificationRunner(new MockShellExecutor()),
-      runEventRepository: new ThrowingNthRunEventRepository(2, "final event store down"),
+      runEventRepository: new ThrowingRunEventRepositoryForDesktopEvent(
+        "run_completed",
+        "final event store down"
+      ),
       idGenerator: new SequenceIdGenerator(),
       clock: new FixedClock("2026-01-01T00:00:00.000Z")
     });
@@ -1810,6 +1873,54 @@ class StaticDiffCollector implements DiffCollectorService {
   }
 }
 
+class BlockingFakeAgentAdapter {
+  readonly kind = "fake" as const;
+  readonly displayName = "Blocking Fake";
+
+  constructor(private readonly release: Promise<void>) {}
+
+  async detect(): Promise<{ available: true; version: string }> {
+    return { available: true, version: "blocking" };
+  }
+
+  async *run(): AsyncIterable<AgentRunEvent> {
+    yield { type: "status", message: "blocking adapter entered" };
+    await this.release;
+    yield { type: "stdout", message: "blocking adapter released\n" };
+    yield { type: "exit", message: "blocking fake completed", exitCode: 0 };
+  }
+}
+
+function deferred(): {
+  promise: Promise<void>;
+  resolve: () => void;
+  reject: (error: unknown) => void;
+} {
+  let resolve!: () => void;
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<void>((promiseResolve, promiseReject) => {
+    resolve = promiseResolve;
+    reject = promiseReject;
+  });
+  return { promise, resolve, reject };
+}
+
+async function waitForPersistedRunEvent(
+  repository: InMemoryRunEventRepository,
+  runId: string,
+  predicate: (events: RunEvent[]) => boolean
+): Promise<RunEvent[]> {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < 1_000) {
+    const events = await repository.listByRunId(runId);
+    if (predicate(events)) {
+      return events;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error(`timed out waiting for persisted run event on ${runId}`);
+}
+
 class ContinuationDiffCollector extends StaticDiffCollector {
   constructor(
     private readonly parentWorktree: string,
@@ -1907,19 +2018,37 @@ class ThrowingNthRunMetadataRepository extends InMemoryRunMetadataRepository {
   }
 }
 
-class ThrowingNthRunEventRepository extends InMemoryRunEventRepository {
-  private createManyCount = 0;
+class ThrowingListRunEventRepository extends InMemoryRunEventRepository {
+  private listCount = 0;
 
   constructor(
-    private readonly throwOnCreateMany: number,
+    private readonly throwOnList: number,
+    private readonly message: string
+  ) {
+    super();
+  }
+
+  async listByRunId(runId: string): Promise<RunEvent[]> {
+    this.listCount += 1;
+    if (this.listCount === this.throwOnList) {
+      throw new Error(this.message);
+    }
+    return super.listByRunId(runId);
+  }
+}
+
+class ThrowingRunEventRepositoryForDesktopEvent extends InMemoryRunEventRepository {
+  constructor(
+    private readonly desktopEventType: string,
     private readonly message: string
   ) {
     super();
   }
 
   async createMany(events: RunEvent[]): Promise<RunEvent[]> {
-    this.createManyCount += 1;
-    if (this.createManyCount === this.throwOnCreateMany) {
+    if (
+      events.some((event) => event.metadata?.desktopEventType === this.desktopEventType)
+    ) {
       throw new Error(this.message);
     }
     return super.createMany(events);

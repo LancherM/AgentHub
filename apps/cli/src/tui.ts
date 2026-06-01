@@ -94,6 +94,7 @@ export interface TuiShellState {
   selectedRoleCallId?: string;
   selectedTaskIndex: number;
   selectedTaskId?: string;
+  selectedActiveRunIndex: number;
   hideCompletedRoleCalls: boolean;
   collapsedRoleCallIds: string[];
   scrollOffsets: {
@@ -102,6 +103,7 @@ export interface TuiShellState {
     tasks: number;
     transcript: number;
   };
+  conversationScrollOffset: number;
   composer: string;
   commandPaletteOpen: boolean;
   statusMessage?: string;
@@ -363,6 +365,7 @@ export function createInitialTuiShellState(composer = ""): TuiShellState {
     selectedRunIndex: 0,
     selectedRoleCallIndex: 0,
     selectedTaskIndex: 0,
+    selectedActiveRunIndex: 0,
     hideCompletedRoleCalls: false,
     collapsedRoleCallIds: [],
     scrollOffsets: {
@@ -371,6 +374,7 @@ export function createInitialTuiShellState(composer = ""): TuiShellState {
       tasks: 0,
       transcript: 0
     },
+    conversationScrollOffset: 0,
     composer,
     commandPaletteOpen: false
   };
@@ -601,6 +605,8 @@ function buildTuiFailureModel(input: TuiFailureModelInput): TuiCurrentContextMod
       selectedAgent: input.modelInput.selectedAgent,
       contextMode: input.modelInput.contextMode ?? "runtime_injection"
     },
+    conversation: [],
+    activeRuns: [],
     transcript: [],
     runs: [],
     roleCalls: {

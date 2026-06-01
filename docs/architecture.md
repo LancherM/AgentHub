@@ -1,6 +1,6 @@
 # Architecture
 
-Last audited against `origin/main` at `6780688` on 2026-06-01.
+Last audited against `origin/main` at `1bf5455` on 2026-06-01.
 
 Agent Hub is a CLI-first local application built from shared TypeScript
 packages. The desktop app is an Electron shell over the same local services and
@@ -73,7 +73,7 @@ core sequence:
 4. Create an isolated git worktree under the configured Agent Hub worktree base.
 5. Materialize generated runtime files inside the worktree.
 6. Run the adapter from the worktree cwd with runtime-injected context.
-7. Persist ordered run events and progress events.
+7. Persist ordered run events and progress events as they are produced.
 8. Run structured verification commands in the worktree.
 9. Collect diff metadata and a bounded persisted patch artifact.
 10. Generate and persist a safety/risk report.
@@ -87,6 +87,10 @@ After a task-run row exists, finalization is defensive. Diff, verification,
 risk, artifact, metadata, memory-proposal, or cleanup failures become persisted
 diagnostic events and warnings where possible. Failed finalization returns the
 task to `open` and keeps partial evidence inspectable.
+Live event persistence is best-effort during adapter execution so CLI TUI
+polling can render current progress. Finalization still backfills any missing
+event sequences before cleanup and records persistence failures as warnings or
+diagnostic events according to the existing failure boundary.
 
 ## Context Delivery
 
@@ -373,10 +377,13 @@ should reuse persisted transcript, task, run, RoleCall, verification, risk,
 memory, skill, and review evidence while keeping deep audit in explicit CLI or
 desktop review commands. The first shared package boundary for that work is a
 core read-model layer; it adds no persistence tables and performs no terminal
-orchestration. The `agent-hub tui` command lives in `apps/cli`, renders those
-read models as a terminal shell, and delegates composer submission back to the
-existing CLI chat turn path. Continuation, review writes, and governance
-mutations remain outside the TUI renderer. Runs and Tasks focus modes are still
+orchestration. That read model now includes Work-specific `conversation` and
+`activeRuns` projections in addition to the existing transcript, run, RoleCall,
+review, task, team, memory, and skill summaries. The `agent-hub tui` command
+lives in `apps/cli`, renders those read models as a terminal shell, and
+delegates composer submission back to the existing CLI chat turn path.
+Continuation and governance mutations remain outside the TUI renderer. Runs
+and Tasks focus modes are still
 read-model projections over existing task, run, RoleCall, RoleTodo,
 verification, risk, metadata, and artifact repositories; they do not introduce
 new persistence or raw log/diff rendering.
@@ -404,9 +411,20 @@ summary. Reserved role executors are surfaced from existing task assignment
 metadata; no executor backend, database table, daemon, or desktop behavior is
 added for the TUI.
 Terminal polish is also contained in the CLI renderer. It compacts identifiers,
-groups Work-view runs and review evidence ahead of empty graph state on narrow
-terminals, and uses Ink components for terminal layout instead of hand-wrapped
-string panels.
+renders the Work view as a conversation flow plus bounded active-run boxes,
+moves the shortcut-labelled Work/Runs/View/Graph/Tasks/Memory/Help tabs below
+the composer, and uses Ink components for terminal layout instead of
+hand-wrapped string panels.
+Active-run boxes cover running runs only. They use a fixed eight-line shape:
+title border, five output/progress lines, cursor indicator, and bottom border.
+They prefer structured assistant output, then fall back to recent lifecycle,
+adapter, stdout, and stderr events while filtering raw JSON protocol frames.
+Verification, risk, diff, and review evidence stay out of active boxes.
+Terminal pending-review runs fold into the conversation projection as a single
+awaiting-review line pointing to the View pane, while completed or failed runs
+with a recorded review decision render their agent-facing output plus
+verification and risk summary lines. The Work view remains prompt-first, and
+printable keys do not trigger audit mutations.
 The direct CLI entrypoint exits after command completion, so one-shot TUI smoke
 renders do not leave local SQLite helper processes holding the terminal open.
 For interactive launches, the CLI default IO includes `process.stdin`, and the
@@ -415,16 +433,18 @@ test IO object omits stdin. This keeps `agent-hub tui` interactive in a real
 terminal while preserving deterministic `--once` and non-TTY smoke renders.
 Composer editing is handled in the Ink component state before shortcut
 dispatch: printable keys update the composer, `/team` clears the composer and
-switches to the Team view, `Enter` submits other non-empty composer text, `Esc`
-clears composer text, and `Tab` remains a focus-navigation key even while text
-is present. The status bar switches to composer-specific hints while text is
-present. This keeps role/review shortcuts from stealing normal prompt text
-without trapping focus inside the composer.
+switches to the Team view, `Enter` submits other non-empty composer text,
+empty-composer `Enter` is a no-op, `Esc` clears composer text or returns
+auxiliary panes to Work, and `Tab` remains a focus-navigation key even while
+text is present. This keeps role/review shortcuts from stealing normal prompt
+text without trapping focus inside the composer.
 Interactive TUI prompt submission reuses the CLI chat/task-runner path with a
 buffered CLI IO adapter. The run still persists messages, run cards, run
 events, diffs, risks, and review evidence through the shared repositories, but
 agent stdout and debug text do not write directly to the Ink terminal surface;
-the TUI refreshes from the persisted read model instead.
+the TUI refreshes from the persisted read model instead. Because TaskRunner now
+persists emitted run events before final completion, the refresh loop can show
+active adapter progress without adding a separate live-log channel.
 The Ink app never reads SQLite, git, shell, or filesystem directly. It receives
 `loadModel`, `submitPrompt`, and `recordReviewDecision` callbacks from the CLI
 boundary, wraps interactive submit/review callbacks in bounded UI timeouts, and
@@ -434,9 +454,11 @@ does not add an event daemon, remote worker, or incremental orchestration path.
 Busy submit/review state remains local Ink state too: the renderer keeps
 keyboard navigation and composer editing active, but gates additional submit or
 review-decision writes until the in-flight callback finishes. Scrollable
-transcript state and terminal-height list windows remain local Ink state, while
-selected runs, tasks, and RoleCalls continue to resolve through the existing
-read-model summaries.
+conversation state is line-based and re-anchors to the bottom when new
+conversation or active-run output appears. Active-run selection and
+terminal-height list windows remain local Ink state, while selected runs,
+tasks, and RoleCalls continue to resolve through the existing read-model
+summaries.
 The command hint helper falls back from an absent selected RoleCall to
 `agent-hub team roles list --project-id <project-id>`, the command palette
 includes the same role-list command beside run, review, and memory commands, and
@@ -454,3 +476,9 @@ boundary, and keep the ESM-only Ink code in a separate `apps/cli/src/tui-ink`
 build target. The CommonJS CLI command boundary dynamically imports the
 compiled `apps/cli/dist/tui-ink/entry.mjs` entrypoint; the renderer still does
 not access SQLite, filesystem, git, shell, or agent adapters directly.
+The Work-view conversation-terminal architecture is documented in
+`docs/tui-conversation-terminal-roadmap.md`. It extends the same core read
+model with conversation and active-run projections, then keeps the Ink Work
+surface scoped to `ConversationFlow` and `ActiveRunBox` components. Auxiliary
+Runs, Review, Graph, Tasks, Memory, Help, Palette, and the slash-command Team
+pane continue to use the existing local evidence and callback boundaries.

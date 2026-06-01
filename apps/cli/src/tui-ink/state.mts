@@ -1,4 +1,5 @@
 import type {
+  TuiConversationEntry,
   TuiCurrentContextModel,
   TuiRoleCallNodeSummary,
   TuiRunSummary,
@@ -6,7 +7,7 @@ import type {
 } from "@agent-hub/core";
 
 const defaultListWindowSize = 8;
-const defaultTranscriptWindowSize = 5;
+const defaultConversationWindowSize = 8;
 
 export type TuiInkFocus =
   | "work"
@@ -26,6 +27,7 @@ export interface TuiInkState {
   selectedRoleCallId?: string;
   selectedTaskIndex: number;
   selectedTaskId?: string;
+  selectedActiveRunIndex: number;
   hideCompletedRoleCalls: boolean;
   collapsedRoleCallIds: string[];
   scrollOffsets: {
@@ -34,6 +36,7 @@ export interface TuiInkState {
     tasks: number;
     transcript: number;
   };
+  conversationScrollOffset: number;
   composer: string;
   commandPaletteOpen: boolean;
   statusMessage?: string;
@@ -52,6 +55,10 @@ export type TuiInkKey =
   | "right"
   | "enter"
   | "escape"
+  | "work"
+  | "graph"
+  | "runs"
+  | "tasks"
   | "help"
   | "team"
   | "review"
@@ -67,10 +74,9 @@ export type TuiInkKey =
 
 export const focusModes: TuiInkFocus[] = [
   "work",
-  "graph",
-  "team",
   "runs",
   "review",
+  "graph",
   "tasks",
   "memory",
   "help"
@@ -82,6 +88,7 @@ export function createInitialInkState(composer = ""): TuiInkState {
     selectedRunIndex: 0,
     selectedRoleCallIndex: 0,
     selectedTaskIndex: 0,
+    selectedActiveRunIndex: 0,
     hideCompletedRoleCalls: false,
     collapsedRoleCallIds: [],
     scrollOffsets: {
@@ -90,6 +97,7 @@ export function createInitialInkState(composer = ""): TuiInkState {
       tasks: 0,
       transcript: 0
     },
+    conversationScrollOffset: 0,
     composer,
     commandPaletteOpen: false
   };
@@ -114,12 +122,23 @@ export function reduceInkState(
     next.focus = next.focus === "help" ? "work" : "help";
     return next;
   }
+  if (key === "work" || key === "graph" || key === "runs" || key === "tasks") {
+    next.focus = key;
+    next.commandPaletteOpen = false;
+    return next;
+  }
   if (key === "team") {
     next.focus = "team";
     next.statusMessage = "Team roles shown.";
     return next;
   }
   if (key === "review") {
+    const pendingRun = state.focus === "work"
+      ? selectedPendingReviewRun(model, state)
+      : undefined;
+    if (pendingRun) {
+      next.selectedRunId = pendingRun.id;
+    }
     next.focus = "review";
     return next;
   }
@@ -167,7 +186,6 @@ export function reduceInkState(
     return next;
   }
   if (key === "enter") {
-    next.focus = "review";
     return next;
   }
   if (key === "up" || key === "down" || key === "page_up" || key === "page_down" || key === "home" || key === "end") {
@@ -264,10 +282,32 @@ export function selectedReviewRunId(
   model: TuiCurrentContextModel,
   state: TuiInkState
 ): string | undefined {
+  const pendingReviewRun = state.focus === "work"
+    ? selectedPendingReviewRun(model, state)
+    : undefined;
+  if (pendingReviewRun) {
+    return pendingReviewRun.id;
+  }
   if (model.review.kind === "run") {
     return model.review.selectedId;
   }
   return model.review.evidence.linkedRunId ?? selectedRun(model, state)?.id;
+}
+
+export function selectedPendingReviewRun(
+  model: TuiCurrentContextModel,
+  state: TuiInkState
+): TuiRunSummary | undefined {
+  const pending = model.runs
+    .filter((run) =>
+      (run.status === "succeeded" || run.status === "failed" || run.status === "cancelled") &&
+      run.reviewDecision.status === "pending"
+    )
+    .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+  if (pending.length === 0) {
+    return undefined;
+  }
+  return pending[Math.min(Math.max(state.selectedActiveRunIndex, 0), pending.length - 1)];
 }
 
 export function commandHintForFocus(
@@ -346,7 +386,7 @@ function moveSelection(
     return;
   }
   if (state.focus === "work") {
-    moveTranscriptScroll(state, key, model.transcript.length);
+    moveConversationScroll(state, key, conversationLineCount(model.conversation));
     return;
   }
   if (state.focus === "team" || state.focus === "memory" || state.focus === "help") {
@@ -367,25 +407,53 @@ function moveSelection(
   );
 }
 
-function moveTranscriptScroll(
+function moveConversationScroll(
   state: TuiInkState,
   key: "up" | "down" | "page_up" | "page_down" | "home" | "end",
-  transcriptLength: number
+  conversationLineLength: number
 ): void {
-  const maxOffset = Math.max(0, transcriptLength - defaultTranscriptWindowSize);
+  const maxOffset = Math.max(0, conversationLineLength - defaultConversationWindowSize);
   if (key === "home") {
-    state.scrollOffsets.transcript = maxOffset;
+    state.conversationScrollOffset = maxOffset;
     return;
   }
   if (key === "end") {
-    state.scrollOffsets.transcript = 0;
+    state.conversationScrollOffset = 0;
     return;
   }
   const delta = transcriptScrollDelta(key);
-  state.scrollOffsets.transcript = Math.min(
-    Math.max(state.scrollOffsets.transcript + delta, 0),
+  state.conversationScrollOffset = Math.min(
+    Math.max(state.conversationScrollOffset + delta, 0),
     maxOffset
   );
+}
+
+function conversationLineCount(entries: TuiConversationEntry[]): number {
+  return entries.reduce((count, entry) => count + conversationEntryLineCount(entry), 0);
+}
+
+function conversationEntryLineCount(entry: TuiConversationEntry): number {
+  if (entry.type === "review_pending" || entry.type === "delegation") {
+    return 1;
+  }
+  const contentLines = Array.isArray(entry.outputLines)
+    ? entry.outputLines.length
+    : textLineCount(entry.content);
+  if (entry.type === "agent_completed" || entry.type === "agent_failed") {
+    return 1 +
+      Math.max(1, contentLines) +
+      (entry.verificationLine ? 1 : 0) +
+      (entry.riskLine ? 1 : 0);
+  }
+  return 1 + Math.max(1, contentLines);
+}
+
+function textLineCount(content: string | undefined): number {
+  return (content ?? "")
+    .split(/\r?\n/)
+    .map((value) => value.trim())
+    .filter(Boolean)
+    .length;
 }
 
 function toggleSelectedRoleCallCollapse(
@@ -469,10 +537,10 @@ function transcriptScrollDelta(
   key: "up" | "down" | "page_up" | "page_down" | "home" | "end"
 ): number {
   if (key === "page_up") {
-    return defaultTranscriptWindowSize;
+    return defaultConversationWindowSize;
   }
   if (key === "page_down") {
-    return -defaultTranscriptWindowSize;
+    return -defaultConversationWindowSize;
   }
   if (key === "up") {
     return 1;
