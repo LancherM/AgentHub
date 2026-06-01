@@ -5,6 +5,9 @@ import type {
   TuiTaskSummary
 } from "@agent-hub/core";
 
+const defaultListWindowSize = 8;
+const defaultTranscriptWindowSize = 5;
+
 export type TuiInkFocus =
   | "work"
   | "graph"
@@ -314,7 +317,7 @@ function moveSelection(
     state.scrollOffsets.runs = ensureVisible(
       state.scrollOffsets.runs,
       nextIndex,
-      8,
+      defaultListWindowSize,
       model.runs.length
     );
     return;
@@ -326,9 +329,13 @@ function moveSelection(
     state.scrollOffsets.tasks = ensureVisible(
       state.scrollOffsets.tasks,
       nextIndex,
-      8,
+      defaultListWindowSize,
       model.tasks.length
     );
+    return;
+  }
+  if (state.focus === "work") {
+    moveTranscriptScroll(state, key, model.transcript.length);
     return;
   }
   const nodes = visibleRoleCalls(model, state);
@@ -341,8 +348,29 @@ function moveSelection(
   state.scrollOffsets.roleCalls = ensureVisible(
     state.scrollOffsets.roleCalls,
     state.selectedRoleCallIndex,
-    8,
+    defaultListWindowSize,
     nodes.length
+  );
+}
+
+function moveTranscriptScroll(
+  state: TuiInkState,
+  key: "up" | "down" | "page_up" | "page_down" | "home" | "end",
+  transcriptLength: number
+): void {
+  const maxOffset = Math.max(0, transcriptLength - defaultTranscriptWindowSize);
+  if (key === "home") {
+    state.scrollOffsets.transcript = maxOffset;
+    return;
+  }
+  if (key === "end") {
+    state.scrollOffsets.transcript = 0;
+    return;
+  }
+  const delta = transcriptScrollDelta(key);
+  state.scrollOffsets.transcript = Math.min(
+    Math.max(state.scrollOffsets.transcript + delta, 0),
+    maxOffset
   );
 }
 
@@ -421,6 +449,24 @@ function selectionDelta(
     return Number.POSITIVE_INFINITY;
   }
   return key === "down" ? 1 : -1;
+}
+
+function transcriptScrollDelta(
+  key: "up" | "down" | "page_up" | "page_down" | "home" | "end"
+): number {
+  if (key === "page_up") {
+    return defaultTranscriptWindowSize;
+  }
+  if (key === "page_down") {
+    return -defaultTranscriptWindowSize;
+  }
+  if (key === "up") {
+    return 1;
+  }
+  if (key === "down") {
+    return -1;
+  }
+  return 0;
 }
 
 function nextSelectionIndex(current: number, delta: number, length: number): number {

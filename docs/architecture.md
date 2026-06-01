@@ -421,6 +421,15 @@ buffered CLI IO adapter. The run still persists messages, run cards, run
 events, diffs, risks, and review evidence through the shared repositories, but
 agent stdout and debug text do not write directly to the Ink terminal surface;
 the TUI refreshes from the persisted read model instead.
+The Ink app never reads SQLite, git, shell, or filesystem directly. It receives
+`loadModel`, `submitPrompt`, and `recordReviewDecision` callbacks from the CLI
+boundary, wraps interactive submit/review callbacks in bounded UI timeouts, and
+uses a lightweight polling interval to reload the same read model for live-ish
+terminal updates. Polling is a renderer refresh of persisted local evidence; it
+does not add an event daemon, remote worker, or incremental orchestration path.
+Scrollable transcript state and terminal-height list windows remain local Ink
+state, while selected runs, tasks, and RoleCalls continue to resolve through
+the existing read-model summaries.
 The command hint helper falls back from an absent selected RoleCall to
 `agent-hub team roles list --project-id <project-id>`, and the command palette
 includes the same role-list command beside run, review, and memory commands.

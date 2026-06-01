@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
   Box,
   Text,
@@ -32,6 +32,9 @@ import {
 } from "./state.mjs";
 
 const h = React.createElement;
+const defaultTuiOperationTimeoutMs = 10 * 60 * 1000;
+const defaultTuiPollIntervalMs = 2_500;
+const defaultTuiModelRefreshTimeoutMs = 30_000;
 
 export interface TuiInkTerminalSize {
   columns: number;
@@ -73,6 +76,9 @@ export interface TuiInkAppProps extends TuiInkFrameProps {
   loadModel?: (state: TuiInkState) => Promise<TuiCurrentContextModel>;
   submitPrompt?: (input: TuiInkSubmitInput) => Promise<TuiInkSubmitResult>;
   recordReviewDecision?: (input: TuiInkReviewInput) => Promise<TuiInkReviewResult>;
+  operationTimeoutMs?: number;
+  pollIntervalMs?: number;
+  modelRefreshTimeoutMs?: number;
 }
 
 export function TuiInkApp(props: TuiInkAppProps): React.ReactElement {
@@ -80,90 +86,192 @@ export function TuiInkApp(props: TuiInkAppProps): React.ReactElement {
   const [model, setModel] = useState(props.model);
   const [state, setState] = useState(props.state ?? createInitialInkState());
   const [busy, setBusy] = useState(false);
+  const [busyMessage, setBusyMessage] = useState<string | undefined>();
+  const stateRef = useRef(state);
+  const modelRef = useRef(model);
+  const operationTimeoutMs = props.operationTimeoutMs ?? defaultTuiOperationTimeoutMs;
+  const modelRefreshTimeoutMs = props.modelRefreshTimeoutMs ?? defaultTuiModelRefreshTimeoutMs;
+
+  useEffect(() => {
+    stateRef.current = state;
+  }, [state]);
+
+  useEffect(() => {
+    modelRef.current = model;
+  }, [model]);
+
+  useEffect(() => {
+    if (!props.interactive || !props.loadModel) {
+      return undefined;
+    }
+    const intervalMs = props.pollIntervalMs ?? defaultTuiPollIntervalMs;
+    if (intervalMs <= 0) {
+      return undefined;
+    }
+    let disposed = false;
+    let inFlight = false;
+    const interval = setInterval(() => {
+      if (inFlight || !props.loadModel) {
+        return;
+      }
+      inFlight = true;
+      withTimeout(
+        props.loadModel(stateRef.current),
+        modelRefreshTimeoutMs,
+        "TUI refresh"
+      )
+        .then((nextModel) => {
+          if (!disposed) {
+            setModel(nextModel);
+          }
+        })
+        .catch((error) => {
+          if (!disposed) {
+            setState((current) => ({
+              ...current,
+              statusMessage: `Refresh failed: ${errorMessage(error)}`
+            }));
+          }
+        })
+        .finally(() => {
+          inFlight = false;
+        });
+    }, intervalMs);
+    return () => {
+      disposed = true;
+      clearInterval(interval);
+    };
+  }, [modelRefreshTimeoutMs, props.interactive, props.loadModel, props.pollIntervalMs]);
 
   const refreshModel = async (nextState: TuiInkState) => {
     if (!props.loadModel) {
       return;
     }
     try {
-      setModel(await props.loadModel(nextState));
+      setModel(
+        await withTimeout(
+          props.loadModel(nextState),
+          modelRefreshTimeoutMs,
+          "TUI refresh"
+        )
+      );
     } catch (error) {
       setState({
         ...nextState,
-        statusMessage: error instanceof Error ? error.message : String(error)
+        statusMessage: errorMessage(error)
       });
     }
   };
 
   const applyKey = (key: TuiInkKey) => {
-    const nextState = reduceInkState(state, key, model);
+    const nextState = reduceInkState(stateRef.current, key, modelRef.current);
     setState(nextState);
   };
 
   const submitComposer = async () => {
-    const prompt = state.composer.trim();
+    const currentState = stateRef.current;
+    const currentModel = modelRef.current;
+    const prompt = currentState.composer.trim();
     if (!prompt) {
-      setState({ ...state, statusMessage: "Composer is empty." });
+      setState({ ...currentState, statusMessage: "Composer is empty." });
       return;
     }
     if (!props.submitPrompt) {
-      setState({ ...state, statusMessage: "Prompt submission is unavailable." });
+      setState({ ...currentState, statusMessage: "Prompt submission is unavailable." });
       return;
     }
+    setBusyMessage("Submitting prompt...");
     setBusy(true);
-    const result = await props.submitPrompt({
-      prompt,
-      projectId: model.context.projectId,
-      threadId: model.context.threadId
-    });
-    const nextState = {
-      ...state,
-      composer: "",
-      statusMessage: result.message
-    };
-    setState(nextState);
-    if (result.model) {
-      setModel(result.model);
-    } else {
-      await refreshModel(nextState);
+    try {
+      const result = await withTimeout(
+        props.submitPrompt({
+          prompt,
+          projectId: currentModel.context.projectId,
+          threadId: currentModel.context.threadId
+        }),
+        operationTimeoutMs,
+        "Prompt submission"
+      );
+      const nextState = {
+        ...stateRef.current,
+        composer: "",
+        statusMessage: result.message
+      };
+      setState(nextState);
+      if (result.model) {
+        setModel(result.model);
+      } else {
+        await refreshModel(nextState);
+      }
+    } catch (error) {
+      setState({
+        ...stateRef.current,
+        statusMessage: errorMessage(error)
+      });
+    } finally {
+      setBusy(false);
+      setBusyMessage(undefined);
     }
-    setBusy(false);
   };
 
   const recordDecision = async (status: "accepted" | "rejected") => {
     if (!props.recordReviewDecision) {
-      setState({ ...state, statusMessage: "Review decisions are unavailable." });
+      setState({ ...stateRef.current, statusMessage: "Review decisions are unavailable." });
       return;
     }
-    const runId = selectedReviewRunId(model, state);
+    const runId = selectedReviewRunId(modelRef.current, stateRef.current);
     if (!runId) {
-      setState({ ...state, statusMessage: "No linked run is selected for review." });
+      setState({ ...stateRef.current, statusMessage: "No linked run is selected for review." });
       return;
     }
+    setBusyMessage(`Recording review ${status}...`);
     setBusy(true);
-    const result = await props.recordReviewDecision({
-      runId,
-      status,
-      reason: status === "rejected" ? "Rejected from TUI review shortcut." : undefined
-    });
-    const nextState = {
-      ...state,
-      focus: "review" as const,
-      statusMessage: result.message
-    };
-    setState(nextState);
-    if (result.model) {
-      setModel(result.model);
-    } else {
-      await refreshModel(nextState);
+    try {
+      const result = await withTimeout(
+        props.recordReviewDecision({
+          runId,
+          status,
+          reason: status === "rejected" ? "Rejected from TUI review shortcut." : undefined
+        }),
+        operationTimeoutMs,
+        "Review decision"
+      );
+      const nextState = {
+        ...stateRef.current,
+        focus: "review" as const,
+        statusMessage: result.message
+      };
+      setState(nextState);
+      if (result.model) {
+        setModel(result.model);
+      } else {
+        await refreshModel(nextState);
+      }
+    } catch (error) {
+      setState({
+        ...stateRef.current,
+        statusMessage: errorMessage(error)
+      });
+    } finally {
+      setBusy(false);
+      setBusyMessage(undefined);
     }
-    setBusy(false);
   };
 
   useInput(
     (input, key) => {
       if (key.ctrl && (input === "c" || input === "C")) {
         app.exit();
+        return;
+      }
+      if (busy) {
+        if (key.escape && state.composer.length > 0) {
+          setState((current) => ({
+            ...current,
+            composer: "",
+            statusMessage: "Composer cleared."
+          }));
+        }
         return;
       }
       const wantsSubmit =
@@ -187,7 +295,7 @@ export function TuiInkApp(props: TuiInkAppProps): React.ReactElement {
         void recordDecision("accepted");
         return;
       }
-      if (input === "j" && state.focus === "review" && state.composer.length === 0) {
+      if (input === "R" && state.focus === "review" && state.composer.length === 0) {
         void recordDecision("rejected");
         return;
       }
@@ -220,12 +328,12 @@ export function TuiInkApp(props: TuiInkAppProps): React.ReactElement {
         setState((current) => ({ ...current, composer: `${current.composer}${input}` }));
       }
     },
-    { isActive: props.interactive && !busy }
+    { isActive: props.interactive }
   );
 
   return h(TuiInkFrame, {
     model,
-    state: busy ? { ...state, statusMessage: state.statusMessage ?? "Working..." } : state,
+    state: busy ? { ...state, statusMessage: busyMessage ?? "Working..." } : state,
     terminal: props.terminal
   });
 }
@@ -296,16 +404,16 @@ function MainView(props: TuiInkFrameProps): React.ReactElement {
     return h(HelpPane);
   }
   if (state.focus === "graph") {
-    return h(RoleCallsPane, { model, state, detail: true });
+    return h(RoleCallsPane, { model, state, terminal, detail: true });
   }
   if (state.focus === "runs") {
-    return h(RunsPane, { model, state, detail: true });
+    return h(RunsPane, { model, state, terminal, detail: true });
   }
   if (state.focus === "review") {
     return h(ReviewPane, { model, state, detail: true });
   }
   if (state.focus === "tasks") {
-    return h(TasksPane, { model, state });
+    return h(TasksPane, { model, state, terminal });
   }
   if (state.focus === "memory") {
     return h(MemoryPane, { model });
@@ -318,14 +426,14 @@ function WorkView({ model, state, terminal }: Required<TuiInkFrameProps>): React
     return h(
       Box,
       { flexDirection: "row", columnGap: 2 },
-      h(Pane, { title: "Runs", width: 38 }, h(RunsPane, { model, state })),
+      h(Pane, { title: "Runs", width: 38 }, h(RunsPane, { model, state, terminal })),
       h(Pane, { title: "Review", width: 42 }, h(ReviewPane, { model, state })),
       h(
         Pane,
         { title: "RoleCalls", flexGrow: 1 },
-        h(RoleCallsPane, { model, state }),
+        h(RoleCallsPane, { model, state, terminal }),
         line(""),
-        h(TranscriptPane, { model })
+        h(TranscriptPane, { model, state, terminal })
       )
     );
   }
@@ -336,47 +444,50 @@ function WorkView({ model, state, terminal }: Required<TuiInkFrameProps>): React
       h(
         Pane,
         { title: "Runs + Review", width: Math.floor(terminal.columns * 0.52) },
-        h(RunsPane, { model, state }),
+        h(RunsPane, { model, state, terminal }),
         line(""),
         h(ReviewPane, { model, state })
       ),
       h(
         Pane,
         { title: "RoleCalls + Transcript", flexGrow: 1 },
-        h(RoleCallsPane, { model, state }),
+        h(RoleCallsPane, { model, state, terminal }),
         line(""),
-        h(TranscriptPane, { model })
+        h(TranscriptPane, { model, state, terminal })
       )
     );
   }
   return h(
     Box,
     { flexDirection: "column" },
-    h(Pane, { title: "Runs" }, h(RunsPane, { model, state })),
+    h(Pane, { title: "Runs" }, h(RunsPane, { model, state, terminal })),
     line(""),
     h(Pane, { title: "Review" }, h(ReviewPane, { model, state })),
     line(""),
-    h(Pane, { title: "RoleCalls" }, h(RoleCallsPane, { model, state })),
+    h(Pane, { title: "RoleCalls" }, h(RoleCallsPane, { model, state, terminal })),
     line(""),
-    h(TranscriptPane, { model })
+    h(TranscriptPane, { model, state, terminal })
   );
 }
 
 function RunsPane({
   model,
   state,
+  terminal,
   detail = false
 }: {
   model: TuiCurrentContextModel;
   state: TuiInkState;
+  terminal: TuiInkTerminalSize;
   detail?: boolean;
 }): React.ReactElement {
   if (model.runs.length === 0) {
     return block(line("No runs in the current context.", { dimColor: true }));
   }
   const activeRun = selectedRun(model, state);
-  const offset = Math.min(state.scrollOffsets.runs, Math.max(0, model.runs.length - 8));
-  const visibleRuns = model.runs.slice(offset, offset + 8);
+  const windowSize = runWindowSize(terminal, detail);
+  const offset = Math.min(state.scrollOffsets.runs, Math.max(0, model.runs.length - windowSize));
+  const visibleRuns = model.runs.slice(offset, offset + windowSize);
   return block(
     ...visibleRuns.map((run) =>
       line(runLine(run, run.id === activeRun?.id), {
@@ -422,10 +533,12 @@ function ReviewPane({
 function RoleCallsPane({
   model,
   state,
+  terminal,
   detail = false
 }: {
   model: TuiCurrentContextModel;
   state: TuiInkState;
+  terminal: TuiInkTerminalSize;
   detail?: boolean;
 }): React.ReactElement {
   const nodes = visibleRoleCalls(model, state);
@@ -437,8 +550,9 @@ function RoleCallsPane({
     );
   }
   const selectedIndex = selectedRoleCallIndex(model, state);
-  const offset = Math.min(state.scrollOffsets.roleCalls, Math.max(0, nodes.length - 8));
-  const visibleNodes = nodes.slice(offset, offset + (detail ? 12 : 5));
+  const windowSize = roleCallWindowSize(terminal, detail);
+  const offset = Math.min(state.scrollOffsets.roleCalls, Math.max(0, nodes.length - windowSize));
+  const visibleNodes = nodes.slice(offset, offset + windowSize);
   return block(
     line(
       `active ${model.roleCalls.counts.active} waiting ${model.roleCalls.counts.waiting} pending ${model.roleCalls.counts.pending} stop ${model.roleCalls.loop.stopReason}`,
@@ -457,14 +571,29 @@ function RoleCallsPane({
   );
 }
 
-function TranscriptPane({ model }: { model: TuiCurrentContextModel }): React.ReactElement {
+function TranscriptPane({
+  model,
+  state,
+  terminal
+}: {
+  model: TuiCurrentContextModel;
+  state: TuiInkState;
+  terminal: TuiInkTerminalSize;
+}): React.ReactElement {
   if (model.transcript.length === 0) {
     return block(line("Transcript", { bold: true }), line("No messages in the current context.", { dimColor: true }));
   }
-  const offset = Math.max(0, model.transcript.length - 5);
+  const windowSize = transcriptWindowSize(terminal);
+  const maxOffset = Math.max(0, model.transcript.length - windowSize);
+  const offsetFromBottom = Math.min(state.scrollOffsets.transcript, maxOffset);
+  const start = Math.max(0, model.transcript.length - windowSize - offsetFromBottom);
+  const visible = model.transcript.slice(start, start + windowSize);
+  const title = maxOffset > 0
+    ? `Transcript ${start + 1}-${start + visible.length}/${model.transcript.length}`
+    : "Transcript";
   return block(
-    line("Transcript", { bold: true }),
-    ...model.transcript.slice(offset, offset + 5).flatMap((message) => [
+    line(title, { bold: true }),
+    ...visible.flatMap((message) => [
       line(`${message.author}${message.runId ? ` ${compactId(message.runId)}` : ""}`, {
         color: "cyan"
       }),
@@ -473,17 +602,26 @@ function TranscriptPane({ model }: { model: TuiCurrentContextModel }): React.Rea
   );
 }
 
-function TasksPane({ model, state }: { model: TuiCurrentContextModel; state: TuiInkState }): React.ReactElement {
+function TasksPane({
+  model,
+  state,
+  terminal
+}: {
+  model: TuiCurrentContextModel;
+  state: TuiInkState;
+  terminal: TuiInkTerminalSize;
+}): React.ReactElement {
   if (model.tasks.length === 0) {
     return h(Pane, { title: "Tasks" }, line("No current-context tasks.", { dimColor: true }));
   }
   const task = selectedTask(model, state);
-  const offset = Math.min(state.scrollOffsets.tasks, Math.max(0, model.tasks.length - 8));
+  const windowSize = taskWindowSize(terminal);
+  const offset = Math.min(state.scrollOffsets.tasks, Math.max(0, model.tasks.length - windowSize));
   const selectedIndex = selectedTaskIndex(model, state);
   return h(
     Pane,
     { title: `Tasks ${model.tasks.length}` },
-    ...model.tasks.slice(offset, offset + 8).map((item, index) =>
+    ...model.tasks.slice(offset, offset + windowSize).map((item, index) =>
       line(`${offset + index === selectedIndex ? ">" : " "} ${item.id} ${item.status} ${truncateText(item.title, 72)}${item.nextAction ? ` next ${item.nextAction}` : ""}`)
     ),
     ...(task
@@ -554,7 +692,7 @@ function HelpPane(): React.ReactElement {
     Pane,
     { title: "Help" },
     line("tab/shift-tab focus   up/down or k/j move   enter review"),
-    line(": commands   c continue   a accept review   j reject in Review"),
+    line(": commands   c continue   a accept review   R reject in Review"),
     line("enter submits non-empty composer   h hide done   m memory   ? help   x exit")
   );
 }
@@ -567,7 +705,7 @@ function Composer({ model, state }: { model: TuiCurrentContextModel; state: TuiI
 function StatusBar({ model, state }: { model: TuiCurrentContextModel; state: TuiInkState }): React.ReactElement {
   const hints = state.composer
     ? "enter submit | tab focus | esc clear | ctrl+c exit"
-    : "tab focus | enter review | : palette | p command | ? help | x exit";
+    : "tab focus | enter review | : palette | p command | a accept | R reject | ? help | x exit";
   return line(
     `${hints} | ${commandHintForFocus(model, state)}`,
     { dimColor: true }
@@ -604,6 +742,62 @@ function line(
   return h(Text, { wrap: "truncate", ...options }, value);
 }
 
+function runWindowSize(terminal: TuiInkTerminalSize, detail: boolean): number {
+  return boundedWindowSize(terminal.rows - (detail ? 14 : 24), detail ? 8 : 5, detail ? 30 : 14);
+}
+
+function roleCallWindowSize(terminal: TuiInkTerminalSize, detail: boolean): number {
+  return boundedWindowSize(terminal.rows - (detail ? 10 : 28), detail ? 8 : 5, detail ? 30 : 12);
+}
+
+function taskWindowSize(terminal: TuiInkTerminalSize): number {
+  return boundedWindowSize(terminal.rows - 14, 8, 30);
+}
+
+function transcriptWindowSize(terminal: TuiInkTerminalSize): number {
+  return boundedWindowSize(Math.floor((terminal.rows - 14) / 2), 5, 18);
+}
+
+function boundedWindowSize(value: number, minimum: number, maximum: number): number {
+  return Math.min(Math.max(value, minimum), maximum);
+}
+
+function withTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  label: string
+): Promise<T> {
+  if (timeoutMs <= 0 || !Number.isFinite(timeoutMs)) {
+    return promise;
+  }
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  return new Promise<T>((resolve, reject) => {
+    timeout = setTimeout(() => {
+      reject(new Error(`${label} timed out after ${formatDuration(timeoutMs)}.`));
+    }, timeoutMs);
+    promise.then(resolve, reject).finally(() => {
+      if (timeout) {
+        clearTimeout(timeout);
+      }
+    });
+  });
+}
+
+function formatDuration(milliseconds: number): string {
+  if (milliseconds < 1000) {
+    return `${milliseconds}ms`;
+  }
+  const seconds = Math.round(milliseconds / 1000);
+  if (seconds < 60) {
+    return `${seconds}s`;
+  }
+  return `${Math.round(seconds / 60)}m`;
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 function keyToAction(input: string, key: Key, focus: string): TuiInkKey | undefined {
   if (key.tab || input === "\t") {
     return key.shift ? "shift_tab" : "tab";
@@ -612,7 +806,7 @@ function keyToAction(input: string, key: Key, focus: string): TuiInkKey | undefi
     return "up";
   }
   if (key.downArrow || input === "j") {
-    return focus === "review" ? undefined : "down";
+    return "down";
   }
   if (key.pageUp) {
     return "page_up";
