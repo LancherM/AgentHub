@@ -322,7 +322,7 @@ function getDefaultRuntime(): CliRuntime {
 
 export async function main(
   argv = process.argv.slice(2),
-  io: CliIO = { stdout: process.stdout, stderr: process.stderr },
+  io: CliIO = { stdin: process.stdin, stdout: process.stdout, stderr: process.stderr },
   cwd = process.cwd(),
   runtime?: CliRuntime
 ): Promise<number> {

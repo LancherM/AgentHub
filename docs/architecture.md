@@ -406,6 +406,10 @@ terminals, and uses Ink components for terminal layout instead of hand-wrapped
 string panels.
 The direct CLI entrypoint exits after command completion, so one-shot TUI smoke
 renders do not leave local SQLite helper processes holding the terminal open.
+For interactive launches, the CLI default IO includes `process.stdin`, and the
+TUI also falls back to `process.stdin` for TTY/raw-mode detection when a custom
+test IO object omits stdin. This keeps `agent-hub tui` interactive in a real
+terminal while preserving deterministic `--once` and non-TTY smoke renders.
 The hand-rendered string layout has been removed from the TUI runtime path.
 The current renderer direction is documented in
 `docs/tui-ink-rewrite-roadmap.md`: keep the core read model and CLI action

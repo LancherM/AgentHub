@@ -66,12 +66,14 @@ evidence are shown before empty RoleCall state, long run ids are compacted, and
 status/check/risk signals are grouped so the screen reads like an operating
 workbench instead of raw log output.
 One-shot TUI renders (`--once`) are intended for quick smoke checks and return
-to the shell after printing the current workbench. The TUI renderer is now an
-Ink component tree under `apps/cli/src/tui-ink`, loaded by the CLI command
-boundary and backed by the same shared read models and action callbacks. The
-legacy hand-rendered string workbench has been removed as a runtime path; the
-remaining TUI roadmap work is interaction polish, scroll behavior, and broader
-state coverage without changing the governance boundaries above.
+to the shell after printing the current workbench. Normal `agent-hub tui`
+launches stay open when stdin/stdout are an interactive terminal with raw-mode
+support. The TUI renderer is now an Ink component tree under
+`apps/cli/src/tui-ink`, loaded by the CLI command boundary and backed by the
+same shared read models and action callbacks. The legacy hand-rendered string
+workbench has been removed as a runtime path; the remaining TUI roadmap work is
+interaction polish, scroll behavior, and broader state coverage without
+changing the governance boundaries above.
 
 ## Core Concepts
 

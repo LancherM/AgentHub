@@ -741,7 +741,7 @@ function mergeLaunchWarnings(
 }
 
 function isInteractiveTerminal(io: TuiCliIO): boolean {
-  const stdin = io.stdin as (NodeJS.ReadableStream & { isTTY?: boolean }) | undefined;
+  const stdin = (io.stdin ?? process.stdin) as NodeJS.ReadableStream & { isTTY?: boolean };
   return Boolean(stdin?.isTTY && io.stdout.isTTY);
 }
 
