@@ -1,10 +1,34 @@
 // Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
 
-exports[`CLI TUI command > keeps wide and narrow terminal render snapshots stable > narrow command palette 1`] = `
-"Agent Hub  TUI Project  #review  @agent  ctx runtime_injection  i...
-[Work]  Graph  Runs  Review  Tasks  Memory  Help
+exports[`CLI TUI command > keeps narrow empty workbench output focused on runs before graph state > narrow empty workbench 1`] = `
+"Agent Hub | unregistered | no-thread
+agent @codex | ctx runtime_injection | iter 0 | risk unknown
+[Work] Graph Runs Review Tasks Memory Help
 
-Command Palette
+== Runs ==  0
+  No runs in the current context.
+
+== Review ==
+No current context
+  No local review evidence is available yet.
+
+== RoleCalls ==
+  none | loop stop terminal | pending 0
+
+== Transcript ==
+  No messages in the current context.
+
+tab focus | enter review | : palette | c continue | p command | ? help | x ...
+> @codex prompt
+"
+`;
+
+exports[`CLI TUI command > keeps wide and narrow terminal render snapshots stable > narrow command palette 1`] = `
+"Agent Hub | TUI Project | #review
+agent @agent | ctx runtime_injection | iter 0/4 | risk unknown
+[Work] Graph Runs Review Tasks Memory Help
+
+== Command Palette ==
   Current context
     focus work
     command agent-hub role-calls show call_parent
@@ -25,16 +49,17 @@ Command Palette
     p print focused command
     ctrl+j submit composer
 
-Actions: tab focus  enter open  : palette  c continue  k cancel  ...
+tab focus | enter review | : palette | c continue | p command | ?...
 > @agent prompt
 "
 `;
 
 exports[`CLI TUI command > keeps wide and narrow terminal render snapshots stable > wide command palette 1`] = `
-"Agent Hub  TUI Project  #review  @agent  ctx runtime_injection  iter 0/4  risk unknown
-[Work]  Graph  Runs  Review  Tasks  Memory  Help
+"Agent Hub | TUI Project | #review
+agent @agent | ctx runtime_injection | iter 0/4 | risk unknown
+[Work] Graph Runs Review Tasks Memory Help
 
-Command Palette
+== Command Palette ==
   Current context
     focus work
     command agent-hub role-calls show call_parent
@@ -55,62 +80,52 @@ Command Palette
     p print focused command
     ctrl+j submit composer
 
-Actions: tab focus  enter open  : palette  c continue  k cancel  a accept  j reject  p commands  ctrl+j submit  r rev...
+tab focus | enter review | : palette | c continue | p command | ? help | x exit
 > @agent prompt
 "
 `;
 
 exports[`CLI TUI command > renders context-read failures with CLI recovery commands > context read failure recovery 1`] = `
-"Agent Hub  project_broken  no-thread  @fake  ctx runtime_injection  iter 0  risk unknown
-[Work]  Graph  Runs  Review  Tasks  Memory  Help
-Warning: failed to read TUI context: database read failed
-Warning: recovery: agent-hub project list
-Warning: recovery: agent-hub rooms list --project-id project_broken
-Warning: recovery: agent-hub tui --help
+"Agent Hub | project_broken | no-thread
+agent @fake | ctx runtime_injection | iter 0 | risk unknown
+[Work] Graph Runs Review Tasks Memory Help
+! failed to read TUI context: database read failed
+! recovery: agent-hub project list
+! recovery: agent-hub rooms list --project-id project_broken
+! recovery: agent-hub tui --help
 
-Transcript
-  No messages in the current context.
+== Runs ==  0                                                |  == RoleCalls ==
+  No runs in the current context.                            |    none | loop stop terminal | pending 0
+                                                             |
+== Review ==                                                 |  == Transcript ==
+TUI context unavailable                                      |    No messages in the current context.
+  The current local context could not be read.               |
+  latest failed to read TUI context: database read failed    |
+  commands:                                                  |
+    agent-hub project list                                   |
+    agent-hub rooms list --project-id project_broken         |
+    agent-hub tui --help                                     |
 
-RoleCall Graph  active 0  waiting 0  pending 0  stop terminal
-  No RoleCalls in the current context.
-
-Runs
-  No runs in the current context.
-
-Selected
-TUI context unavailable
-  The current local context could not be read.
-  latest failed to read TUI context: database read failed
-  commands:
-    agent-hub project list
-    agent-hub rooms list --project-id project_broken
-    agent-hub tui --help
-
-Actions: tab focus  enter open  : palette  c continue  k cancel  a accept  j reject  p commands  ctrl+j submit  r rev...
+tab focus | enter review | : palette | c continue | p command | ? help | x exit
 > @fake prompt
 "
 `;
 
 exports[`CLI TUI command > renders missing registration recovery instead of failing launch > missing registration recovery 1`] = `
-"Agent Hub  unregistered  no-thread  @fake  ctx runtime_injection  iter 0  risk unknown
-[Work]  Graph  Runs  Review  Tasks  Memory  Help
-Warning: project root /tmp/unregistered-tui-project is not registered
-Warning: recovery: agent-hub project add --name <name> --root /tmp/unregistered-tui-project
+"Agent Hub | unregistered | no-thread
+agent @fake | ctx runtime_injection | iter 0 | risk unknown
+[Work] Graph Runs Review Tasks Memory Help
+! project root /tmp/unregistered-tui-project is not registered
+! recovery: agent-hub project add --name <name> --root /tmp/unregistered-tui-project
 
-Transcript
-  No messages in the current context.
+== Runs ==  0                                                |  == RoleCalls ==
+  No runs in the current context.                            |    none | loop stop terminal | pending 0
+                                                             |
+== Review ==                                                 |  == Transcript ==
+No current context                                           |    No messages in the current context.
+  No local review evidence is available yet.                 |
 
-RoleCall Graph  active 0  waiting 0  pending 0  stop terminal
-  No RoleCalls in the current context.
-
-Runs
-  No runs in the current context.
-
-Selected
-No current context
-  No local review evidence is available yet.
-
-Actions: tab focus  enter open  : palette  c continue  k cancel  a accept  j reject  p commands  ctrl+j submit  r rev...
+tab focus | enter review | : palette | c continue | p command | ? help | x exit
 > @fake prompt
 "
 `;

@@ -61,11 +61,12 @@ describe("CLI TUI command", () => {
 
     const rendered = output.join("");
     expect(errors.join("")).toBe("");
-    expect(rendered).toContain("Agent Hub  TUI Project  #review  @codex");
-    expect(rendered).toContain("Transcript");
-    expect(rendered).toContain("RoleCall Graph");
+    expect(rendered).toContain("Agent Hub | TUI Project | #review");
+    expect(rendered).toContain("agent @codex | ctx runtime_injection");
+    expect(rendered).toContain("== Transcript ==");
+    expect(rendered).toContain("== RoleCalls ==");
     expect(rendered).toContain("@engineer -> @reviewer [running]");
-    expect(rendered).toContain("Runs");
+    expect(rendered).toContain("== Runs ==");
     expect(rendered).toContain("run_1 @codex running");
     expect(rendered).toContain("> @codex prompt");
   });
@@ -86,9 +87,9 @@ describe("CLI TUI command", () => {
 
     const rendered = output.join("");
     expect(errors.join("")).toBe("");
-    expect(rendered).toContain("Agent Hub  unregistered  no-thread");
+    expect(rendered).toContain("Agent Hub | unregistered | no-thread");
     expect(rendered).toContain("recovery: agent-hub project add --name <name>");
-    expect(rendered).toContain("No RoleCalls in the current context.");
+    expect(rendered).toContain("none | loop stop terminal");
     expect(rendered).toMatchSnapshot("missing registration recovery");
   });
 
@@ -150,7 +151,7 @@ describe("CLI TUI command", () => {
       )
     ).resolves.toBe(0);
     expect(errors.join("")).toBe("");
-    expect(output.join("")).toContain("Agent Hub  TUI Project  #review");
+    expect(output.join("")).toContain("Agent Hub | TUI Project | #review");
   });
 
   it("switches focus, selection, hide-done, and graph collapse through key reducer", async () => {
@@ -373,6 +374,21 @@ describe("CLI TUI command", () => {
       .toMatchSnapshot("wide command palette");
     expect(renderTuiWorkbench(model, state, { columns: 68, rows: 36 }))
       .toMatchSnapshot("narrow command palette");
+  });
+
+  it("keeps narrow empty workbench output focused on runs before graph state", async () => {
+    const runtime = createCliRuntime({ storageMode: "memory" });
+    const model = await buildTuiCurrentContextModel(runtime, {
+      selectedAgent: "codex"
+    });
+    const rendered = renderTuiWorkbench(
+      model,
+      createInitialTuiShellState(),
+      { columns: 78, rows: 32 }
+    );
+
+    expect(rendered.indexOf("== Runs ==")).toBeLessThan(rendered.indexOf("== RoleCalls =="));
+    expect(rendered).toMatchSnapshot("narrow empty workbench");
   });
 });
 

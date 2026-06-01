@@ -61,6 +61,12 @@ registration, failed context reads, unavailable agent CLIs, reserved role
 executors, and missing linked-run evidence render concise status text plus
 equivalent CLI recovery commands instead of opening broad browsers or applying
 side effects.
+The Work focus is optimized for narrow terminals: recent runs and review
+evidence are shown before empty RoleCall state, long run ids are compacted, and
+status/check/risk signals are grouped so the screen reads like an operating
+workbench instead of raw log output.
+One-shot TUI renders (`--once`) are intended for quick smoke checks and return
+to the shell after printing the current workbench.
 
 ## Core Concepts
 

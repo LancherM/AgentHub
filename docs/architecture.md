@@ -400,3 +400,9 @@ and read failures into renderable fallback models with recovery commands, while
 summary. Reserved role executors are surfaced from existing task assignment
 metadata; no executor backend, database table, daemon, or desktop behavior is
 added for the TUI.
+Terminal polish is also contained in the CLI renderer. It compacts identifiers,
+groups Work-view runs and review evidence ahead of empty graph state on narrow
+terminals, and uses deterministic ASCII layout helpers so snapshots cover the
+presentation without adding a curses/React dependency.
+The direct CLI entrypoint exits after command completion, so one-shot TUI smoke
+renders do not leave local SQLite helper processes holding the terminal open.

@@ -5087,6 +5087,6 @@ function summarizeVerificationResults(results: VerificationResult[]): string {
 
 if (require.main === module) {
   void main().then((exitCode) => {
-    process.exitCode = exitCode;
+    process.exit(exitCode);
   });
 }

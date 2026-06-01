@@ -434,7 +434,7 @@ export function renderTuiWorkbench(
 ): string {
   const narrow = size.columns < 92;
   const lines = [
-    renderHeader(model),
+    ...renderHeaderLines(model),
     renderFocusBar(state),
     ...renderWarnings(model),
     ...(state.statusMessage ? [`Status: ${state.statusMessage}`] : []),
@@ -455,24 +455,8 @@ export function renderTuiWorkbench(
     lines.push(...renderTasksPanel(model, state, { includeTitle: true }));
   } else if (state.focus === "memory") {
     lines.push(...renderMemoryPanel(model));
-  } else if (narrow) {
-    lines.push(
-      ...renderGraphPanel(model, state, { includeTitle: true }),
-      "",
-      ...renderRunsPanel(model, state, { includeTitle: true }),
-      "",
-      ...renderTranscriptPanel(model, { includeTitle: true })
-    );
   } else {
-    lines.push(
-      ...renderTranscriptPanel(model, { includeTitle: true }),
-      "",
-      ...renderGraphPanel(model, state, { includeTitle: true }),
-      "",
-      ...renderRunsPanel(model, state, { includeTitle: true }),
-      "",
-      ...renderSelectedSummary(model)
-    );
+    lines.push(...renderWorkPanel(model, state, { columns: size.columns, narrow }));
   }
 
   lines.push("", ...renderActionHints(), renderComposerPlaceholder(model, state));
@@ -922,7 +906,7 @@ function agentAvailabilityCommand(agent: AgentKind): string {
   return "agent-hub tui --debug --agent fake --once";
 }
 
-function renderHeader(model: TuiCurrentContextModel): string {
+function renderHeaderLines(model: TuiCurrentContextModel): string[] {
   const project = model.context.projectName ?? model.context.projectId ?? "unregistered";
   const room = model.context.roomHandle
     ? `#${model.context.roomHandle}`
@@ -933,31 +917,54 @@ function renderHeader(model: TuiCurrentContextModel): string {
     ? `iter ${model.roleCalls.loop.iteration}`
     : `iter ${model.roleCalls.loop.iteration}/${model.roleCalls.loop.maxIterations}`;
   return [
-    "Agent Hub",
-    project,
-    room,
-    agent,
-    `ctx ${model.context.contextMode}`,
-    loop,
-    `risk ${risk}`
-  ].join("  ");
+    ["Agent Hub", project, room].join(" | "),
+    [`agent ${agent}`, `ctx ${model.context.contextMode}`, loop, `risk ${risk}`].join(" | ")
+  ];
 }
 
 function renderFocusBar(state: TuiShellState): string {
   return focusModes
     .map((mode) => (mode === state.focus ? `[${label(mode)}]` : label(mode)))
-    .join("  ");
+    .join(" ");
 }
 
 function renderWarnings(model: TuiCurrentContextModel): string[] {
-  return model.warnings.map((warning) => `Warning: ${warning}`);
+  return model.warnings.map((warning) => `! ${warning}`);
+}
+
+function renderWorkPanel(
+  model: TuiCurrentContextModel,
+  state: TuiShellState,
+  options: { columns: number; narrow: boolean }
+): string[] {
+  const visibleNodes = graphNodesForState(model.roleCalls.nodes, state);
+  const runsAndReview = [
+    ...renderRunsPanel(model, state, { includeTitle: true, includeDetail: false }),
+    "",
+    ...renderSelectedSummary(model)
+  ];
+  const graphAndTranscript = [
+    ...(visibleNodes.length > 0
+      ? renderGraphPanel(model, state, { includeTitle: true })
+      : renderCompactEmptyGraph(model)),
+    "",
+    ...renderTranscriptPanel(model, { includeTitle: true })
+  ];
+  if (options.narrow) {
+    return [
+      ...runsAndReview,
+      "",
+      ...graphAndTranscript
+    ];
+  }
+  return renderColumns(runsAndReview, graphAndTranscript, options.columns);
 }
 
 function renderTranscriptPanel(
   model: TuiCurrentContextModel,
   options: { includeTitle: boolean }
 ): string[] {
-  const lines = options.includeTitle ? ["Transcript"] : [];
+  const lines = options.includeTitle ? ["== Transcript =="] : [];
   if (model.transcript.length === 0) {
     return [...lines, "  No messages in the current context."];
   }
@@ -979,7 +986,7 @@ function renderGraphPanel(
   const counts = model.roleCalls.counts;
   const lines = options.includeTitle
     ? [
-        `RoleCall Graph  active ${counts.active}  waiting ${counts.waiting}  pending ${counts.pending}  stop ${model.roleCalls.loop.stopReason}`
+        `== RoleCalls ==  active ${counts.active}  waiting ${counts.waiting}  pending ${counts.pending}  stop ${model.roleCalls.loop.stopReason}`
       ]
     : [];
   if (visibleNodes.length === 0) {
@@ -993,12 +1000,19 @@ function renderGraphPanel(
         : " ";
       const branch = node.depth > 0 ? `${"  ".repeat(node.depth)}|-- ` : "";
       const collapsed = state.collapsedRoleCallIds.includes(node.id) ? " [+]" : "";
-      const run = node.linkedRunId ? ` ${node.linkedRunId}` : "";
+      const run = node.linkedRunId ? ` ${compactId(node.linkedRunId)}` : "";
       const waiting = node.evidence.waitingReason ? ` ${node.evidence.waitingReason}` : "";
       return `${selected} ${branch}@${node.callerRole} -> @${node.calleeRole} [${node.statusLabel}]${run}${collapsed} ${node.task}${waiting}`;
     }),
     "",
     ...renderLoopDetail(model)
+  ];
+}
+
+function renderCompactEmptyGraph(model: TuiCurrentContextModel): string[] {
+  return [
+    "== RoleCalls ==",
+    `  none | loop stop ${model.roleCalls.loop.stopReason} | pending ${model.roleCalls.loop.pendingRoleCallIds.length}`
   ];
 }
 
@@ -1021,29 +1035,39 @@ function renderLoopDetail(model: TuiCurrentContextModel): string[] {
 function renderRunsPanel(
   model: TuiCurrentContextModel,
   state: TuiShellState,
-  options: { includeTitle: boolean }
+  options: { includeTitle: boolean; includeDetail?: boolean }
 ): string[] {
-  const lines = options.includeTitle ? ["Runs"] : [];
+  const lines = options.includeTitle ? [`== Runs ==  ${model.runs.length}`] : [];
   if (model.runs.length === 0) {
     return [...lines, "  No runs in the current context."];
   }
   const selectedRun = model.runs[boundedIndex(state.selectedRunIndex, model.runs.length)];
   return [
     ...lines,
-    ...model.runs.map((run, index) => {
-      const selected = index === boundedIndex(state.selectedRunIndex, model.runs.length)
-        ? ">"
-        : " ";
-      const checks = run.evidence.checks
-        ? ` checks ${run.evidence.checks.passed}/${run.evidence.checks.failed}/${run.evidence.checks.skipped}`
-        : "";
-      const risk = run.evidence.risk ? ` risk ${run.evidence.risk.level}` : "";
-      const diff = run.evidence.diff ? ` files ${run.evidence.diff.changedFiles}` : "";
-      return `${selected} ${run.id} @${run.agentKind} ${run.status} ${run.stage}${checks}${risk}${diff}`;
-    }),
-    "",
-    ...renderRunOperatingDetail(selectedRun)
+    ...model.runs.map((run, index) =>
+      renderRunLine(
+        run,
+        index === boundedIndex(state.selectedRunIndex, model.runs.length)
+      )
+    ),
+    ...(options.includeDetail === false
+      ? []
+      : [
+          "",
+          ...renderRunOperatingDetail(selectedRun)
+        ])
   ];
+}
+
+function renderRunLine(run: TuiRunSummary, selectedRun: boolean): string {
+  const selected = selectedRun ? ">" : " ";
+  const checks = run.evidence.checks
+    ? ` checks ${run.evidence.checks.passed}/${run.evidence.checks.failed}/${run.evidence.checks.skipped}`
+    : "";
+  const risk = run.evidence.risk ? ` risk ${run.evidence.risk.level}` : "";
+  const diff = run.evidence.diff ? ` files ${run.evidence.diff.changedFiles}` : "";
+  const stage = run.stage !== run.status ? ` ${run.stage}` : "";
+  return `${selected} ${compactId(run.id)} @${run.agentKind} ${runStatusLabel(run.status)}${stage}${checks}${risk}${diff}`;
 }
 
 function renderRunOperatingDetail(run: TuiRunSummary | undefined): string[] {
@@ -1051,12 +1075,9 @@ function renderRunOperatingDetail(run: TuiRunSummary | undefined): string[] {
     return [];
   }
   return [
-    `Selected Run ${run.id}`,
-    `  task ${run.taskTitle ?? run.taskId}`,
-    `  status ${run.status}`,
-    `  stage ${run.stage}`,
-    `  retained_worktree ${run.retainedWorktree ? "yes" : "no"}`,
-    `  review_status ${run.reviewDecision.status}`,
+    `Run ${compactId(run.id)}`,
+    `  ${run.taskTitle ?? run.taskId}`,
+    `  status ${runStatusLabel(run.status)} | stage ${run.stage} | retained ${run.retainedWorktree ? "yes" : "no"} | review ${run.reviewDecision.status}`,
     ...evidenceLines(run.evidence),
     ...commandLines(run.commands)
   ];
@@ -1064,8 +1085,10 @@ function renderRunOperatingDetail(run: TuiRunSummary | undefined): string[] {
 
 function renderSelectedSummary(model: TuiCurrentContextModel): string[] {
   return [
-    "Selected",
-    `${model.review.title}`,
+    "== Review ==",
+    model.review.selectedId
+      ? `${model.review.title} (${compactId(model.review.selectedId)})`
+      : model.review.title,
     `  ${model.review.summary}`,
     ...evidenceLines(model.review.evidence),
     ...commandLines(model.review.commands)
@@ -1074,7 +1097,7 @@ function renderSelectedSummary(model: TuiCurrentContextModel): string[] {
 
 function renderReviewPanel(model: TuiCurrentContextModel): string[] {
   return [
-    `Review ${model.review.selectedId ?? "none"}`,
+    `== Review ==  ${model.review.selectedId ? compactId(model.review.selectedId) : "none"}`,
     model.review.title,
     `  ${model.review.summary}`,
     ...evidenceLines(model.review.evidence),
@@ -1087,7 +1110,7 @@ function renderTasksPanel(
   state: TuiShellState,
   options: { includeTitle: boolean }
 ): string[] {
-  const lines = options.includeTitle ? ["Tasks"] : [];
+  const lines = options.includeTitle ? [`== Tasks ==  ${model.tasks.length}`] : [];
   if (model.tasks.length === 0) {
     return [...lines, "  No current-context tasks."];
   }
@@ -1179,7 +1202,7 @@ function renderMemoryPanel(model: TuiCurrentContextModel): string[] {
       ? "none"
       : model.skills.available.map((skill) => `${skill.scope}:${skill.id}`).join(", ");
   return [
-    "Memory",
+    "== Memory ==",
     `  proposed ${model.memory.counts.proposed}`,
     `  approved ${model.memory.counts.approved}`,
     `  rejected ${model.memory.counts.rejected}`,
@@ -1190,11 +1213,11 @@ function renderMemoryPanel(model: TuiCurrentContextModel): string[] {
     ...(model.memory.approvalCommands.length === 0
       ? ["    none"]
       : model.memory.approvalCommands.map((command) => `    ${command}`)),
-    "Skills",
+    "== Skills ==",
     `  selected ${selectedSkills}`,
     `  available ${availableSkills}`,
     `  source ${model.skills.runtimeSource}`,
-    "Context",
+    "== Context ==",
     `  mode ${model.skills.contextMode}`
   ];
 }
@@ -1207,7 +1230,7 @@ function renderCommandPalettePanel(
   const visibleNodes = graphNodesForState(model.roleCalls.nodes, state);
   const selectedNode = visibleNodes[boundedIndex(state.selectedRoleCallIndex, visibleNodes.length)];
   return [
-    "Command Palette",
+    "== Command Palette ==",
     "  Current context",
     `    focus ${state.focus}`,
     `    command ${commandHintForFocus(model, state)}`,
@@ -1234,7 +1257,7 @@ function renderCommandPalettePanel(
 
 function renderHelpPanel(): string[] {
   return [
-    "Help",
+    "== Help ==",
     "  tab / shift-tab   switch focus",
     "  up/down           move selection",
     "  left/right        collapse or expand selected RoleCall subtree",
@@ -1264,7 +1287,7 @@ function renderHelpPanel(): string[] {
 
 function renderActionHints(): string[] {
   return [
-    "Actions: tab focus  enter open  : palette  c continue  k cancel  a accept  j reject  p commands  ctrl+j submit  r review  h hide done  m memory  ? help  x exit"
+    "tab focus | enter review | : palette | c continue | p command | ? help | x exit"
   ];
 }
 
@@ -1279,7 +1302,7 @@ function renderComposerPlaceholder(
 function evidenceLines(evidence: TuiCurrentContextModel["review"]["evidence"]): string[] {
   const lines: string[] = [];
   if (evidence.linkedRunId) {
-    lines.push(`  linked_run ${evidence.linkedRunId}`);
+    lines.push(`  linked run ${compactId(evidence.linkedRunId)}`);
   }
   if (evidence.latestEvent) {
     lines.push(`  latest ${evidence.latestEvent}`);
@@ -1289,15 +1312,15 @@ function evidenceLines(evidence: TuiCurrentContextModel["review"]["evidence"]): 
   }
   if (evidence.checks) {
     lines.push(
-      `  checks passed ${evidence.checks.passed} failed ${evidence.checks.failed} skipped ${evidence.checks.skipped}`
+      `  checks ${evidence.checks.passed} passed / ${evidence.checks.failed} failed / ${evidence.checks.skipped} skipped`
     );
   }
   if (evidence.risk) {
-    lines.push(`  risk ${evidence.risk.level}${evidence.risk.primaryReason ? ` ${evidence.risk.primaryReason}` : ""}`);
+    lines.push(`  risk ${evidence.risk.level}${evidence.risk.primaryReason ? ` - ${evidence.risk.primaryReason}` : ""}`);
   }
   if (evidence.diff) {
     lines.push(
-      `  changed ${evidence.diff.changedFiles} files +${evidence.diff.insertions ?? 0} -${evidence.diff.deletions ?? 0}`
+      `  files ${evidence.diff.changedFiles}  +${evidence.diff.insertions ?? 0} -${evidence.diff.deletions ?? 0}`
     );
   }
   return lines;
@@ -1308,6 +1331,48 @@ function commandLines(commands: string[]): string[] {
     return [];
   }
   return ["  commands:", ...commands.map((command) => `    ${command}`)];
+}
+
+function renderColumns(left: string[], right: string[], columns: number): string[] {
+  const gap = "  |  ";
+  const available = Math.max(40, columns - gap.length);
+  const leftWidth = Math.max(34, Math.floor(available * 0.52));
+  const rightWidth = Math.max(24, available - leftWidth);
+  const lineCount = Math.max(left.length, right.length);
+  const lines: string[] = [];
+  for (let index = 0; index < lineCount; index += 1) {
+    const leftLine = fitLine(left[index] ?? "", leftWidth).padEnd(leftWidth);
+    const rightLine = fitLine(right[index] ?? "", rightWidth);
+    lines.push(`${leftLine}${gap}${rightLine}`.trimEnd());
+  }
+  return lines;
+}
+
+function compactId(id: string): string {
+  const match = /^(run|task|call|message|thread)_([0-9a-f]{8})[0-9a-f-]*/i.exec(id);
+  if (match) {
+    return `${match[1]}_${match[2]}`;
+  }
+  if (id.length > 18) {
+    return `${id.slice(0, 15)}...`;
+  }
+  return id;
+}
+
+function runStatusLabel(status: TuiRunSummary["status"]): string {
+  if (status === "succeeded") {
+    return "ok";
+  }
+  if (status === "failed") {
+    return "failed";
+  }
+  if (status === "running") {
+    return "running";
+  }
+  if (status === "queued") {
+    return "queued";
+  }
+  return "cancelled";
 }
 
 function selectedReviewRunId(model: TuiCurrentContextModel): string | undefined {
