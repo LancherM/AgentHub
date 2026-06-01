@@ -479,6 +479,16 @@ and never mutates composer contents. Palette filtering is fuzzy over safe focus
 items and existing CLI command hints; `Enter` either changes TUI focus or copies
 a command hint into the composer for explicit user submission. It never invokes
 shell commands directly.
+Notifications, timeline, badge flash, and splash remain CLI renderer concerns.
+`/notify` toggles an in-memory flag for the current Ink session; when enabled,
+the renderer may write only terminal escape output (bell plus OSC 9) after a
+previously active run disappears from the active-run projection and its recorded
+start time is more than 30 seconds old. `/timeline` and empty-composer `l`
+render a compact chronological overlay from the same read model. Badge flash is
+derived from newly observed active runs or pending-review entries, and
+`--splash`/`--no-splash` only affect whether the renderer includes a
+non-blocking startup banner. None of these states adds tables, settings,
+filesystem writes, shell execution, adapter calls, or run lifecycle mutations.
 The direct CLI entrypoint exits after command completion, so one-shot TUI smoke
 renders do not leave local SQLite helper processes holding the terminal open.
 For interactive launches, the CLI default IO includes `process.stdin`, and the

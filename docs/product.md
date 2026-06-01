@@ -120,6 +120,16 @@ uses Up/Down to move between matches; `Esc` closes it without corrupting the
 composer. The command palette accepts input, fuzzy filters safe focus actions
 and existing local CLI command hints, highlights matches, and uses `Enter` to
 either switch focus or prepare the selected command in the composer.
+The optional mini timeline is also local renderer state. `/timeline` or
+empty-composer `l` opens a compact chronological view over the current rendered
+conversation, active runs, and recent runs; `Esc` or `l` closes it. `/notify`
+toggles in-memory completion notifications for the current terminal session
+only. When enabled, the TUI emits a terminal bell plus OSC 9 notification only
+after a previously active run leaves the active list and had been running for
+more than 30 seconds. Notifications, timeline state, and transient badge flashes
+do not persist settings, alter run behavior, or invoke external services.
+Startup splash is explicit: `--splash` shows a short non-blocking banner, while
+`--no-splash` suppresses it.
 The default tab bar matches the conversation-terminal scheme: Work, Runs, View,
 Graph, Tasks, Memory, Team, and Help stay one key away instead of being
 embedded into the first screen.

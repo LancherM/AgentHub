@@ -42,6 +42,8 @@ export interface TuiInkState {
   searchOpen: boolean;
   searchQuery: string;
   searchMatchIndex: number;
+  notifyEnabled: boolean;
+  timelineOpen: boolean;
   composer: string;
   composerCursorPosition: number;
   commandPaletteOpen: boolean;
@@ -76,6 +78,8 @@ export type TuiInkKey =
   | "continue_loop"
   | "toggle_review_diff"
   | "toggle_compare"
+  | "toggle_notify"
+  | "toggle_timeline"
   | "cancel"
   | "accept_review"
   | "reject_review"
@@ -113,6 +117,8 @@ export function createInitialInkState(composer = ""): TuiInkState {
     searchOpen: false,
     searchQuery: "",
     searchMatchIndex: 0,
+    notifyEnabled: false,
+    timelineOpen: false,
     composer,
     composerCursorPosition: composer.length,
     commandPaletteOpen: false,
@@ -144,12 +150,14 @@ export function reduceInkState(
     next.focus = key;
     next.commandPaletteOpen = false;
     next.searchOpen = false;
+    next.timelineOpen = false;
     return next;
   }
   if (key === "team") {
     next.focus = "team";
     next.commandPaletteOpen = false;
     next.searchOpen = false;
+    next.timelineOpen = false;
     next.statusMessage = "Team roles shown.";
     return next;
   }
@@ -164,12 +172,14 @@ export function reduceInkState(
     next.reviewCompareMode = false;
     next.commandPaletteOpen = false;
     next.searchOpen = false;
+    next.timelineOpen = false;
     return next;
   }
   if (key === "memory") {
     next.focus = "memory";
     next.commandPaletteOpen = false;
     next.searchOpen = false;
+    next.timelineOpen = false;
     return next;
   }
   if (key === "skills") {
@@ -194,6 +204,20 @@ export function reduceInkState(
   }
   if (key === "toggle_compare") {
     toggleCompareMode(next, model);
+    return next;
+  }
+  if (key === "toggle_notify") {
+    next.notifyEnabled = !next.notifyEnabled;
+    next.statusMessage = next.notifyEnabled
+      ? "Completion notifications enabled."
+      : "Completion notifications disabled.";
+    return next;
+  }
+  if (key === "toggle_timeline") {
+    next.timelineOpen = !next.timelineOpen;
+    next.commandPaletteOpen = false;
+    next.searchOpen = false;
+    next.statusMessage = next.timelineOpen ? "Timeline shown." : "Timeline hidden.";
     return next;
   }
   if (key === "cancel") {
@@ -230,6 +254,11 @@ export function reduceInkState(
       next.paletteQuery = "";
       next.paletteSelectedIndex = 0;
       next.statusMessage = "Command palette closed.";
+      return next;
+    }
+    if (next.timelineOpen) {
+      next.timelineOpen = false;
+      next.statusMessage = "Timeline hidden.";
       return next;
     }
     if (next.focus === "review" && next.reviewDiffExpanded) {

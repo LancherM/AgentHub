@@ -104,8 +104,18 @@ export interface TuiShellState {
     transcript: number;
   };
   conversationScrollOffset: number;
+  reviewDiffExpanded: boolean;
+  reviewCompareMode: boolean;
+  searchOpen: boolean;
+  searchQuery: string;
+  searchMatchIndex: number;
+  notifyEnabled: boolean;
+  timelineOpen: boolean;
   composer: string;
+  composerCursorPosition: number;
   commandPaletteOpen: boolean;
+  paletteQuery: string;
+  paletteSelectedIndex: number;
   statusMessage?: string;
 }
 
@@ -124,6 +134,7 @@ interface ParsedTuiArgs {
   retainOnFailure: boolean;
   debug: boolean;
   once: boolean;
+  splash?: boolean;
   help: boolean;
 }
 
@@ -147,6 +158,7 @@ interface InkTuiEntry {
     terminal: { columns: number; rows: number };
     io: TuiCliIO;
     interactive: boolean;
+    showSplash?: boolean;
     loadModel?: (state: TuiShellState) => Promise<TuiCurrentContextModel>;
     submitPrompt?: (input: {
       prompt: string;
@@ -279,6 +291,7 @@ export async function runTuiCommand(options: RunTuiCommandOptions): Promise<numb
     launchWarnings: launch.warnings,
     projectRoot: options.projectRoot,
     interactive,
+    showSplash: parsed.splash === true,
     submitPrompt: options.submitPrompt
       ? async (input) => {
           const submission = await safeSubmitPrompt(options.submitPrompt as TuiPromptSubmitter, {
@@ -354,6 +367,8 @@ export function tuiHelpText(): string {
     "  --skill [scope:]id         Show a selected skill indicator.",
     "  --debug                    Include debug-available agent choices.",
     "  --once                     Render once and exit, useful for smoke tests.",
+    "  --splash                   Show a short non-blocking startup splash.",
+    "  --no-splash                Skip the startup splash.",
     "  --help                     Show this help.",
     ""
   ].join("\n");
@@ -375,8 +390,18 @@ export function createInitialTuiShellState(composer = ""): TuiShellState {
       transcript: 0
     },
     conversationScrollOffset: 0,
+    reviewDiffExpanded: false,
+    reviewCompareMode: false,
+    searchOpen: false,
+    searchQuery: "",
+    searchMatchIndex: 0,
+    notifyEnabled: false,
+    timelineOpen: false,
     composer,
-    commandPaletteOpen: false
+    composerCursorPosition: composer.length,
+    commandPaletteOpen: false,
+    paletteQuery: "",
+    paletteSelectedIndex: 0
   };
 }
 
@@ -403,6 +428,7 @@ async function renderInkTui(input: {
     message: string;
     model?: TuiCurrentContextModel;
   }>;
+  showSplash?: boolean;
 }): Promise<void> {
   const entry = await loadInkTuiEntry();
   await entry.runInkTui({
@@ -411,6 +437,7 @@ async function renderInkTui(input: {
     terminal: terminalSize(input.io.stdout),
     io: input.io,
     interactive: input.interactive,
+    showSplash: input.showSplash,
     loadModel: async (state) =>
       buildRenderableTuiModel({
         runtime: input.runtime,
@@ -452,6 +479,7 @@ function parseTuiArgs(args: string[]): ParsedTuiArgs {
     retainOnFailure: false,
     selectedSkillReferences: [],
     once: false,
+    splash: false,
     help: false
   };
   for (let index = 0; index < args.length; index += 1) {
@@ -524,6 +552,14 @@ function parseTuiArgs(args: string[]): ParsedTuiArgs {
     }
     if (arg === "--once") {
       parsed.once = true;
+      continue;
+    }
+    if (arg === "--splash") {
+      parsed.splash = true;
+      continue;
+    }
+    if (arg === "--no-splash") {
+      parsed.splash = false;
       continue;
     }
     throw new Error(`unknown tui argument ${arg}`);

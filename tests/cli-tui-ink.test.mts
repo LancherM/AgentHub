@@ -592,6 +592,167 @@ describe("Ink TUI renderer", () => {
     expect(output).toContain("agent-hub memory list --project-id project_1");
   });
 
+  it("renders the optional startup splash and badge flash state", () => {
+    const output = renderToString(
+      React.createElement(TuiInkFrame, {
+        model: baseModel,
+        state: createInitialInkState(),
+        terminal: { columns: 120, rows: 40 },
+        showSplash: true,
+        badgeFlash: true
+      }),
+      { columns: 120 }
+    );
+
+    expect(output).toContain("Agent Hub TUI");
+    expect(output).toContain("! TUI Project · @codex");
+  });
+
+  it("toggles local notifications and timeline without submitting prompts", async () => {
+    const submissions = [];
+    const instance = render(
+      React.createElement(TuiInkApp, {
+        model: baseModel,
+        state: createInitialInkState(),
+        terminal: { columns: 120, rows: 40 },
+        interactive: true,
+        submitPrompt: async (input) => {
+          submissions.push(input);
+          return { ok: true, message: "Submitted prompt.", model: baseModel };
+        }
+      })
+    );
+
+    for (const character of "/notify") {
+      instance.stdin.write(character);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+    instance.stdin.write("\r");
+    await waitForFrame(instance, "Completion notifications enabled.");
+    expect(instance.lastFrame()).toContain("notify on");
+
+    instance.stdin.write("l");
+    await waitForFrame(instance, "Timeline shown.");
+    expect(instance.lastFrame()).toContain("Timeline");
+    expect(instance.lastFrame()).toContain("notify on");
+
+    instance.stdin.write("\u001b");
+    await waitForFrame(instance, "Timeline hidden.");
+    for (const character of "/timeline") {
+      instance.stdin.write(character);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+    instance.stdin.write("\r");
+    await waitForFrame(instance, "Timeline shown.");
+
+    expect(submissions).toEqual([]);
+    instance.unmount();
+  });
+
+  it("emits completion notifications only for eligible long runs", async () => {
+    const notifications = [];
+    const activeModel = {
+      ...baseModel,
+      conversation: [],
+      activeRuns: [
+        {
+          runId: "run_notify",
+          agent: "codex",
+          startedAt: "2000-01-01T00:00:00.000Z",
+          title: "@codex run_notify ● running",
+          outputLines: ["Running long verification"]
+        }
+      ]
+    };
+    const completedModel = {
+      ...baseModel,
+      conversation: [
+        {
+          id: "run:run_notify",
+          type: "agent_completed",
+          timestamp: "2026-05-29T12:30:00.000Z",
+          author: "@codex",
+          agent: "codex",
+          runId: "run_notify",
+          statusLabel: "completed",
+          outputLines: ["completed"]
+        }
+      ],
+      activeRuns: []
+    };
+    const instance = render(
+      React.createElement(TuiInkApp, {
+        model: activeModel,
+        state: { ...createInitialInkState(), notifyEnabled: true },
+        terminal: { columns: 120, rows: 40 },
+        interactive: true,
+        loadModel: async () => completedModel,
+        notify: (message) => {
+          notifications.push(message);
+        },
+        pollIntervalMs: 5,
+        modelRefreshTimeoutMs: 50
+      })
+    );
+
+    await waitForCondition(() => notifications.length === 1);
+
+    expect(notifications).toEqual(["Agent Hub run run_notify completed"]);
+    instance.unmount();
+  });
+
+  it("skips completion notifications for short runs", async () => {
+    const notifications = [];
+    const activeModel = {
+      ...baseModel,
+      conversation: [],
+      activeRuns: [
+        {
+          runId: "run_short",
+          agent: "codex",
+          startedAt: new Date(Date.now() - 1_000).toISOString(),
+          title: "@codex run_short ● running",
+          outputLines: ["Running quick check"]
+        }
+      ]
+    };
+    const completedModel = {
+      ...baseModel,
+      conversation: [
+        {
+          id: "run:run_short",
+          type: "agent_completed",
+          timestamp: "2026-05-29T12:30:00.000Z",
+          author: "@codex",
+          agent: "codex",
+          runId: "run_short",
+          statusLabel: "completed",
+          outputLines: ["completed"]
+        }
+      ],
+      activeRuns: []
+    };
+    const instance = render(
+      React.createElement(TuiInkApp, {
+        model: activeModel,
+        state: { ...createInitialInkState(), notifyEnabled: true },
+        terminal: { columns: 120, rows: 40 },
+        interactive: true,
+        loadModel: async () => completedModel,
+        notify: (message) => {
+          notifications.push(message);
+        },
+        pollIntervalMs: 5,
+        modelRefreshTimeoutMs: 50
+      })
+    );
+
+    await waitForFrame(instance, "@codex run_short ✓ completed");
+
+    expect(notifications).toEqual([]);
+    instance.unmount();
+  });
+
   it("opens team roles from the slash command without submitting a prompt", async () => {
     const submissions = [];
     const instance = render(
@@ -1320,4 +1481,18 @@ async function waitForFrame(
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
   throw new Error(`Timed out waiting for frame text: ${expected}`);
+}
+
+async function waitForCondition(
+  condition,
+  timeoutMs = 500
+) {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    if (condition()) {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error("Timed out waiting for condition.");
 }
