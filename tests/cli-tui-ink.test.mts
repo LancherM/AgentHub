@@ -1,7 +1,8 @@
 import React from "../apps/cli/node_modules/react/index.js";
 import { renderToString } from "../apps/cli/node_modules/ink/build/index.js";
+import { render } from "../apps/cli/node_modules/ink-testing-library/build/index.js";
 import { describe, expect, it } from "vitest";
-import { TuiInkFrame } from "../apps/cli/src/tui-ink/App.mts";
+import { TuiInkApp, TuiInkFrame } from "../apps/cli/src/tui-ink/App.mts";
 import {
   createInitialInkState,
   reduceInkState,
@@ -174,6 +175,76 @@ describe("Ink TUI renderer", () => {
     expect(selectedRun(model, state)?.id).toBe("run_0000000a");
     expect(output).toContain("> run_0000000a @codex ok");
     expect(output).not.toContain("run_00000000 @codex ok");
+  });
+
+  it("submits composer text without interpreting unknown mentions", async () => {
+    const submissions = [];
+    const submittedModel = modelWithRuns(["run_12345678"]);
+    const instance = render(
+      React.createElement(TuiInkApp, {
+        model: baseModel,
+        state: createInitialInkState(),
+        terminal: { columns: 120, rows: 40 },
+        interactive: true,
+        submitPrompt: async (input) => {
+          submissions.push(input);
+          return { ok: true, message: "Submitted prompt.", model: submittedModel };
+        }
+      })
+    );
+
+    for (const character of "@unknown summarize") {
+      instance.stdin.write(character);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    instance.stdin.write("\n");
+    await new Promise((resolve) => setTimeout(resolve, 25));
+
+    expect(submissions).toEqual([
+      expect.objectContaining({ prompt: "@unknown summarize" })
+    ]);
+    expect(instance.lastFrame()).toContain("Submitted prompt.");
+    expect(instance.lastFrame()).toContain("run_12345678 @codex ok");
+    instance.unmount();
+  });
+
+  it("records governed review decisions from the selected run", async () => {
+    const decisions = [];
+    const acceptedModel = {
+      ...baseModel,
+      runs: [
+        {
+          ...baseModel.runs[0],
+          reviewDecision: { status: "accepted" }
+        }
+      ]
+    };
+    const instance = render(
+      React.createElement(TuiInkApp, {
+        model: baseModel,
+        state: { ...createInitialInkState(), focus: "review" },
+        terminal: { columns: 120, rows: 40 },
+        interactive: true,
+        recordReviewDecision: async (input) => {
+          decisions.push(input);
+          return { ok: true, message: "Review accepted.", model: acceptedModel };
+        }
+      })
+    );
+
+    instance.stdin.write("a");
+    await new Promise((resolve) => setTimeout(resolve, 25));
+
+    expect(decisions).toEqual([
+      expect.objectContaining({
+        runId: "run_27984312-fc9a-46bf-9ccf-c06997187091",
+        status: "accepted"
+      })
+    ]);
+    expect(instance.lastFrame()).toContain("Review accepted.");
+    expect(instance.lastFrame()).toContain("review accepted");
+    instance.unmount();
   });
 });
 

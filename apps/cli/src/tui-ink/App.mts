@@ -165,20 +165,28 @@ export function TuiInkApp(props: TuiInkAppProps): React.ReactElement {
         app.exit();
         return;
       }
-      if (key.ctrl && (input === "j" || key.return)) {
+      if (input === "\n" || (key.ctrl && (input === "j" || key.return))) {
         void submitComposer();
         return;
       }
-      if (input === "x" || input === "q") {
+      if ((input === "x" || input === "q") && state.composer.length === 0) {
         app.exit();
         return;
       }
-      if (input === "a") {
+      if (input === "a" && state.focus === "review" && state.composer.length === 0) {
         void recordDecision("accepted");
         return;
       }
-      if (input === "j" && state.focus === "review") {
+      if (input === "j" && state.focus === "review" && state.composer.length === 0) {
         void recordDecision("rejected");
+        return;
+      }
+      if ((input === ":" || input === "?") && state.composer.length === 0) {
+        applyKey(input === ":" ? "palette" : "help");
+        return;
+      }
+      if (isPrintableInput(input, key) && (state.focus === "work" || state.composer.length > 0)) {
+        setState((current) => ({ ...current, composer: `${current.composer}${input}` }));
         return;
       }
       const mapped = keyToAction(input, key, state.focus);
@@ -187,11 +195,11 @@ export function TuiInkApp(props: TuiInkAppProps): React.ReactElement {
         return;
       }
       if (key.backspace || key.delete) {
-        setState({ ...state, composer: state.composer.slice(0, -1) });
+        setState((current) => ({ ...current, composer: current.composer.slice(0, -1) }));
         return;
       }
       if (isPrintableInput(input, key)) {
-        setState({ ...state, composer: `${state.composer}${input}` });
+        setState((current) => ({ ...current, composer: `${current.composer}${input}` }));
       }
     },
     { isActive: props.interactive && !busy }

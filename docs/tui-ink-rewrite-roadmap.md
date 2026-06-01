@@ -275,7 +275,8 @@ Acceptance:
 
 ### Phase Ink-3: Composer And Refresh
 
-Status: partially implemented
+Status: done for prompt submission and post-action refresh; progress spinners
+can be refined later
 
 Goal: restore prompt submission with a component composer.
 
@@ -293,7 +294,8 @@ Acceptance:
 
 ### Phase Ink-4: Review, Memory, And Command Palette
 
-Status: partially implemented
+Status: done for governed review decisions, memory indicators, and command
+palette coverage
 
 Goal: restore governed actions without adding side effects.
 
