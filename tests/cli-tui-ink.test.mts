@@ -91,6 +91,47 @@ const baseModel = {
     commands: ["agent-hub risks show run_27984312-fc9a-46bf-9ccf-c06997187091"]
   },
   tasks: [],
+  team: {
+    projectId: "project_1",
+    roles: [
+      {
+        id: "preset:engineer",
+        handle: "engineer",
+        displayName: "Engineer",
+        source: "preset",
+        enabled: true,
+        executorKind: "agent_adapter",
+        executorLabel: "agent_adapter / codex",
+        executorRunnable: true,
+        defaultRoom: "planning",
+        capabilitySummary: "Implementation, tests, refactoring within task scope.",
+        defaultSkillReferences: []
+      },
+      {
+        id: "preset:reviewer",
+        handle: "reviewer",
+        displayName: "Reviewer",
+        source: "preset",
+        enabled: true,
+        executorKind: "human",
+        executorLabel: "human reserved",
+        executorRunnable: false,
+        defaultRoom: "review",
+        capabilitySummary: "Review, risk assessment, verification planning.",
+        defaultSkillReferences: [],
+        unavailableReason: "Reserved executor is not runnable in this phase."
+      }
+    ],
+    counts: {
+      total: 2,
+      enabled: 2,
+      runnable: 1,
+      reserved: 1,
+      custom: 0,
+      presetOverrides: 0
+    },
+    command: "agent-hub team roles list --project-id project_1"
+  },
   memory: {
     projectId: "project_1",
     counts: { proposed: 1, approved: 1, rejected: 0 },
@@ -140,6 +181,38 @@ describe("Ink TUI renderer", () => {
     expect(output).toContain("agent-hub team roles list --project-id project_1");
     expect(output).toContain("agent-hub runs show run_27984312-fc9a-46bf-9ccf-c06997187091");
     expect(output).toContain("agent-hub memory list --project-id project_1");
+  });
+
+  it("opens team roles from the slash command without submitting a prompt", async () => {
+    const submissions = [];
+    const instance = render(
+      React.createElement(TuiInkApp, {
+        model: baseModel,
+        state: createInitialInkState(),
+        terminal: { columns: 120, rows: 40 },
+        interactive: true,
+        submitPrompt: async (input) => {
+          submissions.push(input);
+          return { ok: true, message: "Submitted prompt.", model: baseModel };
+        }
+      })
+    );
+
+    for (const character of "/team") {
+      instance.stdin.write(character);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+    instance.stdin.write("\r");
+
+    await waitForFrame(instance, "Team roles shown.");
+
+    expect(submissions).toEqual([]);
+    expect(instance.lastFrame()).toContain("[Team]");
+    expect(instance.lastFrame()).toContain("Team Roles 2");
+    expect(instance.lastFrame()).toContain("@engineer preset agent_adapter / codex #planning");
+    expect(instance.lastFrame()).toContain("@reviewer preset human reserved #review");
+    expect(instance.lastFrame()).toContain("> @codex prompt");
+    instance.unmount();
   });
 
   it("preserves selected runs by id when refreshed models insert new runs", () => {

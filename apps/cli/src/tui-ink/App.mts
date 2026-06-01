@@ -190,6 +190,22 @@ export function TuiInkApp(props: TuiInkAppProps): React.ReactElement {
     }));
   };
 
+  const applyComposerCommand = (): boolean => {
+    const currentState = stateRef.current;
+    const command = currentState.composer.trim().toLowerCase();
+    if (command === "/team" || command === "/roles") {
+      setStateNow({
+        ...currentState,
+        focus: "team",
+        composer: "",
+        commandPaletteOpen: false,
+        statusMessage: "Team roles shown."
+      });
+      return true;
+    }
+    return false;
+  };
+
   const submitComposer = async () => {
     const currentState = stateRef.current;
     const currentModel = modelRef.current;
@@ -303,6 +319,8 @@ export function TuiInkApp(props: TuiInkAppProps): React.ReactElement {
 
   useInput(
     (input, key) => {
+      const currentState = stateRef.current;
+      const isBusy = busyRef.current;
       if (key.ctrl && (input === "c" || input === "C")) {
         app.exit();
         return;
@@ -312,8 +330,11 @@ export function TuiInkApp(props: TuiInkAppProps): React.ReactElement {
         input === "\r" ||
         key.return ||
         (key.ctrl && (input === "j" || input === "J"));
-      if (wantsSubmit && state.composer.length > 0) {
-        if (busy) {
+      if (wantsSubmit && currentState.composer.length > 0) {
+        if (applyComposerCommand()) {
+          return;
+        }
+        if (isBusy) {
           showBusyInputMessage();
           return;
         }
@@ -321,38 +342,38 @@ export function TuiInkApp(props: TuiInkAppProps): React.ReactElement {
         return;
       }
       if (key.ctrl && (input === "j" || input === "J")) {
-        if (busy) {
+        if (isBusy) {
           showBusyInputMessage();
           return;
         }
         void submitComposer();
         return;
       }
-      if ((input === "x" || input === "q") && state.composer.length === 0) {
+      if ((input === "x" || input === "q") && currentState.composer.length === 0) {
         app.exit();
         return;
       }
-      if (input === "a" && state.focus === "review" && state.composer.length === 0) {
-        if (busy) {
+      if (input === "a" && currentState.focus === "review" && currentState.composer.length === 0) {
+        if (isBusy) {
           showBusyInputMessage();
           return;
         }
         void recordDecision("accepted");
         return;
       }
-      if (input === "R" && state.focus === "review" && state.composer.length === 0) {
-        if (busy) {
+      if (input === "R" && currentState.focus === "review" && currentState.composer.length === 0) {
+        if (isBusy) {
           showBusyInputMessage();
           return;
         }
         void recordDecision("rejected");
         return;
       }
-      if ((input === ":" || input === "?") && state.composer.length === 0) {
+      if ((input === ":" || input === "?") && currentState.composer.length === 0) {
         applyKey(input === ":" ? "palette" : "help");
         return;
       }
-      if (key.escape && state.composer.length > 0) {
+      if (key.escape && currentState.composer.length > 0) {
         setState((current) => ({
           ...current,
           composer: "",
@@ -360,11 +381,14 @@ export function TuiInkApp(props: TuiInkAppProps): React.ReactElement {
         }));
         return;
       }
-      if (isPrintableInput(input, key) && (state.focus === "work" || state.composer.length > 0)) {
+      if (
+        isPrintableInput(input, key) &&
+        (currentState.focus === "work" || currentState.composer.length > 0)
+      ) {
         setState((current) => ({ ...current, composer: `${current.composer}${input}` }));
         return;
       }
-      const mapped = keyToAction(input, key, state.focus);
+      const mapped = keyToAction(input, key, currentState.focus);
       if (mapped) {
         applyKey(mapped);
         return;
@@ -454,6 +478,9 @@ function MainView(props: TuiInkFrameProps): React.ReactElement {
   }
   if (state.focus === "graph") {
     return h(RoleCallsPane, { model, state, terminal, detail: true });
+  }
+  if (state.focus === "team") {
+    return h(TeamPane, { model, terminal });
   }
   if (state.focus === "runs") {
     return h(RunsPane, { model, state, terminal, detail: true });
@@ -688,6 +715,50 @@ function TasksPane({
   );
 }
 
+function TeamPane({
+  model,
+  terminal
+}: {
+  model: TuiCurrentContextModel;
+  terminal: TuiInkTerminalSize;
+}): React.ReactElement {
+  const team = model.team;
+  if (!team.projectId) {
+    return h(
+      Pane,
+      { title: "Team Roles" },
+      line("Register or select a project before listing team roles.", { dimColor: true })
+    );
+  }
+  if (team.roles.length === 0) {
+    return h(
+      Pane,
+      { title: "Team Roles" },
+      line("No team roles are available in the current context.", { dimColor: true }),
+      line(`next ${team.command ?? "agent-hub project list"}`, { dimColor: true })
+    );
+  }
+  const windowSize = teamWindowSize(terminal);
+  const visibleRoles = team.roles.slice(0, windowSize);
+  const remaining = team.roles.length - visibleRoles.length;
+  return h(
+    Pane,
+    { title: `Team Roles ${team.counts.total}` },
+    line(
+      `enabled ${team.counts.enabled} runnable ${team.counts.runnable} reserved ${team.counts.reserved} custom ${team.counts.custom} overrides ${team.counts.presetOverrides}`,
+      { dimColor: true }
+    ),
+    ...visibleRoles.map((role) =>
+      line(
+        `${role.enabled ? " " : "!"} @${role.handle} ${role.source} ${role.executorLabel}${role.defaultRoom ? ` #${role.defaultRoom}` : ""} - ${truncateText(role.capabilitySummary, 62)}`
+      )
+    ),
+    ...(remaining > 0 ? [line(`${remaining} more roles hidden by window size`, { dimColor: true })] : []),
+    line(""),
+    line(`next ${team.command ?? "agent-hub project list"}`, { dimColor: true })
+  );
+}
+
 function MemoryPane({ model }: { model: TuiCurrentContextModel }): React.ReactElement {
   const selectedSkills =
     model.skills.selected.length === 0
@@ -741,7 +812,7 @@ function HelpPane(): React.ReactElement {
     Pane,
     { title: "Help" },
     line("tab/shift-tab focus   up/down or k/j move   enter review"),
-    line(": commands   c continue   a accept review   R reject in Review"),
+    line(": commands   /team roles   c continue   a accept review   R reject in Review"),
     line("enter submits non-empty composer   h hide done   m memory   ? help   x exit")
   );
 }
@@ -753,7 +824,7 @@ function Composer({ model, state }: { model: TuiCurrentContextModel; state: TuiI
 
 function StatusBar({ model, state }: { model: TuiCurrentContextModel; state: TuiInkState }): React.ReactElement {
   const hints = state.composer
-    ? "enter submit | tab focus | esc clear | ctrl+c exit"
+    ? "enter submit | /team roles | tab focus | esc clear | ctrl+c exit"
     : "tab focus | enter review | : palette | p command | a accept | R reject | ? help | x exit";
   return line(
     `${hints} | ${commandHintForFocus(model, state)}`,
@@ -801,6 +872,10 @@ function roleCallWindowSize(terminal: TuiInkTerminalSize, detail: boolean): numb
 
 function taskWindowSize(terminal: TuiInkTerminalSize): number {
   return boundedWindowSize(terminal.rows - 14, 8, 30);
+}
+
+function teamWindowSize(terminal: TuiInkTerminalSize): number {
+  return boundedWindowSize(terminal.rows - 12, 8, 32);
 }
 
 function transcriptWindowSize(terminal: TuiInkTerminalSize): number {

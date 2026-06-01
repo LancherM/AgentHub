@@ -31,8 +31,8 @@ SQLite, shell, git, and agent execution remain in Electron main-process services
 or shared local packages.
 
 `agent-hub tui` is a current-context terminal workbench shell. It renders
-bounded transcript, run, RoleCall, review, task, memory, and skill summaries
-from shared read models, supports launch by thread or room, and submits
+bounded transcript, run, RoleCall, review, task, team-role, memory, and skill
+summaries from shared read models, supports launch by thread or room, and submits
 composer prompts through the same local CLI chat path. Loop continuation,
 review writes, memory approval, apply, merge, push, and PR creation stay
 outside the TUI.
@@ -53,6 +53,11 @@ The Memory focus mode is a governance indicator, not a browser: it shows
 proposed/approved/rejected counts, the approved-memory source, explicit
 approval/rejection command hints, selected skills, available skill identifiers,
 and the current context delivery mode.
+The Team focus mode is opened from focus navigation or by typing `/team` in the
+composer. It shows the current project's resolved preset, preset-overridden, and
+custom roles from the same role settings used by `team roles list`, including
+enabled/runnable counts, executor labels, default rooms, and the equivalent CLI
+list command.
 The command palette (`:`) collects current-context CLI command hints for runs,
 RoleCalls, review, and memory. It is a terminal aid only; it does not add
 project or room browsing.
@@ -75,10 +80,11 @@ workbench has been removed as a runtime path; the remaining TUI roadmap work is
 interaction polish, scroll behavior, and broader state coverage without
 changing the governance boundaries above.
 The TUI composer is prompt-first while editing: printable keys append to the
-prompt, `Enter` submits non-empty prompts when a submission callback is
-available, `Esc` clears the in-progress prompt, and `Tab` remains available for
-focus navigation. The status bar switches to composer-specific hints so exit
-shortcuts are not advertised while a prompt is being edited. Interactive
+prompt, `/team` opens the Team roles view without submitting a prompt, `Enter`
+submits non-command prompts when a submission callback is available, `Esc`
+clears the in-progress prompt, and `Tab` remains available for focus navigation.
+The status bar switches to composer-specific hints so exit shortcuts are not
+advertised while a prompt is being edited. Interactive
 submit and review-decision actions show bounded busy states without locking the
 keyboard: users can still switch focus, open command hints, and draft the next
 prompt while the current local action is running. The TUI only blocks duplicate
@@ -96,7 +102,8 @@ shortcut is uppercase `R` so vim-style `j` remains navigation rather than an
 audit write.
 When the graph has no selected RoleCall, the TUI command hint and command
 palette surface `agent-hub team roles list --project-id <project-id>` as the
-next useful role command.
+next useful role command; `/team` is the in-TUI shortcut for viewing that list
+directly.
 TUI validation is expected to work from a clean checkout: root typecheck and
 lint scripts check the Ink renderer through TypeScript build-mode references,
 allowing required local `dist` declarations to be generated during validation

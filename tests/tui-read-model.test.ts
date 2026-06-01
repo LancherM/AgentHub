@@ -107,6 +107,13 @@ describe("TUI current-context read model", () => {
       followUps: ["deferred @reviewer: Review retained-run cleanup summary."],
       nextAction: "inspect run_active"
     });
+    expect(model.team.roles.map((role) => role.handle)).toContain("engineer");
+    expect(model.team.counts).toMatchObject({
+      total: 7,
+      runnable: 1,
+      reserved: 0
+    });
+    expect(model.team.command).toBe("agent-hub team roles list --project-id project_1");
     expect(model.memory.counts).toEqual({
       proposed: 2,
       approved: 1,
