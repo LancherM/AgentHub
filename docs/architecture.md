@@ -388,3 +388,6 @@ TUI, and desktop-facing services can share the same `review_decision` artifact
 shape. Recording a decision writes a run artifact only and does not mutate task
 run status, workspace cleanup, repository files, branches, memory, or lifecycle
 state.
+Memory, skill, and context indicators are rendered from core read-model
+summaries. The TUI may show command hints such as `agent-hub memory list`, but
+memory approval and skill editing remain explicit CLI/context-store workflows.

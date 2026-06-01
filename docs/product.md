@@ -49,6 +49,10 @@ Review decisions can be recorded with `agent-hub reviews accept|reject` or the
 TUI review shortcuts. These decisions create local `review_decision` artifacts
 only; they do not apply files, alter run status, merge, push, approve memory,
 clean worktrees, or delete branches.
+The Memory focus mode is a governance indicator, not a browser: it shows
+proposed/approved/rejected counts, the approved-memory source, explicit
+approval/rejection command hints, selected skills, available skill identifiers,
+and the current context delivery mode.
 
 ## Core Concepts
 

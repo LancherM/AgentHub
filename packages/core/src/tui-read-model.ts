@@ -244,6 +244,8 @@ export interface TuiMemorySummary {
   projectId?: string;
   counts: Record<MemoryStatus, number>;
   command?: string;
+  approvalCommands: string[];
+  approvedSource: string;
   approvalReminder: string;
 }
 
@@ -723,6 +725,14 @@ function summarizeMemory(
     projectId,
     counts,
     command: projectId ? `agent-hub memory list --project-id ${projectId}` : undefined,
+    approvalCommands: projectId
+      ? [
+          `agent-hub memory list --project-id ${projectId}`,
+          "agent-hub memory approve <memory-id>",
+          "agent-hub memory reject <memory-id>"
+        ]
+      : [],
+    approvedSource: "Agent Hub context store; approved memory is injected at runtime.",
     approvalReminder: "Memory approval remains an explicit CLI action."
   };
 }

@@ -208,6 +208,27 @@ describe("CLI TUI command", () => {
         })
       ]);
   });
+
+  it("renders memory, skills, context indicators, and command shortcut hints", async () => {
+    const runtime = createCliRuntime({ storageMode: "memory" });
+    await seedTuiContext(runtime);
+    const model = await buildTuiCurrentContextModel(runtime, {
+      projectId: "project_1",
+      threadId: "thread_1",
+      selectedSkillReferences: ["global:typescript-safety"]
+    });
+    let state = createInitialTuiShellState();
+    state = { ...state, focus: "memory" };
+
+    const rendered = renderTuiWorkbench(model, state, { columns: 120, rows: 80 });
+    expect(rendered).toContain("approved_source Agent Hub context store");
+    expect(rendered).toContain("agent-hub memory list --project-id project_1");
+    expect(rendered).toContain("selected global:typescript-safety");
+    expect(rendered).toContain("mode runtime_injection");
+
+    state = reduceTuiKey(state, "print_commands", model).state;
+    expect(state.statusMessage).toBe("agent-hub memory list --project-id project_1");
+  });
 });
 
 function testIo(output: string[], errors: string[]) {
@@ -330,6 +351,32 @@ async function seedTuiContext(runtime: ReturnType<typeof createCliRuntime>) {
       }
     })
   );
+  await runtime.memoryItemRepository.create({
+    id: "memory_1",
+    projectId: "project_1",
+    category: "workflow_rule",
+    status: "proposed",
+    content: "Keep memory approval explicit.",
+    createdAt: now,
+    updatedAt: now
+  });
+  await runtime.memoryItemRepository.create({
+    id: "memory_2",
+    projectId: "project_1",
+    category: "project_fact",
+    status: "approved",
+    content: "TUI uses runtime injection.",
+    createdAt: now,
+    updatedAt: now
+  });
+  await runtime.skillRepository.create({
+    id: "typescript-safety",
+    name: "TypeScript Safety",
+    description: "Check TypeScript output.",
+    path: "/tmp/skills/typescript-safety/SKILL.md",
+    createdAt: now,
+    updatedAt: now
+  });
 }
 
 function roleCall(input: Partial<RoleCall>): RoleCall {

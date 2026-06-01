@@ -115,6 +115,7 @@ export type TuiKey =
   | "cancel"
   | "accept_review"
   | "reject_review"
+  | "print_commands"
   | "exit"
   | "other";
 
@@ -132,6 +133,7 @@ interface ParsedTuiArgs {
   acceptRunId?: string;
   rejectRunId?: string;
   rejectReason?: string;
+  selectedSkillReferences: string[];
   workspaceBasePath?: string;
   dryRun: boolean;
   retainOnFailure: boolean;
@@ -253,6 +255,7 @@ export async function runTuiCommand(options: RunTuiCommandOptions): Promise<numb
     projectId: launch.projectId,
     threadId: launch.threadId,
     selectedAgent,
+    selectedSkillReferences: parsed.selectedSkillReferences,
     maxIterations: parsed.maxIterations,
     hideCompletedRoleCalls: state.hideCompletedRoleCalls
   };
@@ -307,6 +310,7 @@ export function tuiHelpText(): string {
     "  --accept-run <run-id>      Record an audit-only accepted review decision.",
     "  --reject-run <run-id>      Record an audit-only rejected review decision.",
     "  --reason <text>            Reason for --reject-run.",
+    "  --skill [scope:]id         Show a selected skill indicator.",
     "  --debug                    Include debug-available agent choices.",
     "  --once                     Render once and exit, useful for smoke tests.",
     "  --help                     Show this help.",
@@ -378,6 +382,10 @@ export function reduceTuiKey(
   }
   if (key === "accept_review" || key === "reject_review") {
     next.statusMessage = "Review decision shortcut is available in the interactive TUI.";
+    return { state: next, exit: false };
+  }
+  if (key === "print_commands") {
+    next.statusMessage = commandHintForFocus(model, next);
     return { state: next, exit: false };
   }
   if (key === "escape") {
@@ -593,6 +601,7 @@ function parseTuiArgs(args: string[]): ParsedTuiArgs {
     debug: false,
     dryRun: false,
     retainOnFailure: false,
+    selectedSkillReferences: [],
     once: false,
     help: false
   };
@@ -652,6 +661,11 @@ function parseTuiArgs(args: string[]): ParsedTuiArgs {
     }
     if (arg === "--reason") {
       parsed.rejectReason = requiredArgValue(args, index, arg);
+      index += 1;
+      continue;
+    }
+    if (arg === "--skill") {
+      parsed.selectedSkillReferences.push(requiredArgValue(args, index, arg));
       index += 1;
       continue;
     }
@@ -956,7 +970,13 @@ function renderMemoryPanel(model: TuiCurrentContextModel): string[] {
     `  proposed ${model.memory.counts.proposed}`,
     `  approved ${model.memory.counts.approved}`,
     `  rejected ${model.memory.counts.rejected}`,
+    `  approved_source ${model.memory.approvedSource}`,
+    `  reminder ${model.memory.approvalReminder}`,
     `  next ${model.memory.command ?? "register a project before listing memory"}`,
+    "  commands:",
+    ...(model.memory.approvalCommands.length === 0
+      ? ["    none"]
+      : model.memory.approvalCommands.map((command) => `    ${command}`)),
     "Skills",
     `  selected ${selectedSkills}`,
     `  available ${availableSkills}`,
@@ -976,6 +996,7 @@ function renderHelpPanel(): string[] {
     "  c                 prepare bounded continuation prompt",
     "  k                 cancel selected running item when supported",
     "  a / j             accept or reject selected run for record only",
+    "  p                 print focused CLI command hint",
     "  ctrl+j            submit composer prompt",
     "  r                 review summary",
     "  h                 toggle completed RoleCalls",
@@ -996,7 +1017,7 @@ function renderHelpPanel(): string[] {
 
 function renderActionHints(): string[] {
   return [
-    "Actions: tab focus  enter open  c continue  k cancel  a accept  j reject  ctrl+j submit  r review  h hide done  m memory  ? help  x exit"
+    "Actions: tab focus  enter open  c continue  k cancel  a accept  j reject  p commands  ctrl+j submit  r review  h hide done  m memory  ? help  x exit"
   ];
 }
 
@@ -1185,7 +1206,29 @@ function tuiKeyFromReadlineKey(key: readline.Key): TuiKey {
   if (key.name === "j") {
     return "reject_review";
   }
+  if (key.name === "p") {
+    return "print_commands";
+  }
   return "other";
+}
+
+function commandHintForFocus(
+  model: TuiCurrentContextModel,
+  state: TuiShellState
+): string {
+  if (state.focus === "memory") {
+    return model.memory.command ?? "Register a project before listing memory.";
+  }
+  if (state.focus === "runs") {
+    const run = model.runs[boundedIndex(state.selectedRunIndex, model.runs.length)];
+    return run?.commands[0] ?? "No run command is available.";
+  }
+  if (state.focus === "review") {
+    return model.review.commands[0] ?? "No review command is available.";
+  }
+  const nodes = graphNodesForState(model.roleCalls.nodes, state);
+  const node = nodes[boundedIndex(state.selectedRoleCallIndex, nodes.length)];
+  return node ? `agent-hub role-calls show ${node.id}` : "No RoleCall command is available.";
 }
 
 function applyContinuePrompt(
