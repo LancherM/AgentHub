@@ -13,9 +13,9 @@
     "build": "tsc -b tsconfig.build.json",
     "desktop:build": "pnpm --filter desktop build",
     "desktop:dist:mac": "bash scripts/build-macos-dmg.sh",
-    "typecheck": "tsc --noEmit --pretty false -p tsconfig.json && tsc --noEmit --pretty false -p apps/cli/tsconfig.tui-ink.json && pnpm --filter desktop typecheck",
+    "typecheck": "tsc --noEmit --pretty false -p tsconfig.json && tsc -b apps/cli/tsconfig.tui-ink.json --pretty false && pnpm --filter desktop typecheck",
     "test": "tsc -b apps/cli/tsconfig.tui-ink.json --pretty false && vitest run",
-    "lint": "tsc --noEmit --pretty false -p tsconfig.json && tsc --noEmit --pretty false -p apps/cli/tsconfig.tui-ink.json && pnpm --filter desktop lint"
+    "lint": "tsc --noEmit --pretty false -p tsconfig.json && tsc -b apps/cli/tsconfig.tui-ink.json --pretty false && pnpm --filter desktop lint"
   },
   "devDependencies": {
     "@types/node": "22.19.19",

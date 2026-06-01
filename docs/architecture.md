@@ -424,6 +424,11 @@ the TUI refreshes from the persisted read model instead.
 The command hint helper falls back from an absent selected RoleCall to
 `agent-hub team roles list --project-id <project-id>`, and the command palette
 includes the same role-list command beside run, review, and memory commands.
+Because the Ink renderer is a NodeNext composite TypeScript project that imports
+workspace package types, root validation runs its TUI check through
+`tsc -b apps/cli/tsconfig.tui-ink.json` so project references emit the required
+local declarations in clean CI checkouts without requiring prebuilt package
+`dist` directories.
 The hand-rendered string layout has been removed from the TUI runtime path.
 The current renderer direction is documented in
 `docs/tui-ink-rewrite-roadmap.md`: keep the core read model and CLI action
