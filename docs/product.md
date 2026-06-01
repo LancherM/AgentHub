@@ -45,6 +45,10 @@ pending/waiting/active counts, convergence reason, max-iteration stops,
 blocking-risk stops, and waiting-for-approval or waiting-for-context stops.
 The continue key prepares an explicit composer prompt; it does not continue
 work in the background.
+Review decisions can be recorded with `agent-hub reviews accept|reject` or the
+TUI review shortcuts. These decisions create local `review_decision` artifacts
+only; they do not apply files, alter run status, merge, push, approve memory,
+clean worktrees, or delete branches.
 
 ## Core Concepts
 
@@ -105,6 +109,8 @@ The current CLI exposes these command groups:
   `--skill [scope:]id`.
 - Run review: `runs list`, `runs show`, `runs events`, `runs diff`, and
   `risks show`.
+- Review decisions: `reviews show`, `reviews accept`, and `reviews reject`
+  record audit-only accept/reject artifacts for a run.
 - RoleCall audit: `role-calls list`, `role-calls show`, `role-todos list`, and
   `role-events list`, each with JSON output where useful for local scripts.
 - Memory and comparison: `memory list`, `memory propose`, `memory approve`,

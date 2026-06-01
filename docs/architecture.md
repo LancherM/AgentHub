@@ -383,3 +383,8 @@ new persistence or raw log/diff rendering.
 RoleCall loop controls reuse the core convergence helper plus TUI risk
 summaries. The CLI renderer can prepare an explicit continuation prompt, but it
 does not run an autonomous background loop or add a daemon.
+Audit-only review decision recording lives in `packages/task-runner` so CLI,
+TUI, and desktop-facing services can share the same `review_decision` artifact
+shape. Recording a decision writes a run artifact only and does not mutate task
+run status, workspace cleanup, repository files, branches, memory, or lifecycle
+state.

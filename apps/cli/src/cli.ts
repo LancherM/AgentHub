@@ -71,8 +71,10 @@ import {
 import {
   buildComparisonReport,
   formatShellCommand,
+  getRunReviewDecision,
   loadRunDiffReview,
   loadRunEventsReview,
+  recordRunReviewDecision,
   TaskRunner,
   type RunDiffReview,
   type RunContinuationInput,
@@ -464,7 +466,8 @@ export async function main(
       projectRoot: global.projectRoot ?? cwd,
       selectedAgent: global.agentKind ?? defaultCliAgent(debug),
       debug,
-      submitPrompt: (input) => submitTuiPrompt(input, io, cwd, activeRuntime)
+      submitPrompt: (input) => submitTuiPrompt(input, io, cwd, activeRuntime),
+      recordReviewDecision: (input) => recordTuiReviewDecision(input, activeRuntime)
     });
   }
 
@@ -522,6 +525,18 @@ export async function main(
 
   if (command === "risks" && rest[0] === "show") {
     return showRisk(rest.slice(1), io, activeRuntime);
+  }
+
+  if (command === "reviews" && rest[0] === "show") {
+    return showReviewDecision(rest.slice(1), io, activeRuntime);
+  }
+
+  if (command === "reviews" && rest[0] === "accept") {
+    return recordReviewDecisionCommand("accepted", rest.slice(1), io, activeRuntime);
+  }
+
+  if (command === "reviews" && rest[0] === "reject") {
+    return recordReviewDecisionCommand("rejected", rest.slice(1), io, activeRuntime);
   }
 
   if (command === "role-calls" && rest[0] === "list") {
@@ -607,6 +622,9 @@ export function helpText(debug = isEnvironmentDebugEnabled()): string {
     "  agent-hub runs diff <run-id> [--stat|--patch] [--full]",
     "  agent-hub runs show <run-id>",
     "  agent-hub risks show <run-id>",
+    "  agent-hub reviews show <run-id>",
+    "  agent-hub reviews accept <run-id>",
+    "  agent-hub reviews reject <run-id> [--reason <text>]",
     "  agent-hub role-calls list [--thread-id <thread-id>] [--role <role>] [--status <status>] [--json]",
     "  agent-hub role-calls show <role-call-id> [--json]",
     "  agent-hub role-todos list [--thread-id <thread-id>] [--role <role>] [--status <status>] [--json]",
@@ -1875,6 +1893,33 @@ async function submitTuiPrompt(
       threadId: input.threadId,
       message: errorMessage(error)
     };
+  }
+}
+
+async function recordTuiReviewDecision(
+  input: { runId: string; status: "accepted" | "rejected"; reason?: string },
+  runtime: CliRuntime
+): Promise<{ ok: boolean; message: string }> {
+  try {
+    const decision = await recordRunReviewDecision(
+      {
+        taskRunRepository: runtime.taskRunRepository,
+        runArtifactRepository: runtime.runArtifactRepository
+      },
+      {
+        runId: input.runId,
+        status: input.status,
+        reason: input.reason,
+        idFactory: createId,
+        now: nowIso
+      }
+    );
+    return {
+      ok: true,
+      message: `Review ${decision.reviewStatus} for ${decision.runId}. No repository action was performed.`
+    };
+  } catch (error) {
+    return { ok: false, message: errorMessage(error) };
   }
 }
 
@@ -3566,6 +3611,81 @@ async function showRisk(
     ].join("\n")
   );
   return 0;
+}
+
+async function showReviewDecision(
+  args: string[],
+  io: CliIO,
+  runtime: CliRuntime
+): Promise<number> {
+  const runId = args[0];
+  if (!runId) {
+    io.stderr.write("error: run id is required\n");
+    return 1;
+  }
+  const run = await runtime.taskRunRepository.get(runId);
+  if (!run) {
+    io.stderr.write(`error: run ${runId} not found\n`);
+    return 1;
+  }
+  const decision = await getRunReviewDecision(
+    { runArtifactRepository: runtime.runArtifactRepository },
+    runId
+  );
+  io.stdout.write(renderReviewDecision(decision));
+  return 0;
+}
+
+async function recordReviewDecisionCommand(
+  status: "accepted" | "rejected",
+  args: string[],
+  io: CliIO,
+  runtime: CliRuntime
+): Promise<number> {
+  const runId = args[0];
+  if (!runId) {
+    io.stderr.write("error: run id is required\n");
+    return 1;
+  }
+  try {
+    const decision = await recordRunReviewDecision(
+      {
+        taskRunRepository: runtime.taskRunRepository,
+        runArtifactRepository: runtime.runArtifactRepository
+      },
+      {
+        runId,
+        status,
+        reason: optionalFlag(args.slice(1), "--reason"),
+        idFactory: createId,
+        now: nowIso
+      }
+    );
+    io.stdout.write(renderReviewDecision(decision));
+    return 0;
+  } catch (error) {
+    io.stderr.write(`error: ${errorMessage(error)}\n`);
+    return 1;
+  }
+}
+
+function renderReviewDecision(decision: {
+  runId: string;
+  reviewStatus: string;
+  acceptedAt?: string;
+  rejectedAt?: string;
+  reason?: string;
+  message?: string;
+}): string {
+  return [
+    `run_id: ${decision.runId}`,
+    `review_status: ${decision.reviewStatus}`,
+    `accepted_at: ${decision.acceptedAt ?? "none"}`,
+    `rejected_at: ${decision.rejectedAt ?? "none"}`,
+    `reason: ${decision.reason ?? "none"}`,
+    `message: ${decision.message ?? "none"}`,
+    ""
+  ].join("\n");
 }
 
 async function listRoleCalls(

@@ -34,6 +34,7 @@ export interface RunTuiCommandOptions {
   selectedAgent?: AgentKind;
   debug?: boolean;
   submitPrompt?: TuiPromptSubmitter;
+  recordReviewDecision?: TuiReviewDecisionRecorder;
 }
 
 export interface TuiPromptSubmissionInput {
@@ -60,6 +61,21 @@ export interface TuiPromptSubmissionResult {
 export type TuiPromptSubmitter = (
   input: TuiPromptSubmissionInput
 ) => Promise<TuiPromptSubmissionResult>;
+
+export interface TuiReviewDecisionInput {
+  runId: string;
+  status: "accepted" | "rejected";
+  reason?: string;
+}
+
+export interface TuiReviewDecisionResult {
+  ok: boolean;
+  message: string;
+}
+
+export type TuiReviewDecisionRecorder = (
+  input: TuiReviewDecisionInput
+) => Promise<TuiReviewDecisionResult>;
 
 export type TuiFocusMode =
   | "work"
@@ -97,6 +113,8 @@ export type TuiKey =
   | "hide_done"
   | "continue_loop"
   | "cancel"
+  | "accept_review"
+  | "reject_review"
   | "exit"
   | "other";
 
@@ -111,6 +129,9 @@ interface ParsedTuiArgs {
   agentKind?: AgentKind;
   maxIterations?: number;
   submitPrompt?: string;
+  acceptRunId?: string;
+  rejectRunId?: string;
+  rejectReason?: string;
   workspaceBasePath?: string;
   dryRun: boolean;
   retainOnFailure: boolean;
@@ -210,6 +231,24 @@ export async function runTuiCommand(options: RunTuiCommandOptions): Promise<numb
       options.io.stderr.write(`error: ${submission.message}\n`);
     }
   }
+  if (parsed.acceptRunId || parsed.rejectRunId) {
+    if (!options.recordReviewDecision) {
+      options.io.stderr.write("error: TUI review decisions are unavailable\n");
+      return 1;
+    }
+    const runId = parsed.acceptRunId ?? parsed.rejectRunId;
+    if (runId) {
+      const decision = await options.recordReviewDecision({
+        runId,
+        status: parsed.acceptRunId ? "accepted" : "rejected",
+        reason: parsed.rejectReason
+      });
+      state.statusMessage = decision.message;
+      if (!decision.ok) {
+        options.io.stderr.write(`error: ${decision.message}\n`);
+      }
+    }
+  }
   const modelInput: TuiCurrentContextInput = {
     projectId: launch.projectId,
     threadId: launch.threadId,
@@ -236,6 +275,7 @@ export async function runTuiCommand(options: RunTuiCommandOptions): Promise<numb
     initialState: state,
     launchWarnings: launch.warnings,
     submitPrompt: options.submitPrompt,
+    recordReviewDecision: options.recordReviewDecision,
     submitInput: {
       projectRoot: options.projectRoot,
       roomRef: parsed.roomRef,
@@ -264,6 +304,9 @@ export function tuiHelpText(): string {
     "  --workspace-base <path>    Workspace base for submitted runs.",
     "  --retain-on-failure        Keep failed submitted-run worktrees.",
     "  --dry-run                  Create submitted runs without adapter execution.",
+    "  --accept-run <run-id>      Record an audit-only accepted review decision.",
+    "  --reject-run <run-id>      Record an audit-only rejected review decision.",
+    "  --reason <text>            Reason for --reject-run.",
     "  --debug                    Include debug-available agent choices.",
     "  --once                     Render once and exit, useful for smoke tests.",
     "  --help                     Show this help.",
@@ -331,6 +374,10 @@ export function reduceTuiKey(
   if (key === "cancel") {
     next.statusMessage =
       "Cancellation is unavailable for this CLI TUI context; use the owning run service when supported.";
+    return { state: next, exit: false };
+  }
+  if (key === "accept_review" || key === "reject_review") {
+    next.statusMessage = "Review decision shortcut is available in the interactive TUI.";
     return { state: next, exit: false };
   }
   if (key === "escape") {
@@ -409,6 +456,7 @@ async function runInteractiveTui(input: {
   initialState: TuiShellState;
   launchWarnings: string[];
   submitPrompt?: TuiPromptSubmitter;
+  recordReviewDecision?: TuiReviewDecisionRecorder;
   submitInput: Omit<TuiPromptSubmissionInput, "prompt" | "projectId" | "threadId">;
 }): Promise<number> {
   const stdin = input.io.stdin ?? process.stdin;
@@ -455,6 +503,28 @@ async function runInteractiveTui(input: {
     };
     const onKeypress = async (chunk: string, key: readline.Key) => {
       await rendering;
+      if (key.name === "a" || key.name === "j") {
+        if (!input.recordReviewDecision) {
+          state = { ...state, statusMessage: "Review decisions are unavailable." };
+          rerender();
+          return;
+        }
+        const model = await buildTuiCurrentContextModel(input.runtime, modelInput);
+        const runId = selectedReviewRunId(model);
+        if (!runId) {
+          state = { ...state, statusMessage: "No linked run is selected for review." };
+          rerender();
+          return;
+        }
+        const decision = await input.recordReviewDecision({
+          runId,
+          status: key.name === "a" ? "accepted" : "rejected",
+          reason: key.name === "j" ? "Rejected from TUI review shortcut." : undefined
+        });
+        state = { ...state, statusMessage: decision.message };
+        rerender();
+        return;
+      }
       if (isSubmitKey(key)) {
         if (!state.composer.trim()) {
           state = { ...state, statusMessage: "Composer is empty." };
@@ -570,6 +640,21 @@ function parseTuiArgs(args: string[]): ParsedTuiArgs {
       parsed.dryRun = true;
       continue;
     }
+    if (arg === "--accept-run") {
+      parsed.acceptRunId = requiredArgValue(args, index, arg);
+      index += 1;
+      continue;
+    }
+    if (arg === "--reject-run") {
+      parsed.rejectRunId = requiredArgValue(args, index, arg);
+      index += 1;
+      continue;
+    }
+    if (arg === "--reason") {
+      parsed.rejectReason = requiredArgValue(args, index, arg);
+      index += 1;
+      continue;
+    }
     if (arg === "--debug") {
       parsed.debug = true;
       continue;
@@ -582,6 +667,9 @@ function parseTuiArgs(args: string[]): ParsedTuiArgs {
   }
   if (parsed.threadId && parsed.roomRef) {
     throw new Error("tui accepts only one of --thread or --room");
+  }
+  if (parsed.acceptRunId && parsed.rejectRunId) {
+    throw new Error("tui accepts only one of --accept-run or --reject-run");
   }
   return parsed;
 }
@@ -766,6 +854,7 @@ function renderRunOperatingDetail(run: TuiRunSummary | undefined): string[] {
     `  status ${run.status}`,
     `  stage ${run.stage}`,
     `  retained_worktree ${run.retainedWorktree ? "yes" : "no"}`,
+    `  review_status ${run.reviewDecision.status}`,
     ...evidenceLines(run.evidence),
     ...commandLines(run.commands)
   ];
@@ -886,6 +975,7 @@ function renderHelpPanel(): string[] {
     "  enter             open selected review summary",
     "  c                 prepare bounded continuation prompt",
     "  k                 cancel selected running item when supported",
+    "  a / j             accept or reject selected run for record only",
     "  ctrl+j            submit composer prompt",
     "  r                 review summary",
     "  h                 toggle completed RoleCalls",
@@ -906,7 +996,7 @@ function renderHelpPanel(): string[] {
 
 function renderActionHints(): string[] {
   return [
-    "Actions: tab focus  enter open  c continue  k cancel  ctrl+j submit  r review  h hide done  m memory  ? help  x exit"
+    "Actions: tab focus  enter open  c continue  k cancel  a accept  j reject  ctrl+j submit  r review  h hide done  m memory  ? help  x exit"
   ];
 }
 
@@ -950,6 +1040,13 @@ function commandLines(commands: string[]): string[] {
     return [];
   }
   return ["  commands:", ...commands.map((command) => `    ${command}`)];
+}
+
+function selectedReviewRunId(model: TuiCurrentContextModel): string | undefined {
+  if (model.review.kind === "run") {
+    return model.review.selectedId;
+  }
+  return model.review.evidence.linkedRunId;
 }
 
 function moveSelection(
@@ -1081,6 +1178,12 @@ function tuiKeyFromReadlineKey(key: readline.Key): TuiKey {
   }
   if (key.name === "k") {
     return "cancel";
+  }
+  if (key.name === "a") {
+    return "accept_review";
+  }
+  if (key.name === "j") {
+    return "reject_review";
   }
   return "other";
 }

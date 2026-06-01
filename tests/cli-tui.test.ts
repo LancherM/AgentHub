@@ -152,6 +152,62 @@ describe("CLI TUI command", () => {
     expect(output.join("")).toContain("Submitted prompt to #submit.");
     expect(output.join("")).toContain("run_");
   });
+
+  it("records audit-only review decisions from CLI and TUI without changing run state", async () => {
+    const runtime = createCliRuntime({ storageMode: "memory" });
+    await seedTuiContext(runtime);
+    const output: string[] = [];
+    const errors: string[] = [];
+
+    await expect(
+      main(["reviews", "show", "run_1"], testIo(output, errors), process.cwd(), runtime)
+    ).resolves.toBe(0);
+    await expect(
+      main(["reviews", "accept", "run_1"], testIo(output, errors), process.cwd(), runtime)
+    ).resolves.toBe(0);
+    await expect(
+      main(
+        [
+          "--project",
+          projectRoot,
+          "tui",
+          "--thread",
+          "thread_1",
+          "--reject-run",
+          "run_1",
+          "--reason",
+          "Needs full suite.",
+          "--once"
+        ],
+        testIo(output, errors),
+        process.cwd(),
+        runtime
+      )
+    ).resolves.toBe(0);
+
+    expect(errors.join("")).toBe("");
+    expect(output.join("")).toContain("review_status: pending");
+    expect(output.join("")).toContain("review_status: accepted");
+    expect(output.join("")).toContain("Review rejected for run_1. No repository action was performed.");
+    await expect(runtime.taskRunRepository.get("run_1")).resolves.toMatchObject({
+      status: "running"
+    });
+    const artifacts = await runtime.runArtifactRepository.listByRunId("run_1");
+    expect(artifacts.filter((artifact) => artifact.kind === "review_decision"))
+      .toEqual([
+        expect.objectContaining({
+          content: "Accepted for record. No merge was performed.",
+          metadata: expect.objectContaining({ reviewStatus: "accepted" })
+        }),
+        expect.objectContaining({
+          content: "Rejected for record. No files were deleted or reverted.",
+          metadata: expect.objectContaining({
+            reviewStatus: "rejected",
+            reason: "Needs full suite."
+          })
+        })
+      ]);
+  });
 });
 
 function testIo(output: string[], errors: string[]) {

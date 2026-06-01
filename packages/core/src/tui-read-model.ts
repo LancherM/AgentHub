@@ -131,7 +131,16 @@ export interface TuiRunSummary {
   parentMessageId?: string;
   retainedWorktree: boolean;
   evidence: TuiEvidenceSummary;
+  reviewDecision: TuiRunReviewDecisionSummary;
   commands: string[];
+}
+
+export interface TuiRunReviewDecisionSummary {
+  status: "pending" | "accepted" | "rejected";
+  acceptedAt?: string;
+  rejectedAt?: string;
+  reason?: string;
+  message?: string;
 }
 
 export interface TuiRoleCallGraphSummary {
@@ -448,6 +457,7 @@ async function summarizeRun(
   task: Task | undefined
 ): Promise<TuiRunSummary> {
   const evidence = await summarizeRunEvidence(repositories, run);
+  const reviewDecision = await summarizeRunReviewDecision(repositories, run.id);
   return {
     id: run.id,
     taskId: run.taskId,
@@ -462,12 +472,43 @@ async function summarizeRun(
     parentMessageId: run.parentMessageId,
     retainedWorktree: Boolean((await repositories.runMetadataRepository.get(run.id))?.workspaceCleanup?.retained),
     evidence,
+    reviewDecision,
     commands: [
       `agent-hub runs show ${run.id}`,
       `agent-hub runs diff ${run.id} --stat`,
       `agent-hub risks show ${run.id}`
     ]
   };
+}
+
+async function summarizeRunReviewDecision(
+  repositories: TuiReadModelRepositories,
+  runId: string
+): Promise<TuiRunReviewDecisionSummary> {
+  const artifact = await repositories.runArtifactRepository.getLatestByRunIdAndKind(
+    runId,
+    "review_decision"
+  );
+  const metadata = artifact?.metadata;
+  if (artifact && metadata?.reviewStatus === "accepted") {
+    return {
+      status: "accepted",
+      acceptedAt:
+        typeof metadata.acceptedAt === "string" ? metadata.acceptedAt : artifact.createdAt,
+      reason: typeof metadata.reason === "string" ? metadata.reason : undefined,
+      message: artifact.content
+    };
+  }
+  if (artifact && metadata?.reviewStatus === "rejected") {
+    return {
+      status: "rejected",
+      rejectedAt:
+        typeof metadata.rejectedAt === "string" ? metadata.rejectedAt : artifact.createdAt,
+      reason: typeof metadata.reason === "string" ? metadata.reason : undefined,
+      message: artifact.content
+    };
+  }
+  return { status: "pending" };
 }
 
 async function summarizeRunEvidence(
