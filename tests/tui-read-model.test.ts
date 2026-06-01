@@ -103,6 +103,8 @@ describe("TUI current-context read model", () => {
       id: "task_1",
       assignmentCount: 2,
       executableAssignmentCount: 2,
+      roleTodos: [expect.objectContaining({ id: "todo_1", status: "deferred" })],
+      followUps: ["deferred @reviewer: Review retained-run cleanup summary."],
       nextAction: "inspect run_active"
     });
     expect(model.memory.counts).toEqual({
@@ -133,6 +135,52 @@ describe("TUI current-context read model", () => {
       title: "Review retained-run cleanup"
     });
     expect(model.roleCalls.loop.stopReason).toBe("max_iterations");
+  });
+
+  it("summarizes active, failed, completed, retained, and no-change run states", async () => {
+    const runtime = createCliRuntime({ storageMode: "memory" });
+    await seedRunStates(runtime);
+
+    const model = await buildTuiCurrentContextModel(runtime, {
+      projectId: "project_runs",
+      threadId: "thread_runs",
+      maxRuns: 5
+    });
+
+    expect(model.runs.map((run) => run.id)).toEqual([
+      "run_active",
+      "run_no_change",
+      "run_retained",
+      "run_failed",
+      "run_completed"
+    ]);
+    expect(model.runs.find((run) => run.id === "run_active")).toMatchObject({
+      status: "running",
+      stage: "verifying"
+    });
+    expect(model.runs.find((run) => run.id === "run_failed")).toMatchObject({
+      status: "failed",
+      evidence: {
+        checks: { failed: 1, failedNames: ["pnpm test"] },
+        risk: { level: "high" }
+      }
+    });
+    expect(model.runs.find((run) => run.id === "run_retained")).toMatchObject({
+      status: "failed",
+      retainedWorktree: true
+    });
+    expect(model.runs.find((run) => run.id === "run_no_change")).toMatchObject({
+      status: "succeeded",
+      evidence: {
+        diff: { changedFiles: 0, insertions: 0, deletions: 0 }
+      }
+    });
+    expect(model.runs.find((run) => run.id === "run_completed")).toMatchObject({
+      status: "succeeded",
+      evidence: {
+        diff: { changedFiles: 1, insertions: 4, deletions: 1 }
+      }
+    });
   });
 });
 
@@ -452,5 +500,112 @@ function roleCall(input: Partial<RoleCall>): RoleCall {
     createdAt: input.createdAt ?? now,
     startedAt: input.startedAt,
     completedAt: input.completedAt
+  };
+}
+
+async function seedRunStates(runtime: ReturnType<typeof createCliRuntime>) {
+  await runtime.projectRepository.create({
+    id: "project_runs",
+    name: "Runs",
+    rootPath: "/tmp/runs",
+    createdAt: now,
+    updatedAt: now
+  });
+  await runtime.conversationThreadRepository.create({
+    id: "thread_runs",
+    projectId: "project_runs",
+    title: "Runs",
+    createdAt: now,
+    updatedAt: now
+  });
+  await runtime.taskRepository.create({
+    id: "task_runs",
+    projectId: "project_runs",
+    title: "Operate on runs",
+    metadata: { threadId: "thread_runs" },
+    status: "running",
+    createdAt: now,
+    updatedAt: now
+  });
+  for (const runRecord of [
+    runState("run_completed", "succeeded", "2026-05-29T12:01:00.000Z"),
+    runState("run_failed", "failed", "2026-05-29T12:02:00.000Z"),
+    runState("run_retained", "failed", "2026-05-29T12:03:00.000Z"),
+    runState("run_no_change", "succeeded", "2026-05-29T12:04:00.000Z"),
+    runState("run_active", "running", "2026-05-29T12:05:00.000Z")
+  ]) {
+    await runtime.taskRunRepository.create(runRecord);
+  }
+  await runtime.runEventRepository.createMany([
+    event("run_event_active", "run_active", 0, "status", "verifying"),
+    event("run_event_failed", "run_failed", 0, "error", "tests failed"),
+    event("run_event_completed", "run_completed", 0, "message", "done")
+  ]);
+  await runtime.verificationResultRepository.create(
+    verification("verification_failed", "run_failed", "pnpm test", "failed")
+  );
+  await runtime.riskReportRepository.create({
+    id: "risk_failed",
+    taskRunId: "run_failed",
+    level: "high",
+    summary: "Failed tests.",
+    changedFiles: ["src/fail.ts"],
+    verificationSummary: "failed",
+    failedChecks: ["pnpm test"],
+    riskFactors: ["failed checks"],
+    manualReviewChecklist: ["Inspect failed tests."],
+    acceptanceRecommendation: "Do not accept.",
+    findings: [],
+    createdAt: now
+  });
+  await runtime.runMetadataRepository.save({
+    runId: "run_retained",
+    workspaceCleanup: {
+      cleaned: false,
+      retained: true,
+      reason: "retain_on_failure",
+      commands: []
+    }
+  });
+  await runtime.runMetadataRepository.save({
+    runId: "run_no_change",
+    diff: {
+      ok: true,
+      workspacePath: "/tmp/worktree",
+      isClean: true,
+      changedFiles: [],
+      stat: { filesChanged: 0, insertions: 0, deletions: 0, text: "" },
+      diff: "",
+      fileSummaries: [],
+      commands: []
+    }
+  });
+  await runtime.runArtifactRepository.create({
+    id: "artifact_completed",
+    taskRunId: "run_completed",
+    kind: "git_diff",
+    content: "diff --git a/src/done.ts b/src/done.ts",
+    metadata: {
+      changedFiles: ["src/done.ts"],
+      stat: { filesChanged: 1, insertions: 4, deletions: 1 }
+    },
+    createdAt: now
+  });
+}
+
+function runState(
+  id: string,
+  status: "queued" | "running" | "succeeded" | "failed" | "cancelled",
+  updatedAt: string
+) {
+  return {
+    id,
+    taskId: "task_runs",
+    agentKind: "fake" as const,
+    status,
+    startedAt: updatedAt,
+    completedAt: status === "running" ? undefined : updatedAt,
+    createdAt: updatedAt,
+    updatedAt
   };
 }

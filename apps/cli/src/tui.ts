@@ -708,6 +708,7 @@ function renderRunsPanel(
   if (model.runs.length === 0) {
     return [...lines, "  No runs in the current context."];
   }
+  const selectedRun = model.runs[boundedIndex(state.selectedRunIndex, model.runs.length)];
   return [
     ...lines,
     ...model.runs.map((run, index) => {
@@ -720,7 +721,24 @@ function renderRunsPanel(
       const risk = run.evidence.risk ? ` risk ${run.evidence.risk.level}` : "";
       const diff = run.evidence.diff ? ` files ${run.evidence.diff.changedFiles}` : "";
       return `${selected} ${run.id} @${run.agentKind} ${run.status} ${run.stage}${checks}${risk}${diff}`;
-    })
+    }),
+    "",
+    ...renderRunOperatingDetail(selectedRun)
+  ];
+}
+
+function renderRunOperatingDetail(run: TuiRunSummary | undefined): string[] {
+  if (!run) {
+    return [];
+  }
+  return [
+    `Selected Run ${run.id}`,
+    `  task ${run.taskTitle ?? run.taskId}`,
+    `  status ${run.status}`,
+    `  stage ${run.stage}`,
+    `  retained_worktree ${run.retainedWorktree ? "yes" : "no"}`,
+    ...evidenceLines(run.evidence),
+    ...commandLines(run.commands)
   ];
 }
 
@@ -753,6 +771,7 @@ function renderTasksPanel(
   if (model.tasks.length === 0) {
     return [...lines, "  No current-context tasks."];
   }
+  const selectedTask = model.tasks[boundedIndex(state.selectedTaskIndex, model.tasks.length)];
   return [
     ...lines,
     ...model.tasks.map((task, index) =>
@@ -761,7 +780,9 @@ function renderTasksPanel(
         index,
         index === boundedIndex(state.selectedTaskIndex, model.tasks.length)
       )
-    )
+    ),
+    "",
+    ...renderTaskOperatingDetail(selectedTask)
   ];
 }
 
@@ -775,6 +796,32 @@ function renderTaskLine(
     .map((assignment) => `${assignment.label}:${assignment.status}`)
     .join(", ");
   return `${selected} ${task.id} ${task.status} ${task.title} assignments ${task.assignmentCount}${task.nextAction ? ` next ${task.nextAction}` : ""}${assignments ? ` (${assignments})` : ""}`;
+}
+
+function renderTaskOperatingDetail(task: TuiTaskSummary | undefined): string[] {
+  if (!task) {
+    return [];
+  }
+  return [
+    `Selected Task ${task.id}`,
+    `  goal ${task.title}`,
+    `  status ${task.status}`,
+    `  next ${task.nextAction ?? "wait"}`,
+    "  assignments:",
+    ...(task.assignments.length === 0
+      ? ["    none"]
+      : task.assignments.map((assignment) =>
+          `    ${assignment.label} ${assignment.status}${assignment.runId ? ` ${assignment.runId}` : ""}`
+        )),
+    "  role_todos:",
+    ...(task.roleTodos.length === 0
+      ? ["    none"]
+      : task.roleTodos.map((todo) => `    @${todo.role} ${todo.status}: ${todo.title}`)),
+    "  follow_ups:",
+    ...(task.followUps.length === 0
+      ? ["    none"]
+      : task.followUps.map((item) => `    ${item}`))
+  ];
 }
 
 function renderMemoryPanel(model: TuiCurrentContextModel): string[] {

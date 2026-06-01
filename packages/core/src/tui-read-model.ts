@@ -215,6 +215,8 @@ export interface TuiTaskSummary {
   assignmentCount: number;
   executableAssignmentCount: number;
   assignments: TuiAssignmentSummary[];
+  roleTodos: TuiRoleTodoSummary[];
+  followUps: string[];
   nextAction?: string;
 }
 
@@ -400,7 +402,12 @@ export async function buildTuiCurrentContextModel(
       input.selectedRoleCallId,
       input.selectedRunId
     ),
-    tasks: summarizeTasks(contextTasks, input.maxTasks ?? defaultLimits.tasks),
+    tasks: summarizeTasks(
+      contextTasks,
+      roleTodos,
+      roleCalls,
+      input.maxTasks ?? defaultLimits.tasks
+    ),
     memory: summarizeMemory(projectId, memory),
     skills: summarizeSkills({
       skills,
@@ -620,7 +627,16 @@ function selectReviewSummary(
   };
 }
 
-function summarizeTasks(tasks: Task[], limit: number): TuiTaskSummary[] {
+function summarizeTasks(
+  tasks: Task[],
+  roleTodos: RoleTodo[],
+  roleCalls: RoleCall[],
+  limit: number
+): TuiTaskSummary[] {
+  const todos = summarizeTodos(roleTodos, defaultLimits.todos);
+  const followUps = roleCalls
+    .filter((call) => call.status === "deferred" || call.status === "rejected")
+    .map((call) => `${call.status} @${call.calleeRole}: ${truncate(call.task, 96)}`);
   return [...tasks]
     .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
     .slice(0, limit)
@@ -642,6 +658,8 @@ function summarizeTasks(tasks: Task[], limit: number): TuiTaskSummary[] {
           status: assignment.status,
           runId: assignment.runId
         })),
+        roleTodos: todos,
+        followUps,
         nextAction: nextTaskAction(task, assignments)
       };
     });

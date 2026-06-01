@@ -36,6 +36,10 @@ from shared read models, supports launch by thread or room, and submits
 composer prompts through the same local CLI chat path. Loop continuation,
 review writes, memory approval, apply, merge, push, and PR creation stay
 outside the TUI.
+Its Runs and Tasks focus modes are current-context operating views: they show
+active/recent run status, stage, checks, risk, diff counts, retained-worktree
+state, linked CLI commands, assignments, RoleTodos, deferred/rejected follow-up
+signals, and the next action without exposing raw logs or full patches.
 
 ## Core Concepts
 

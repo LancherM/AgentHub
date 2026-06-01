@@ -376,4 +376,7 @@ core read-model layer; it adds no persistence tables and performs no terminal
 orchestration. The `agent-hub tui` command lives in `apps/cli`, renders those
 read models as a terminal shell, and delegates composer submission back to the
 existing CLI chat turn path. Continuation, review writes, and governance
-mutations remain outside the TUI renderer.
+mutations remain outside the TUI renderer. Runs and Tasks focus modes are still
+read-model projections over existing task, run, RoleCall, RoleTodo,
+verification, risk, metadata, and artifact repositories; they do not introduce
+new persistence or raw log/diff rendering.
