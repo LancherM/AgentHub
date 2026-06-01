@@ -67,6 +67,10 @@ status/check/risk signals are grouped so the screen reads like an operating
 workbench instead of raw log output.
 One-shot TUI renders (`--once`) are intended for quick smoke checks and return
 to the shell after printing the current workbench.
+The current hand-rendered TUI is an interim renderer, not the final terminal
+experience target. The planned replacement is the Ink-based component rewrite
+captured in `docs/tui-ink-rewrite-roadmap.md`, while the product scope and
+governance boundaries above remain unchanged.
 
 ## Core Concepts
 

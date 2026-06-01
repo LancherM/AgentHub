@@ -20,6 +20,11 @@ needs the practical operating surface around the graph: composer, targets,
 runs, tasks, minimal review, memory prompts, skills/context indicators, and
 keyboard commands.
 
+Implementation note: the initial hand-rendered string TUI validated the shared
+read-model and command boundaries, but it is not the target renderer. The next
+implementation direction is the component-based Ink rewrite described in
+`docs/tui-ink-rewrite-roadmap.md`.
+
 Project registration, broad project browsing, room management, deep audit,
 comparison reports, raw logs, full diffs, knowledge browsing, and lifecycle
 apply controls remain explicit CLI or desktop workflows. The TUI may show the

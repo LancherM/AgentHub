@@ -406,3 +406,11 @@ terminals, and uses deterministic ASCII layout helpers so snapshots cover the
 presentation without adding a curses/React dependency.
 The direct CLI entrypoint exits after command completion, so one-shot TUI smoke
 renders do not leave local SQLite helper processes holding the terminal open.
+The hand-rendered string layout is now treated as an interim implementation.
+The planned renderer replacement is documented in
+`docs/tui-ink-rewrite-roadmap.md`: keep the core read model and CLI action
+callbacks, introduce an Ink component tree in the CLI boundary, pin the first
+implementation to the Node 20-compatible Ink 5 line, and avoid migrating the
+whole CLI package to ESM in the first spike. Because the current CLI build is
+CommonJS, the Ink work should use a separate NodeNext/TSX build target that
+emits an ESM entrypoint loaded by the existing CLI with dynamic `import()`.
