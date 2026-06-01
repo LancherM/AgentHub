@@ -608,6 +608,25 @@ describe("Ink TUI renderer", () => {
     expect(output).toContain("! TUI Project · @codex");
   });
 
+  it("hides the interactive startup splash after the first paint", async () => {
+    const instance = render(
+      React.createElement(TuiInkApp, {
+        model: baseModel,
+        state: createInitialInkState(),
+        terminal: { columns: 120, rows: 40 },
+        interactive: true,
+        showSplash: true,
+        splashDurationMs: 5
+      })
+    );
+
+    await waitForFrame(instance, "Agent Hub TUI");
+    await waitForCondition(() => !(instance.lastFrame() ?? "").includes("Agent Hub TUI"));
+
+    expect(instance.lastFrame()).toContain("TUI Project");
+    instance.unmount();
+  });
+
   it("toggles local notifications and timeline without submitting prompts", async () => {
     const submissions = [];
     const instance = render(

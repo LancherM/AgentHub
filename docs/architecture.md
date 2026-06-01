@@ -435,17 +435,17 @@ moves the shortcut-labelled Work/Runs/View/Graph/Tasks/Memory/Team/Help tabs
 below the composer, and uses Ink components for terminal layout instead of
 hand-wrapped string panels.
 The Ink renderer owns only presentation grammar: reverse-color risk-aware
-headers, idle `◈` breathing, agent-message left bars, timestamp/elapsed/usage
-metadata display, path/command/code highlighting, and safe OSC 8 file-link
+headers, a low-flicker idle `◈` indicator, agent-message left bars,
+timestamp/elapsed/usage metadata display, path/command/code highlighting, and safe OSC 8 file-link
 wrapping. The core TUI read model exposes derived elapsed and usage labels from
 persisted run timestamps and run-event metadata; it does not change event
 persistence, adapter execution, run status, or review semantics.
 Active-run boxes cover running runs only. They use a rounded fixed eight-line
 shape: title border, five output/progress lines, a progress-or-cursor footer,
-and bottom border. The renderer owns spinner frame selection, live elapsed
-calculation from the run start timestamp, best-effort percentage or `N/M`
-progress parsing, and transient completion/failure feedback. None of that state
-is persisted or sent back into adapters.
+and bottom border. The renderer owns low-frequency spinner frame selection,
+live elapsed calculation from the run start timestamp, best-effort percentage
+or `N/M` progress parsing, and transient completion/failure feedback. None of
+that state is persisted or sent back into adapters.
 They prefer structured assistant output, then fall back to recent adapter,
 stdout, and stderr events while filtering raw JSON protocol frames, setup
 lifecycle lines, internal agent protocol summaries, runtime warnings, and skill
@@ -487,8 +487,11 @@ start time is more than 30 seconds old. `/timeline` and empty-composer `l`
 render a compact chronological overlay from the same read model. Badge flash is
 derived from newly observed active runs or pending-review entries, and
 `--splash`/`--no-splash` only affect whether the renderer includes a
-non-blocking startup banner. None of these states adds tables, settings,
-filesystem writes, shell execution, adapter calls, or run lifecycle mutations.
+non-blocking startup banner. In interactive mode the splash is removed from
+the frame after the initial paint, and unchanged read-model refreshes are
+discarded before `setModel` so the terminal avoids avoidable full-screen
+repaints. None of these states adds tables, settings, filesystem writes, shell
+execution, adapter calls, or run lifecycle mutations.
 The direct CLI entrypoint exits after command completion, so one-shot TUI smoke
 renders do not leave local SQLite helper processes holding the terminal open.
 For interactive launches, the CLI default IO includes `process.stdin`, and the

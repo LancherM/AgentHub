@@ -44,10 +44,11 @@ const defaultTuiOperationTimeoutMs = 10 * 60 * 1000;
 const defaultTuiPollIntervalMs = 2_500;
 const defaultTuiModelRefreshTimeoutMs = 30_000;
 const activeRunSpinnerFrames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-const activeRunAnimationIntervalMs = 80;
+const activeRunAnimationIntervalMs = 1_000;
 const runFeedbackDurationMs = 200;
 const badgeFlashDurationMs = 350;
 const completionNotificationMinimumMs = 30_000;
+const startupSplashDurationMs = 700;
 
 type RunFeedbackKind = "success" | "failure";
 
@@ -99,6 +100,7 @@ export interface TuiInkAppProps extends TuiInkFrameProps {
   operationTimeoutMs?: number;
   pollIntervalMs?: number;
   modelRefreshTimeoutMs?: number;
+  splashDurationMs?: number;
 }
 
 export function TuiInkApp(props: TuiInkAppProps): React.ReactElement {
@@ -107,6 +109,7 @@ export function TuiInkApp(props: TuiInkAppProps): React.ReactElement {
   const [state, setState] = useState(props.state ?? createInitialInkState());
   const [busy, setBusy] = useState(false);
   const [busyMessage, setBusyMessage] = useState<string | undefined>();
+  const [showStartupSplash, setShowStartupSplash] = useState(props.showSplash === true);
   const stateRef = useRef(state);
   const modelRef = useRef(model);
   const busyRef = useRef(busy);
@@ -131,6 +134,18 @@ export function TuiInkApp(props: TuiInkAppProps): React.ReactElement {
   }, [busyMessage]);
 
   useCompletionNotifications(model, state.notifyEnabled, props.notify);
+
+  useEffect(() => {
+    if (!props.showSplash) {
+      setShowStartupSplash(false);
+      return undefined;
+    }
+    setShowStartupSplash(true);
+    const timeout = setTimeout(() => {
+      setShowStartupSplash(false);
+    }, props.splashDurationMs ?? startupSplashDurationMs);
+    return () => clearTimeout(timeout);
+  }, [props.showSplash, props.splashDurationMs]);
 
   useEffect(() => {
     if (!props.interactive || !props.loadModel) {
@@ -213,6 +228,9 @@ export function TuiInkApp(props: TuiInkAppProps): React.ReactElement {
 
   const setModelFromRefresh = (nextModel: TuiCurrentContextModel) => {
     const previousModel = modelRef.current;
+    if (modelRenderSignature(previousModel) === modelRenderSignature(nextModel)) {
+      return;
+    }
     modelRef.current = nextModel;
     setModel(nextModel);
     if (workContentSignature(previousModel) !== workContentSignature(nextModel)) {
@@ -725,7 +743,7 @@ export function TuiInkApp(props: TuiInkAppProps): React.ReactElement {
     model,
     state: busy ? { ...state, statusMessage: busyMessage ?? "Working..." } : state,
     terminal: props.terminal,
-    showSplash: props.showSplash
+    showSplash: showStartupSplash
   });
 }
 
@@ -787,17 +805,6 @@ function HeaderBar({
   badgeFlash: boolean;
 }): React.ReactElement {
   const idle = model.activeRuns.length === 0 && state.composer.length === 0;
-  const [breathOn, setBreathOn] = useState(true);
-  useEffect(() => {
-    if (!idle) {
-      setBreathOn(true);
-      return undefined;
-    }
-    const interval = setInterval(() => {
-      setBreathOn((current) => !current);
-    }, 900);
-    return () => clearInterval(interval);
-  }, [idle]);
   const project = model.context.projectName ?? model.context.projectId ?? "unregistered";
   const agent = model.context.selectedAgent ? `@${model.context.selectedAgent}` : "@agent";
   const loop = model.roleCalls.loop.maxIterations === undefined
@@ -823,7 +830,7 @@ function HeaderBar({
     h(Text, {
       inverse: true,
       backgroundColor: headerColor,
-      dimColor: idle && !breathOn
+      dimColor: idle && !badgeFlash
     }, symbol),
     h(Text, {
       inverse: true,
@@ -2544,4 +2551,20 @@ function workContentSignature(model: TuiCurrentContextModel): string {
     .map((run) => `${run.runId}:${run.outputLines.at(-1) ?? ""}`)
     .join("|");
   return `${lastEntry?.id ?? ""}:${lastEntry?.timestamp ?? ""}:${activeDigest}`;
+}
+
+function modelRenderSignature(model: TuiCurrentContextModel): string {
+  return JSON.stringify({
+    context: model.context,
+    conversation: model.conversation,
+    activeRuns: model.activeRuns,
+    runs: model.runs,
+    roleCalls: model.roleCalls,
+    review: model.review,
+    tasks: model.tasks,
+    team: model.team,
+    memory: model.memory,
+    skills: model.skills,
+    warnings: model.warnings
+  });
 }
