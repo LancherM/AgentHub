@@ -380,3 +380,6 @@ mutations remain outside the TUI renderer. Runs and Tasks focus modes are still
 read-model projections over existing task, run, RoleCall, RoleTodo,
 verification, risk, metadata, and artifact repositories; they do not introduce
 new persistence or raw log/diff rendering.
+RoleCall loop controls reuse the core convergence helper plus TUI risk
+summaries. The CLI renderer can prepare an explicit continuation prompt, but it
+does not run an autonomous background loop or add a daemon.

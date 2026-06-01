@@ -165,6 +165,7 @@ export type TuiLoopStopReason =
   | "pending_role_calls"
   | "waiting_approval"
   | "waiting_context"
+  | "blocking_risk"
   | "max_iterations";
 
 export interface TuiRoleCallNodeSummary {
@@ -390,7 +391,7 @@ export async function buildTuiCurrentContextModel(
       nodes: visibleRoleCallNodes,
       todos: summarizeTodos(roleTodos, input.maxTodos ?? defaultLimits.todos),
       counts: countRoleCalls(roleCallNodes, visibleRoleCallNodes.length),
-      loop: summarizeLoop(roleCalls, {
+      loop: summarizeLoop(roleCalls, boundedRuns, {
         iteration: input.iteration ?? 0,
         maxIterations: input.maxIterations
       })
@@ -719,6 +720,7 @@ function summarizeSkills(input: {
 
 function summarizeLoop(
   calls: RoleCall[],
+  runs: TuiRunSummary[],
   input: { iteration: number; maxIterations?: number }
 ): TuiLoopSummary {
   const convergence = evaluateRoleCallGraphConvergence({
@@ -738,18 +740,22 @@ function summarizeLoop(
     pendingRoleCallIds: convergence.pendingRoleCallIds,
     waitingRoleCallIds,
     activeRoleCallIds,
-    stopReason: loopStopReason(calls, input, convergence.reason),
+    stopReason: loopStopReason(calls, runs, input, convergence.reason),
     convergenceReason: convergence.reason
   };
 }
 
 function loopStopReason(
   calls: RoleCall[],
+  runs: TuiRunSummary[],
   input: { iteration: number; maxIterations?: number },
   convergenceReason: RoleCallGraphConvergenceReason
 ): TuiLoopStopReason {
   if (input.maxIterations !== undefined && input.iteration >= input.maxIterations) {
     return "max_iterations";
+  }
+  if (runs.some((run) => run.evidence.risk?.level === "blocking")) {
+    return "blocking_risk";
   }
   if (calls.some((call) => call.status === "waiting_approval")) {
     return "waiting_approval";

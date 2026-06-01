@@ -85,10 +85,14 @@ describe("CLI TUI command", () => {
     expect(state.collapsedRoleCallIds).toEqual(["call_child"]);
     state = reduceTuiKey(state, "hide_done", model).state;
     expect(state.hideCompletedRoleCalls).toBe(true);
+    state = reduceTuiKey(state, "continue_loop", model).state;
+    expect(state.statusMessage).toBe("Cannot continue: waiting_context.");
+    state = reduceTuiKey(state, "cancel", model).state;
+    expect(state.statusMessage).toContain("Cancellation is unavailable");
 
     const rendered = renderTuiWorkbench(model, state, { columns: 72, rows: 28 });
     expect(rendered).toContain("[Graph]");
-    expect(rendered).toContain("Completed RoleCalls hidden.");
+    expect(rendered).toContain("Cancellation is unavailable");
   });
 
   it("submits prompts through the CLI chat path and keeps unknown mentions as text", async () => {
@@ -155,7 +159,7 @@ function testIo(output: string[], errors: string[]) {
     stdout: {
       isTTY: false,
       columns: 120,
-      rows: 40,
+      rows: 80,
       write: (chunk: string) => {
         output.push(chunk);
         return true;

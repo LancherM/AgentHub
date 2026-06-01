@@ -40,6 +40,11 @@ Its Runs and Tasks focus modes are current-context operating views: they show
 active/recent run status, stage, checks, risk, diff counts, retained-worktree
 state, linked CLI commands, assignments, RoleTodos, deferred/rejected follow-up
 signals, and the next action without exposing raw logs or full patches.
+The RoleCall graph shows bounded loop state, including iteration count,
+pending/waiting/active counts, convergence reason, max-iteration stops,
+blocking-risk stops, and waiting-for-approval or waiting-for-context stops.
+The continue key prepares an explicit composer prompt; it does not continue
+work in the background.
 
 ## Core Concepts
 

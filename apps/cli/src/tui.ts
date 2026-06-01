@@ -95,6 +95,8 @@ export type TuiKey =
   | "memory"
   | "skills"
   | "hide_done"
+  | "continue_loop"
+  | "cancel"
   | "exit"
   | "other";
 
@@ -320,6 +322,15 @@ export function reduceTuiKey(
     next.statusMessage = next.hideCompletedRoleCalls
       ? "Completed RoleCalls hidden."
       : "Completed RoleCalls visible.";
+    return { state: next, exit: false };
+  }
+  if (key === "continue_loop") {
+    applyContinuePrompt(next, model);
+    return { state: next, exit: false };
+  }
+  if (key === "cancel") {
+    next.statusMessage =
+      "Cancellation is unavailable for this CLI TUI context; use the owning run service when supported.";
     return { state: next, exit: false };
   }
   if (key === "escape") {
@@ -695,7 +706,25 @@ function renderGraphPanel(
       const run = node.linkedRunId ? ` ${node.linkedRunId}` : "";
       const waiting = node.evidence.waitingReason ? ` ${node.evidence.waitingReason}` : "";
       return `${selected} ${branch}@${node.callerRole} -> @${node.calleeRole} [${node.statusLabel}]${run}${collapsed} ${node.task}${waiting}`;
-    })
+    }),
+    "",
+    ...renderLoopDetail(model)
+  ];
+}
+
+function renderLoopDetail(model: TuiCurrentContextModel): string[] {
+  const loop = model.roleCalls.loop;
+  const iteration = loop.maxIterations === undefined
+    ? `${loop.iteration}`
+    : `${loop.iteration}/${loop.maxIterations}`;
+  return [
+    "Loop",
+    `  iteration ${iteration}`,
+    `  active ${loop.activeRoleCallIds.length}`,
+    `  pending ${loop.pendingRoleCallIds.length}`,
+    `  waiting ${loop.waitingRoleCallIds.length}`,
+    `  stop ${loop.stopReason}`,
+    `  convergence ${loop.convergenceReason}`
   ];
 }
 
@@ -855,6 +884,8 @@ function renderHelpPanel(): string[] {
     "  up/down           move selection",
     "  left/right        collapse or expand selected RoleCall subtree",
     "  enter             open selected review summary",
+    "  c                 prepare bounded continuation prompt",
+    "  k                 cancel selected running item when supported",
     "  ctrl+j            submit composer prompt",
     "  r                 review summary",
     "  h                 toggle completed RoleCalls",
@@ -875,7 +906,7 @@ function renderHelpPanel(): string[] {
 
 function renderActionHints(): string[] {
   return [
-    "Actions: tab focus  enter open  ctrl+j submit  r review  h hide done  m memory  ? help  x exit"
+    "Actions: tab focus  enter open  c continue  k cancel  ctrl+j submit  r review  h hide done  m memory  ? help  x exit"
   ];
 }
 
@@ -1045,7 +1076,30 @@ function tuiKeyFromReadlineKey(key: readline.Key): TuiKey {
   if (key.name === "h") {
     return "hide_done";
   }
+  if (key.name === "c") {
+    return "continue_loop";
+  }
+  if (key.name === "k") {
+    return "cancel";
+  }
   return "other";
+}
+
+function applyContinuePrompt(
+  state: TuiShellState,
+  model: TuiCurrentContextModel
+): void {
+  const stopReason = model.roleCalls.loop.stopReason;
+  if (stopReason !== "terminal" && stopReason !== "none") {
+    state.statusMessage = `Cannot continue: ${stopReason}.`;
+    return;
+  }
+  const nodes = graphNodesForState(model.roleCalls.nodes, state);
+  const selected = nodes[boundedIndex(state.selectedRoleCallIndex, nodes.length)];
+  state.composer = selected
+    ? `Continue @${selected.calleeRole} on RoleCall ${selected.id}: ${selected.task}`
+    : "Continue the current task with the selected agent.";
+  state.statusMessage = "Continuation prompt prepared; press ctrl+j to submit.";
 }
 
 function isSubmitKey(key: readline.Key): boolean {

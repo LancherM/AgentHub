@@ -182,6 +182,49 @@ describe("TUI current-context read model", () => {
       }
     });
   });
+
+  it("reports bounded loop stop reasons for terminal, pending, waiting, blocking, and limits", async () => {
+    await expect(loopStopReasonFor([roleCall({ id: "call_ok", status: "succeeded" })]))
+      .resolves.toBe("terminal");
+    await expect(loopStopReasonFor([roleCall({ id: "call_running", status: "running" })]))
+      .resolves.toBe("pending_role_calls");
+    await expect(
+      loopStopReasonFor([
+        roleCall({
+          id: "call_waiting_approval",
+          status: "waiting_approval",
+          decision: {
+            disposition: "needs_approval",
+            reason: "Needs approval."
+          }
+        })
+      ])
+    ).resolves.toBe("waiting_approval");
+    await expect(
+      loopStopReasonFor([
+        roleCall({
+          id: "call_waiting_context",
+          status: "waiting_context",
+          decision: {
+            disposition: "needs_context",
+            reason: "Needs context.",
+            requiredContext: ["test output"]
+          }
+        })
+      ])
+    ).resolves.toBe("waiting_context");
+    await expect(
+      loopStopReasonFor([roleCall({ id: "call_running", status: "running" })], {
+        blockingRisk: true
+      })
+    ).resolves.toBe("blocking_risk");
+    await expect(
+      loopStopReasonFor([roleCall({ id: "call_running", status: "running" })], {
+        iteration: 3,
+        maxIterations: 3
+      })
+    ).resolves.toBe("max_iterations");
+  });
 });
 
 async function seedCurrentContext(runtime: ReturnType<typeof createCliRuntime>) {
@@ -608,4 +651,73 @@ function runState(
     createdAt: updatedAt,
     updatedAt
   };
+}
+
+async function loopStopReasonFor(
+  calls: RoleCall[],
+  options: {
+    iteration?: number;
+    maxIterations?: number;
+    blockingRisk?: boolean;
+  } = {}
+) {
+  const runtime = createCliRuntime({ storageMode: "memory" });
+  await runtime.projectRepository.create({
+    id: "project_loop",
+    name: "Loop",
+    rootPath: "/tmp/loop",
+    createdAt: now,
+    updatedAt: now
+  });
+  await runtime.conversationThreadRepository.create({
+    id: "thread_1",
+    projectId: "project_loop",
+    title: "Loop",
+    createdAt: now,
+    updatedAt: now
+  });
+  await runtime.taskRepository.create({
+    id: "task_loop",
+    projectId: "project_loop",
+    title: "Loop",
+    metadata: { threadId: "thread_1" },
+    status: "running",
+    createdAt: now,
+    updatedAt: now
+  });
+  if (options.blockingRisk) {
+    await runtime.taskRunRepository.create({
+      id: "run_blocking",
+      taskId: "task_loop",
+      agentKind: "fake",
+      status: "running",
+      createdAt: now,
+      updatedAt: now
+    });
+    await runtime.riskReportRepository.create({
+      id: "risk_blocking",
+      taskRunId: "run_blocking",
+      level: "blocking",
+      summary: "Blocking risk.",
+      changedFiles: ["danger.ts"],
+      verificationSummary: "not safe",
+      failedChecks: [],
+      riskFactors: ["blocking risk"],
+      manualReviewChecklist: ["Stop loop."],
+      acceptanceRecommendation: "Stop.",
+      findings: [],
+      createdAt: now
+    });
+    calls = calls.map((call) => ({ ...call, taskRunId: "run_blocking" }));
+  }
+  for (const call of calls) {
+    await runtime.roleCallRepository.create(call);
+  }
+  const model = await buildTuiCurrentContextModel(runtime, {
+    projectId: "project_loop",
+    threadId: "thread_1",
+    iteration: options.iteration,
+    maxIterations: options.maxIterations
+  });
+  return model.roleCalls.loop.stopReason;
 }
