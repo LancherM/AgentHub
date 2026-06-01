@@ -186,8 +186,10 @@ describe("Ink TUI renderer", () => {
     expect(output).toContain("@codex run_27984312 △ awaiting review");
     expect(output).toContain("切换到 [V]iew 查看详情");
     expect(output).not.toContain("checks 0/0/1");
+    expect(output).toContain("W/R/V/G/T/M/E tabs");
     expect(output).toContain("> @codex prompt");
     expect(output.indexOf("> @codex prompt")).toBeLessThan(output.indexOf("[W]ork"));
+    expect(output).toContain("[E]am");
     expect(output).not.toContain("Runs + Review");
     expect(output).not.toContain("-- more hidden --");
   });
@@ -252,6 +254,24 @@ describe("Ink TUI renderer", () => {
     expect(instance.lastFrame()).toContain("@engineer preset agent_adapter / codex #planning");
     expect(instance.lastFrame()).toContain("@reviewer preset human reserved #review");
     expect(instance.lastFrame()).toContain("> @codex prompt");
+    instance.unmount();
+  });
+
+  it("switches to the Team tab from the tab bar shortcut", async () => {
+    const instance = render(
+      React.createElement(TuiInkApp, {
+        model: baseModel,
+        state: createInitialInkState(),
+        terminal: { columns: 120, rows: 40 },
+        interactive: true
+      })
+    );
+
+    instance.stdin.write("E");
+    await waitForFrame(instance, "Team Roles 2");
+
+    expect(instance.lastFrame()).toContain("[E]am");
+    expect(instance.lastFrame()).toContain("@engineer preset agent_adapter / codex #planning");
     instance.unmount();
   });
 
@@ -472,12 +492,58 @@ describe("Ink TUI renderer", () => {
     await new Promise((resolve) => setTimeout(resolve, 25));
 
     expect(instance.lastFrame()).toContain("> exit");
+    expect(instance.lastFrame()).toContain("arrows edit");
 
     instance.stdin.write("\u001b");
     await new Promise((resolve) => setTimeout(resolve, 25));
 
     expect(instance.lastFrame()).toContain("Composer cleared.");
     expect(instance.lastFrame()).toContain("> @codex prompt");
+    instance.unmount();
+  });
+
+  it("starts prompt text with lowercase focus-key characters outside Work", async () => {
+    const instance = render(
+      React.createElement(TuiInkApp, {
+        model: baseModel,
+        state: { ...createInitialInkState(), focus: "review" },
+        terminal: { columns: 120, rows: 40 },
+        interactive: true
+      })
+    );
+
+    for (const character of "what") {
+      instance.stdin.write(character);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+
+    expect(instance.lastFrame()).toContain("Selected Run");
+    expect(instance.lastFrame()).toContain("> what");
+    instance.unmount();
+  });
+
+  it("edits composer text at the cursor", async () => {
+    const instance = render(
+      React.createElement(TuiInkApp, {
+        model: baseModel,
+        state: createInitialInkState(),
+        terminal: { columns: 120, rows: 40 },
+        interactive: true
+      })
+    );
+
+    for (const character of "ac") {
+      instance.stdin.write(character);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+    instance.stdin.write("\u001b[D");
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    instance.stdin.write("b");
+    await waitForFrame(instance, "> abc");
+
+    instance.stdin.write("\u007f");
+    await waitForFrame(instance, "> ac");
+
     instance.unmount();
   });
 

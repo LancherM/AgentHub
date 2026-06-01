@@ -213,6 +213,7 @@ export function TuiInkApp(props: TuiInkAppProps): React.ReactElement {
         ...currentState,
         focus: "team",
         composer: "",
+        composerCursorPosition: 0,
         commandPaletteOpen: false,
         statusMessage: "Team roles shown."
       });
@@ -240,6 +241,7 @@ export function TuiInkApp(props: TuiInkAppProps): React.ReactElement {
     const submittingState = {
       ...currentState,
       composer: "",
+      composerCursorPosition: 0,
       statusMessage: "Submitting prompt..."
     };
     setStateNow(submittingState);
@@ -363,6 +365,33 @@ export function TuiInkApp(props: TuiInkAppProps): React.ReactElement {
         void submitComposer();
         return;
       }
+      if (key.ctrl && (input === "a" || input === "A")) {
+        setState((current) => ({
+          ...current,
+          composerCursorPosition: 0
+        }));
+        return;
+      }
+      if (key.ctrl && (input === "e" || input === "E")) {
+        setState((current) => ({
+          ...current,
+          composerCursorPosition: current.composer.length
+        }));
+        return;
+      }
+      if (key.ctrl && (input === "u" || input === "U")) {
+        setState((current) => ({
+          ...current,
+          composer: "",
+          composerCursorPosition: 0,
+          statusMessage: "Composer cleared."
+        }));
+        return;
+      }
+      if (key.ctrl && (input === "d" || input === "D")) {
+        setState(deleteComposerCharacterAfterCursor);
+        return;
+      }
       if ((input === "x" || input === "q") && currentState.composer.length === 0) {
         app.exit();
         return;
@@ -399,28 +428,62 @@ export function TuiInkApp(props: TuiInkAppProps): React.ReactElement {
         setState((current) => ({
           ...current,
           composer: "",
+          composerCursorPosition: 0,
           statusMessage: "Composer cleared."
         }));
         return;
       }
-      if (
-        isPrintableInput(input, key) &&
-        (currentState.focus === "work" || currentState.composer.length > 0)
-      ) {
-        setState((current) => ({ ...current, composer: `${current.composer}${input}` }));
+      if (key.leftArrow && currentState.composer.length > 0) {
+        setState((current) => ({
+          ...current,
+          composerCursorPosition: Math.max(0, current.composerCursorPosition - 1)
+        }));
+        return;
+      }
+      if (key.rightArrow && currentState.composer.length > 0) {
+        setState((current) => ({
+          ...current,
+          composerCursorPosition: Math.min(current.composer.length, current.composerCursorPosition + 1)
+        }));
+        return;
+      }
+      if (key.home && currentState.composer.length > 0) {
+        setState((current) => ({
+          ...current,
+          composerCursorPosition: 0
+        }));
+        return;
+      }
+      if (key.end && currentState.composer.length > 0) {
+        setState((current) => ({
+          ...current,
+          composerCursorPosition: current.composer.length
+        }));
+        return;
+      }
+      if (key.backspace) {
+        setState(deleteComposerCharacterBeforeCursor);
+        return;
+      }
+      if (key.delete) {
+        setState(deleteComposerCharacterAfterCursor);
+        return;
+      }
+      const navigationMapped = currentState.composer.length === 0
+        ? keyToAction(input, key, currentState.focus)
+        : undefined;
+      if (navigationMapped && isNavigationAction(navigationMapped)) {
+        applyKey(navigationMapped);
+        return;
+      }
+      if (isPrintableInput(input, key)) {
+        setState((current) => insertComposerText(current, input));
         return;
       }
       const mapped = keyToAction(input, key, currentState.focus);
       if (mapped) {
         applyKey(mapped);
         return;
-      }
-      if (key.backspace || key.delete) {
-        setState((current) => ({ ...current, composer: current.composer.slice(0, -1) }));
-        return;
-      }
-      if (isPrintableInput(input, key)) {
-        setState((current) => ({ ...current, composer: `${current.composer}${input}` }));
       }
     },
     { isActive: props.interactive }
@@ -446,6 +509,7 @@ export function TuiInkFrame({
     ...model.warnings.map((warning) => line(`! ${warning}`, { color: "yellow" })),
     ...(state.statusMessage ? [line(`Status: ${state.statusMessage}`, { color: "green" })] : []),
     h(MainView, { model, state, terminal }),
+    h(StatusBar, { model, state }),
     h(Composer, { model, state }),
     h(FocusTabs, { state })
   );
@@ -499,6 +563,7 @@ function FocusTabs({ state }: { state: TuiInkState }): React.ReactElement {
     { focus: "graph", shortcut: "G", suffix: "raph", prefix: "[" },
     { focus: "tasks", shortcut: "T", suffix: "asks", prefix: "[" },
     { focus: "memory", shortcut: "M", suffix: "em", prefix: "[" },
+    { focus: "team", shortcut: "E", suffix: "am", prefix: "[" },
     { focus: "help", shortcut: "?", suffix: "" }
   ];
   return h(
@@ -779,37 +844,6 @@ function RoleCallsPane({
   );
 }
 
-function TranscriptPane({
-  model,
-  state,
-  terminal
-}: {
-  model: TuiCurrentContextModel;
-  state: TuiInkState;
-  terminal: TuiInkTerminalSize;
-}): React.ReactElement {
-  if (model.transcript.length === 0) {
-    return block(line("Transcript", { bold: true }), line("No messages in the current context.", { dimColor: true }));
-  }
-  const windowSize = transcriptWindowSize(terminal);
-  const maxOffset = Math.max(0, model.transcript.length - windowSize);
-  const offsetFromBottom = Math.min(state.scrollOffsets.transcript, maxOffset);
-  const start = Math.max(0, model.transcript.length - windowSize - offsetFromBottom);
-  const visible = model.transcript.slice(start, start + windowSize);
-  const title = maxOffset > 0
-    ? `Transcript ${start + 1}-${start + visible.length}/${model.transcript.length}`
-    : "Transcript";
-  return block(
-    line(title, { bold: true }),
-    ...visible.flatMap((message) => [
-      line(`${message.author}${message.runId ? ` ${compactId(message.runId)}` : ""}`, {
-        color: "cyan"
-      }),
-      line(`  ${truncateText(message.content || "(empty)", 90)}`)
-    ])
-  );
-}
-
 function TasksPane({
   model,
   state,
@@ -943,30 +977,38 @@ function HelpPane(): React.ReactElement {
   return h(
     Pane,
     { title: "Help" },
-    line("tab/shift-tab focus   up/down or k/j move   enter submit"),
-    line(": commands   /team roles   c continue   a accept review   R reject in Review"),
-    line("enter submits non-empty composer   h hide done   m memory   ? help   x exit")
+    line("tab/shift-tab focus   W/R/V/G/T/M/E switch tabs   up/down or k/j move"),
+    line(": commands   /team roles   a accept review   R reject in Review"),
+    line("enter submit   esc clear   arrows/home/end edit composer   ctrl+u clear   ? help")
   );
 }
 
 function Composer({ model, state }: { model: TuiCurrentContextModel; state: TuiInkState }): React.ReactElement {
   const agent = model.context.selectedAgent ? `@${model.context.selectedAgent}` : "@agent";
+  const cursor = boundedComposerCursor(state);
+  const before = state.composer.slice(0, cursor);
+  const cursorCharacter = state.composer[cursor] ?? " ";
+  const after = state.composer.slice(cursor + (cursor < state.composer.length ? 1 : 0));
   return h(
     Box,
     { flexDirection: "row" },
     h(Text, null, "> "),
     state.composer
-      ? h(Text, { color: "green" }, state.composer)
+      ? h(React.Fragment, null,
+          h(Text, { color: "green" }, before),
+          h(Text, { color: "green", inverse: true }, cursorCharacter),
+          h(Text, { color: "green" }, after)
+        )
       : h(Text, { dimColor: true }, `${agent} prompt`)
   );
 }
 
 function StatusBar({ model, state }: { model: TuiCurrentContextModel; state: TuiInkState }): React.ReactElement {
   const hints = state.composer
-    ? "enter submit | /team roles | tab focus | esc clear | ctrl+c exit"
+    ? "enter submit | arrows edit | ctrl+a/e home/end | ctrl+u clear | tab focus | esc clear | ctrl+c exit"
     : state.focus === "review"
-      ? "tab focus | enter review | : palette | p command | a accept | R reject | ? help | x exit"
-      : "tab focus | enter review | : palette | p command | ? help | x exit";
+      ? "tab focus | : palette | a accept | R reject | ? help | x exit"
+      : "tab focus | W/R/V/G/T/M/E tabs | : palette | ? help | x exit";
   return line(
     `${hints} | ${commandHintForFocus(model, state)}`,
     { dimColor: true }
@@ -1017,10 +1059,6 @@ function taskWindowSize(terminal: TuiInkTerminalSize): number {
 
 function teamWindowSize(terminal: TuiInkTerminalSize): number {
   return boundedWindowSize(terminal.rows - 12, 8, 32);
-}
-
-function transcriptWindowSize(terminal: TuiInkTerminalSize): number {
-  return boundedWindowSize(Math.floor((terminal.rows - 14) / 2), 5, 18);
 }
 
 function activeRunLayout(
@@ -1104,7 +1142,6 @@ function errorMessage(error: unknown): string {
 }
 
 function keyToAction(input: string, key: Key, focus: string): TuiInkKey | undefined {
-  const normalizedInput = input.toLowerCase();
   if (key.tab || input === "\t") {
     return key.shift ? "shift_tab" : "tab";
   }
@@ -1141,34 +1178,37 @@ function keyToAction(input: string, key: Key, focus: string): TuiInkKey | undefi
   if (input === "?") {
     return "help";
   }
-  if (normalizedInput === "w") {
+  if (input === "W") {
     return "work";
   }
-  if (normalizedInput === "r") {
+  if (input === "R") {
     return "runs";
   }
-  if (normalizedInput === "v") {
+  if (input === "V") {
     return "review";
   }
-  if (normalizedInput === "g") {
+  if (input === "G") {
     return "graph";
   }
-  if (normalizedInput === "t") {
+  if (input === "T") {
     return "tasks";
   }
-  if (normalizedInput === "m") {
+  if (input === "M") {
     return "memory";
   }
-  if (normalizedInput === "s") {
+  if (input === "E") {
+    return "team";
+  }
+  if (input === "s") {
     return "skills";
   }
-  if (normalizedInput === "h") {
+  if (input === "h") {
     return "hide_done";
   }
-  if (normalizedInput === "c") {
+  if (input === "c") {
     return "continue_loop";
   }
-  if (normalizedInput === "p") {
+  if (input === "p") {
     return "print_commands";
   }
   if (input === ":") {
@@ -1190,6 +1230,19 @@ function isDirectFocusAction(action: TuiInkKey): boolean {
   );
 }
 
+function isNavigationAction(action: TuiInkKey): boolean {
+  return (
+    action === "up" ||
+    action === "down" ||
+    action === "page_up" ||
+    action === "page_down" ||
+    action === "home" ||
+    action === "end" ||
+    action === "left" ||
+    action === "right"
+  );
+}
+
 function isPrintableInput(input: string, key: Key): boolean {
   return (
     input.length > 0 &&
@@ -1206,6 +1259,43 @@ function isPrintableInput(input: string, key: Key): boolean {
     !key.delete &&
     input >= " "
   );
+}
+
+function insertComposerText(state: TuiInkState, value: string): TuiInkState {
+  const cursor = boundedComposerCursor(state);
+  return {
+    ...state,
+    composer: `${state.composer.slice(0, cursor)}${value}${state.composer.slice(cursor)}`,
+    composerCursorPosition: cursor + value.length
+  };
+}
+
+function deleteComposerCharacterBeforeCursor(state: TuiInkState): TuiInkState {
+  const cursor = boundedComposerCursor(state);
+  if (cursor <= 0) {
+    return state;
+  }
+  return {
+    ...state,
+    composer: `${state.composer.slice(0, cursor - 1)}${state.composer.slice(cursor)}`,
+    composerCursorPosition: cursor - 1
+  };
+}
+
+function deleteComposerCharacterAfterCursor(state: TuiInkState): TuiInkState {
+  const cursor = boundedComposerCursor(state);
+  if (cursor >= state.composer.length) {
+    return state;
+  }
+  return {
+    ...state,
+    composer: `${state.composer.slice(0, cursor)}${state.composer.slice(cursor + 1)}`,
+    composerCursorPosition: cursor
+  };
+}
+
+function boundedComposerCursor(state: TuiInkState): number {
+  return Math.min(Math.max(state.composerCursorPosition, 0), state.composer.length);
 }
 
 function compactHeaderParts(parts: HeaderPart[], columns: number): HeaderPart[] {

@@ -432,12 +432,15 @@ TUI also falls back to `process.stdin` for TTY/raw-mode detection when a custom
 test IO object omits stdin. This keeps `agent-hub tui` interactive in a real
 terminal while preserving deterministic `--once` and non-TTY smoke renders.
 Composer editing is handled in the Ink component state before shortcut
-dispatch: printable keys update the composer, `/team` clears the composer and
-switches to the Team view, `Enter` submits other non-empty composer text,
-empty-composer `Enter` is a no-op, `Esc` clears composer text or returns
-auxiliary panes to Work, and `Tab` remains a focus-navigation key even while
-text is present. This keeps role/review shortcuts from stealing normal prompt
-text without trapping focus inside the composer.
+dispatch: printable lowercase keys update the composer from any focus,
+uppercase tab shortcuts switch Work/Runs/View/Graph/Tasks/Memory/Team,
+`/team` clears the composer and switches to the Team view, `Enter` submits
+other non-empty composer text, empty-composer `Enter` is a no-op, `Esc` clears
+composer text or returns auxiliary panes to Work, and `Tab` remains a
+focus-navigation key even while text is present. The composer tracks a cursor
+offset for left/right, Home/End, Backspace/Delete, and Ctrl+A/E/U/D editing.
+This keeps normal prompt text from being stolen by global focus shortcuts
+without trapping focus inside the composer.
 Interactive TUI prompt submission reuses the CLI chat/task-runner path with a
 buffered CLI IO adapter. The run still persists messages, run cards, run
 events, diffs, risks, and review evidence through the shared repositories, but
@@ -461,8 +464,9 @@ tasks, and RoleCalls continue to resolve through the existing read-model
 summaries.
 The command hint helper falls back from an absent selected RoleCall to
 `agent-hub team roles list --project-id <project-id>`, the command palette
-includes the same role-list command beside run, review, and memory commands, and
-the `/team` slash command changes local Ink focus to the Team read-model pane.
+includes the same role-list command beside run, review, and memory commands,
+the `[E]am` tab participates in the default focus cycle, and the `/team` slash
+command changes local Ink focus to the Team read-model pane.
 Because the Ink renderer is a NodeNext composite TypeScript project that imports
 workspace package types, root validation runs its TUI check through
 `tsc -b apps/cli/tsconfig.tui-ink.json` so project references emit the required

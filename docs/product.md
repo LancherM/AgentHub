@@ -44,7 +44,7 @@ signals, and the next action without exposing raw logs or full patches.
 The RoleCall graph shows bounded loop state, including iteration count,
 pending/waiting/active counts, convergence reason, max-iteration stops,
 blocking-risk stops, and waiting-for-approval or waiting-for-context stops.
-The continue key prepares an explicit composer prompt; it does not continue
+Continuation helpers prepare an explicit composer prompt; they do not continue
 work in the background.
 Review decisions can be recorded with `agent-hub reviews accept|reject` or the
 TUI review shortcuts. These decisions create local `review_decision` artifacts
@@ -54,8 +54,8 @@ The Memory focus mode is a governance indicator, not a browser: it shows
 proposed/approved/rejected counts, the approved-memory source, explicit
 approval/rejection command hints, selected skills, available skill identifiers,
 and the current context delivery mode.
-The Team read-model pane is opened by typing `/team` in the composer or from
-the command palette, not from the default tab cycle. It shows the current
+The Team read-model pane is available from the default tab cycle, the `[E]am`
+tab shortcut, typing `/team` in the composer, or the command palette. It shows the current
 project's resolved preset, preset-overridden, and custom roles from the same
 role settings used by `team roles list`, including enabled/runnable counts,
 executor labels, default rooms, and the equivalent CLI list command.
@@ -77,11 +77,9 @@ shows recent lifecycle, adapter, stdout, and stderr lines while filtering raw
 JSON protocol frames. Runs awaiting local review leave the active box and
 become a single awaiting-review conversation line pointing at `[V]iew`, so the
 Review pane can handle accept/reject without stealing prompt text.
-The default tab bar matches the
-conversation-terminal scheme: Work, Runs, View, Graph, Tasks, Memory, and Help
-stay one key away instead of being embedded into the first screen. Team roles
-remain available through `/team` and the command palette rather than occupying
-a default tab.
+The default tab bar matches the conversation-terminal scheme: Work, Runs, View,
+Graph, Tasks, Memory, Team, and Help stay one key away instead of being
+embedded into the first screen.
 One-shot TUI renders (`--once`) are intended for quick smoke checks and return
 to the shell after printing the current workbench. Normal `agent-hub tui`
 launches stay open when stdin/stdout are an interactive terminal with raw-mode
@@ -91,11 +89,14 @@ same shared read models and action callbacks. The legacy hand-rendered string
 workbench has been removed as a runtime path; the remaining TUI roadmap work is
 interaction polish, scroll behavior, and broader state coverage without
 changing the governance boundaries above.
-The TUI composer is prompt-first while editing: printable keys append to the
-prompt, `/team` opens the Team roles view without submitting a prompt, `Enter`
-submits non-command prompts when a submission callback is available, `Esc`
-clears the in-progress prompt, and empty-composer `Enter` does not switch
-panes. `Tab` remains available for focus navigation. Interactive
+The TUI composer is prompt-first while editing: printable lowercase keys append
+to the prompt from any focus, uppercase tab shortcuts switch
+Work/Runs/View/Graph/Tasks/Memory/Team, `/team` opens the Team roles view
+without submitting a prompt, `Enter` submits non-command prompts when a
+submission callback is available, `Esc` clears the in-progress prompt, and
+empty-composer `Enter` does not switch panes. `Tab` remains available for focus
+navigation, and the composer supports cursor movement plus Home/End,
+Backspace/Delete, and Ctrl+A/E/U/D editing controls. Interactive
 submit and review-decision actions show bounded busy states without locking the
 keyboard: users can still switch focus, open command hints, and draft the next
 prompt while the current local action is running. The TUI only blocks duplicate
@@ -112,9 +113,9 @@ output anchors Work back to the bottom. TaskRunner persists run events as they
 are produced, so running boxes can show live progress from the local evidence
 store instead of waiting for final run completion. The conversation can scroll back by
 rendered line from Work focus, Runs and Tasks panes expand on taller terminals,
-direct lowercase or uppercase focus keys switch Work/Runs/View/Graph/Tasks/Memory when the composer
-is empty, and the Review reject shortcut is uppercase `R` so vim-style `j`
-remains navigation rather than an audit write.
+uppercase focus keys switch Work/Runs/View/Graph/Tasks/Memory/Team when the
+composer is empty, and the Review reject shortcut is uppercase `R` so
+vim-style `j` remains navigation rather than an audit write.
 When the graph has no selected RoleCall, the TUI command hint and command
 palette surface `agent-hub team roles list --project-id <project-id>` as the
 next useful role command; `/team` is the in-TUI shortcut for viewing that list

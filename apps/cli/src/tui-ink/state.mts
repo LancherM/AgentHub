@@ -34,10 +34,10 @@ export interface TuiInkState {
     runs: number;
     roleCalls: number;
     tasks: number;
-    transcript: number;
   };
   conversationScrollOffset: number;
   composer: string;
+  composerCursorPosition: number;
   commandPaletteOpen: boolean;
   statusMessage?: string;
 }
@@ -79,6 +79,7 @@ export const focusModes: TuiInkFocus[] = [
   "graph",
   "tasks",
   "memory",
+  "team",
   "help"
 ];
 
@@ -94,11 +95,11 @@ export function createInitialInkState(composer = ""): TuiInkState {
     scrollOffsets: {
       runs: 0,
       roleCalls: 0,
-      tasks: 0,
-      transcript: 0
+      tasks: 0
     },
     conversationScrollOffset: 0,
     composer,
+    composerCursorPosition: composer.length,
     commandPaletteOpen: false
   };
 }
@@ -489,6 +490,7 @@ function applyContinuePrompt(
   state.composer = selected
     ? `Continue @${selected.calleeRole} on RoleCall ${selected.id}: ${selected.task}`
     : "Continue the current task with the selected agent.";
+  state.composerCursorPosition = state.composer.length;
   state.statusMessage = "Continuation prompt prepared; press ctrl+j to submit.";
 }
 

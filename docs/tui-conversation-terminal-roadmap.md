@@ -210,14 +210,14 @@ Keyboard rules:
 
 - `enter` submits the composer when non-empty.
 - `esc` clears the composer when non-empty.
-- `w/r/v/g/t/m` switch Work, Runs, Review, Graph, Tasks, and Memory when the
-  composer is empty. The implementation can distinguish lowercase `r` for
-  Runs from uppercase `R` for reject.
+- Uppercase `W/R/V/G/T/M/E` switch Work, Runs, Review, Graph, Tasks, Memory,
+  and Team when the composer is empty. Lowercase printable characters start or
+  edit prompt text so normal typing is not swallowed by global focus shortcuts.
 - `?` opens Help; `:` opens Palette.
 - `tab` and `shift-tab` keep cycling focus modes.
 - `a` and `R` accept or reject only while the Review pane is focused, through
   the existing audit-only review decision callback.
-- `c` prepares an explicit continuation prompt; it does not start background
+- Continuation helpers prepare an explicit prompt; they do not start background
   work.
 - `x`, `q`, and `ctrl+c` exit only when doing so will not discard visible
   composer text unexpectedly.
@@ -335,7 +335,7 @@ pnpm test tests/cli-tui-ink.test.mts tests/cli-tui.test.ts
 
 Scope:
 
-- Add direct `w/r/v/g/t/m` focus keys.
+- Add direct uppercase `W/R/V/G/T/M/E` focus keys.
 - Make Work scroll operate on `conversationScrollOffset`.
 - Preserve selection and scroll state across model refreshes.
 - Tighten composer, Work, auxiliary pane, and pending-review keyboard behavior.
