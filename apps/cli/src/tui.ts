@@ -94,6 +94,7 @@ export interface TuiShellState {
   hideCompletedRoleCalls: boolean;
   collapsedRoleCallIds: string[];
   composer: string;
+  commandPaletteOpen: boolean;
   statusMessage?: string;
 }
 
@@ -116,6 +117,7 @@ export type TuiKey =
   | "accept_review"
   | "reject_review"
   | "print_commands"
+  | "palette"
   | "exit"
   | "other";
 
@@ -203,7 +205,8 @@ export async function runTuiCommand(options: RunTuiCommandOptions): Promise<numb
     selectedTaskIndex: 0,
     hideCompletedRoleCalls: false,
     collapsedRoleCallIds: [],
-    composer: parsed.submitPrompt ?? ""
+    composer: parsed.submitPrompt ?? "",
+    commandPaletteOpen: false
   };
   if (parsed.submitPrompt) {
     if (!options.submitPrompt) {
@@ -326,7 +329,8 @@ export function createInitialTuiShellState(): TuiShellState {
     selectedTaskIndex: 0,
     hideCompletedRoleCalls: false,
     collapsedRoleCallIds: [],
-    composer: ""
+    composer: "",
+    commandPaletteOpen: false
   };
 }
 
@@ -388,6 +392,10 @@ export function reduceTuiKey(
     next.statusMessage = commandHintForFocus(model, next);
     return { state: next, exit: false };
   }
+  if (key === "palette") {
+    next.commandPaletteOpen = !next.commandPaletteOpen;
+    return { state: next, exit: false };
+  }
   if (key === "escape") {
     next.focus = "work";
     return { state: next, exit: false };
@@ -421,7 +429,9 @@ export function renderTuiWorkbench(
     ""
   ];
 
-  if (state.focus === "help") {
+  if (state.commandPaletteOpen) {
+    lines.push(...renderCommandPalettePanel(model, state));
+  } else if (state.focus === "help") {
     lines.push(...renderHelpPanel());
   } else if (state.focus === "graph") {
     lines.push(...renderGraphPanel(model, state, { includeTitle: true }));
@@ -986,6 +996,39 @@ function renderMemoryPanel(model: TuiCurrentContextModel): string[] {
   ];
 }
 
+function renderCommandPalettePanel(
+  model: TuiCurrentContextModel,
+  state: TuiShellState
+): string[] {
+  const selectedRun = model.runs[boundedIndex(state.selectedRunIndex, model.runs.length)];
+  const visibleNodes = graphNodesForState(model.roleCalls.nodes, state);
+  const selectedNode = visibleNodes[boundedIndex(state.selectedRoleCallIndex, visibleNodes.length)];
+  return [
+    "Command Palette",
+    "  Current context",
+    `    focus ${state.focus}`,
+    `    command ${commandHintForFocus(model, state)}`,
+    "  Runs",
+    ...(selectedRun
+      ? selectedRun.commands.map((command) => `    ${command}`)
+      : ["    no run selected"]),
+    "  RoleCalls",
+    selectedNode ? `    agent-hub role-calls show ${selectedNode.id}` : "    no RoleCall selected",
+    "  Review",
+    ...(model.review.commands.length === 0
+      ? ["    no review command available"]
+      : model.review.commands.map((command) => `    ${command}`)),
+    "  Memory",
+    ...(model.memory.approvalCommands.length === 0
+      ? ["    no memory command available"]
+      : model.memory.approvalCommands.map((command) => `    ${command}`)),
+    "  Keys",
+    "    : close palette",
+    "    p print focused command",
+    "    ctrl+j submit composer"
+  ];
+}
+
 function renderHelpPanel(): string[] {
   return [
     "Help",
@@ -997,6 +1040,7 @@ function renderHelpPanel(): string[] {
     "  k                 cancel selected running item when supported",
     "  a / j             accept or reject selected run for record only",
     "  p                 print focused CLI command hint",
+    "  :                 command palette",
     "  ctrl+j            submit composer prompt",
     "  r                 review summary",
     "  h                 toggle completed RoleCalls",
@@ -1017,7 +1061,7 @@ function renderHelpPanel(): string[] {
 
 function renderActionHints(): string[] {
   return [
-    "Actions: tab focus  enter open  c continue  k cancel  a accept  j reject  p commands  ctrl+j submit  r review  h hide done  m memory  ? help  x exit"
+    "Actions: tab focus  enter open  : palette  c continue  k cancel  a accept  j reject  p commands  ctrl+j submit  r review  h hide done  m memory  ? help  x exit"
   ];
 }
 
@@ -1208,6 +1252,9 @@ function tuiKeyFromReadlineKey(key: readline.Key): TuiKey {
   }
   if (key.name === "p") {
     return "print_commands";
+  }
+  if (key.sequence === ":") {
+    return "palette";
   }
   return "other";
 }

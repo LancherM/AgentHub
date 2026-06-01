@@ -89,10 +89,12 @@ describe("CLI TUI command", () => {
     expect(state.statusMessage).toBe("Cannot continue: waiting_context.");
     state = reduceTuiKey(state, "cancel", model).state;
     expect(state.statusMessage).toContain("Cancellation is unavailable");
+    state = reduceTuiKey(state, "palette", model).state;
+    expect(state.commandPaletteOpen).toBe(true);
 
     const rendered = renderTuiWorkbench(model, state, { columns: 72, rows: 28 });
     expect(rendered).toContain("[Graph]");
-    expect(rendered).toContain("Cancellation is unavailable");
+    expect(rendered).toContain("Command Palette");
   });
 
   it("submits prompts through the CLI chat path and keeps unknown mentions as text", async () => {
@@ -228,6 +230,23 @@ describe("CLI TUI command", () => {
 
     state = reduceTuiKey(state, "print_commands", model).state;
     expect(state.statusMessage).toBe("agent-hub memory list --project-id project_1");
+  });
+
+  it("keeps wide and narrow terminal render snapshots stable", async () => {
+    const runtime = createCliRuntime({ storageMode: "memory" });
+    await seedTuiContext(runtime);
+    const model = await buildTuiCurrentContextModel(runtime, {
+      projectId: "project_1",
+      threadId: "thread_1",
+      selectedSkillReferences: ["global:typescript-safety"],
+      maxIterations: 4
+    });
+    const state = { ...createInitialTuiShellState(), commandPaletteOpen: true };
+
+    expect(renderTuiWorkbench(model, state, { columns: 120, rows: 60 }))
+      .toMatchSnapshot("wide command palette");
+    expect(renderTuiWorkbench(model, state, { columns: 68, rows: 36 }))
+      .toMatchSnapshot("narrow command palette");
   });
 });
 

@@ -391,3 +391,6 @@ state.
 Memory, skill, and context indicators are rendered from core read-model
 summaries. The TUI may show command hints such as `agent-hub memory list`, but
 memory approval and skill editing remain explicit CLI/context-store workflows.
+The command palette is renderer state in `apps/cli`; it reuses the same
+current-context read model and does not add new repositories, project browsing,
+or background workers.

@@ -53,6 +53,9 @@ The Memory focus mode is a governance indicator, not a browser: it shows
 proposed/approved/rejected counts, the approved-memory source, explicit
 approval/rejection command hints, selected skills, available skill identifiers,
 and the current context delivery mode.
+The command palette (`:`) collects current-context CLI command hints for runs,
+RoleCalls, review, and memory. It is a terminal aid only; it does not add
+project or room browsing.
 
 ## Core Concepts
 
