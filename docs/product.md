@@ -30,6 +30,67 @@ renderer stays sandboxed behind `window.agentHub`; orchestration, filesystem,
 SQLite, shell, git, and agent execution remain in Electron main-process services
 or shared local packages.
 
+`agent-hub tui` is a current-context terminal workbench shell. It renders
+bounded transcript, run, RoleCall, review, task, memory, and skill summaries
+from shared read models, supports launch by thread or room, and submits
+composer prompts through the same local CLI chat path. Loop continuation,
+review writes, memory approval, apply, merge, push, and PR creation stay
+outside the TUI.
+Its Runs and Tasks focus modes are current-context operating views: they show
+active/recent run status, stage, checks, risk, diff counts, retained-worktree
+state, linked CLI commands, assignments, RoleTodos, deferred/rejected follow-up
+signals, and the next action without exposing raw logs or full patches.
+The RoleCall graph shows bounded loop state, including iteration count,
+pending/waiting/active counts, convergence reason, max-iteration stops,
+blocking-risk stops, and waiting-for-approval or waiting-for-context stops.
+The continue key prepares an explicit composer prompt; it does not continue
+work in the background.
+Review decisions can be recorded with `agent-hub reviews accept|reject` or the
+TUI review shortcuts. These decisions create local `review_decision` artifacts
+only; they do not apply files, alter run status, merge, push, approve memory,
+clean worktrees, or delete branches.
+The Memory focus mode is a governance indicator, not a browser: it shows
+proposed/approved/rejected counts, the approved-memory source, explicit
+approval/rejection command hints, selected skills, available skill identifiers,
+and the current context delivery mode.
+The command palette (`:`) collects current-context CLI command hints for runs,
+RoleCalls, review, and memory. It is a terminal aid only; it does not add
+project or room browsing.
+TUI hardening keeps failure states local and recoverable: missing project
+registration, failed context reads, unavailable agent CLIs, reserved role
+executors, and missing linked-run evidence render concise status text plus
+equivalent CLI recovery commands instead of opening broad browsers or applying
+side effects.
+The Work focus is optimized for narrow terminals: recent runs and review
+evidence are shown before empty RoleCall state, long run ids are compacted, and
+status/check/risk signals are grouped so the screen reads like an operating
+workbench instead of raw log output.
+One-shot TUI renders (`--once`) are intended for quick smoke checks and return
+to the shell after printing the current workbench. Normal `agent-hub tui`
+launches stay open when stdin/stdout are an interactive terminal with raw-mode
+support. The TUI renderer is now an Ink component tree under
+`apps/cli/src/tui-ink`, loaded by the CLI command boundary and backed by the
+same shared read models and action callbacks. The legacy hand-rendered string
+workbench has been removed as a runtime path; the remaining TUI roadmap work is
+interaction polish, scroll behavior, and broader state coverage without
+changing the governance boundaries above.
+The TUI composer is prompt-first while editing: printable keys append to the
+prompt, `Enter` submits non-empty prompts when a submission callback is
+available, `Esc` clears the in-progress prompt, and `Tab` remains available for
+focus navigation. The status bar switches to composer-specific hints so exit
+shortcuts are not advertised while a prompt is being edited.
+Prompt submission keeps the terminal workbench in control of the screen: agent
+stdout, run debug details, and raw adapter text are persisted through the normal
+chat/run records and then shown through TUI panes, not dumped directly into the
+Ink alternate screen during an interactive submit.
+When the graph has no selected RoleCall, the TUI command hint and command
+palette surface `agent-hub team roles list --project-id <project-id>` as the
+next useful role command.
+TUI validation is expected to work from a clean checkout: root typecheck and
+lint scripts check the Ink renderer through TypeScript build-mode references,
+allowing required local `dist` declarations to be generated during validation
+instead of assuming they already exist.
+
 ## Core Concepts
 
 Projects are local repository roots registered in Agent Hub's SQLite database.
@@ -81,11 +142,16 @@ The current CLI exposes these command groups:
 - Persistent chat and rooms: bare `agent-hub` interactive mode, `chat`,
   `threads list`, `threads show`, `rooms list`, `rooms create`, `rooms use`,
   `rooms send`, and `rooms timeline`.
+- Terminal workbench: `tui` opens a keyboard-first read-only view over the
+  current thread or room context, with focus modes for work, RoleCalls, runs,
+  review, tasks, memory, and help.
 - Team roles: `team roles list`, `team roles show`, `team roles save`, and
   `team roles executor`. Saved roles can reference default skills with
   `--skill [scope:]id`.
 - Run review: `runs list`, `runs show`, `runs events`, `runs diff`, and
   `risks show`.
+- Review decisions: `reviews show`, `reviews accept`, and `reviews reject`
+  record audit-only accept/reject artifacts for a run.
 - RoleCall audit: `role-calls list`, `role-calls show`, `role-todos list`, and
   `role-events list`, each with JSON output where useful for local scripts.
 - Memory and comparison: `memory list`, `memory propose`, `memory approve`,
@@ -232,6 +298,8 @@ Not implemented as product behavior today:
   current metadata-backed model;
 - richer Codex/Claude structured event mapping beyond the current persisted
   stdout/status/message/error model.
+- bounded loop continuation and TUI review decision writes beyond the current
+  workbench shell.
 
 Roadmaps for future work live in `docs/local-ai-workgroup-roadmap.md`,
 `docs/interaction-optimization-roadmap.md`, `docs/tui-roadmap.md`, and the

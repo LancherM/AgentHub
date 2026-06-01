@@ -3,6 +3,9 @@
   "version": "0.0.0",
   "private": true,
   "type": "commonjs",
+  "engines": {
+    "node": ">=22"
+  },
   "bin": {
     "agent-hub": "./dist/cli.js"
   },
@@ -14,6 +17,13 @@
     "@agent-hub/core": "workspace:*",
     "@agent-hub/db": "workspace:*",
     "@agent-hub/safety": "workspace:*",
-    "@agent-hub/task-runner": "workspace:*"
+    "@agent-hub/task-runner": "workspace:*",
+    "ink": "7.0.5",
+    "react": "19.2.6",
+    "react-devtools-core": "7.0.1"
+  },
+  "devDependencies": {
+    "@types/react": "19.2.15",
+    "ink-testing-library": "4.0.0"
   }
 }

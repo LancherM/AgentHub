@@ -9,6 +9,7 @@
     { "path": "./packages/db" },
     { "path": "./packages/task-runner" },
     { "path": "./apps/cli" },
+    { "path": "./apps/cli/tsconfig.tui-ink.json" },
     { "path": "./apps/desktop" }
   ]
 }

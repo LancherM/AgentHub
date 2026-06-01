@@ -71,8 +71,10 @@ import {
 import {
   buildComparisonReport,
   formatShellCommand,
+  getRunReviewDecision,
   loadRunDiffReview,
   loadRunEventsReview,
+  recordRunReviewDecision,
   TaskRunner,
   type RunDiffReview,
   type RunContinuationInput,
@@ -81,6 +83,7 @@ import {
 } from "@agent-hub/task-runner";
 import { scanSensitivePaths } from "@agent-hub/safety";
 import { createSqliteRepositories } from "@agent-hub/db";
+import { runTuiCommand, type TuiPromptSubmissionInput } from "./tui";
 import {
   InMemoryAgentProfileRepository,
   InMemoryComparisonReportRepository,
@@ -319,7 +322,7 @@ function getDefaultRuntime(): CliRuntime {
 
 export async function main(
   argv = process.argv.slice(2),
-  io: CliIO = { stdout: process.stdout, stderr: process.stderr },
+  io: CliIO = { stdin: process.stdin, stdout: process.stdout, stderr: process.stderr },
   cwd = process.cwd(),
   runtime?: CliRuntime
 ): Promise<number> {
@@ -454,6 +457,20 @@ export async function main(
     });
   }
 
+  if (command === "tui") {
+    return runTuiCommand({
+      args: rest,
+      io,
+      cwd,
+      runtime: activeRuntime,
+      projectRoot: global.projectRoot ?? cwd,
+      selectedAgent: global.agentKind ?? defaultCliAgent(debug),
+      debug,
+      submitPrompt: (input) => submitTuiPrompt(input, io, cwd, activeRuntime),
+      recordReviewDecision: (input) => recordTuiReviewDecision(input, activeRuntime)
+    });
+  }
+
   if (
     (command === "team" && rest[0] === "roles" && rest[1] === "list") ||
     (command === "roles" && rest[0] === "list")
@@ -508,6 +525,18 @@ export async function main(
 
   if (command === "risks" && rest[0] === "show") {
     return showRisk(rest.slice(1), io, activeRuntime);
+  }
+
+  if (command === "reviews" && rest[0] === "show") {
+    return showReviewDecision(rest.slice(1), io, activeRuntime);
+  }
+
+  if (command === "reviews" && rest[0] === "accept") {
+    return recordReviewDecisionCommand("accepted", rest.slice(1), io, activeRuntime);
+  }
+
+  if (command === "reviews" && rest[0] === "reject") {
+    return recordReviewDecisionCommand("rejected", rest.slice(1), io, activeRuntime);
   }
 
   if (command === "role-calls" && rest[0] === "list") {
@@ -583,6 +612,7 @@ export function helpText(debug = isEnvironmentDebugEnabled()): string {
     "  agent-hub [--db <path>] rooms send --project-id <project-id> --room <handle-or-thread-id> --message <text>",
     "  agent-hub [--db <path>] rooms timeline --project-id <project-id> --room <handle-or-thread-id>",
     "  agent-hub [--db <path>] chat [--thread <thread-id>|--room <handle-or-thread-id>]",
+    "  agent-hub [--db <path>] tui [--thread <thread-id>|--room <handle-or-thread-id>] [--agent codex|claude-code] [--max-iterations <n>]",
     "  agent-hub [--db <path>] team roles list --project-id <project-id>",
     "  agent-hub [--db <path>] team roles show --project-id <project-id> --role <handle>",
     `  agent-hub [--db <path>] team roles save --project-id <project-id> --handle <handle> [--display-name <name>] [--executor ${agentChoices}|human|llm_api|workflow] [--skill [scope:]id]`,
@@ -592,6 +622,9 @@ export function helpText(debug = isEnvironmentDebugEnabled()): string {
     "  agent-hub runs diff <run-id> [--stat|--patch] [--full]",
     "  agent-hub runs show <run-id>",
     "  agent-hub risks show <run-id>",
+    "  agent-hub reviews show <run-id>",
+    "  agent-hub reviews accept <run-id>",
+    "  agent-hub reviews reject <run-id> [--reason <text>]",
     "  agent-hub role-calls list [--thread-id <thread-id>] [--role <role>] [--status <status>] [--json]",
     "  agent-hub role-calls show <role-call-id> [--json]",
     "  agent-hub role-todos list [--thread-id <thread-id>] [--role <role>] [--status <status>] [--json]",
@@ -1804,6 +1837,116 @@ async function sendRoomMessage(
   } catch (error) {
     io.stderr.write(`error: ${error instanceof Error ? error.message : String(error)}\n`);
     return 1;
+  }
+}
+
+async function submitTuiPrompt(
+  input: TuiPromptSubmissionInput,
+  io: CliIO,
+  cwd: string,
+  runtime: CliRuntime
+): Promise<{
+  ok: boolean;
+  exitCode: number;
+  projectId?: string;
+  threadId?: string;
+  message: string;
+}> {
+  try {
+    const project = input.threadId
+      ? await projectForThread(runtime, input.threadId)
+      : input.projectId
+        ? await requireProject(runtime, input.projectId)
+        : await ensureProjectForRoot(runtime, input.projectRoot);
+    const roomThread = input.roomRef
+      ? await resolveRoomThread(runtime, project.id, input.roomRef)
+      : undefined;
+    const state: ChatState = {
+      projectRoot: project.rootPath,
+      project,
+      selectedAgent: input.selectedAgent,
+      threadId: input.threadId ?? roomThread?.id,
+      roomHandle: roomThread ? roomHandleForThread(roomThread) : undefined,
+      workspaceBasePath: input.workspaceBasePath
+        ? path.resolve(cwd, input.workspaceBasePath)
+        : undefined,
+      retainOnFailure: input.retainOnFailure,
+      dryRun: input.dryRun,
+      debug: input.debug
+    };
+    const capturedIo = createBufferedCliIO(io);
+    const exitCode = await runChatTurn(input.prompt, capturedIo.io, runtime, state);
+    const capturedError = firstLine(capturedIo.stderr.join(""));
+    return {
+      ok: exitCode === 0,
+      exitCode,
+      projectId: state.project.id,
+      threadId: state.threadId,
+      message:
+        exitCode === 0
+          ? `Submitted prompt to ${state.roomHandle ? `#${state.roomHandle}` : state.threadId ?? "new thread"}.`
+          : `Submitted prompt failed with exit code ${exitCode}${capturedError ? `: ${capturedError}` : ""}.`
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      exitCode: 1,
+      projectId: input.projectId,
+      threadId: input.threadId,
+      message: errorMessage(error)
+    };
+  }
+}
+
+function createBufferedCliIO(source: CliIO): {
+  io: CliIO;
+  stdout: string[];
+  stderr: string[];
+} {
+  const stdout: string[] = [];
+  const stderr: string[] = [];
+  return {
+    io: {
+      stdin: source.stdin,
+      stdout: { write: bufferedWrite(stdout) },
+      stderr: { write: bufferedWrite(stderr) }
+    },
+    stdout,
+    stderr
+  };
+}
+
+function bufferedWrite(buffer: string[]): (chunk: string) => boolean {
+  return (chunk: string) => {
+    buffer.push(String(chunk));
+    return true;
+  };
+}
+
+async function recordTuiReviewDecision(
+  input: { runId: string; status: "accepted" | "rejected"; reason?: string },
+  runtime: CliRuntime
+): Promise<{ ok: boolean; message: string }> {
+  try {
+    const decision = await recordRunReviewDecision(
+      {
+        taskRunRepository: runtime.taskRunRepository,
+        runArtifactRepository: runtime.runArtifactRepository
+      },
+      {
+        runId: input.runId,
+        status: input.status,
+        reason: input.reason,
+        idFactory: createId,
+        now: nowIso
+      }
+    );
+    return {
+      ok: true,
+      message: `Review ${decision.reviewStatus} for ${decision.runId}. No repository action was performed.`
+    };
+  } catch (error) {
+    return { ok: false, message: errorMessage(error) };
   }
 }
 
@@ -3497,6 +3640,81 @@ async function showRisk(
   return 0;
 }
 
+async function showReviewDecision(
+  args: string[],
+  io: CliIO,
+  runtime: CliRuntime
+): Promise<number> {
+  const runId = args[0];
+  if (!runId) {
+    io.stderr.write("error: run id is required\n");
+    return 1;
+  }
+  const run = await runtime.taskRunRepository.get(runId);
+  if (!run) {
+    io.stderr.write(`error: run ${runId} not found\n`);
+    return 1;
+  }
+  const decision = await getRunReviewDecision(
+    { runArtifactRepository: runtime.runArtifactRepository },
+    runId
+  );
+  io.stdout.write(renderReviewDecision(decision));
+  return 0;
+}
+
+async function recordReviewDecisionCommand(
+  status: "accepted" | "rejected",
+  args: string[],
+  io: CliIO,
+  runtime: CliRuntime
+): Promise<number> {
+  const runId = args[0];
+  if (!runId) {
+    io.stderr.write("error: run id is required\n");
+    return 1;
+  }
+  try {
+    const decision = await recordRunReviewDecision(
+      {
+        taskRunRepository: runtime.taskRunRepository,
+        runArtifactRepository: runtime.runArtifactRepository
+      },
+      {
+        runId,
+        status,
+        reason: optionalFlag(args.slice(1), "--reason"),
+        idFactory: createId,
+        now: nowIso
+      }
+    );
+    io.stdout.write(renderReviewDecision(decision));
+    return 0;
+  } catch (error) {
+    io.stderr.write(`error: ${errorMessage(error)}\n`);
+    return 1;
+  }
+}
+
+function renderReviewDecision(decision: {
+  runId: string;
+  reviewStatus: string;
+  acceptedAt?: string;
+  rejectedAt?: string;
+  reason?: string;
+  message?: string;
+}): string {
+  return [
+    `run_id: ${decision.runId}`,
+    `review_status: ${decision.reviewStatus}`,
+    `accepted_at: ${decision.acceptedAt ?? "none"}`,
+    `rejected_at: ${decision.rejectedAt ?? "none"}`,
+    `reason: ${decision.reason ?? "none"}`,
+    `message: ${decision.message ?? "none"}`,
+    ""
+  ].join("\n");
+}
+
 async function listRoleCalls(
   args: string[],
   io: CliIO,
@@ -4896,6 +5114,6 @@ function summarizeVerificationResults(results: VerificationResult[]): string {
 
 if (require.main === module) {
   void main().then((exitCode) => {
-    process.exitCode = exitCode;
+    process.exit(exitCode);
   });
 }

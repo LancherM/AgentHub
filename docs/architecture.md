@@ -32,7 +32,8 @@ Desktop renderer
 - `packages/core` owns domain validation, lifecycle state-transition guards,
   repository interfaces, in-memory repository implementations, agent-facing
   output extraction, RoleCall parsing, RoleCall orchestration, RoleCall context,
-  RoleResult helpers, and graph convergence helpers.
+  RoleResult helpers, graph convergence helpers, and bounded current-context
+  TUI read models over existing persisted evidence.
 - `packages/db` owns SQLite migrations, default database path resolution, a
   queued `sqlite3` session driver, and SQLite implementations of the core
   repository interfaces.
@@ -50,8 +51,9 @@ Desktop renderer
 - `packages/safety` owns dangerous-command detection, diff/event safety scans,
   risk report generation, and RoleCall policy validation.
 - `apps/cli` owns command parsing, interactive shell behavior, persistent chat
-  and room command UX, output rendering, debug rendering, and CLI-only
-  persistence operations such as manual run-event recording.
+  and room command UX, the read-only TUI renderer/key handling, output
+  rendering, debug rendering, and CLI-only persistence operations such as
+  manual run-event recording.
 - `apps/desktop` owns Electron main/preload, React renderer, desktop layout,
   local UI preferences, IPC service facades, and desktop-only presentation
   state. It does not own task orchestration.
@@ -369,4 +371,69 @@ Future changes should preserve these boundaries:
 The planned terminal UI direction is captured in `docs/tui-roadmap.md`. It
 should reuse persisted transcript, task, run, RoleCall, verification, risk,
 memory, skill, and review evidence while keeping deep audit in explicit CLI or
-desktop review commands.
+desktop review commands. The first shared package boundary for that work is a
+core read-model layer; it adds no persistence tables and performs no terminal
+orchestration. The `agent-hub tui` command lives in `apps/cli`, renders those
+read models as a terminal shell, and delegates composer submission back to the
+existing CLI chat turn path. Continuation, review writes, and governance
+mutations remain outside the TUI renderer. Runs and Tasks focus modes are still
+read-model projections over existing task, run, RoleCall, RoleTodo,
+verification, risk, metadata, and artifact repositories; they do not introduce
+new persistence or raw log/diff rendering.
+RoleCall loop controls reuse the core convergence helper plus TUI risk
+summaries. The CLI renderer can prepare an explicit continuation prompt, but it
+does not run an autonomous background loop or add a daemon.
+Audit-only review decision recording lives in `packages/task-runner` so CLI,
+TUI, and desktop-facing services can share the same `review_decision` artifact
+shape. Recording a decision writes a run artifact only and does not mutate task
+run status, workspace cleanup, repository files, branches, memory, or lifecycle
+state.
+Memory, skill, and context indicators are rendered from core read-model
+summaries. The TUI may show command hints such as `agent-hub memory list`, but
+memory approval and skill editing remain explicit CLI/context-store workflows.
+The command palette is renderer state in `apps/cli`; it reuses the same
+current-context read model and does not add new repositories, project browsing,
+or background workers.
+TUI hardening stays at the CLI/read-model boundary. `apps/cli` converts launch
+and read failures into renderable fallback models with recovery commands, while
+`packages/core` keeps missing linked-run evidence readable in the RoleCall
+summary. Reserved role executors are surfaced from existing task assignment
+metadata; no executor backend, database table, daemon, or desktop behavior is
+added for the TUI.
+Terminal polish is also contained in the CLI renderer. It compacts identifiers,
+groups Work-view runs and review evidence ahead of empty graph state on narrow
+terminals, and uses Ink components for terminal layout instead of hand-wrapped
+string panels.
+The direct CLI entrypoint exits after command completion, so one-shot TUI smoke
+renders do not leave local SQLite helper processes holding the terminal open.
+For interactive launches, the CLI default IO includes `process.stdin`, and the
+TUI also falls back to `process.stdin` for TTY/raw-mode detection when a custom
+test IO object omits stdin. This keeps `agent-hub tui` interactive in a real
+terminal while preserving deterministic `--once` and non-TTY smoke renders.
+Composer editing is handled in the Ink component state before shortcut
+dispatch: printable keys update the composer, `Enter` submits non-empty
+composer text, `Esc` clears composer text, and `Tab` remains a focus-navigation
+key even while text is present. The status bar switches to composer-specific
+hints while text is present. This keeps role/review shortcuts from stealing
+normal prompt text without trapping focus inside the composer.
+Interactive TUI prompt submission reuses the CLI chat/task-runner path with a
+buffered CLI IO adapter. The run still persists messages, run cards, run
+events, diffs, risks, and review evidence through the shared repositories, but
+agent stdout and debug text do not write directly to the Ink terminal surface;
+the TUI refreshes from the persisted read model instead.
+The command hint helper falls back from an absent selected RoleCall to
+`agent-hub team roles list --project-id <project-id>`, and the command palette
+includes the same role-list command beside run, review, and memory commands.
+Because the Ink renderer is a NodeNext composite TypeScript project that imports
+workspace package types, root validation runs its TUI check through
+`tsc -b apps/cli/tsconfig.tui-ink.json` so project references emit the required
+local declarations in clean CI checkouts without requiring prebuilt package
+`dist` directories.
+The hand-rendered string layout has been removed from the TUI runtime path.
+The current renderer direction is documented in
+`docs/tui-ink-rewrite-roadmap.md`: keep the core read model and CLI action
+callbacks, use a Node 22+ Ink 7 / React 19 component tree inside the CLI
+boundary, and keep the ESM-only Ink code in a separate `apps/cli/src/tui-ink`
+build target. The CommonJS CLI command boundary dynamically imports the
+compiled `apps/cli/dist/tui-ink/entry.mjs` entrypoint; the renderer still does
+not access SQLite, filesystem, git, shell, or agent adapters directly.

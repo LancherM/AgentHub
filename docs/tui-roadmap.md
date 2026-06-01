@@ -1,7 +1,7 @@
 # TUI Roadmap
 
-Status: planning
-Last updated: 2026-05-29
+Status: implementation in progress
+Last updated: 2026-06-01
 
 This roadmap defines a future terminal UI for Agent Hub. The TUI should be a
 complete keyboard-first workbench for the current Agent Hub context, not a
@@ -19,6 +19,11 @@ RoleCall graph visibility is central, but it is not the whole TUI. The TUI also
 needs the practical operating surface around the graph: composer, targets,
 runs, tasks, minimal review, memory prompts, skills/context indicators, and
 keyboard commands.
+
+Implementation note: the initial hand-rendered string TUI validated the shared
+read-model and command boundaries, but it has been replaced as a runtime path.
+The current implementation direction is the component-based Ink rewrite
+described in `docs/tui-ink-rewrite-roadmap.md`.
 
 Project registration, broad project browsing, room management, deep audit,
 comparison reports, raw logs, full diffs, knowledge browsing, and lifecycle
@@ -448,20 +453,21 @@ Rules:
 
 ## Dependency Strategy
 
-Start with a render-model-first implementation. The first phase should produce
-pure functions that map persisted evidence into terminal rows and panels. This
-keeps tests deterministic and avoids committing to a terminal rendering library
-before the product surface is stable.
+The render-model-first spike proved the shared read model and command
+boundaries, but the hand-rendered string layout was not maintainable enough for
+focus, resizing, and evidence prioritization. The TUI now uses Ink as the
+terminal rendering dependency:
 
-Acceptable implementation path:
+- `apps/cli/src/tui.ts` stays the CLI launch and action boundary.
+- `apps/cli/src/tui-ink/*.mts` is the ESM Ink 7 / React 19 renderer.
+- `apps/cli/tsconfig.tui-ink.json` compiles the renderer to
+  `apps/cli/dist/tui-ink/*.mjs`.
+- Node 22+ is the supported runtime line for the CLI/TUI dependency set.
 
-1. Build read models and render snapshots with no new dependency.
-2. Implement a minimal ANSI/raw-key shell if sufficient.
-3. Add a small TUI rendering dependency only if the raw-key shell becomes a
-   maintenance burden.
-
-Any dependency addition must be justified by concrete needs such as focus
-management, resizing, scrollable panels, or reliable keyboard handling.
+Future TUI dependency additions still need a concrete need such as scrollable
+panes, reliable keyboard handling, or terminal rendering correctness. They
+must stay inside the CLI/local package boundary and must not introduce a
+server, browser UI, or orchestration logic in the renderer.
 
 ## Phase Sequence
 
