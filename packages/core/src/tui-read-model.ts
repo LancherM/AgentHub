@@ -633,7 +633,7 @@ async function summarizeConversation(
     if (!terminalRunStatuses.has(run.status) || activeRunIds.has(run.id)) {
       return [];
     }
-    if (run.reviewDecision.status === "pending") {
+    if (run.status === "succeeded" && run.reviewDecision.status === "pending") {
       return [{
         id: `review-pending:${run.id}`,
         type: "review_pending" as const,

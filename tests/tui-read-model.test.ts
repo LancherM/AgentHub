@@ -210,6 +210,10 @@ describe("TUI current-context read model", () => {
       }
     });
     expect(model.activeRuns.map((run) => run.runId)).toEqual(["run_active"]);
+    expect(model.conversation.find((entry) => entry.id === "run:run_failed")).toMatchObject({
+      type: "agent_failed",
+      outputLines: ["tests failed"]
+    });
     expect(model.conversation.map((entry) => entry.id)).toContain("run:run_completed");
     expect(model.conversation.map((entry) => entry.id)).toContain("review-pending:run_no_change");
     expect(model.conversation.find((entry) => entry.id === "review-pending:run_no_change")).toMatchObject({
