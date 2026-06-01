@@ -30,6 +30,11 @@ renderer stays sandboxed behind `window.agentHub`; orchestration, filesystem,
 SQLite, shell, git, and agent execution remain in Electron main-process services
 or shared local packages.
 
+Shared TUI read models now summarize the current thread or room context for a
+future terminal workbench. They expose bounded transcript, run, RoleCall,
+review, task, memory, and skill summaries only; there is not yet an executable
+`agent-hub tui` command.
+
 ## Core Concepts
 
 Projects are local repository roots registered in Agent Hub's SQLite database.
@@ -232,6 +237,7 @@ Not implemented as product behavior today:
   current metadata-backed model;
 - richer Codex/Claude structured event mapping beyond the current persisted
   stdout/status/message/error model.
+- executable terminal UI controls beyond the current shared read models.
 
 Roadmaps for future work live in `docs/local-ai-workgroup-roadmap.md`,
 `docs/interaction-optimization-roadmap.md`, `docs/tui-roadmap.md`, and the

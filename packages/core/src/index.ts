@@ -4,4 +4,5 @@ export * from "./role-call-parser";
 export * from "./role-call-orchestrator";
 export * from "./role-call-context";
 export * from "./role-call-convergence";
+export * from "./tui-read-model";
 export * from "./storage";

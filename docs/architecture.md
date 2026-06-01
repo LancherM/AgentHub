@@ -32,7 +32,8 @@ Desktop renderer
 - `packages/core` owns domain validation, lifecycle state-transition guards,
   repository interfaces, in-memory repository implementations, agent-facing
   output extraction, RoleCall parsing, RoleCall orchestration, RoleCall context,
-  RoleResult helpers, and graph convergence helpers.
+  RoleResult helpers, graph convergence helpers, and bounded current-context
+  TUI read models over existing persisted evidence.
 - `packages/db` owns SQLite migrations, default database path resolution, a
   queued `sqlite3` session driver, and SQLite implementations of the core
   repository interfaces.
@@ -369,4 +370,6 @@ Future changes should preserve these boundaries:
 The planned terminal UI direction is captured in `docs/tui-roadmap.md`. It
 should reuse persisted transcript, task, run, RoleCall, verification, risk,
 memory, skill, and review evidence while keeping deep audit in explicit CLI or
-desktop review commands.
+desktop review commands. The first shared package boundary for that work is a
+core read-model layer; it adds no persistence tables and performs no terminal
+rendering or orchestration.
