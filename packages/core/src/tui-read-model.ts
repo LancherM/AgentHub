@@ -806,24 +806,20 @@ async function terminalRunOutputLines(
 function recentAgentRunOutputLines(events: RunEvent[], run: TuiRunSummary): string[] {
   const agentOutput = extractAgentFacingOutput(
     { events: events.map(toAgentOutputEvent) },
-    { includeTerminalSummaries: false }
+    { includeRawStreams: false, includeTerminalSummaries: false }
   );
   const outputLines = outputTextLines(agentOutput);
   if (outputLines.length > 0) {
     return outputLines.slice(-6);
   }
-  const progressLines = events
-    .filter(isAgentProgressEvent)
+  const activityLines = events
     .sort((left, right) => left.sequence - right.sequence)
-    .flatMap((event) =>
-      event.message
-        .split(/\r?\n/)
-        .map((line) => line.trim())
-        .filter(Boolean)
-    )
+    .flatMap(activeRunEventLines)
     .map((line) => truncate(line, 120))
     .slice(-6);
-  return progressLines.length > 0 ? progressLines : [`${run.agentKind} ${run.status}`];
+  return activityLines.length > 0
+    ? activityLines
+    : [`${run.agentKind} ${run.status}`, "waiting for observable output..."];
 }
 
 function outputTextLines(value: string): string[] {
@@ -846,35 +842,67 @@ function toAgentOutputEvent(event: RunEvent): {
   };
 }
 
-function isAgentProgressEvent(event: RunEvent): boolean {
-  if (event.metadata?.assistantOutput === false) {
-    return false;
-  }
-  if (event.metadata?.assistantOutput === true) {
-    return true;
-  }
+function activeRunEventLines(event: RunEvent): string[] {
   const phase = typeof event.metadata?.phase === "string" ? event.metadata.phase : undefined;
-  if (phase && phase !== "agent") {
-    return false;
+  if (phase === "context") {
+    return [];
   }
   const desktopEventType =
     typeof event.metadata?.desktopEventType === "string"
       ? event.metadata.desktopEventType
       : undefined;
+  if (desktopEventType === "context_compiled") {
+    return [];
+  }
+  if (event.type === "stdout" || event.type === "stderr") {
+    const prefix = event.type === "stderr" ? "stderr: " : "";
+    return humanReadableStreamLines(event.message).map((line) => `${prefix}${line}`);
+  }
   if (
-    desktopEventType &&
-    !desktopEventType.startsWith("agent_") &&
-    desktopEventType !== "run_failed"
+    event.type !== "message" &&
+    event.type !== "status" &&
+    event.type !== "error" &&
+    event.type !== "exit"
   ) {
+    return [];
+  }
+  const prefix = event.type === "error" ? "error: " : event.type === "exit" ? "exit: " : "";
+  return runEventDisplayText(event)
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => `${prefix}${line}`);
+}
+
+function runEventDisplayText(event: RunEvent): string {
+  const metadataMessage = event.metadata?.message;
+  const metadataSummary = event.metadata?.summary;
+  if (typeof metadataMessage === "string" && metadataMessage.trim().length > 0) {
+    return metadataMessage.trim();
+  }
+  if (typeof metadataSummary === "string" && metadataSummary.trim().length > 0) {
+    return metadataSummary.trim();
+  }
+  return event.message.trim();
+}
+
+function humanReadableStreamLines(value: string): string[] {
+  return value
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0 && !isJsonObjectLine(line));
+}
+
+function isJsonObjectLine(value: string): boolean {
+  if (!value.startsWith("{") || !value.endsWith("}")) {
     return false;
   }
-  return (
-    event.type === "stdout" ||
-    event.type === "stderr" ||
-    event.type === "message" ||
-    event.type === "status" ||
-    event.type === "error"
-  );
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed);
+  } catch {
+    return false;
+  }
 }
 
 function activeRunEvidenceLines(run: TuiRunSummary): string[] {

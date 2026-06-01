@@ -3,6 +3,7 @@ import { createCliRuntime } from "@agent-hub/cli";
 import {
   buildTuiCurrentContextModel,
   conservativePermissionSet,
+  type JsonObject,
   type RoleCall,
   type WorkgroupTaskAssignmentMetadata
 } from "@agent-hub/core";
@@ -221,6 +222,83 @@ describe("TUI current-context read model", () => {
       content: "awaiting review — 切换到 [V]iew 查看详情"
     });
     expect(model.conversation.map((entry) => entry.id)).not.toContain("review:run_completed:accepted");
+  });
+
+  it("fills active run boxes from persisted live runtime events", async () => {
+    const runtime = createCliRuntime({ storageMode: "memory" });
+    await runtime.projectRepository.create({
+      id: "project_live",
+      name: "Live Events",
+      rootPath: "/tmp/live-events",
+      createdAt: now,
+      updatedAt: now
+    });
+    await runtime.conversationThreadRepository.create({
+      id: "thread_live",
+      projectId: "project_live",
+      title: "Live Events",
+      createdAt: now,
+      updatedAt: now
+    });
+    await runtime.taskRepository.create({
+      id: "task_live",
+      projectId: "project_live",
+      title: "Watch a live run",
+      metadata: { threadId: "thread_live" },
+      status: "running",
+      createdAt: now,
+      updatedAt: now
+    });
+    await runtime.taskRunRepository.create({
+      id: "run_live",
+      taskId: "task_live",
+      agentKind: "codex",
+      status: "running",
+      startedAt: now,
+      createdAt: now,
+      updatedAt: now
+    });
+    await runtime.runEventRepository.createMany([
+      event("event_context", "run_live", 0, "status", "Context compiled.", {
+        phase: "context",
+        desktopEventType: "context_compiled"
+      }),
+      event("event_started", "run_live", 1, "status", "TaskRunner execution started.", {
+        phase: "lifecycle",
+        desktopEventType: "run_started"
+      }),
+      event("event_worktree", "run_live", 2, "status", "Isolated worktree is ready.", {
+        phase: "agent",
+        desktopEventType: "agent_step"
+      }),
+      event("event_preflight", "run_live", 3, "status", "Codex preflight passed"),
+      event("event_starting", "run_live", 4, "status", "starting Codex"),
+      event("event_json_stdout", "run_live", 5, "stdout", "{\"type\":\"session.created\"}\n"),
+      event("event_session", "run_live", 6, "status", "Codex session.created", {
+        adapterEvent: { type: "session.created" }
+      }),
+      event("event_stderr", "run_live", 7, "stderr", "waiting for network\n")
+    ]);
+
+    const model = await buildTuiCurrentContextModel(runtime, {
+      projectId: "project_live",
+      threadId: "thread_live"
+    });
+
+    expect(model.activeRuns).toEqual([
+      expect.objectContaining({
+        runId: "run_live",
+        outputLines: [
+          "TaskRunner execution started.",
+          "Isolated worktree is ready.",
+          "Codex preflight passed",
+          "starting Codex",
+          "Codex session.created",
+          "stderr: waiting for network"
+        ]
+      })
+    ]);
+    expect(model.activeRuns[0]?.outputLines.join("\n")).not.toContain("{\"type\"");
   });
 
   it("reports bounded loop stop reasons for terminal, pending, waiting, blocking, and limits", async () => {
@@ -570,7 +648,8 @@ function event(
   taskRunId: string,
   sequence: number,
   type: "stdout" | "stderr" | "message" | "status" | "error" | "exit",
-  messageText: string
+  messageText: string,
+  metadata: JsonObject = {}
 ) {
   return {
     id,
@@ -578,7 +657,7 @@ function event(
     sequence,
     type,
     message: messageText,
-    metadata: {},
+    metadata,
     createdAt: now
   };
 }

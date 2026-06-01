@@ -411,8 +411,23 @@ export class TaskRunner {
     await this.taskRunRepository.create(run);
     const events: AgentRunEvent[] = [];
     const warnings = [...contextBundle.warnings];
-    const emitRunEvent = async (event: AgentRunEvent): Promise<void> => {
+    let liveRunEventPersistenceFailed = false;
+    const emitRunEvent = async (
+      event: AgentRunEvent,
+      options: { persistImmediately?: boolean } = {}
+    ): Promise<void> => {
+      const sequence = events.length;
       events.push(event);
+      if (options.persistImmediately !== false) {
+        try {
+          await this.persistRunEvent(run.id, event, sequence);
+        } catch (error) {
+          if (!liveRunEventPersistenceFailed) {
+            warnings.push(`live run event persistence failed: ${errorMessage(error)}`);
+            liveRunEventPersistenceFailed = true;
+          }
+        }
+      }
       if (!input.onEvent) {
         return;
       }
@@ -956,7 +971,8 @@ export class TaskRunner {
         status: toDesktopStatus(status),
         summary: finalMessage,
         assistantOutput: false
-      })
+      }),
+      { persistImmediately: false }
     );
 
     try {
@@ -1303,6 +1319,16 @@ export class TaskRunner {
       warnings.push(`run event persistence failed: ${errorMessage(error)}`);
       throw error;
     }
+  }
+
+  private async persistRunEvent(
+    runId: string,
+    event: AgentRunEvent,
+    sequence: number
+  ): Promise<void> {
+    await this.runEventRepository.createMany([
+      toPersistedRunEvent(runId, event, sequence, this.clock, this.idGenerator)
+    ]);
   }
 }
 

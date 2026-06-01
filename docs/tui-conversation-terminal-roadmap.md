@@ -133,9 +133,10 @@ Build rules:
 - Fold terminal runs with pending review into a one-line `review_pending`
   conversation entry pointing to `[V]iew`; accept/reject shortcuts remain in
   the Review pane so Work stays prompt-first.
-- Populate active `outputLines` from recent agent-facing stdout/stderr, with
-  adapter-progress lines as the fallback. Verification, risk, and diff evidence
-  do not render inside active boxes.
+- Populate active `outputLines` from recent structured assistant output, with
+  persisted lifecycle, adapter, stdout, and stderr lines as the fallback.
+  Filter raw JSON protocol frames from the fallback stream. Verification, risk,
+  and diff evidence do not render inside active boxes.
 - Populate terminal completed/failed entries with agent-facing output plus
   verification and risk summary lines.
 
@@ -178,6 +179,8 @@ Narrow terminals hide fields from the right side first: risk, iteration, agent.
 
 - fixed eight-line shape: one title border, five output lines, one cursor line,
   and one bottom border;
+- read from run events persisted during execution, so progress appears before
+  the run reaches final status;
 - truncate long lines rather than wrapping them into layout shifts;
 - green for running;
 - show at most three boxes; if more exist, collapse the oldest boxes to title

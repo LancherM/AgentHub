@@ -71,10 +71,12 @@ The Work focus is a conversation terminal. User messages, RoleCall
 delegations, completed or failed terminal run output, verification summaries,
 and risk summaries are folded into a chronological conversation flow. Running
 runs appear as stable fixed-height active-run boxes with only the latest
-agent-facing stdout/stderr tail plus the active cursor indicator. Runs awaiting
-local review leave the active box and become a single awaiting-review
-conversation line pointing at `[V]iew`, so the Review pane can handle
-accept/reject without stealing prompt text.
+agent-facing output or observable runtime events plus the active cursor
+indicator. When an adapter has not emitted assistant text yet, the active box
+shows recent lifecycle, adapter, stdout, and stderr lines while filtering raw
+JSON protocol frames. Runs awaiting local review leave the active box and
+become a single awaiting-review conversation line pointing at `[V]iew`, so the
+Review pane can handle accept/reject without stealing prompt text.
 The default tab bar matches the
 conversation-terminal scheme: Work, Runs, View, Graph, Tasks, Memory, and Help
 stay one key away instead of being embedded into the first screen. Team roles
@@ -106,7 +108,9 @@ Ink alternate screen during an interactive submit.
 Interactive TUI sessions periodically refresh the same current-context read
 model so externally changing run, task, conversation, RoleCall, and review
 state can appear without a manual keypress. New conversation or active-run
-output anchors Work back to the bottom. The conversation can scroll back by
+output anchors Work back to the bottom. TaskRunner persists run events as they
+are produced, so running boxes can show live progress from the local evidence
+store instead of waiting for final run completion. The conversation can scroll back by
 rendered line from Work focus, Runs and Tasks panes expand on taller terminals,
 direct lowercase or uppercase focus keys switch Work/Runs/View/Graph/Tasks/Memory when the composer
 is empty, and the Review reject shortcut is uppercase `R` so vim-style `j`
@@ -207,8 +211,8 @@ calls. For every run it:
 - creates an isolated git worktree outside the original checkout;
 - materializes runtime files only inside that worktree;
 - invokes the selected adapter from the worktree cwd;
-- captures stdout, stderr, parsed structured messages, status, error, and exit
-  events;
+- captures and incrementally persists stdout, stderr, parsed structured
+  messages, status, error, and exit events;
 - runs configured verification commands in the worktree;
 - collects staged, unstaged, and untracked diffs;
 - persists task brief, conversation brief, git diff, skill inventory,

@@ -73,7 +73,7 @@ core sequence:
 4. Create an isolated git worktree under the configured Agent Hub worktree base.
 5. Materialize generated runtime files inside the worktree.
 6. Run the adapter from the worktree cwd with runtime-injected context.
-7. Persist ordered run events and progress events.
+7. Persist ordered run events and progress events as they are produced.
 8. Run structured verification commands in the worktree.
 9. Collect diff metadata and a bounded persisted patch artifact.
 10. Generate and persist a safety/risk report.
@@ -87,6 +87,10 @@ After a task-run row exists, finalization is defensive. Diff, verification,
 risk, artifact, metadata, memory-proposal, or cleanup failures become persisted
 diagnostic events and warnings where possible. Failed finalization returns the
 task to `open` and keeps partial evidence inspectable.
+Live event persistence is best-effort during adapter execution so CLI TUI
+polling can render current progress. Finalization still backfills any missing
+event sequences before cleanup and records persistence failures as warnings or
+diagnostic events according to the existing failure boundary.
 
 ## Context Delivery
 
@@ -412,13 +416,15 @@ moves the shortcut-labelled Work/Runs/View/Graph/Tasks/Memory/Help tabs below
 the composer, and uses Ink components for terminal layout instead of
 hand-wrapped string panels.
 Active-run boxes cover running runs only. They use a fixed eight-line shape:
-title border, five stdout/stderr tail lines, cursor indicator, and bottom
-border. Verification, risk, diff, and review evidence stay out of active
-boxes. Terminal pending-review runs fold into the conversation projection as a
-single awaiting-review line pointing to the View pane, while completed or
-failed runs with a recorded review decision render their agent-facing output
-plus verification and risk summary lines. The Work view remains prompt-first,
-and printable keys do not trigger audit mutations.
+title border, five output/progress lines, cursor indicator, and bottom border.
+They prefer structured assistant output, then fall back to recent lifecycle,
+adapter, stdout, and stderr events while filtering raw JSON protocol frames.
+Verification, risk, diff, and review evidence stay out of active boxes.
+Terminal pending-review runs fold into the conversation projection as a single
+awaiting-review line pointing to the View pane, while completed or failed runs
+with a recorded review decision render their agent-facing output plus
+verification and risk summary lines. The Work view remains prompt-first, and
+printable keys do not trigger audit mutations.
 The direct CLI entrypoint exits after command completion, so one-shot TUI smoke
 renders do not leave local SQLite helper processes holding the terminal open.
 For interactive launches, the CLI default IO includes `process.stdin`, and the
@@ -436,7 +442,9 @@ Interactive TUI prompt submission reuses the CLI chat/task-runner path with a
 buffered CLI IO adapter. The run still persists messages, run cards, run
 events, diffs, risks, and review evidence through the shared repositories, but
 agent stdout and debug text do not write directly to the Ink terminal surface;
-the TUI refreshes from the persisted read model instead.
+the TUI refreshes from the persisted read model instead. Because TaskRunner now
+persists emitted run events before final completion, the refresh loop can show
+active adapter progress without adding a separate live-log channel.
 The Ink app never reads SQLite, git, shell, or filesystem directly. It receives
 `loadModel`, `submitPrompt`, and `recordReviewDecision` callbacks from the CLI
 boundary, wraps interactive submit/review callbacks in bounded UI timeouts, and
