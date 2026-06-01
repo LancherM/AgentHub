@@ -137,6 +137,7 @@ describe("Ink TUI renderer", () => {
     );
 
     expect(output).toContain("Command Palette");
+    expect(output).toContain("agent-hub team roles list --project-id project_1");
     expect(output).toContain("agent-hub runs show run_27984312-fc9a-46bf-9ccf-c06997187091");
     expect(output).toContain("agent-hub memory list --project-id project_1");
   });
@@ -226,8 +227,9 @@ describe("Ink TUI renderer", () => {
     await new Promise((resolve) => setTimeout(resolve, 25));
 
     expect(instance.lastFrame()).toContain("> exit");
+    expect(instance.lastFrame()).toContain("enter submit");
+    expect(instance.lastFrame()).toContain("tab focus");
     expect(instance.lastFrame()).toContain("esc clear");
-    expect(instance.lastFrame()).toContain("ctrl+c exit");
 
     instance.stdin.write("\u001b");
     await new Promise((resolve) => setTimeout(resolve, 25));
@@ -235,6 +237,59 @@ describe("Ink TUI renderer", () => {
     expect(instance.lastFrame()).toContain("Composer cleared.");
     expect(instance.lastFrame()).toContain("> @codex prompt");
     expect(instance.lastFrame()).toContain("x exit");
+    instance.unmount();
+  });
+
+  it("keeps tab navigation available while the composer has text", async () => {
+    const instance = render(
+      React.createElement(TuiInkApp, {
+        model: baseModel,
+        state: createInitialInkState(),
+        terminal: { columns: 120, rows: 40 },
+        interactive: true
+      })
+    );
+
+    for (const character of "draft") {
+      instance.stdin.write(character);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+    instance.stdin.write("\t");
+    await new Promise((resolve) => setTimeout(resolve, 25));
+
+    expect(instance.lastFrame()).toContain("[Graph]");
+    expect(instance.lastFrame()).toContain("> draft");
+    instance.unmount();
+  });
+
+  it("submits non-empty composer text with return without switching to review", async () => {
+    const submissions = [];
+    const instance = render(
+      React.createElement(TuiInkApp, {
+        model: baseModel,
+        state: createInitialInkState(),
+        terminal: { columns: 120, rows: 40 },
+        interactive: true,
+        submitPrompt: async (input) => {
+          submissions.push(input);
+          return { ok: true, message: "Submitted prompt.", model: baseModel };
+        }
+      })
+    );
+
+    for (const character of "run command") {
+      instance.stdin.write(character);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+    instance.stdin.write("\r");
+    await new Promise((resolve) => setTimeout(resolve, 25));
+
+    expect(submissions).toEqual([
+      expect.objectContaining({ prompt: "run command" })
+    ]);
+    expect(instance.lastFrame()).toContain("Submitted prompt.");
+    expect(instance.lastFrame()).toContain("[Work]");
+    expect(instance.lastFrame()).not.toContain("[Review]");
     instance.unmount();
   });
 

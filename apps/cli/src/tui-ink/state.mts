@@ -280,7 +280,13 @@ export function commandHintForFocus(
     return command ?? "No task recovery command is available.";
   }
   const node = selectedRoleCall(model, state);
-  return node ? `agent-hub role-calls show ${node.id}` : "No RoleCall command is available.";
+  return node ? `agent-hub role-calls show ${node.id}` : roleListCommand(model) ?? "No RoleCall command is available.";
+}
+
+export function roleListCommand(model: TuiCurrentContextModel): string | undefined {
+  return model.context.projectId
+    ? `agent-hub team roles list --project-id ${model.context.projectId}`
+    : undefined;
 }
 
 export function unavailableRoleExecutorCommands(

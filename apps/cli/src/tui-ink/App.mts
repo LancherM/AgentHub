@@ -19,6 +19,7 @@ import {
   createInitialInkState,
   focusModes,
   reduceInkState,
+  roleListCommand,
   selectedReviewRunId,
   selectedRun,
   selectedTask,
@@ -165,7 +166,16 @@ export function TuiInkApp(props: TuiInkAppProps): React.ReactElement {
         app.exit();
         return;
       }
-      if (input === "\n" || (key.ctrl && (input === "j" || key.return))) {
+      const wantsSubmit =
+        input === "\n" ||
+        input === "\r" ||
+        key.return ||
+        (key.ctrl && (input === "j" || input === "J"));
+      if (wantsSubmit && state.composer.length > 0) {
+        void submitComposer();
+        return;
+      }
+      if (key.ctrl && (input === "j" || input === "J")) {
         void submitComposer();
         return;
       }
@@ -524,12 +534,15 @@ function CommandPalette({
   state: TuiInkState;
 }): React.ReactElement {
   const run = selectedRun(model, state);
+  const primaryCommand = commandHintForFocus(model, state);
+  const roleCommand = roleListCommand(model);
   return h(
     Pane,
     { title: "Command Palette" },
     line(`focus ${state.focus}`),
-    line(commandHintForFocus(model, state), { color: "green" }),
+    line(primaryCommand, { color: "green" }),
     line(""),
+    ...(roleCommand && roleCommand !== primaryCommand ? [line(roleCommand)] : []),
     ...(run ? run.commands.map((command) => line(command)) : [line("no run selected")]),
     ...model.review.commands.map((command) => line(command)),
     ...model.memory.approvalCommands.map((command) => line(command))
@@ -542,7 +555,7 @@ function HelpPane(): React.ReactElement {
     { title: "Help" },
     line("tab/shift-tab focus   up/down or k/j move   enter review"),
     line(": commands   c continue   a accept review   j reject in Review"),
-    line("ctrl+j submit composer   h hide done   m memory   ? help   x exit")
+    line("enter submits non-empty composer   h hide done   m memory   ? help   x exit")
   );
 }
 
@@ -553,7 +566,7 @@ function Composer({ model, state }: { model: TuiCurrentContextModel; state: TuiI
 
 function StatusBar({ model, state }: { model: TuiCurrentContextModel; state: TuiInkState }): React.ReactElement {
   const hints = state.composer
-    ? "ctrl+j submit | esc clear | ctrl+c exit"
+    ? "enter submit | tab focus | esc clear | ctrl+c exit"
     : "tab focus | enter review | : palette | p command | ? help | x exit";
   return line(
     `${hints} | ${commandHintForFocus(model, state)}`,
@@ -592,7 +605,7 @@ function line(
 }
 
 function keyToAction(input: string, key: Key, focus: string): TuiInkKey | undefined {
-  if (key.tab) {
+  if (key.tab || input === "\t") {
     return key.shift ? "shift_tab" : "tab";
   }
   if (key.upArrow || input === "k") {

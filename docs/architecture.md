@@ -411,14 +411,19 @@ TUI also falls back to `process.stdin` for TTY/raw-mode detection when a custom
 test IO object omits stdin. This keeps `agent-hub tui` interactive in a real
 terminal while preserving deterministic `--once` and non-TTY smoke renders.
 Composer editing is handled in the Ink component state before shortcut
-dispatch: printable keys update the composer, `Esc` clears composer text, and
-the status bar switches to composer-specific hints while text is present. This
-keeps role/review shortcuts from stealing normal prompt text.
+dispatch: printable keys update the composer, `Enter` submits non-empty
+composer text, `Esc` clears composer text, and `Tab` remains a focus-navigation
+key even while text is present. The status bar switches to composer-specific
+hints while text is present. This keeps role/review shortcuts from stealing
+normal prompt text without trapping focus inside the composer.
 Interactive TUI prompt submission reuses the CLI chat/task-runner path with a
 buffered CLI IO adapter. The run still persists messages, run cards, run
 events, diffs, risks, and review evidence through the shared repositories, but
 agent stdout and debug text do not write directly to the Ink terminal surface;
 the TUI refreshes from the persisted read model instead.
+The command hint helper falls back from an absent selected RoleCall to
+`agent-hub team roles list --project-id <project-id>`, and the command palette
+includes the same role-list command beside run, review, and memory commands.
 The hand-rendered string layout has been removed from the TUI runtime path.
 The current renderer direction is documented in
 `docs/tui-ink-rewrite-roadmap.md`: keep the core read model and CLI action
