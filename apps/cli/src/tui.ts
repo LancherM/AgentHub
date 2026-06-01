@@ -79,6 +79,7 @@ export type TuiReviewDecisionRecorder = (
 export type TuiFocusMode =
   | "work"
   | "graph"
+  | "team"
   | "runs"
   | "review"
   | "tasks"
@@ -632,6 +633,21 @@ function buildTuiFailureModel(input: TuiFailureModelInput): TuiCurrentContextMod
       commands
     },
     tasks: [],
+    team: {
+      projectId: input.modelInput.projectId,
+      roles: [],
+      counts: {
+        total: 0,
+        enabled: 0,
+        runnable: 0,
+        reserved: 0,
+        custom: 0,
+        presetOverrides: 0
+      },
+      command: input.modelInput.projectId
+        ? `agent-hub team roles list --project-id ${input.modelInput.projectId}`
+        : undefined
+    },
     memory: {
       projectId: input.modelInput.projectId,
       counts: { proposed: 0, approved: 0, rejected: 0 },

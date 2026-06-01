@@ -11,6 +11,7 @@ const defaultTranscriptWindowSize = 5;
 export type TuiInkFocus =
   | "work"
   | "graph"
+  | "team"
   | "runs"
   | "review"
   | "tasks"
@@ -52,6 +53,7 @@ export type TuiInkKey =
   | "enter"
   | "escape"
   | "help"
+  | "team"
   | "review"
   | "memory"
   | "skills"
@@ -66,6 +68,7 @@ export type TuiInkKey =
 export const focusModes: TuiInkFocus[] = [
   "work",
   "graph",
+  "team",
   "runs",
   "review",
   "tasks",
@@ -109,6 +112,11 @@ export function reduceInkState(
   }
   if (key === "help") {
     next.focus = next.focus === "help" ? "work" : "help";
+    return next;
+  }
+  if (key === "team") {
+    next.focus = "team";
+    next.statusMessage = "Team roles shown.";
     return next;
   }
   if (key === "review") {
@@ -269,6 +277,9 @@ export function commandHintForFocus(
   if (state.focus === "memory") {
     return model.memory.command ?? "Register a project before listing memory.";
   }
+  if (state.focus === "team") {
+    return model.team.command ?? "Register a project before listing team roles.";
+  }
   if (state.focus === "runs") {
     return selectedRun(model, state)?.commands[0] ?? "No run command is available.";
   }
@@ -287,9 +298,9 @@ export function commandHintForFocus(
 }
 
 export function roleListCommand(model: TuiCurrentContextModel): string | undefined {
-  return model.context.projectId
+  return model.team.command ?? (model.context.projectId
     ? `agent-hub team roles list --project-id ${model.context.projectId}`
-    : undefined;
+    : undefined);
 }
 
 export function unavailableRoleExecutorCommands(
@@ -336,6 +347,9 @@ function moveSelection(
   }
   if (state.focus === "work") {
     moveTranscriptScroll(state, key, model.transcript.length);
+    return;
+  }
+  if (state.focus === "team" || state.focus === "memory" || state.focus === "help") {
     return;
   }
   const nodes = visibleRoleCalls(model, state);

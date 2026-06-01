@@ -388,9 +388,12 @@ TUI, and desktop-facing services can share the same `review_decision` artifact
 shape. Recording a decision writes a run artifact only and does not mutate task
 run status, workspace cleanup, repository files, branches, memory, or lifecycle
 state.
-Memory, skill, and context indicators are rendered from core read-model
-summaries. The TUI may show command hints such as `agent-hub memory list`, but
-memory approval and skill editing remain explicit CLI/context-store workflows.
+Memory, skill, context, and team-role indicators are rendered from core
+read-model summaries. The TUI may show command hints such as
+`agent-hub memory list`, but memory approval and skill editing remain explicit
+CLI/context-store workflows. Team-role summaries reuse preset roles plus the
+project's existing `desktop.project.<project-id>.workgroupRoles` settings value;
+they add no role table and do not invoke shell commands from the renderer.
 The command palette is renderer state in `apps/cli`; it reuses the same
 current-context read model and does not add new repositories, project browsing,
 or background workers.
@@ -411,11 +414,12 @@ TUI also falls back to `process.stdin` for TTY/raw-mode detection when a custom
 test IO object omits stdin. This keeps `agent-hub tui` interactive in a real
 terminal while preserving deterministic `--once` and non-TTY smoke renders.
 Composer editing is handled in the Ink component state before shortcut
-dispatch: printable keys update the composer, `Enter` submits non-empty
-composer text, `Esc` clears composer text, and `Tab` remains a focus-navigation
-key even while text is present. The status bar switches to composer-specific
-hints while text is present. This keeps role/review shortcuts from stealing
-normal prompt text without trapping focus inside the composer.
+dispatch: printable keys update the composer, `/team` clears the composer and
+switches to the Team view, `Enter` submits other non-empty composer text, `Esc`
+clears composer text, and `Tab` remains a focus-navigation key even while text
+is present. The status bar switches to composer-specific hints while text is
+present. This keeps role/review shortcuts from stealing normal prompt text
+without trapping focus inside the composer.
 Interactive TUI prompt submission reuses the CLI chat/task-runner path with a
 buffered CLI IO adapter. The run still persists messages, run cards, run
 events, diffs, risks, and review evidence through the shared repositories, but
@@ -427,12 +431,16 @@ boundary, wraps interactive submit/review callbacks in bounded UI timeouts, and
 uses a lightweight polling interval to reload the same read model for live-ish
 terminal updates. Polling is a renderer refresh of persisted local evidence; it
 does not add an event daemon, remote worker, or incremental orchestration path.
-Scrollable transcript state and terminal-height list windows remain local Ink
-state, while selected runs, tasks, and RoleCalls continue to resolve through
-the existing read-model summaries.
+Busy submit/review state remains local Ink state too: the renderer keeps
+keyboard navigation and composer editing active, but gates additional submit or
+review-decision writes until the in-flight callback finishes. Scrollable
+transcript state and terminal-height list windows remain local Ink state, while
+selected runs, tasks, and RoleCalls continue to resolve through the existing
+read-model summaries.
 The command hint helper falls back from an absent selected RoleCall to
-`agent-hub team roles list --project-id <project-id>`, and the command palette
-includes the same role-list command beside run, review, and memory commands.
+`agent-hub team roles list --project-id <project-id>`, the command palette
+includes the same role-list command beside run, review, and memory commands, and
+the `/team` slash command changes local Ink focus to the Team read-model pane.
 Because the Ink renderer is a NodeNext composite TypeScript project that imports
 workspace package types, root validation runs its TUI check through
 `tsc -b apps/cli/tsconfig.tui-ink.json` so project references emit the required

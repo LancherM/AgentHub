@@ -2,6 +2,13 @@ import {
   evaluateRoleCallGraphConvergence,
   type RoleCallGraphConvergenceReason
 } from "./role-call-convergence";
+import {
+  isAgentKindEnabled,
+  presetWorkgroupRoles,
+  validateWorkgroupRole,
+  type WorkgroupExecutor,
+  type WorkgroupRole
+} from "./domain";
 import type {
   AgentKind,
   ConversationMessage,
@@ -37,6 +44,7 @@ import type {
   RunArtifactRepository,
   RunMetadataRepository,
   SkillRepository,
+  SettingsRepository,
   TaskRepository,
   TaskRunRepository,
   VerificationResultRepository
@@ -60,6 +68,7 @@ export interface TuiReadModelRepositories {
   roleCallRepository: RoleCallRepository;
   roleCallEventRepository: RoleCallEventRepository;
   roleTodoRepository: RoleTodoRepository;
+  settingsRepository?: SettingsRepository;
 }
 
 export interface TuiCurrentContextInput {
@@ -88,6 +97,7 @@ export interface TuiCurrentContextModel {
   roleCalls: TuiRoleCallGraphSummary;
   review: TuiReviewSelectionSummary;
   tasks: TuiTaskSummary[];
+  team: TuiTeamSummary;
   memory: TuiMemorySummary;
   skills: TuiSkillsSummary;
   warnings: string[];
@@ -240,6 +250,37 @@ export interface TuiAssignmentSummary {
   runId?: string;
 }
 
+export type TuiTeamRoleSource = "preset" | "preset_override" | "custom";
+
+export interface TuiTeamSummary {
+  projectId?: string;
+  roles: TuiTeamRoleSummary[];
+  counts: {
+    total: number;
+    enabled: number;
+    runnable: number;
+    reserved: number;
+    custom: number;
+    presetOverrides: number;
+  };
+  command?: string;
+}
+
+export interface TuiTeamRoleSummary {
+  id: string;
+  handle: string;
+  displayName: string;
+  source: TuiTeamRoleSource;
+  enabled: boolean;
+  executorKind: WorkgroupExecutor["kind"];
+  executorLabel: string;
+  executorRunnable: boolean;
+  defaultRoom?: string;
+  capabilitySummary: string;
+  defaultSkillReferences: NonNullable<WorkgroupRole["defaultSkillReferences"]>;
+  unavailableReason?: string;
+}
+
 export interface TuiMemorySummary {
   projectId?: string;
   counts: Record<MemoryStatus, number>;
@@ -326,6 +367,9 @@ const terminalRoleCallStatuses = new Set<RoleCallStatus>([
   "failed",
   "cancelled"
 ]);
+const roleSettingsPrefix = "desktop.project.";
+const roleSettingsSuffix = ".workgroupRoles";
+const maxStoredRoles = 32;
 
 export async function buildTuiCurrentContextModel(
   repositories: TuiReadModelRepositories,
@@ -369,6 +413,10 @@ export async function buildTuiCurrentContextModel(
         : Promise.resolve([]),
       repositories.skillRepository.list()
     ]);
+  const teamResult = await summarizeTeam(repositories, projectId);
+  if (teamResult.warning) {
+    warnings.push(teamResult.warning);
+  }
 
   const contextTasks = filterTasksForThread(tasks, thread?.id);
   const runs = await runsForTasks(repositories, contextTasks);
@@ -420,6 +468,7 @@ export async function buildTuiCurrentContextModel(
       roleCalls,
       input.maxTasks ?? defaultLimits.tasks
     ),
+    team: teamResult.summary,
     memory: summarizeMemory(projectId, memory),
     skills: summarizeSkills({
       skills,
@@ -622,6 +671,159 @@ function summarizeTodos(todos: RoleTodo[], limit: number): TuiRoleTodoSummary[] 
       relatedRoleCallIds: [...todo.relatedRoleCallIds],
       updatedAt: todo.updatedAt
     }));
+}
+
+async function summarizeTeam(
+  repositories: TuiReadModelRepositories,
+  projectId: string | undefined
+): Promise<{ summary: TuiTeamSummary; warning?: string }> {
+  if (!projectId) {
+    return { summary: emptyTeamSummary(undefined) };
+  }
+  try {
+    const roles = await resolvedTeamRoles(repositories, projectId);
+    const summaries = roles.map((entry) => toTuiTeamRoleSummary(entry.role, entry.source));
+    return { summary: teamSummaryFromRoles(projectId, summaries) };
+  } catch (error) {
+    const summaries = presetWorkgroupRoles.map((role) =>
+      toTuiTeamRoleSummary(role, "preset")
+    );
+    return {
+      summary: teamSummaryFromRoles(projectId, summaries),
+      warning: `team roles unavailable: ${errorMessage(error)}`
+    };
+  }
+}
+
+async function resolvedTeamRoles(
+  repositories: TuiReadModelRepositories,
+  projectId: string
+): Promise<Array<{ role: WorkgroupRole; source: TuiTeamRoleSource }>> {
+  const stored = await storedTeamRoles(repositories, projectId);
+  const storedByHandle = new Map(stored.map((role) => [role.handle, role]));
+  const presetHandles = new Set(presetWorkgroupRoles.map((role) => role.handle));
+  const resolved: Array<{ role: WorkgroupRole; source: TuiTeamRoleSource }> =
+    presetWorkgroupRoles.map((preset) => {
+      const override = storedByHandle.get(preset.handle);
+      return override
+        ? { role: override, source: "preset_override" }
+        : { role: preset, source: "preset" };
+    });
+  for (const role of stored) {
+    if (presetHandles.has(role.handle)) {
+      continue;
+    }
+    resolved.push({ role, source: "custom" });
+  }
+  return resolved.sort((left, right) => {
+    const leftPreset = presetHandles.has(left.role.handle) ? 0 : 1;
+    const rightPreset = presetHandles.has(right.role.handle) ? 0 : 1;
+    if (leftPreset !== rightPreset) {
+      return leftPreset - rightPreset;
+    }
+    return left.role.handle.localeCompare(right.role.handle);
+  });
+}
+
+async function storedTeamRoles(
+  repositories: TuiReadModelRepositories,
+  projectId: string
+): Promise<WorkgroupRole[]> {
+  if (!repositories.settingsRepository) {
+    return [];
+  }
+  const setting = await repositories.settingsRepository.get(roleSettingsKey(projectId));
+  if (!setting) {
+    return [];
+  }
+  const roles = settingValueRoles(setting.value);
+  return roles.map((role) => validateWorkgroupRole(role as WorkgroupRole));
+}
+
+function toTuiTeamRoleSummary(
+  role: WorkgroupRole,
+  source: TuiTeamRoleSource
+): TuiTeamRoleSummary {
+  const executorRunnable =
+    role.executor.kind === "agent_adapter" &&
+    isAgentKindEnabled(role.executor.adapterKind);
+  return {
+    id: role.id,
+    handle: role.handle,
+    displayName: role.displayName,
+    source,
+    enabled: role.enabled,
+    executorKind: role.executor.kind,
+    executorLabel: executorLabel(role.executor, executorRunnable),
+    executorRunnable,
+    defaultRoom: role.defaultRoom,
+    capabilitySummary: truncate(role.capabilitySummary, defaultLimits.contentChars),
+    defaultSkillReferences: role.defaultSkillReferences ?? [],
+    unavailableReason:
+      role.executor.kind === "agent_adapter"
+        ? undefined
+        : role.executor.unavailableReason
+  };
+}
+
+function teamSummaryFromRoles(
+  projectId: string,
+  roles: TuiTeamRoleSummary[]
+): TuiTeamSummary {
+  return {
+    projectId,
+    roles,
+    counts: {
+      total: roles.length,
+      enabled: roles.filter((role) => role.enabled).length,
+      runnable: roles.filter((role) => role.enabled && role.executorRunnable).length,
+      reserved: roles.filter((role) => role.executorKind !== "agent_adapter").length,
+      custom: roles.filter((role) => role.source === "custom").length,
+      presetOverrides: roles.filter((role) => role.source === "preset_override").length
+    },
+    command: `agent-hub team roles list --project-id ${projectId}`
+  };
+}
+
+function emptyTeamSummary(projectId: string | undefined): TuiTeamSummary {
+  return {
+    projectId,
+    roles: [],
+    counts: {
+      total: 0,
+      enabled: 0,
+      runnable: 0,
+      reserved: 0,
+      custom: 0,
+      presetOverrides: 0
+    },
+    command: projectId ? `agent-hub team roles list --project-id ${projectId}` : undefined
+  };
+}
+
+function roleSettingsKey(projectId: string): string {
+  return `${roleSettingsPrefix}${projectId}${roleSettingsSuffix}`;
+}
+
+function settingValueRoles(value: unknown): unknown[] {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("stored team roles must be an object");
+  }
+  const roles = (value as { roles?: unknown }).roles;
+  if (!Array.isArray(roles)) {
+    throw new Error("stored team roles must contain a roles array");
+  }
+  if (roles.length > maxStoredRoles) {
+    throw new Error(`team roles must contain ${maxStoredRoles} or fewer entries`);
+  }
+  return roles;
+}
+
+function executorLabel(executor: WorkgroupExecutor, runnable: boolean): string {
+  if (executor.kind === "agent_adapter") {
+    return runnable ? `agent_adapter / ${executor.adapterKind}` : "agent_adapter disabled";
+  }
+  return `${executor.kind} reserved`;
 }
 
 function selectReviewSummary(
@@ -946,6 +1148,10 @@ function roleTodoStatusRank(status: RoleTodoStatus): number {
     return 2;
   }
   return 3;
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function runStage(run: TaskRun, latestEvent: string | undefined): string {
