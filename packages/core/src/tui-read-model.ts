@@ -92,6 +92,8 @@ export interface TuiCurrentContextInput {
 
 export interface TuiCurrentContextModel {
   context: TuiContextSummary;
+  conversation: TuiConversationEntry[];
+  activeRuns: TuiActiveRunBox[];
   transcript: TuiTranscriptMessage[];
   runs: TuiRunSummary[];
   roleCalls: TuiRoleCallGraphSummary;
@@ -101,6 +103,42 @@ export interface TuiCurrentContextModel {
   memory: TuiMemorySummary;
   skills: TuiSkillsSummary;
   warnings: string[];
+}
+
+export type TuiConversationEntryType =
+  | "user_message"
+  | "assistant_message"
+  | "agent_completed"
+  | "agent_failed"
+  | "review_decided"
+  | "delegation";
+
+export interface TuiConversationEntry {
+  id: string;
+  type: TuiConversationEntryType;
+  timestamp: string;
+  author: string;
+  content: string;
+  agent?: string;
+  runId?: string;
+  roleCallId?: string;
+  statusLabel?: string;
+  verificationLine?: string;
+  riskLine?: string;
+  decision?: "accepted" | "rejected";
+}
+
+export interface TuiActiveRunBox {
+  runId: string;
+  agent: string;
+  state: "queued" | "running" | "awaiting_review";
+  tone: "green" | "yellow" | "red";
+  title: string;
+  outputLines: string[];
+  evidenceLines: string[];
+  actionHint?: string;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface TuiContextSummary {
@@ -424,6 +462,7 @@ export async function buildTuiCurrentContextModel(
     runs.map((run) => summarizeRun(repositories, run, taskById(contextTasks, run.taskId)))
   );
   const boundedRuns = sortRuns(runSummaries).slice(0, input.maxRuns ?? defaultLimits.runs);
+  const activeRuns = await summarizeActiveRunBoxes(repositories, boundedRuns);
   const roleCallNodes = await Promise.all(
     sortRoleCalls(roleCalls).map((call) =>
       summarizeRoleCall(repositories, call, roleEvents, input.hideCompletedRoleCalls === true)
@@ -444,6 +483,14 @@ export async function buildTuiCurrentContextModel(
       selectedAgent: input.selectedAgent,
       contextMode: input.contextMode ?? "runtime_injection"
     },
+    conversation: summarizeConversation({
+      messages,
+      runs: boundedRuns,
+      roleCalls,
+      activeRuns,
+      limit: Math.max(input.maxMessages ?? defaultLimits.messages, defaultLimits.messages)
+    }),
+    activeRuns,
     transcript: summarizeTranscript(messages, input.maxMessages ?? defaultLimits.messages),
     runs: boundedRuns,
     roleCalls: {
@@ -500,6 +547,145 @@ function summarizeTranscript(
       status: message.status,
       createdAt: message.createdAt
     }));
+}
+
+async function summarizeActiveRunBoxes(
+  repositories: TuiReadModelRepositories,
+  runs: TuiRunSummary[]
+): Promise<TuiActiveRunBox[]> {
+  const active = runs.filter((run) => activeRunStatuses.has(run.status));
+  const pendingReview = [...runs]
+    .filter((run) => terminalRunStatuses.has(run.status) && run.reviewDecision.status === "pending")
+    .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+    .at(0);
+  const selected = pendingReview && !active.some((run) => run.id === pendingReview.id)
+    ? [...active, pendingReview]
+    : active;
+  const sorted = selected.sort((left, right) =>
+    activeRunCreatedAt(left).localeCompare(activeRunCreatedAt(right))
+  );
+  return Promise.all(sorted.map((run) => summarizeActiveRunBox(repositories, run)));
+}
+
+async function summarizeActiveRunBox(
+  repositories: TuiReadModelRepositories,
+  run: TuiRunSummary
+): Promise<TuiActiveRunBox> {
+  const events = await repositories.runEventRepository.listByRunId(run.id);
+  const state: TuiActiveRunBox["state"] = run.status === "queued" || run.status === "running"
+    ? run.status
+    : "awaiting_review";
+  const evidenceLines = activeRunEvidenceLines(run);
+  const actionHint = state === "awaiting_review"
+    ? "a accept | R reject | v details"
+    : undefined;
+  return {
+    runId: run.id,
+    agent: run.agentKind,
+    state,
+    tone: state === "awaiting_review" ? "yellow" : "green",
+    title: `@${run.agentKind} ${run.id} ${activeRunStatusLabel(state)}`,
+    outputLines: recentRunOutputLines(events),
+    evidenceLines,
+    actionHint,
+    createdAt: activeRunCreatedAt(run),
+    updatedAt: run.updatedAt
+  };
+}
+
+function summarizeConversation(input: {
+  messages: ConversationMessage[];
+  runs: TuiRunSummary[];
+  roleCalls: RoleCall[];
+  activeRuns: TuiActiveRunBox[];
+  limit: number;
+}): TuiConversationEntry[] {
+  const activeRunIds = new Set(input.activeRuns.map((run) => run.runId));
+  const runLinkedMessages = new Map(
+    input.messages
+      .filter((message) => message.runId && message.role === "assistant")
+      .map((message) => [message.runId as string, message.content])
+  );
+  const entries: Array<TuiConversationEntry & { sortRank: number }> = [];
+
+  for (const message of input.messages) {
+    const linkedRun = message.runId
+      ? input.runs.find((run) => run.id === message.runId)
+      : undefined;
+    if (message.kind === "run_card" || message.role === "tool") {
+      continue;
+    }
+    if (linkedRun && terminalRunStatuses.has(linkedRun.status)) {
+      continue;
+    }
+    entries.push({
+      id: `message:${message.id}`,
+      type: message.role === "user" ? "user_message" : "assistant_message",
+      timestamp: message.createdAt,
+      author: messageAuthor(message),
+      content: truncate(message.content, defaultLimits.contentChars),
+      agent: message.agentKind,
+      runId: message.runId,
+      statusLabel: message.status,
+      sortRank: 10 + message.sequence
+    });
+  }
+
+  for (const run of input.runs) {
+    if (!terminalRunStatuses.has(run.status) || activeRunIds.has(run.id)) {
+      continue;
+    }
+    entries.push({
+      id: `run:${run.id}`,
+      type: run.status === "failed" ? "agent_failed" : "agent_completed",
+      timestamp: run.completedAt ?? run.updatedAt,
+      author: `@${run.agentKind}`,
+      content: truncate(
+        runLinkedMessages.get(run.id) ??
+          run.evidence.resultSummary ??
+          `${run.agentKind} ${run.status}`,
+        defaultLimits.contentChars
+      ),
+      agent: run.agentKind,
+      runId: run.id,
+      statusLabel: run.status,
+      verificationLine: conversationVerificationLine(run.evidence),
+      riskLine: conversationRiskLine(run.evidence),
+      sortRank: 30
+    });
+    if (run.reviewDecision.status !== "pending") {
+      const decision = run.reviewDecision.status === "accepted" ? "accepted" : "rejected";
+      entries.push({
+        id: `review:${run.id}:${decision}`,
+        type: "review_decided",
+        timestamp: run.reviewDecision.acceptedAt ?? run.reviewDecision.rejectedAt ?? run.updatedAt,
+        author: "review",
+        content: reviewDecisionContent(run),
+        agent: run.agentKind,
+        runId: run.id,
+        decision,
+        sortRank: 40
+      });
+    }
+  }
+
+  for (const call of input.roleCalls) {
+    entries.push({
+      id: `delegation:${call.id}`,
+      type: "delegation",
+      timestamp: call.createdAt,
+      author: `@${call.callerRole}`,
+      content: `delegated to @${call.calleeRole}: ${truncate(call.task, defaultLimits.contentChars)}`,
+      roleCallId: call.id,
+      statusLabel: call.status,
+      sortRank: 20
+    });
+  }
+
+  return entries
+    .sort(compareConversationEntries)
+    .slice(-input.limit)
+    .map(({ sortRank: _sortRank, ...entry }) => entry);
 }
 
 async function summarizeRun(
@@ -589,6 +775,88 @@ async function summarizeRunEvidence(
       : undefined,
     diff
   };
+}
+
+function recentRunOutputLines(events: RunEvent[]): string[] {
+  return events
+    .filter((event) =>
+      event.type === "stdout" ||
+      event.type === "stderr" ||
+      event.type === "message" ||
+      event.type === "status" ||
+      event.type === "error"
+    )
+    .sort((left, right) => left.sequence - right.sequence)
+    .flatMap((event) =>
+      event.message
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter(Boolean)
+    )
+    .map((line) => truncate(line, 120))
+    .slice(-6);
+}
+
+function activeRunEvidenceLines(run: TuiRunSummary): string[] {
+  return [
+    conversationVerificationLine(run.evidence),
+    conversationRiskLine(run.evidence),
+    run.evidence.diff
+      ? `files ${run.evidence.diff.changedFiles} +${run.evidence.diff.insertions ?? 0} -${run.evidence.diff.deletions ?? 0}`
+      : undefined
+  ].filter((line): line is string => line !== undefined);
+}
+
+function activeRunStatusLabel(state: TuiActiveRunBox["state"]): string {
+  if (state === "awaiting_review") {
+    return "awaiting review";
+  }
+  return state;
+}
+
+function activeRunCreatedAt(run: TuiRunSummary): string {
+  return run.startedAt ?? run.completedAt ?? run.updatedAt;
+}
+
+function conversationVerificationLine(
+  evidence: TuiEvidenceSummary
+): string | undefined {
+  if (!evidence.checks) {
+    return undefined;
+  }
+  const failedNames = evidence.checks.failedNames.length > 0
+    ? `: ${evidence.checks.failedNames.join(", ")}`
+    : "";
+  return `checks ${evidence.checks.passed}/${evidence.checks.failed}/${evidence.checks.skipped}${failedNames}`;
+}
+
+function conversationRiskLine(evidence: TuiEvidenceSummary): string | undefined {
+  if (!evidence.risk) {
+    return undefined;
+  }
+  return `risk ${evidence.risk.level}${evidence.risk.primaryReason ? `: ${evidence.risk.primaryReason}` : ""}`;
+}
+
+function reviewDecisionContent(run: TuiRunSummary): string {
+  const status = run.reviewDecision.status;
+  const reason = run.reviewDecision.reason
+    ? `: ${run.reviewDecision.reason}`
+    : "";
+  return `${status}${reason}`;
+}
+
+function compareConversationEntries(
+  left: TuiConversationEntry & { sortRank: number },
+  right: TuiConversationEntry & { sortRank: number }
+): number {
+  const time = left.timestamp.localeCompare(right.timestamp);
+  if (time !== 0) {
+    return time;
+  }
+  if (left.sortRank !== right.sortRank) {
+    return left.sortRank - right.sortRank;
+  }
+  return left.id.localeCompare(right.id);
 }
 
 async function summarizeRoleCall(

@@ -30,12 +30,13 @@ renderer stays sandboxed behind `window.agentHub`; orchestration, filesystem,
 SQLite, shell, git, and agent execution remain in Electron main-process services
 or shared local packages.
 
-`agent-hub tui` is a current-context terminal workbench shell. It renders
-bounded transcript, run, RoleCall, review, task, team-role, memory, and skill
-summaries from shared read models, supports launch by thread or room, and submits
-composer prompts through the same local CLI chat path. Loop continuation,
-review writes, memory approval, apply, merge, push, and PR creation stay
-outside the TUI.
+`agent-hub tui` is a current-context terminal workbench shell. It renders a
+conversation-first Work surface plus bounded run, RoleCall, review, task,
+team-role, memory, and skill summaries from shared read models, supports
+launch by thread or room, and submits composer prompts through the same local
+CLI chat path. Loop continuation, memory approval, apply, merge, push, and PR
+creation stay outside the TUI; review writes are audit-only `review_decision`
+records.
 Its Runs and Tasks focus modes are current-context operating views: they show
 active/recent run status, stage, checks, risk, diff counts, retained-worktree
 state, linked CLI commands, assignments, RoleTodos, deferred/rejected follow-up
@@ -66,10 +67,13 @@ registration, failed context reads, unavailable agent CLIs, reserved role
 executors, and missing linked-run evidence render concise status text plus
 equivalent CLI recovery commands instead of opening broad browsers or applying
 side effects.
-The Work focus is optimized for narrow terminals: recent runs and review
-evidence are shown before empty RoleCall state, long run ids are compacted, and
-status/check/risk signals are grouped so the screen reads like an operating
-workbench instead of raw log output.
+The Work focus is a conversation terminal. User and assistant messages,
+delegations, terminal run summaries, review decisions, checks, and risks are
+folded into a chronological conversation flow. Queued/running runs and the
+newest actionable pending-review run appear as stable active-run boxes with
+bounded event tails and evidence lines. Auxiliary Runs, Review, Graph, Team,
+Tasks, Memory, Help, and Palette views remain available through focus
+switching instead of being embedded into the first screen.
 One-shot TUI renders (`--once`) are intended for quick smoke checks and return
 to the shell after printing the current workbench. Normal `agent-hub tui`
 launches stay open when stdin/stdout are an interactive terminal with raw-mode
@@ -95,11 +99,12 @@ stdout, run debug details, and raw adapter text are persisted through the normal
 chat/run records and then shown through TUI panes, not dumped directly into the
 Ink alternate screen during an interactive submit.
 Interactive TUI sessions periodically refresh the same current-context read
-model so externally changing run, task, transcript, RoleCall, and review state
-can appear without a manual keypress. The transcript can scroll back from Work
-focus, Runs and Tasks panes expand on taller terminals, and the Review reject
-shortcut is uppercase `R` so vim-style `j` remains navigation rather than an
-audit write.
+model so externally changing run, task, conversation, RoleCall, and review
+state can appear without a manual keypress. The conversation can scroll back
+from Work focus, Runs and Tasks panes expand on taller terminals, direct
+lowercase focus keys switch Work/Runs/View/Graph/Tasks/Memory when the composer
+is empty, and the Review reject shortcut is uppercase `R` so vim-style `j`
+remains navigation rather than an audit write.
 When the graph has no selected RoleCall, the TUI command hint and command
 palette surface `agent-hub team roles list --project-id <project-id>` as the
 next useful role command; `/team` is the in-TUI shortcut for viewing that list
@@ -323,7 +328,8 @@ Roadmaps for future work live in `docs/local-ai-workgroup-roadmap.md`,
 `docs/interaction-optimization-roadmap.md`, `docs/tui-roadmap.md`,
 `docs/tui-conversation-terminal-roadmap.md`, and the Adaptive Role Calls
 specification documents. Those files describe direction; this document
-describes the current product state. The conversation-terminal TUI roadmap is a
-planned Work-view redesign, not current product behavior: it keeps the existing
-Ink/local read-model boundary while moving Runs, Review, Graph, Tasks, and
-Memory into auxiliary tabs behind a conversation-first Work surface.
+describes the current product state. The conversation-terminal TUI roadmap now
+records the implemented Work-view direction and remaining hardening guidance:
+the current TUI keeps the Ink/local read-model boundary while presenting a
+conversation-first Work surface and moving Runs, Review, Graph, Tasks, Team,
+and Memory into auxiliary views.

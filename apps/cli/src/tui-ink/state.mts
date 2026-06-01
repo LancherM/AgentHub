@@ -1,4 +1,5 @@
 import type {
+  TuiActiveRunBox,
   TuiCurrentContextModel,
   TuiRoleCallNodeSummary,
   TuiRunSummary,
@@ -6,7 +7,7 @@ import type {
 } from "@agent-hub/core";
 
 const defaultListWindowSize = 8;
-const defaultTranscriptWindowSize = 5;
+const defaultConversationWindowSize = 8;
 
 export type TuiInkFocus =
   | "work"
@@ -26,6 +27,7 @@ export interface TuiInkState {
   selectedRoleCallId?: string;
   selectedTaskIndex: number;
   selectedTaskId?: string;
+  selectedActiveRunIndex: number;
   hideCompletedRoleCalls: boolean;
   collapsedRoleCallIds: string[];
   scrollOffsets: {
@@ -34,6 +36,7 @@ export interface TuiInkState {
     tasks: number;
     transcript: number;
   };
+  conversationScrollOffset: number;
   composer: string;
   commandPaletteOpen: boolean;
   statusMessage?: string;
@@ -52,6 +55,10 @@ export type TuiInkKey =
   | "right"
   | "enter"
   | "escape"
+  | "work"
+  | "graph"
+  | "runs"
+  | "tasks"
   | "help"
   | "team"
   | "review"
@@ -67,10 +74,10 @@ export type TuiInkKey =
 
 export const focusModes: TuiInkFocus[] = [
   "work",
-  "graph",
-  "team",
   "runs",
   "review",
+  "graph",
+  "team",
   "tasks",
   "memory",
   "help"
@@ -82,6 +89,7 @@ export function createInitialInkState(composer = ""): TuiInkState {
     selectedRunIndex: 0,
     selectedRoleCallIndex: 0,
     selectedTaskIndex: 0,
+    selectedActiveRunIndex: 0,
     hideCompletedRoleCalls: false,
     collapsedRoleCallIds: [],
     scrollOffsets: {
@@ -90,6 +98,7 @@ export function createInitialInkState(composer = ""): TuiInkState {
       tasks: 0,
       transcript: 0
     },
+    conversationScrollOffset: 0,
     composer,
     commandPaletteOpen: false
   };
@@ -112,6 +121,11 @@ export function reduceInkState(
   }
   if (key === "help") {
     next.focus = next.focus === "help" ? "work" : "help";
+    return next;
+  }
+  if (key === "work" || key === "graph" || key === "runs" || key === "tasks") {
+    next.focus = key;
+    next.commandPaletteOpen = false;
     return next;
   }
   if (key === "team") {
@@ -264,10 +278,27 @@ export function selectedReviewRunId(
   model: TuiCurrentContextModel,
   state: TuiInkState
 ): string | undefined {
+  const awaitingReviewRun = state.focus === "work"
+    ? selectedAwaitingReviewRun(model, state)
+    : undefined;
+  if (awaitingReviewRun) {
+    return awaitingReviewRun.runId;
+  }
   if (model.review.kind === "run") {
     return model.review.selectedId;
   }
   return model.review.evidence.linkedRunId ?? selectedRun(model, state)?.id;
+}
+
+export function selectedAwaitingReviewRun(
+  model: TuiCurrentContextModel,
+  state: TuiInkState
+): TuiActiveRunBox | undefined {
+  const awaiting = model.activeRuns.filter((run) => run.state === "awaiting_review");
+  if (awaiting.length === 0) {
+    return undefined;
+  }
+  return awaiting[Math.min(Math.max(state.selectedActiveRunIndex, 0), awaiting.length - 1)];
 }
 
 export function commandHintForFocus(
@@ -346,7 +377,7 @@ function moveSelection(
     return;
   }
   if (state.focus === "work") {
-    moveTranscriptScroll(state, key, model.transcript.length);
+    moveConversationScroll(state, key, model.conversation.length);
     return;
   }
   if (state.focus === "team" || state.focus === "memory" || state.focus === "help") {
@@ -367,23 +398,23 @@ function moveSelection(
   );
 }
 
-function moveTranscriptScroll(
+function moveConversationScroll(
   state: TuiInkState,
   key: "up" | "down" | "page_up" | "page_down" | "home" | "end",
-  transcriptLength: number
+  conversationLength: number
 ): void {
-  const maxOffset = Math.max(0, transcriptLength - defaultTranscriptWindowSize);
+  const maxOffset = Math.max(0, conversationLength - defaultConversationWindowSize);
   if (key === "home") {
-    state.scrollOffsets.transcript = maxOffset;
+    state.conversationScrollOffset = maxOffset;
     return;
   }
   if (key === "end") {
-    state.scrollOffsets.transcript = 0;
+    state.conversationScrollOffset = 0;
     return;
   }
   const delta = transcriptScrollDelta(key);
-  state.scrollOffsets.transcript = Math.min(
-    Math.max(state.scrollOffsets.transcript + delta, 0),
+  state.conversationScrollOffset = Math.min(
+    Math.max(state.conversationScrollOffset + delta, 0),
     maxOffset
   );
 }
@@ -469,10 +500,10 @@ function transcriptScrollDelta(
   key: "up" | "down" | "page_up" | "page_down" | "home" | "end"
 ): number {
   if (key === "page_up") {
-    return defaultTranscriptWindowSize;
+    return defaultConversationWindowSize;
   }
   if (key === "page_down") {
-    return -defaultTranscriptWindowSize;
+    return -defaultConversationWindowSize;
   }
   if (key === "up") {
     return 1;

@@ -23,8 +23,8 @@ keyboard commands.
 Implementation note: the initial hand-rendered string TUI validated the shared
 read-model and command boundaries, but it has been replaced as a runtime path.
 The current implementation direction is the component-based Ink rewrite
-described in `docs/tui-ink-rewrite-roadmap.md`. The next Work-view redesign is
-the conversation-terminal plan in `docs/tui-conversation-terminal-roadmap.md`.
+described in `docs/tui-ink-rewrite-roadmap.md`. The Work view now follows the
+conversation-terminal plan in `docs/tui-conversation-terminal-roadmap.md`.
 
 Project registration, broad project browsing, room management, deep audit,
 comparison reports, raw logs, full diffs, knowledge browsing, and lifecycle

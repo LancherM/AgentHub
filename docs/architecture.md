@@ -373,10 +373,13 @@ should reuse persisted transcript, task, run, RoleCall, verification, risk,
 memory, skill, and review evidence while keeping deep audit in explicit CLI or
 desktop review commands. The first shared package boundary for that work is a
 core read-model layer; it adds no persistence tables and performs no terminal
-orchestration. The `agent-hub tui` command lives in `apps/cli`, renders those
-read models as a terminal shell, and delegates composer submission back to the
-existing CLI chat turn path. Continuation, review writes, and governance
-mutations remain outside the TUI renderer. Runs and Tasks focus modes are still
+orchestration. That read model now includes Work-specific `conversation` and
+`activeRuns` projections in addition to the existing transcript, run, RoleCall,
+review, task, team, memory, and skill summaries. The `agent-hub tui` command
+lives in `apps/cli`, renders those read models as a terminal shell, and
+delegates composer submission back to the existing CLI chat turn path.
+Continuation and governance mutations remain outside the TUI renderer. Runs
+and Tasks focus modes are still
 read-model projections over existing task, run, RoleCall, RoleTodo,
 verification, risk, metadata, and artifact repositories; they do not introduce
 new persistence or raw log/diff rendering.
@@ -404,9 +407,9 @@ summary. Reserved role executors are surfaced from existing task assignment
 metadata; no executor backend, database table, daemon, or desktop behavior is
 added for the TUI.
 Terminal polish is also contained in the CLI renderer. It compacts identifiers,
-groups Work-view runs and review evidence ahead of empty graph state on narrow
-terminals, and uses Ink components for terminal layout instead of hand-wrapped
-string panels.
+renders the Work view as a conversation flow plus bounded active-run boxes,
+moves focus tabs below the composer, and uses Ink components for terminal
+layout instead of hand-wrapped string panels.
 The direct CLI entrypoint exits after command completion, so one-shot TUI smoke
 renders do not leave local SQLite helper processes holding the terminal open.
 For interactive launches, the CLI default IO includes `process.stdin`, and the
@@ -434,9 +437,9 @@ does not add an event daemon, remote worker, or incremental orchestration path.
 Busy submit/review state remains local Ink state too: the renderer keeps
 keyboard navigation and composer editing active, but gates additional submit or
 review-decision writes until the in-flight callback finishes. Scrollable
-transcript state and terminal-height list windows remain local Ink state, while
-selected runs, tasks, and RoleCalls continue to resolve through the existing
-read-model summaries.
+conversation state, active-run selection, and terminal-height list windows
+remain local Ink state, while selected runs, tasks, and RoleCalls continue to
+resolve through the existing read-model summaries.
 The command hint helper falls back from an absent selected RoleCall to
 `agent-hub team roles list --project-id <project-id>`, the command palette
 includes the same role-list command beside run, review, and memory commands, and
@@ -454,9 +457,9 @@ boundary, and keep the ESM-only Ink code in a separate `apps/cli/src/tui-ink`
 build target. The CommonJS CLI command boundary dynamically imports the
 compiled `apps/cli/dist/tui-ink/entry.mjs` entrypoint; the renderer still does
 not access SQLite, filesystem, git, shell, or agent adapters directly.
-The next Work-view architecture plan is documented in
+The Work-view conversation-terminal architecture is documented in
 `docs/tui-conversation-terminal-roadmap.md`. It extends the same core read
-model with conversation and active-run projections, then rewrites only the Ink
-Work surface around `ConversationFlow` and `ActiveRunBox` components. Auxiliary
-Runs, Review, Graph, Tasks, Memory, Help, and Palette panes continue to use
-the existing local evidence and callback boundaries.
+model with conversation and active-run projections, then keeps the Ink Work
+surface scoped to `ConversationFlow` and `ActiveRunBox` components. Auxiliary
+Runs, Review, Graph, Team, Tasks, Memory, Help, and Palette panes continue to
+use the existing local evidence and callback boundaries.

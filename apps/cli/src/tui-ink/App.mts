@@ -6,7 +6,11 @@ import {
   useInput,
   type Key
 } from "ink";
-import type { TuiCurrentContextModel } from "@agent-hub/core";
+import type {
+  TuiActiveRunBox,
+  TuiConversationEntry,
+  TuiCurrentContextModel
+} from "@agent-hub/core";
 import {
   compactId,
   evidenceItems,
@@ -20,6 +24,7 @@ import {
   focusModes,
   reduceInkState,
   roleListCommand,
+  selectedAwaitingReviewRun,
   selectedReviewRunId,
   selectedRun,
   selectedTask,
@@ -295,7 +300,6 @@ export function TuiInkApp(props: TuiInkAppProps): React.ReactElement {
       );
       const nextState = {
         ...stateRef.current,
-        focus: "review" as const,
         statusMessage: result.message
       };
       setStateNow(nextState);
@@ -353,7 +357,10 @@ export function TuiInkApp(props: TuiInkAppProps): React.ReactElement {
         app.exit();
         return;
       }
-      if (input === "a" && currentState.focus === "review" && currentState.composer.length === 0) {
+      const canRecordReview =
+        currentState.focus === "review" ||
+        (currentState.focus === "work" && selectedAwaitingReviewRun(modelRef.current, currentState));
+      if (input === "a" && canRecordReview && currentState.composer.length === 0) {
         if (isBusy) {
           showBusyInputMessage();
           return;
@@ -361,7 +368,7 @@ export function TuiInkApp(props: TuiInkAppProps): React.ReactElement {
         void recordDecision("accepted");
         return;
       }
-      if (input === "R" && currentState.focus === "review" && currentState.composer.length === 0) {
+      if (input === "R" && canRecordReview && currentState.composer.length === 0) {
         if (isBusy) {
           showBusyInputMessage();
           return;
@@ -371,6 +378,13 @@ export function TuiInkApp(props: TuiInkAppProps): React.ReactElement {
       }
       if ((input === ":" || input === "?") && currentState.composer.length === 0) {
         applyKey(input === ":" ? "palette" : "help");
+        return;
+      }
+      const directMapped = currentState.composer.length === 0
+        ? keyToAction(input, key, currentState.focus)
+        : undefined;
+      if (directMapped && isDirectFocusAction(directMapped)) {
+        applyKey(directMapped);
         return;
       }
       if (key.escape && currentState.composer.length > 0) {
@@ -420,32 +434,43 @@ export function TuiInkFrame({
   return h(
     Box,
     { flexDirection: "column", width },
-    h(HeaderBar, { model }),
-    h(FocusTabs, { state }),
+    h(HeaderBar, { model, terminal }),
     ...model.warnings.map((warning) => line(`! ${warning}`, { color: "yellow" })),
     ...(state.statusMessage ? [line(`Status: ${state.statusMessage}`, { color: "green" })] : []),
     line(""),
     h(MainView, { model, state, terminal }),
     line(""),
     h(Composer, { model, state }),
+    h(FocusTabs, { state }),
     h(StatusBar, { model, state })
   );
 }
 
-function HeaderBar({ model }: { model: TuiCurrentContextModel }): React.ReactElement {
+function HeaderBar({
+  model,
+  terminal
+}: {
+  model: TuiCurrentContextModel;
+  terminal: TuiInkTerminalSize;
+}): React.ReactElement {
   const project = model.context.projectName ?? model.context.projectId ?? "unregistered";
-  const room = model.context.roomHandle
-    ? `#${model.context.roomHandle}`
-    : model.context.threadTitle ?? model.context.threadId ?? "no-thread";
   const agent = model.context.selectedAgent ? `@${model.context.selectedAgent}` : "@agent";
   const loop = model.roleCalls.loop.maxIterations === undefined
     ? `iter ${model.roleCalls.loop.iteration}`
     : `iter ${model.roleCalls.loop.iteration}/${model.roleCalls.loop.maxIterations}`;
+  const room = model.context.roomHandle ? `#${model.context.roomHandle}` : undefined;
+  const parts = [
+    "Agent Hub",
+    room ? `${project} ${room}` : project,
+    agent,
+    loop,
+    `risk ${highestRisk(model)}`
+  ];
   return h(
     Box,
     { flexDirection: "column" },
     line(
-      `Agent Hub  ${project}  ${room}  ${agent}  ctx ${model.context.contextMode}  ${loop}  risk ${highestRisk(model)}`,
+      truncateText(parts.join(" - "), Math.max(24, terminal.columns)),
       { bold: true, color: "cyan" }
     )
   );
@@ -498,52 +523,112 @@ function MainView(props: TuiInkFrameProps): React.ReactElement {
 }
 
 function WorkView({ model, state, terminal }: Required<TuiInkFrameProps>): React.ReactElement {
-  if (terminal.columns >= 120) {
-    return h(
-      Box,
-      { flexDirection: "row", columnGap: 2 },
-      h(Pane, { title: "Runs", width: 38 }, h(RunsPane, { model, state, terminal })),
-      h(Pane, { title: "Review", width: 42 }, h(ReviewPane, { model, state })),
-      h(
-        Pane,
-        { title: "RoleCalls", flexGrow: 1 },
-        h(RoleCallsPane, { model, state, terminal }),
-        line(""),
-        h(TranscriptPane, { model, state, terminal })
-      )
-    );
-  }
-  if (terminal.columns >= 90) {
-    return h(
-      Box,
-      { flexDirection: "row", columnGap: 2 },
-      h(
-        Pane,
-        { title: "Runs + Review", width: Math.floor(terminal.columns * 0.52) },
-        h(RunsPane, { model, state, terminal }),
-        line(""),
-        h(ReviewPane, { model, state })
-      ),
-      h(
-        Pane,
-        { title: "RoleCalls + Transcript", flexGrow: 1 },
-        h(RoleCallsPane, { model, state, terminal }),
-        line(""),
-        h(TranscriptPane, { model, state, terminal })
-      )
-    );
-  }
+  const fullBoxLimit = Math.min(model.activeRuns.length, 3);
+  const collapsedBoxes = model.activeRuns.slice(0, Math.max(0, model.activeRuns.length - fullBoxLimit));
+  const fullBoxes = model.activeRuns.slice(-fullBoxLimit);
+  const activeLineCost = collapsedBoxes.length + fullBoxes.length * activeRunBoxLineCount(terminal);
+  const conversationLines = conversationWindowSize(terminal, activeLineCost);
   return h(
     Box,
     { flexDirection: "column" },
-    h(Pane, { title: "Runs" }, h(RunsPane, { model, state, terminal })),
-    line(""),
-    h(Pane, { title: "Review" }, h(ReviewPane, { model, state })),
-    line(""),
-    h(Pane, { title: "RoleCalls" }, h(RoleCallsPane, { model, state, terminal })),
-    line(""),
-    h(TranscriptPane, { model, state, terminal })
+    h(ConversationFlow, { model, state, visibleLines: conversationLines }),
+    ...(collapsedBoxes.length > 0
+      ? collapsedBoxes.map((box) =>
+          line(`${activeRunTitle(box)} ...`, { color: toneColor(box.tone) })
+        )
+      : []),
+    ...fullBoxes.map((box) => h(ActiveRunBoxView, { key: box.runId, box, terminal }))
   );
+}
+
+function ConversationFlow({
+  model,
+  state,
+  visibleLines
+}: {
+  model: TuiCurrentContextModel;
+  state: TuiInkState;
+  visibleLines: number;
+}): React.ReactElement {
+  if (model.conversation.length === 0) {
+    return block(line("No messages in the current context.", { dimColor: true }));
+  }
+  const maxOffset = Math.max(0, model.conversation.length - visibleLines);
+  const offsetFromBottom = Math.min(state.conversationScrollOffset, maxOffset);
+  const start = Math.max(0, model.conversation.length - visibleLines - offsetFromBottom);
+  const visible = model.conversation.slice(start, start + visibleLines);
+  const title = maxOffset > 0
+    ? `Messages ${start + 1}-${start + visible.length}/${model.conversation.length}`
+    : undefined;
+  return block(
+    ...(title ? [line(title, { dimColor: true })] : []),
+    ...visible.flatMap((entry) => conversationEntryLines(entry))
+  );
+}
+
+function conversationEntryLines(entry: TuiConversationEntry): React.ReactElement[] {
+  if (entry.type === "agent_completed" || entry.type === "agent_failed") {
+    return [
+      line(`${entry.agent ? `@${entry.agent}` : entry.author} ${entry.runId ? compactId(entry.runId) : ""} ${entry.statusLabel ?? ""}`.trim(), {
+        color: entry.type === "agent_failed" ? "red" : "cyan"
+      }),
+      line(`  ${entry.content}`),
+      ...(entry.verificationLine ? [line(`  ${entry.verificationLine}`)] : []),
+      ...(entry.riskLine ? [line(`  ${entry.riskLine}`)] : [])
+    ];
+  }
+  if (entry.type === "review_decided") {
+    return [
+      line(`review ${entry.runId ? compactId(entry.runId) : ""} ${entry.decision ?? ""}`.trim(), { color: "green" }),
+      line(`  ${entry.content}`)
+    ];
+  }
+  if (entry.type === "delegation") {
+    return [
+      line(`${entry.author} -> ${entry.roleCallId ? compactId(entry.roleCallId) : "role"}`, { color: "cyan" }),
+      line(`  ${entry.content}`)
+    ];
+  }
+  return [
+    line(entry.author, { color: entry.type === "user_message" ? undefined : "cyan" }),
+    line(`  ${entry.content}`)
+  ];
+}
+
+function ActiveRunBoxView({
+  box,
+  terminal
+}: {
+  box: TuiActiveRunBox;
+  terminal: TuiInkTerminalSize;
+}): React.ReactElement {
+  const width = activeRunBoxWidth(terminal);
+  const innerWidth = Math.max(12, width - 2);
+  const title = activeRunTitle(box);
+  const top = borderedTitle(title, innerWidth);
+  const contentHeight = activeRunContentHeight(terminal);
+  const contentLines = [...box.outputLines, ...box.evidenceLines].slice(-contentHeight);
+  const paddedLines = [
+    ...contentLines,
+    ...Array.from({ length: Math.max(0, contentHeight - contentLines.length) }, () => "")
+  ];
+  const hint = box.actionHint ?? "_";
+  return block(
+    line(top, { color: toneColor(box.tone) }),
+    ...paddedLines.map((value) => line(`| ${truncateText(value, innerWidth - 2).padEnd(innerWidth - 2)} |`, { color: toneColor(box.tone) })),
+    line(`| ${truncateText(hint, innerWidth - 2).padEnd(innerWidth - 2)} |`, { color: toneColor(box.tone) }),
+    line(`+${"-".repeat(innerWidth)}+`, { color: toneColor(box.tone) })
+  );
+}
+
+function activeRunTitle(box: TuiActiveRunBox): string {
+  const label = box.state === "awaiting_review" ? "awaiting review" : box.state;
+  return `@${box.agent} ${compactId(box.runId)} ${label}`;
+}
+
+function borderedTitle(title: string, innerWidth: number): string {
+  const decorated = `-- ${truncateText(title, Math.max(8, innerWidth - 4))} `;
+  return `+${decorated}${"-".repeat(Math.max(0, innerWidth - decorated.length))}+`;
 }
 
 function RunsPane({
@@ -882,6 +967,35 @@ function transcriptWindowSize(terminal: TuiInkTerminalSize): number {
   return boundedWindowSize(Math.floor((terminal.rows - 14) / 2), 5, 18);
 }
 
+function conversationWindowSize(
+  terminal: TuiInkTerminalSize,
+  activeLineCost: number
+): number {
+  return boundedWindowSize(terminal.rows - 7 - activeLineCost, 4, 8);
+}
+
+function activeRunBoxLineCount(terminal: TuiInkTerminalSize): number {
+  return activeRunContentHeight(terminal) + 3;
+}
+
+function activeRunContentHeight(terminal: TuiInkTerminalSize): number {
+  return terminal.rows < 24 ? 3 : 6;
+}
+
+function activeRunBoxWidth(terminal: TuiInkTerminalSize): number {
+  return Math.max(28, terminal.columns - 2);
+}
+
+function toneColor(tone: TuiActiveRunBox["tone"]): string {
+  if (tone === "yellow") {
+    return "yellow";
+  }
+  if (tone === "red") {
+    return "red";
+  }
+  return "green";
+}
+
 function boundedWindowSize(value: number, minimum: number, maximum: number): number {
   return Math.min(Math.max(value, minimum), maximum);
 }
@@ -959,8 +1073,20 @@ function keyToAction(input: string, key: Key, focus: string): TuiInkKey | undefi
   if (input === "?") {
     return "help";
   }
+  if (input === "w") {
+    return "work";
+  }
   if (input === "r") {
+    return "runs";
+  }
+  if (input === "v") {
     return "review";
+  }
+  if (input === "g") {
+    return "graph";
+  }
+  if (input === "t") {
+    return "tasks";
   }
   if (input === "m") {
     return "memory";
@@ -981,6 +1107,19 @@ function keyToAction(input: string, key: Key, focus: string): TuiInkKey | undefi
     return "palette";
   }
   return undefined;
+}
+
+function isDirectFocusAction(action: TuiInkKey): boolean {
+  return (
+    action === "work" ||
+    action === "runs" ||
+    action === "review" ||
+    action === "graph" ||
+    action === "tasks" ||
+    action === "memory" ||
+    action === "team" ||
+    action === "help"
+  );
 }
 
 function isPrintableInput(input: string, key: Key): boolean {

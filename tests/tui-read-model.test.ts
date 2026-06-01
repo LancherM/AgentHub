@@ -19,6 +19,8 @@ describe("TUI current-context read model", () => {
     });
 
     expect(model.context.projectId).toBe("missing_project");
+    expect(model.conversation).toEqual([]);
+    expect(model.activeRuns).toEqual([]);
     expect(model.transcript).toEqual([]);
     expect(model.runs).toEqual([]);
     expect(model.roleCalls.counts.total).toBe(0);
@@ -58,6 +60,28 @@ describe("TUI current-context read model", () => {
     expect(model.transcript.map((message) => message.id)).toEqual([
       "message_2",
       "message_3"
+    ]);
+    expect(model.activeRuns.map((run) => `${run.runId}:${run.state}`)).toEqual([
+      "run_done:awaiting_review",
+      "run_active:running"
+    ]);
+    expect(model.activeRuns.find((run) => run.runId === "run_active")).toMatchObject({
+      title: "@fake run_active running",
+      outputLines: ["adapter started", "verification started"],
+      evidenceLines: [
+        "checks 1/1/1: pnpm test",
+        "risk medium: partial verification",
+        "files 2 +12 -4"
+      ]
+    });
+    expect(model.conversation.map((entry) => entry.id)).toEqual([
+      "message:message_1",
+      "delegation:call_deferred",
+      "delegation:call_failed",
+      "delegation:call_running",
+      "delegation:call_succeeded",
+      "delegation:call_waiting_approval",
+      "delegation:call_waiting_context"
     ]);
     expect(model.runs.map((run) => run.id)).toEqual(["run_active", "run_done"]);
     expect(model.runs[0]).toMatchObject({
@@ -188,6 +212,12 @@ describe("TUI current-context read model", () => {
         diff: { changedFiles: 1, insertions: 4, deletions: 1 }
       }
     });
+    expect(model.activeRuns.map((run) => `${run.runId}:${run.state}`)).toEqual([
+      "run_no_change:awaiting_review",
+      "run_active:running"
+    ]);
+    expect(model.conversation.map((entry) => entry.id)).toContain("run:run_completed");
+    expect(model.conversation.map((entry) => entry.id)).toContain("review:run_completed:accepted");
   });
 
   it("reports bounded loop stop reasons for terminal, pending, waiting, blocking, and limits", async () => {
@@ -679,6 +709,17 @@ async function seedRunStates(runtime: ReturnType<typeof createCliRuntime>) {
       stat: { filesChanged: 1, insertions: 4, deletions: 1 }
     },
     createdAt: now
+  });
+  await runtime.runArtifactRepository.create({
+    id: "review_completed",
+    taskRunId: "run_completed",
+    kind: "review_decision",
+    content: "Accepted for record. No merge was performed.",
+    metadata: {
+      reviewStatus: "accepted",
+      acceptedAt: "2026-05-29T12:01:30.000Z"
+    },
+    createdAt: "2026-05-29T12:01:30.000Z"
   });
 }
 

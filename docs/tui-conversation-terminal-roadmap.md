@@ -1,6 +1,6 @@
 # TUI Conversation Terminal Roadmap
 
-Status: planned
+Status: initial implementation landed
 Last updated: 2026-06-01
 
 This document translates the TUI conversation-terminal proposal into an
@@ -17,9 +17,13 @@ The current TUI already has the important foundations:
 - Runs, Review, RoleCalls, Tasks, Memory, Help, prompt submission, polling, and
   audit-only review shortcuts already exist behind local CLI boundaries.
 
-The next redesign changes the default `Work` surface from a multi-pane
-operating dashboard into a conversation terminal. Auxiliary panes remain
-available through tabs, but they stop competing with the first screen.
+The redesign changes the default `Work` surface from a multi-pane operating
+dashboard into a conversation terminal. Auxiliary panes remain available
+through tabs, but they stop competing with the first screen. The initial
+vertical slice has landed: read models expose `conversation` and `activeRuns`,
+Work renders `ConversationFlow` plus `ActiveRunBox` components, direct focus
+keys and Work conversation scrolling are covered by tests, and existing
+auxiliary panes keep their original data and callback boundaries.
 
 ## Product Intent
 

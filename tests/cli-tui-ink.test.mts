@@ -31,6 +31,28 @@ const baseModel = {
       createdAt: "2026-05-29T12:00:00.000Z"
     }
   ],
+  conversation: [
+    {
+      id: "message:message_1",
+      type: "user_message",
+      timestamp: "2026-05-29T12:00:00.000Z",
+      author: "user",
+      content: "Check the TUI shell."
+    },
+    {
+      id: "run:run_27984312-fc9a-46bf-9ccf-c06997187091",
+      type: "agent_completed",
+      timestamp: "2026-05-29T12:05:00.000Z",
+      author: "@codex",
+      content: "Codex exited with code 0",
+      agent: "codex",
+      runId: "run_27984312-fc9a-46bf-9ccf-c06997187091",
+      statusLabel: "succeeded",
+      verificationLine: "checks 0/0/1",
+      riskLine: "risk blocking: No changed files were collected."
+    }
+  ],
+  activeRuns: [],
   runs: [
     {
       id: "run_27984312-fc9a-46bf-9ccf-c06997187091",
@@ -150,7 +172,7 @@ const baseModel = {
 };
 
 describe("Ink TUI renderer", () => {
-  it("keeps narrow first screen focused on Runs before empty RoleCalls", () => {
+  it("renders Work as a conversation terminal instead of an embedded dashboard", () => {
     const output = renderToString(
       React.createElement(TuiInkFrame, {
         model: baseModel,
@@ -161,10 +183,31 @@ describe("Ink TUI renderer", () => {
     );
 
     expect(output).toContain("Agent Hub");
-    expect(output.indexOf("Runs")).toBeLessThan(output.indexOf("Review"));
-    expect(output.indexOf("Review")).toBeLessThan(output.indexOf("RoleCalls"));
-    expect(output).toContain("none | loop stop blocking_risk");
+    expect(output).toContain("user");
+    expect(output).toContain("Check the TUI shell.");
+    expect(output).toContain("@codex run_27984312 succeeded");
+    expect(output).toContain("checks 0/0/1");
+    expect(output).toContain("risk blocking");
+    expect(output).toContain("> @codex prompt");
+    expect(output.indexOf("> @codex prompt")).toBeLessThan(output.indexOf("[Work]"));
+    expect(output).not.toContain("Runs + Review");
     expect(output).not.toContain("-- more hidden --");
+  });
+
+  it("renders active run boxes inside Work", () => {
+    const output = renderToString(
+      React.createElement(TuiInkFrame, {
+        model: modelWithActiveRun(),
+        state: createInitialInkState(),
+        terminal: { columns: 78, rows: 32 }
+      }),
+      { columns: 78 }
+    );
+
+    expect(output).toContain("+-- @codex run_active running");
+    expect(output).toContain("Reading logout.ts");
+    expect(output).toContain("checks 1/0/0");
+    expect(output).toContain("_");
   });
 
   it("keeps full ids and governed commands inside the command palette", () => {
@@ -267,7 +310,7 @@ describe("Ink TUI renderer", () => {
     expect(output).toContain("run_0000000d @codex ok");
   });
 
-  it("scrolls transcript history from the work focus", () => {
+  it("scrolls conversation history from the work focus", () => {
     const model = modelWithTranscript(10);
     const bottomOutput = renderToString(
       React.createElement(TuiInkFrame, {
@@ -287,9 +330,9 @@ describe("Ink TUI renderer", () => {
       { columns: 78 }
     );
 
-    expect(bottomOutput).toContain("Transcript 6-10/10");
+    expect(bottomOutput).toContain("Messages 3-10/10");
     expect(bottomOutput).not.toContain("Transcript message 0");
-    expect(scrolledOutput).toContain("Transcript 1-5/10");
+    expect(scrolledOutput).toContain("Messages 1-8/10");
     expect(scrolledOutput).toContain("Transcript message 0");
   });
 
@@ -309,7 +352,7 @@ describe("Ink TUI renderer", () => {
 
     await new Promise((resolve) => setTimeout(resolve, 30));
 
-    expect(instance.lastFrame()).toContain("run_polled01 @codex ok");
+    expect(instance.lastFrame()).toContain("@codex run_polled01 succeeded");
     instance.unmount();
   });
 
@@ -333,12 +376,12 @@ describe("Ink TUI renderer", () => {
 
     await waitForFrame(instance, "Prompt submission timed out after 5ms.");
 
-    for (const character of "retry") {
+    for (const character of "again") {
       instance.stdin.write(character);
       await new Promise((resolve) => setTimeout(resolve, 1));
     }
 
-    await waitForFrame(instance, "> retry");
+    await waitForFrame(instance, "> again");
     instance.unmount();
   });
 
@@ -373,7 +416,7 @@ describe("Ink TUI renderer", () => {
       await new Promise((resolve) => setTimeout(resolve, 1));
     }
 
-    await waitForFrame(instance, "[Graph]");
+    await waitForFrame(instance, "[Runs]");
     await waitForFrame(instance, "> next");
 
     resolveSubmission({ ok: true, message: "Submitted prompt.", model: baseModel });
@@ -411,7 +454,7 @@ describe("Ink TUI renderer", () => {
       expect.objectContaining({ prompt: "@unknown summarize" })
     ]);
     expect(instance.lastFrame()).toContain("Submitted prompt.");
-    expect(instance.lastFrame()).toContain("run_12345678 @codex ok");
+    expect(instance.lastFrame()).toContain("@codex run_12345678 succeeded");
     instance.unmount();
   });
 
@@ -462,7 +505,7 @@ describe("Ink TUI renderer", () => {
     instance.stdin.write("\t");
     await new Promise((resolve) => setTimeout(resolve, 25));
 
-    expect(instance.lastFrame()).toContain("[Graph]");
+    expect(instance.lastFrame()).toContain("[Runs]");
     expect(instance.lastFrame()).toContain("> draft");
     instance.unmount();
   });
@@ -482,7 +525,7 @@ describe("Ink TUI renderer", () => {
       })
     );
 
-    for (const character of "run command") {
+    for (const character of "execute command") {
       instance.stdin.write(character);
       await new Promise((resolve) => setTimeout(resolve, 1));
     }
@@ -490,7 +533,7 @@ describe("Ink TUI renderer", () => {
     await new Promise((resolve) => setTimeout(resolve, 25));
 
     expect(submissions).toEqual([
-      expect.objectContaining({ prompt: "run command" })
+      expect.objectContaining({ prompt: "execute command" })
     ]);
     expect(instance.lastFrame()).toContain("Submitted prompt.");
     expect(instance.lastFrame()).toContain("[Work]");
@@ -582,30 +625,72 @@ describe("Ink TUI renderer", () => {
 
 function modelWithRuns(ids) {
   const template = baseModel.runs[0];
+  const runs = ids.map((id, index) => ({
+    ...template,
+    id,
+    taskId: `task_${index}`,
+    taskTitle: `Run ${index}`,
+    updatedAt: `2026-05-29T12:${String(index).padStart(2, "0")}:00.000Z`
+  }));
   return {
     ...baseModel,
-    runs: ids.map((id, index) => ({
-      ...template,
-      id,
-      taskId: `task_${index}`,
-      taskTitle: `Run ${index}`,
-      updatedAt: `2026-05-29T12:${String(index).padStart(2, "0")}:00.000Z`
+    runs,
+    activeRuns: [],
+    conversation: runs.map((run) => ({
+      id: `run:${run.id}`,
+      type: "agent_completed",
+      timestamp: run.updatedAt,
+      author: `@${run.agentKind}`,
+      content: `Run ${run.id} completed.`,
+      agent: run.agentKind,
+      runId: run.id,
+      statusLabel: "succeeded",
+      verificationLine: "checks 0/0/1",
+      riskLine: "risk blocking: No changed files were collected."
     }))
   };
 }
 
 function modelWithTranscript(count) {
+  const messages = Array.from({ length: count }, (_value, index) => ({
+    id: `message_${index}`,
+    sequence: index,
+    role: index % 2 === 0 ? "user" : "assistant",
+    kind: "text",
+    author: index % 2 === 0 ? "user" : "codex",
+    content: `Transcript message ${index}`,
+    createdAt: `2026-05-29T12:${String(index).padStart(2, "0")}:00.000Z`
+  }));
   return {
     ...baseModel,
-    transcript: Array.from({ length: count }, (_value, index) => ({
-      id: `message_${index}`,
-      sequence: index,
-      role: index % 2 === 0 ? "user" : "assistant",
-      kind: "text",
-      author: index % 2 === 0 ? "user" : "codex",
-      content: `Transcript message ${index}`,
-      createdAt: `2026-05-29T12:${String(index).padStart(2, "0")}:00.000Z`
-    }))
+    transcript: messages,
+    conversation: messages.map((message) => ({
+      id: `message:${message.id}`,
+      type: message.role === "user" ? "user_message" : "assistant_message",
+      timestamp: message.createdAt,
+      author: message.author,
+      content: message.content
+    })),
+    activeRuns: []
+  };
+}
+
+function modelWithActiveRun() {
+  return {
+    ...baseModel,
+    activeRuns: [
+      {
+        runId: "run_active",
+        agent: "codex",
+        state: "running",
+        tone: "green",
+        title: "@codex run_active running",
+        outputLines: ["Reading logout.ts", "Running tests"],
+        evidenceLines: ["checks 1/0/0", "risk low"],
+        createdAt: "2026-05-29T12:06:00.000Z",
+        updatedAt: "2026-05-29T12:07:00.000Z"
+      }
+    ]
   };
 }
 

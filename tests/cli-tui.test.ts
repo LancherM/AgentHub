@@ -55,13 +55,10 @@ describe("CLI TUI command", () => {
 
     const rendered = output.join("");
     expect(errors.join("")).toBe("");
-    expect(rendered).toContain("Agent Hub  TUI Project  #review");
+    expect(rendered).toContain("Agent Hub - TUI Project #review - @codex");
     expect(rendered).toContain("@codex");
-    expect(rendered).toContain("Transcript");
-    expect(rendered).toContain("RoleCalls");
-    expect(rendered).toContain("@engineer -> @reviewer [running]");
-    expect(rendered).toContain("Runs");
-    expect(rendered).toContain("run_1 @codex running");
+    expect(rendered).toContain("Check TUI evidence.");
+    expect(rendered).toContain("+-- @codex run_1 running");
     expect(rendered).toContain("> @codex prompt");
   });
 
@@ -81,9 +78,9 @@ describe("CLI TUI command", () => {
 
     const rendered = output.join("");
     expect(errors.join("")).toBe("");
-    expect(rendered).toContain("Agent Hub  unregistered  no-thread");
+    expect(rendered).toContain("Agent Hub - unregistered");
     expect(rendered).toContain("recovery: agent-hub project add --name <name>");
-    expect(rendered).toContain("none | loop stop terminal");
+    expect(rendered).toContain("No messages in the current context.");
   });
 
   it("renders context-read failures with CLI recovery commands", async () => {
@@ -122,7 +119,6 @@ describe("CLI TUI command", () => {
     const rendered = output.join("");
     expect(errors.join("")).toBe("");
     expect(rendered).toContain("failed to read TUI context: database read failed");
-    expect(rendered).toContain("TUI context unavailable");
     expect(rendered).toContain("agent-hub project list");
   });
 
@@ -143,7 +139,7 @@ describe("CLI TUI command", () => {
       )
     ).resolves.toBe(0);
     expect(errors.join("")).toBe("");
-    expect(output.join("")).toContain("Agent Hub  TUI Project  #review");
+    expect(output.join("")).toContain("Agent Hub - TUI Project #review");
   });
 
   it("submits prompts through the CLI chat path and keeps unknown mentions as text", async () => {
