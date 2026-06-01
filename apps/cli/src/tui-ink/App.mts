@@ -10,7 +10,8 @@ import type {
   TuiActiveRunBox,
   TuiConversationEntry,
   TuiConversationSuggestion,
-  TuiCurrentContextModel
+  TuiCurrentContextModel,
+  TuiInlineDiffSummary
 } from "@agent-hub/core";
 import {
   compactId,
@@ -377,6 +378,14 @@ export function TuiInkApp(props: TuiInkAppProps): React.ReactElement {
       }
       if (input === "c" && currentState.focus === "work" && currentState.composer.length === 0) {
         applyKey("continue_loop");
+        return;
+      }
+      if (input === " " && currentState.focus === "review" && currentState.composer.length === 0) {
+        applyKey("toggle_review_diff");
+        return;
+      }
+      if (input === "s" && currentState.focus === "review" && currentState.composer.length === 0) {
+        applyKey("toggle_compare");
         return;
       }
       const wantsSubmit =
@@ -811,8 +820,10 @@ function ConversationFlow({
     return block(line("No messages in the current context.", { dimColor: true }));
   }
   const showSuggestions = state.composer.length === 0 && state.conversationScrollOffset === 0;
-  const renderedLines = model.conversation.flatMap((entry) =>
-    conversationEntryLines(entry, feedbackByRunId, showSuggestions)
+  const renderedLines = conversationRenderItems(model.conversation).flatMap((item) =>
+    item.kind === "review_group"
+      ? [reviewPendingGroupLine(item.count)]
+      : conversationEntryLines(item.entry, feedbackByRunId, showSuggestions)
   );
   const maxOffset = Math.max(0, renderedLines.length - visibleLines);
   const offsetFromBottom = Math.min(state.conversationScrollOffset, maxOffset);
@@ -821,6 +832,39 @@ function ConversationFlow({
   return block(
     ...visible
   );
+}
+
+type ConversationRenderItem =
+  | { kind: "entry"; entry: TuiConversationEntry }
+  | { kind: "review_group"; count: number };
+
+function conversationRenderItems(entries: TuiConversationEntry[]): ConversationRenderItem[] {
+  const items: ConversationRenderItem[] = [];
+  for (let index = 0; index < entries.length; index += 1) {
+    const entry = entries[index];
+    if (entry.type !== "review_pending") {
+      items.push({ kind: "entry", entry });
+      continue;
+    }
+    const group: TuiConversationEntry[] = [];
+    while (entries[index]?.type === "review_pending") {
+      group.push(entries[index]);
+      index += 1;
+    }
+    index -= 1;
+    if (group.length > 3) {
+      items.push({ kind: "review_group", count: group.length });
+    } else {
+      items.push(...group.map((value) => ({ kind: "entry" as const, entry: value })));
+    }
+  }
+  return items;
+}
+
+function reviewPendingGroupLine(count: number): React.ReactElement {
+  return line(`┃ △ ${count} pending reviews collapsed — [V]iew review queue`, {
+    color: "yellow"
+  });
 }
 
 function conversationEntryLines(
@@ -842,6 +886,7 @@ function conversationEntryLines(
       ...conversationContentLines(entry.outputLines ?? entry.content, { prefix: "┃   ", agent: true, tone, keyPrefix: entry.id }),
       ...(entry.verificationLine ? [conversationRichLine(`~ ${entry.verificationLine}`, { prefix: "┃   ", agent: true, tone })] : []),
       ...(entry.riskLine ? [conversationRichLine(`⚠ ${entry.riskLine}`, { prefix: "┃   ", agent: true, tone, color: "yellow" })] : []),
+      ...inlineDiffLines(entry.inlineDiff, "┃   ", entry.id),
       ...conversationSuggestionLines(entry, showSuggestions, tone)
     ];
   }
@@ -858,6 +903,7 @@ function conversationEntryLines(
       ...conversationContentLines(entry.outputLines ?? entry.content, { prefix: "┃   ", agent: true, tone, keyPrefix: entry.id }),
       ...(entry.verificationLine ? [conversationRichLine(`~ ${entry.verificationLine}`, { prefix: "┃   ", agent: true, tone })] : []),
       ...(entry.riskLine ? [conversationRichLine(`⚠ ${entry.riskLine}`, { prefix: "┃   ", agent: true, tone, color: "yellow" })] : []),
+      ...inlineDiffLines(entry.inlineDiff, "┃   ", entry.id),
       conversationRichLine(`△ ${entry.content ?? "切换到 [V]iew 查看详情"}`, { prefix: "┃   ", agent: true, tone, color: "yellow" }),
       ...conversationSuggestionLines(entry, showSuggestions, tone)
     ];
@@ -955,6 +1001,46 @@ function conversationSuggestionLines(
       key: `${entry.id}-suggestion-${suggestion.key}`
     })
   );
+}
+
+function inlineDiffLines(
+  diff: TuiInlineDiffSummary | undefined,
+  prefix: string,
+  keyPrefix: string
+): React.ReactElement[] {
+  if (!diff) {
+    return [];
+  }
+  if (diff.mode === "summary") {
+    return [
+      conversationRichLine(diff.summary, {
+        prefix,
+        agent: true,
+        tone: "cyan",
+        dimColor: true
+      })
+    ];
+  }
+  return diff.lines.map((lineItem, index) =>
+    conversationRichLine(lineItem.text, {
+      prefix,
+      agent: true,
+      tone: "cyan",
+      color: diffLineColor(lineItem.kind),
+      dimColor: lineItem.kind === "file",
+      key: `${keyPrefix}-diff-${index}`
+    })
+  );
+}
+
+function diffLineColor(kind: TuiInlineDiffSummary["lines"][number]["kind"]): string | undefined {
+  if (kind === "add") {
+    return "green";
+  }
+  if (kind === "delete") {
+    return "red";
+  }
+  return undefined;
 }
 
 function conversationRichLine(
@@ -1243,6 +1329,9 @@ function ReviewPane({
   detail?: boolean;
 }): React.ReactElement {
   const run = selectedRun(model, state);
+  const compareRuns = run
+    ? model.runs.filter((candidate) => candidate.taskId === run.taskId).slice(0, 2)
+    : [];
   return block(
     line(
       model.review.selectedId
@@ -1253,6 +1342,25 @@ function ReviewPane({
     line(model.review.summary),
     ...(run ? [line(`selected ${compactId(run.id)}  review ${run.reviewDecision.status}`)] : []),
     ...evidenceItems(model.review.evidence).map((item) => line(item)),
+    ...(model.review.evidence.inlineDiff
+      ? [
+          line(
+            state.reviewDiffExpanded
+              ? "diff expanded (Esc collapses)"
+              : "diff available (Enter/Space expands)",
+            { dimColor: true }
+          )
+        ]
+      : []),
+    ...(state.reviewDiffExpanded
+      ? inlineDiffLines(model.review.evidence.inlineDiff, "  ", "review")
+      : []),
+    ...(state.reviewCompareMode && compareRuns.length >= 2
+      ? [
+          line("split compare (read-only)", { bold: true }),
+          ...compareRuns.map((candidate) => line(runLine(candidate, candidate.id === run?.id)))
+        ]
+      : []),
     ...(detail ? model.review.commands.slice(0, 5).map((command) => line(command, { dimColor: true })) : [])
   );
 }

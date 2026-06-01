@@ -106,6 +106,14 @@ submits the selected suggestion through the same prompt callback as manual
 composer text; numeric keys remain normal text while the composer is non-empty.
 Typing hides suggestions, and `c` prepares a continuation prompt without
 submitting it.
+Small run diffs are projected directly into Work when the collected git diff
+has five or fewer changed lines; file/hunk headers are dim, additions are
+green, deletions are red, and context stays plain. Larger diffs collapse to a
+compact `(+N/-M in F files)` summary. Dense runs of more than three pending
+reviews collapse into a single Work line with a `[V]iew` hint. In Review,
+`Enter` or `Space` expands the selected run diff and `Esc` collapses it; `s`
+shows a read-only split compare summary only when the selected task has at
+least two runs.
 The default tab bar matches the conversation-terminal scheme: Work, Runs, View,
 Graph, Tasks, Memory, Team, and Help stay one key away instead of being
 embedded into the first screen.

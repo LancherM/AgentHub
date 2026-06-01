@@ -43,6 +43,7 @@ import type {
   RoleCallRepository,
   RoleTodoRepository,
   RunArtifactRepository,
+  ComparisonReportRepository,
   RunMetadataRepository,
   SkillRepository,
   SettingsRepository,
@@ -64,6 +65,7 @@ export interface TuiReadModelRepositories {
   verificationResultRepository: VerificationResultRepository;
   riskReportRepository: RiskReportRepository;
   runMetadataRepository: RunMetadataRepository;
+  comparisonReportRepository: ComparisonReportRepository;
   memoryItemRepository: MemoryItemRepository;
   skillRepository: SkillRepository;
   roleCallRepository: RoleCallRepository;
@@ -129,6 +131,7 @@ export interface TuiConversationEntry {
   riskLine?: string;
   elapsedLabel?: string;
   usageLabel?: string;
+  inlineDiff?: TuiInlineDiffSummary;
   delegatedTo?: string;
   delegationTask?: string;
   suggestions?: TuiConversationSuggestion[];
@@ -203,6 +206,17 @@ export interface TuiRunUsageSummary {
   outputTokens?: number;
   totalTokens?: number;
   costUsd?: number;
+}
+
+export interface TuiInlineDiffSummary {
+  mode: "inline" | "summary";
+  summary: string;
+  lines: TuiInlineDiffLine[];
+}
+
+export interface TuiInlineDiffLine {
+  kind: "file" | "add" | "delete" | "context";
+  text: string;
 }
 
 export interface TuiRunReviewDecisionSummary {
@@ -385,6 +399,7 @@ export interface TuiEvidenceSummary {
     insertions?: number;
     deletions?: number;
   };
+  inlineDiff?: TuiInlineDiffSummary;
 }
 
 const defaultLimits = {
@@ -704,6 +719,7 @@ async function summarizeConversation(
         riskLine: conversationRiskLine(run.evidence),
         elapsedLabel: run.elapsedLabel,
         usageLabel: run.usageLabel,
+        inlineDiff: run.evidence.inlineDiff,
         sortRank: 30
       }];
     }
@@ -722,6 +738,7 @@ async function summarizeConversation(
       riskLine: conversationRiskLine(run.evidence),
       elapsedLabel: run.elapsedLabel,
       usageLabel: run.usageLabel,
+      inlineDiff: run.evidence.inlineDiff,
       sortRank: 30
     }];
   }));
@@ -832,6 +849,7 @@ async function summarizeRunEvidence(
   const latestEvent = [...events].sort((left, right) => left.sequence - right.sequence).at(-1);
   const risk = riskReport ?? metadata?.riskReport;
   const diff = diffSummary(diffArtifact, metadata?.diff);
+  const inlineDiff = inlineDiffSummary(diffArtifact, metadata?.diff, diff);
   return {
     linkedRunId: run.id,
     latestEvent: latestEvent ? truncate(latestEvent.message, defaultLimits.contentChars) : undefined,
@@ -843,7 +861,8 @@ async function summarizeRunEvidence(
           primaryReason: risk.riskFactors[0] ?? risk.summary
         }
       : undefined,
-    diff
+    diff,
+    inlineDiff
   };
 }
 
@@ -1963,6 +1982,99 @@ function diffSummary(
   };
 }
 
+function inlineDiffSummary(
+  artifact: RunArtifact | undefined,
+  diff: unknown,
+  summary: TuiEvidenceSummary["diff"]
+): TuiInlineDiffSummary | undefined {
+  const diffText = typeof artifact?.content === "string" && artifact.content.trim().length > 0
+    ? artifact.content
+    : stringValue(diff, "diff");
+  if (!diffText) {
+    return summary && summary.changedFiles > 0
+      ? {
+          mode: "summary",
+          summary: diffSummaryText(summary),
+          lines: []
+        }
+      : undefined;
+  }
+  const rawLines = diffText.split(/\r?\n/);
+  const changedLines = rawLines.filter(isChangedDiffLine);
+  if (changedLines.length === 0) {
+    return summary && summary.changedFiles > 0
+      ? {
+          mode: "summary",
+          summary: diffSummaryText(summary),
+          lines: []
+        }
+      : undefined;
+  }
+  if (changedLines.length > 5) {
+    return {
+      mode: "summary",
+      summary: diffSummaryText(summary, changedLines),
+      lines: []
+    };
+  }
+  const lines: TuiInlineDiffLine[] = [];
+  for (const rawLine of rawLines) {
+    const projected = projectDiffLine(rawLine);
+    if (!projected) {
+      continue;
+    }
+    lines.push(projected);
+    if (lines.length >= 16) {
+      break;
+    }
+  }
+  return {
+    mode: "inline",
+    summary: diffSummaryText(summary, changedLines),
+    lines
+  };
+}
+
+function isChangedDiffLine(value: string): boolean {
+  return (
+    (value.startsWith("+") && !value.startsWith("+++")) ||
+    (value.startsWith("-") && !value.startsWith("---"))
+  );
+}
+
+function projectDiffLine(value: string): TuiInlineDiffLine | undefined {
+  if (value.startsWith("diff --git") || value.startsWith("@@")) {
+    return { kind: "file", text: truncate(value, 100) };
+  }
+  if (value.startsWith("+++") || value.startsWith("---") || value.startsWith("index ")) {
+    return undefined;
+  }
+  if (value.startsWith("+")) {
+    return { kind: "add", text: truncate(value, 100) };
+  }
+  if (value.startsWith("-")) {
+    return { kind: "delete", text: truncate(value, 100) };
+  }
+  if (value.startsWith(" ") && value.trim().length > 0) {
+    return { kind: "context", text: truncate(value, 100) };
+  }
+  return undefined;
+}
+
+function diffSummaryText(
+  summary: TuiEvidenceSummary["diff"],
+  changedLines: string[] = []
+): string {
+  const additions =
+    summary?.insertions ??
+    changedLines.filter((line) => line.startsWith("+")).length;
+  const deletions =
+    summary?.deletions ??
+    changedLines.filter((line) => line.startsWith("-")).length;
+  const files = summary?.changedFiles ?? 0;
+  return `(+${additions}/-${deletions}${files > 0 ? ` in ${files} files` : ""})`;
+}
+
 async function requiredRunForEvidence(
   repositories: TuiReadModelRepositories,
   runId: string
@@ -2118,6 +2230,16 @@ function arrayValue(value: unknown, key: string): unknown[] | undefined {
   }
   const candidate = value[key];
   return Array.isArray(candidate) ? candidate : undefined;
+}
+
+function stringValue(value: unknown, key: string): string | undefined {
+  if (!isObject(value)) {
+    return undefined;
+  }
+  const candidate = value[key];
+  return typeof candidate === "string" && candidate.trim().length > 0
+    ? candidate
+    : undefined;
 }
 
 function numberValue(value: unknown, key: string): number | undefined {

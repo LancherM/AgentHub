@@ -37,6 +37,8 @@ export interface TuiInkState {
     tasks: number;
   };
   conversationScrollOffset: number;
+  reviewDiffExpanded: boolean;
+  reviewCompareMode: boolean;
   composer: string;
   composerCursorPosition: number;
   commandPaletteOpen: boolean;
@@ -67,6 +69,8 @@ export type TuiInkKey =
   | "skills"
   | "hide_done"
   | "continue_loop"
+  | "toggle_review_diff"
+  | "toggle_compare"
   | "cancel"
   | "accept_review"
   | "reject_review"
@@ -99,6 +103,8 @@ export function createInitialInkState(composer = ""): TuiInkState {
       tasks: 0
     },
     conversationScrollOffset: 0,
+    reviewDiffExpanded: false,
+    reviewCompareMode: false,
     composer,
     composerCursorPosition: composer.length,
     commandPaletteOpen: false
@@ -142,6 +148,7 @@ export function reduceInkState(
       next.selectedRunId = pendingRun.id;
     }
     next.focus = "review";
+    next.reviewCompareMode = false;
     return next;
   }
   if (key === "memory") {
@@ -164,6 +171,14 @@ export function reduceInkState(
     applyContinuePrompt(next, model);
     return next;
   }
+  if (key === "toggle_review_diff" || (key === "enter" && state.focus === "review")) {
+    toggleReviewDiff(next, model);
+    return next;
+  }
+  if (key === "toggle_compare") {
+    toggleCompareMode(next, model);
+    return next;
+  }
   if (key === "cancel") {
     next.statusMessage =
       "Cancellation is unavailable for this CLI TUI context; use the owning run service when supported.";
@@ -183,6 +198,11 @@ export function reduceInkState(
     return next;
   }
   if (key === "escape") {
+    if (next.focus === "review" && next.reviewDiffExpanded) {
+      next.reviewDiffExpanded = false;
+      next.statusMessage = "Review diff collapsed.";
+      return next;
+    }
     next.commandPaletteOpen = false;
     next.focus = "work";
     return next;
@@ -517,6 +537,44 @@ function applyContinuePrompt(
     : "Continue the current task with the selected agent.";
   state.composerCursorPosition = state.composer.length;
   state.statusMessage = "Continuation prompt prepared; press ctrl+j to submit.";
+}
+
+function toggleReviewDiff(
+  state: TuiInkState,
+  model: TuiCurrentContextModel
+): void {
+  if (state.focus !== "review") {
+    return;
+  }
+  if (!model.review.evidence.inlineDiff) {
+    state.statusMessage = "No review diff is available for the selected run.";
+    return;
+  }
+  state.reviewDiffExpanded = !state.reviewDiffExpanded;
+  state.statusMessage = state.reviewDiffExpanded
+    ? "Review diff expanded."
+    : "Review diff collapsed.";
+}
+
+function toggleCompareMode(
+  state: TuiInkState,
+  model: TuiCurrentContextModel
+): void {
+  if (state.focus !== "review") {
+    return;
+  }
+  const run = selectedRun(model, state);
+  const comparableRuns = run
+    ? model.runs.filter((candidate) => candidate.taskId === run.taskId)
+    : [];
+  if (comparableRuns.length < 2) {
+    state.statusMessage = "Split compare requires at least two runs for the selected task.";
+    return;
+  }
+  state.reviewCompareMode = !state.reviewCompareMode;
+  state.statusMessage = state.reviewCompareMode
+    ? "Split compare shown read-only."
+    : "Split compare hidden.";
 }
 
 function nextFocus(current: TuiInkFocus, delta: number): TuiInkFocus {

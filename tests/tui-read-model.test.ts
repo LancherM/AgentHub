@@ -452,6 +452,84 @@ describe("TUI current-context read model", () => {
       ]);
   });
 
+  it("projects small git diffs into inline TUI review evidence", async () => {
+    const runtime = createCliRuntime({ storageMode: "memory" });
+    await runtime.projectRepository.create({
+      id: "project_diff",
+      name: "Diff",
+      rootPath: "/tmp/diff",
+      createdAt: now,
+      updatedAt: now
+    });
+    await runtime.conversationThreadRepository.create({
+      id: "thread_diff",
+      projectId: "project_diff",
+      title: "Diff",
+      createdAt: now,
+      updatedAt: now
+    });
+    await runtime.taskRepository.create({
+      id: "task_diff",
+      projectId: "project_diff",
+      title: "Project diff",
+      metadata: { threadId: "thread_diff" },
+      status: "completed",
+      createdAt: now,
+      updatedAt: now
+    });
+    await runtime.taskRunRepository.create({
+      id: "run_diff",
+      taskId: "task_diff",
+      agentKind: "codex",
+      status: "succeeded",
+      startedAt: "2026-05-29T10:00:00.000Z",
+      completedAt: "2026-05-29T10:01:00.000Z",
+      createdAt: "2026-05-29T10:00:00.000Z",
+      updatedAt: "2026-05-29T10:01:00.000Z"
+    });
+    await runtime.runEventRepository.create(
+      event("event_diff", "run_diff", 0, "message", "diff ready")
+    );
+    await runtime.runArtifactRepository.create({
+      id: "artifact_diff_inline",
+      taskRunId: "run_diff",
+      kind: "git_diff",
+      content: [
+        "diff --git a/src/auth.ts b/src/auth.ts",
+        "@@ -1,3 +1,3 @@",
+        " const keep = true;",
+        "-const mode = \"old\";",
+        "+const mode = \"new\";"
+      ].join("\n"),
+      metadata: {
+        changedFiles: ["src/auth.ts"],
+        stat: { filesChanged: 1, insertions: 1, deletions: 1 }
+      },
+      createdAt: now
+    });
+
+    const model = await buildTuiCurrentContextModel(runtime, {
+      projectId: "project_diff",
+      threadId: "thread_diff",
+      selectedRunId: "run_diff"
+    });
+
+    expect(model.runs[0]?.evidence.inlineDiff).toMatchObject({
+      mode: "inline",
+      summary: "(+1/-1 in 1 files)",
+      lines: [
+        expect.objectContaining({ kind: "file" }),
+        expect.objectContaining({ kind: "file" }),
+        expect.objectContaining({ kind: "context", text: "const keep = true;" }),
+        expect.objectContaining({ kind: "delete", text: "-const mode = \"old\";" }),
+        expect.objectContaining({ kind: "add", text: "+const mode = \"new\";" })
+      ]
+    });
+    expect(model.review.evidence.inlineDiff?.mode).toBe("inline");
+    expect(model.conversation.find((entry) => entry.id === "review-pending:run_diff")?.inlineDiff?.mode)
+      .toBe("inline");
+  });
+
   it("reports bounded loop stop reasons for terminal, pending, waiting, blocking, and limits", async () => {
     await expect(loopStopReasonFor([roleCall({ id: "call_ok", status: "succeeded" })]))
       .resolves.toBe("terminal");

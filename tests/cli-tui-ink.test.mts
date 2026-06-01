@@ -408,6 +408,89 @@ describe("Ink TUI renderer", () => {
     expect(typingOutput).not.toContain("[1] Run more tests");
   });
 
+  it("renders inline diff projections and collapses dense pending-review groups", () => {
+    const output = renderToString(
+      React.createElement(TuiInkFrame, {
+        model: {
+          ...baseModel,
+          conversation: [
+            ...Array.from({ length: 4 }, (_value, index) => ({
+              id: `review-pending:run_dense_${index}`,
+              type: "review_pending",
+              timestamp: `2026-05-29T12:0${index}:00.000Z`,
+              author: "@codex",
+              agent: "codex",
+              runId: `run_dense_${index}`,
+              statusLabel: "awaiting review",
+              outputLines: [`pending ${index}`]
+            })),
+            {
+              id: "run:run_diff",
+              type: "agent_completed",
+              timestamp: "2026-05-29T12:10:00.000Z",
+              author: "@codex",
+              agent: "codex",
+              runId: "run_diff",
+              statusLabel: "completed",
+              outputLines: ["patched auth"],
+              inlineDiff: inlineDiffFixture()
+            }
+          ]
+        },
+        state: createInitialInkState(),
+        terminal: { columns: 120, rows: 40 }
+      }),
+      { columns: 120 }
+    );
+
+    expect(output).toContain("4 pending reviews collapsed");
+    expect(output).toContain("diff --git a/src/auth.ts b/src/auth.ts");
+    expect(output).toContain("-const mode = \"old\";");
+    expect(output).toContain("+const mode = \"new\";");
+  });
+
+  it("expands review diff details and shows read-only split compare state", () => {
+    const output = renderToString(
+      React.createElement(TuiInkFrame, {
+        model: modelWithReviewDiffAndComparableRuns(),
+        state: {
+          ...createInitialInkState(),
+          focus: "review",
+          reviewDiffExpanded: true,
+          reviewCompareMode: true
+        },
+        terminal: { columns: 120, rows: 40 }
+      }),
+      { columns: 120 }
+    );
+
+    expect(output).toContain("diff expanded");
+    expect(output).toContain("+const mode = \"new\";");
+    expect(output).toContain("split compare (read-only)");
+    expect(output).toContain("run_compare_a @codex ok");
+    expect(output).toContain("run_compare_b @claude-code ok");
+  });
+
+  it("toggles review diff expansion with Enter and Escape", async () => {
+    const instance = render(
+      React.createElement(TuiInkApp, {
+        model: modelWithReviewDiffAndComparableRuns(),
+        state: { ...createInitialInkState(), focus: "review" },
+        terminal: { columns: 120, rows: 40 },
+        interactive: true
+      })
+    );
+
+    instance.stdin.write("\r");
+    await waitForFrame(instance, "Review diff expanded.");
+    expect(instance.lastFrame()).toContain("+const mode = \"new\";");
+
+    instance.stdin.write("\u001b");
+    await waitForFrame(instance, "Review diff collapsed.");
+    expect(instance.lastFrame()).not.toContain("+const mode = \"new\";");
+    instance.unmount();
+  });
+
   it("keeps full ids and governed commands inside the command palette", () => {
     const output = renderToString(
       React.createElement(TuiInkFrame, {
@@ -1089,6 +1172,52 @@ function modelWithSuggestions() {
       }
     ],
     activeRuns: []
+  };
+}
+
+function inlineDiffFixture() {
+  return {
+    mode: "inline",
+    summary: "(+1/-1 in 1 files)",
+    lines: [
+      { kind: "file", text: "diff --git a/src/auth.ts b/src/auth.ts" },
+      { kind: "file", text: "@@ -1,3 +1,3 @@" },
+      { kind: "context", text: " const keep = true;" },
+      { kind: "delete", text: "-const mode = \"old\";" },
+      { kind: "add", text: "+const mode = \"new\";" }
+    ]
+  };
+}
+
+function modelWithReviewDiffAndComparableRuns() {
+  const runs = [
+    {
+      ...baseModel.runs[0],
+      id: "run_compare_a",
+      taskId: "task_compare",
+      agentKind: "codex",
+      reviewDecision: { status: "pending" }
+    },
+    {
+      ...baseModel.runs[0],
+      id: "run_compare_b",
+      taskId: "task_compare",
+      agentKind: "claude-code",
+      reviewDecision: { status: "accepted" }
+    }
+  ];
+  return {
+    ...baseModel,
+    runs,
+    review: {
+      ...baseModel.review,
+      selectedId: "run_compare_a",
+      evidence: {
+        ...baseModel.review.evidence,
+        linkedRunId: "run_compare_a",
+        inlineDiff: inlineDiffFixture()
+      }
+    }
   };
 }
 

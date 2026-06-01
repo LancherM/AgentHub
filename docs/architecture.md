@@ -466,6 +466,13 @@ agent-result conversation entry. They are prompt templates, not actions:
 composer submissions, and they are disabled as soon as the composer contains
 text or the Work conversation is scrolled away from the bottom. The `c`
 shortcut only prepares a continuation prompt in local Ink state.
+Inline diff display is also a read-model projection over existing `git_diff`
+run artifacts or run metadata. Small diffs with five or fewer changed lines are
+projected into bounded file/add/delete/context lines; larger diffs expose only
+a stat summary. The Ink renderer can group dense adjacent pending-review
+entries, expand/collapse Review-pane diff lines, and show a read-only compare
+summary for tasks with multiple runs, but it does not generate comparison
+reports, apply patches, or mutate review decisions.
 The direct CLI entrypoint exits after command completion, so one-shot TUI smoke
 renders do not leave local SQLite helper processes holding the terminal open.
 For interactive launches, the CLI default IO includes `process.stdin`, and the
