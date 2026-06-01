@@ -264,6 +264,16 @@ export function TuiInkApp(props: TuiInkAppProps): React.ReactElement {
         app.exit();
         return;
       }
+      if (busy) {
+        if (key.escape && state.composer.length > 0) {
+          setState((current) => ({
+            ...current,
+            composer: "",
+            statusMessage: "Composer cleared."
+          }));
+        }
+        return;
+      }
       const wantsSubmit =
         input === "\n" ||
         input === "\r" ||
@@ -318,7 +328,7 @@ export function TuiInkApp(props: TuiInkAppProps): React.ReactElement {
         setState((current) => ({ ...current, composer: `${current.composer}${input}` }));
       }
     },
-    { isActive: props.interactive && !busy }
+    { isActive: props.interactive }
   );
 
   return h(TuiInkFrame, {

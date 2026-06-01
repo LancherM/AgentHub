@@ -257,14 +257,12 @@ describe("Ink TUI renderer", () => {
       await new Promise((resolve) => setTimeout(resolve, 1));
     }
     instance.stdin.write("\r");
-    await new Promise((resolve) => setTimeout(resolve, 25));
 
-    expect(instance.lastFrame()).toContain("Prompt submission timed out after 5ms.");
+    await waitForFrame(instance, "Prompt submission timed out after 5ms.");
 
     instance.stdin.write("\u001b");
-    await new Promise((resolve) => setTimeout(resolve, 25));
 
-    expect(instance.lastFrame()).toContain("Composer cleared.");
+    await waitForFrame(instance, "Composer cleared.");
     instance.unmount();
   });
 
@@ -492,4 +490,20 @@ function modelWithTranscript(count) {
       createdAt: `2026-05-29T12:${String(index).padStart(2, "0")}:00.000Z`
     }))
   };
+}
+
+async function waitForFrame(
+  instance,
+  expected,
+  timeoutMs = 500
+) {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    const frame = instance.lastFrame() ?? "";
+    if (frame.includes(expected)) {
+      return frame;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error(`Timed out waiting for frame text: ${expected}`);
 }
