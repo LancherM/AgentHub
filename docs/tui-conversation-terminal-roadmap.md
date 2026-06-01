@@ -1,6 +1,6 @@
 # TUI Conversation Terminal Roadmap
 
-Status: initial implementation landed
+Status: product-fit implementation landed
 Last updated: 2026-06-01
 
 This document translates the TUI conversation-terminal proposal into an
@@ -90,10 +90,9 @@ interface TuiCurrentContextModel {
 
 type TuiConversationEntryType =
   | "user_message"
-  | "assistant_message"
   | "agent_completed"
   | "agent_failed"
-  | "review_decided"
+  | "review_pending"
   | "delegation";
 
 interface TuiConversationEntry {
@@ -101,51 +100,44 @@ interface TuiConversationEntry {
   type: TuiConversationEntryType;
   timestamp: string;
   author: string;
-  content: string;
+  content?: string;
   agent?: string;
   runId?: string;
   roleCallId?: string;
+  outputLines?: string[];
   statusLabel?: string;
   verificationLine?: string;
   riskLine?: string;
-  decision?: "accepted" | "rejected";
+  delegatedTo?: string;
+  delegationTask?: string;
 }
 
 interface TuiActiveRunBox {
   runId: string;
   agent: string;
-  state: "queued" | "running";
-  tone: "green" | "yellow" | "red";
   title: string;
   outputLines: string[];
-  evidenceLines: string[];
-  actionHint?: string;
-  createdAt: string;
-  updatedAt: string;
 }
 ```
 
 Build rules:
 
 - Derive `conversation` from persisted conversation messages, terminal run
-  summaries, RoleCall creation/delegation events, and `review_decision`
-  artifacts.
+  summaries, and RoleCall creation/delegation events.
 - Keep ordering timestamp-stable and deterministic. Conversation messages use
   message sequence first, then timestamp; run and review entries use run or
   artifact timestamps.
 - Exclude runs represented in `activeRuns` from folded `agent_completed` or
   `agent_failed` entries to prevent duplicate first-screen state.
-- Treat queued/running task runs as active boxes.
-- Fold terminal runs with pending review into ordinary conversation text with a
-  compact `v details` hint. Accept/reject shortcuts remain in the Review pane
-  so Work stays prompt-first.
-- Populate `outputLines` from bounded agent-facing output first, with
-  adapter-progress lines as the fallback. Verification and final lifecycle
-  status lines should not crowd out actual agent output.
-- Populate `evidenceLines` from existing verification, risk, and diff
-  summaries. Do not read raw patches or full logs for the Work view.
-- Bound line counts and characters at the read-model layer so the renderer can
-  remain simple and deterministic.
+- Treat running task runs as active boxes.
+- Fold terminal runs with pending review into a one-line `review_pending`
+  conversation entry pointing to `[V]iew`; accept/reject shortcuts remain in
+  the Review pane so Work stays prompt-first.
+- Populate active `outputLines` from recent agent-facing stdout/stderr, with
+  adapter-progress lines as the fallback. Verification, risk, and diff evidence
+  do not render inside active boxes.
+- Populate terminal completed/failed entries with agent-facing output plus
+  verification and risk summary lines.
 
 No persistence schema change is required for the first implementation.
 
@@ -163,14 +155,13 @@ Warnings/status
 MainView
 Composer
 FocusTabs
-StatusBar
 ```
 
 `WorkView` becomes the conversation terminal:
 
-- `ConversationFlow` renders bounded historical entries and scroll state.
-- `ActiveRunBox` renders queued/running runs after the latest conversation
-  entry.
+- `ConversationFlow` renders historical entries by visible terminal line and
+  scroll state.
+- `ActiveRunBox` renders running runs after the latest conversation entry.
 - Auxiliary panes are not shown inside Work.
 - Runs, Review, Graph, Tasks, Memory, Help, and Palette keep using the existing
   pane components as focused auxiliary views.
@@ -185,10 +176,10 @@ Narrow terminals hide fields from the right side first: risk, iteration, agent.
 
 `ActiveRunBox` behavior:
 
-- fixed height by default: one title line, six content lines, one action or
-  cursor line;
+- fixed eight-line shape: one title border, five output lines, one cursor line,
+  and one bottom border;
 - truncate long lines rather than wrapping them into layout shifts;
-- green for queued/running, red only for failed active-state errors;
+- green for running;
 - show at most three boxes; if more exist, collapse the oldest boxes to title
   lines.
 
@@ -271,16 +262,15 @@ Acceptance:
 Scope:
 
 - Add `conversation` and `activeRuns` to `TuiCurrentContextModel`.
-- Build folded terminal run entries and review-decision entries from existing
-  persisted evidence.
-- Build active run boxes from queued/running runs and newest actionable pending
-  review run.
+- Build folded terminal run entries from existing persisted evidence.
+- Build one-line pending-review entries for terminal runs awaiting audit.
+- Build active run boxes from running runs.
 - Add unit coverage in `tests/tui-read-model.test.ts`.
 
 Acceptance:
 
-- Empty, running, succeeded, failed, pending-review, review-decided, and
-  delegated RoleCall states produce deterministic read models.
+- Empty, running, succeeded, failed, pending-review, and delegated RoleCall
+  states produce deterministic read models.
 - Existing TUI model fields remain backward-compatible for auxiliary panes.
 
 Verification:
@@ -319,7 +309,7 @@ pnpm test tests/cli-tui-ink.test.mts
 Scope:
 
 - Tail agent-facing run output into `ActiveRunBox.outputLines`.
-- Render queued/running states as active boxes.
+- Render running states as active boxes.
 - Wire Review-pane `a` and `R` shortcuts to the existing review-decision
   callback for the selected pending terminal run.
 - Refresh immediately after review decisions.
@@ -327,8 +317,8 @@ Scope:
 Acceptance:
 
 - Running boxes update through the existing polling path.
-- Awaiting-review boxes disappear after accept/reject and become folded
-  conversation entries.
+- Awaiting-review entries disappear after accept/reject and terminal runs fold
+  into completed/failed conversation output.
 - Review shortcuts remain audit-only.
 
 Verification:
@@ -345,8 +335,7 @@ Scope:
 - Add direct `w/r/v/g/t/m` focus keys.
 - Make Work scroll operate on `conversationScrollOffset`.
 - Preserve selection and scroll state across model refreshes.
-- Tighten StatusBar hints for composer, Work, auxiliary panes, and
-  pending-review conversation entries.
+- Tighten composer, Work, auxiliary pane, and pending-review keyboard behavior.
 
 Acceptance:
 

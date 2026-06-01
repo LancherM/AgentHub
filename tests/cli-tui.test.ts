@@ -55,7 +55,7 @@ describe("CLI TUI command", () => {
 
     const rendered = output.join("");
     expect(errors.join("")).toBe("");
-    expect(rendered).toContain("TUI Project #review · @codex");
+    expect(rendered).toContain("TUI Project · @codex");
     expect(rendered).toContain("@codex");
     expect(rendered).toContain("Check TUI evidence.");
     expect(rendered).toContain("@codex run_1 ● running");
@@ -139,7 +139,7 @@ describe("CLI TUI command", () => {
       )
     ).resolves.toBe(0);
     expect(errors.join("")).toBe("");
-    expect(output.join("")).toContain("TUI Project #review");
+    expect(output.join("")).toContain("TUI Project");
   });
 
   it("submits prompts through the CLI chat path and keeps unknown mentions as text", async () => {

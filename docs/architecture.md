@@ -411,11 +411,14 @@ renders the Work view as a conversation flow plus bounded active-run boxes,
 moves the shortcut-labelled Work/Runs/View/Graph/Tasks/Memory/Help tabs below
 the composer, and uses Ink components for terminal layout instead of
 hand-wrapped string panels.
-Active-run boxes cover queued/running runs only. They show bounded
-agent-facing output before verification/risk evidence. Terminal pending-review
-runs fold into the conversation projection with a compact Review-pane hint, so
-the Work view remains prompt-first and printable keys do not trigger audit
-mutations.
+Active-run boxes cover running runs only. They use a fixed eight-line shape:
+title border, five stdout/stderr tail lines, cursor indicator, and bottom
+border. Verification, risk, diff, and review evidence stay out of active
+boxes. Terminal pending-review runs fold into the conversation projection as a
+single awaiting-review line pointing to the View pane, while completed or
+failed runs with a recorded review decision render their agent-facing output
+plus verification and risk summary lines. The Work view remains prompt-first,
+and printable keys do not trigger audit mutations.
 The direct CLI entrypoint exits after command completion, so one-shot TUI smoke
 renders do not leave local SQLite helper processes holding the terminal open.
 For interactive launches, the CLI default IO includes `process.stdin`, and the
@@ -424,11 +427,11 @@ test IO object omits stdin. This keeps `agent-hub tui` interactive in a real
 terminal while preserving deterministic `--once` and non-TTY smoke renders.
 Composer editing is handled in the Ink component state before shortcut
 dispatch: printable keys update the composer, `/team` clears the composer and
-switches to the Team view, `Enter` submits other non-empty composer text, `Esc`
-clears composer text, and `Tab` remains a focus-navigation key even while text
-is present. The status bar switches to composer-specific hints while text is
-present. This keeps role/review shortcuts from stealing normal prompt text
-without trapping focus inside the composer.
+switches to the Team view, `Enter` submits other non-empty composer text,
+empty-composer `Enter` is a no-op, `Esc` clears composer text or returns
+auxiliary panes to Work, and `Tab` remains a focus-navigation key even while
+text is present. This keeps role/review shortcuts from stealing normal prompt
+text without trapping focus inside the composer.
 Interactive TUI prompt submission reuses the CLI chat/task-runner path with a
 buffered CLI IO adapter. The run still persists messages, run cards, run
 events, diffs, risks, and review evidence through the shared repositories, but
@@ -443,9 +446,11 @@ does not add an event daemon, remote worker, or incremental orchestration path.
 Busy submit/review state remains local Ink state too: the renderer keeps
 keyboard navigation and composer editing active, but gates additional submit or
 review-decision writes until the in-flight callback finishes. Scrollable
-conversation state, active-run selection, and terminal-height list windows
-remain local Ink state, while selected runs, tasks, and RoleCalls continue to
-resolve through the existing read-model summaries.
+conversation state is line-based and re-anchors to the bottom when new
+conversation or active-run output appears. Active-run selection and
+terminal-height list windows remain local Ink state, while selected runs,
+tasks, and RoleCalls continue to resolve through the existing read-model
+summaries.
 The command hint helper falls back from an absent selected RoleCall to
 `agent-hub team roles list --project-id <project-id>`, the command palette
 includes the same role-list command beside run, review, and memory commands, and

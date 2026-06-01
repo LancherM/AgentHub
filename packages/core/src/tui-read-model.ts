@@ -108,10 +108,9 @@ export interface TuiCurrentContextModel {
 
 export type TuiConversationEntryType =
   | "user_message"
-  | "assistant_message"
   | "agent_completed"
   | "agent_failed"
-  | "review_decided"
+  | "review_pending"
   | "delegation";
 
 export interface TuiConversationEntry {
@@ -119,28 +118,23 @@ export interface TuiConversationEntry {
   type: TuiConversationEntryType;
   timestamp: string;
   author: string;
-  content: string;
+  content?: string;
   agent?: string;
   runId?: string;
   roleCallId?: string;
+  outputLines?: string[];
   statusLabel?: string;
   verificationLine?: string;
   riskLine?: string;
-  decision?: "accepted" | "rejected";
-  reviewLine?: string;
+  delegatedTo?: string;
+  delegationTask?: string;
 }
 
 export interface TuiActiveRunBox {
   runId: string;
   agent: string;
-  state: "queued" | "running";
-  tone: "green" | "yellow" | "red";
   title: string;
   outputLines: string[];
-  evidenceLines: string[];
-  actionHint?: string;
-  createdAt: string;
-  updatedAt: string;
 }
 
 export interface TuiContextSummary {
@@ -378,7 +372,7 @@ const defaultLimits = {
   agentOutputChars: 1_200
 };
 
-const activeRunStatuses = new Set<TaskRunStatus>(["queued", "running"]);
+const activeRunStatuses = new Set<TaskRunStatus>(["running"]);
 const terminalRunStatuses = new Set<TaskRunStatus>([
   "succeeded",
   "failed",
@@ -475,6 +469,14 @@ export async function buildTuiCurrentContextModel(
     .filter((node) => !node.hidden)
     .slice(0, input.maxRoleCalls ?? defaultLimits.roleCalls);
 
+  const conversation = await summarizeConversation(repositories, {
+    messages,
+    runs: boundedRuns,
+    roleCalls,
+    activeRuns,
+    limit: Math.max(input.maxMessages ?? defaultLimits.messages, defaultLimits.messages)
+  });
+
   return {
     context: {
       projectId: project?.id ?? projectId,
@@ -486,13 +488,7 @@ export async function buildTuiCurrentContextModel(
       selectedAgent: input.selectedAgent,
       contextMode: input.contextMode ?? "runtime_injection"
     },
-    conversation: summarizeConversation({
-      messages,
-      runs: boundedRuns,
-      roleCalls,
-      activeRuns,
-      limit: Math.max(input.maxMessages ?? defaultLimits.messages, defaultLimits.messages)
-    }),
+    conversation,
     activeRuns,
     transcript: summarizeTranscript(messages, input.maxMessages ?? defaultLimits.messages),
     runs: boundedRuns,
@@ -567,29 +563,24 @@ async function summarizeActiveRunBox(
   run: TuiRunSummary
 ): Promise<TuiActiveRunBox> {
   const events = await repositories.runEventRepository.listByRunId(run.id);
-  const state: TuiActiveRunBox["state"] = run.status === "queued" ? "queued" : "running";
-  const evidenceLines = activeRunEvidenceLines(run);
   return {
     runId: run.id,
     agent: run.agentKind,
-    state,
-    tone: "green",
-    title: `@${run.agentKind} ${run.id} ${activeRunStatusIcon(state)} ${activeRunStatusLabel(state)}`,
-    outputLines: recentAgentRunOutputLines(events, run),
-    evidenceLines,
-    actionHint: undefined,
-    createdAt: activeRunCreatedAt(run),
-    updatedAt: run.updatedAt
+    title: `@${run.agentKind} ${run.id} ● running`,
+    outputLines: recentAgentRunOutputLines(events, run)
   };
 }
 
-function summarizeConversation(input: {
+async function summarizeConversation(
+  repositories: TuiReadModelRepositories,
+  input: {
   messages: ConversationMessage[];
   runs: TuiRunSummary[];
   roleCalls: RoleCall[];
   activeRuns: TuiActiveRunBox[];
   limit: number;
-}): TuiConversationEntry[] {
+}
+): Promise<TuiConversationEntry[]> {
   const activeRunIds = new Set(input.activeRuns.map((run) => run.runId));
   const runLinkedMessages = new Map(
     input.messages
@@ -605,62 +596,76 @@ function summarizeConversation(input: {
     if (message.kind === "run_card" || message.role === "tool") {
       continue;
     }
+    if (message.runId && activeRunIds.has(message.runId)) {
+      continue;
+    }
     if (linkedRun && terminalRunStatuses.has(linkedRun.status)) {
+      continue;
+    }
+    if (message.role === "user") {
+      entries.push({
+        id: `message:${message.id}`,
+        type: "user_message",
+        timestamp: message.createdAt,
+        author: messageAuthor(message),
+        content: truncate(message.content, defaultLimits.contentChars),
+        agent: message.agentKind,
+        runId: message.runId,
+        statusLabel: message.status,
+        sortRank: 10 + message.sequence
+      });
       continue;
     }
     entries.push({
       id: `message:${message.id}`,
-      type: message.role === "user" ? "user_message" : "assistant_message",
+      type: "agent_completed",
       timestamp: message.createdAt,
       author: messageAuthor(message),
-      content: truncate(message.content, defaultLimits.contentChars),
+      outputLines: outputTextLines(message.content),
       agent: message.agentKind,
       runId: message.runId,
-      statusLabel: message.status,
+      statusLabel: "completed",
       sortRank: 10 + message.sequence
     });
   }
 
-  for (const run of input.runs) {
+  const terminalRunEntries = await Promise.all(input.runs.map(async (run) => {
     if (!terminalRunStatuses.has(run.status) || activeRunIds.has(run.id)) {
-      continue;
+      return [];
     }
-    entries.push({
+    if (run.reviewDecision.status === "pending") {
+      return [{
+        id: `review-pending:${run.id}`,
+        type: "review_pending" as const,
+        timestamp: run.completedAt ?? run.updatedAt,
+        author: `@${run.agentKind}`,
+        content: "awaiting review — 切换到 [V]iew 查看详情",
+        agent: run.agentKind,
+        runId: run.id,
+        statusLabel: "awaiting review",
+        sortRank: 30
+      }];
+    }
+    const entryType = run.status === "succeeded" ? "agent_completed" : "agent_failed";
+    return [{
       id: `run:${run.id}`,
-      type: run.status === "failed" ? "agent_failed" : "agent_completed",
+      type: entryType as "agent_completed" | "agent_failed",
       timestamp: run.completedAt ?? run.updatedAt,
       author: `@${run.agentKind}`,
-      content: truncate(
-        runLinkedMessages.get(run.id) ??
-          run.evidence.resultSummary ??
-          `${run.agentKind} ${run.status}`,
-        defaultLimits.agentOutputChars
+      outputLines: await terminalRunOutputLines(
+        repositories,
+        run,
+        runLinkedMessages.get(run.id)
       ),
       agent: run.agentKind,
       runId: run.id,
-      statusLabel: run.status,
+      statusLabel: terminalRunStatusLabel(run),
       verificationLine: conversationVerificationLine(run.evidence),
       riskLine: conversationRiskLine(run.evidence),
-      reviewLine: run.reviewDecision.status === "pending"
-        ? "review pending: v details"
-        : undefined,
       sortRank: 30
-    });
-    if (run.reviewDecision.status !== "pending") {
-      const decision = run.reviewDecision.status === "accepted" ? "accepted" : "rejected";
-      entries.push({
-        id: `review:${run.id}:${decision}`,
-        type: "review_decided",
-        timestamp: run.reviewDecision.acceptedAt ?? run.reviewDecision.rejectedAt ?? run.updatedAt,
-        author: "review",
-        content: reviewDecisionContent(run),
-        agent: run.agentKind,
-        runId: run.id,
-        decision,
-        sortRank: 40
-      });
-    }
-  }
+    }];
+  }));
+  entries.push(...terminalRunEntries.flat());
 
   for (const call of input.roleCalls) {
     entries.push({
@@ -670,6 +675,8 @@ function summarizeConversation(input: {
       author: `@${call.callerRole}`,
       content: `delegated to @${call.calleeRole}: ${truncate(call.task, defaultLimits.contentChars)}`,
       roleCallId: call.id,
+      delegatedTo: call.calleeRole,
+      delegationTask: truncate(call.task, defaultLimits.contentChars),
       statusLabel: call.status,
       sortRank: 20
     });
@@ -770,6 +777,32 @@ async function summarizeRunEvidence(
   };
 }
 
+async function terminalRunOutputLines(
+  repositories: TuiReadModelRepositories,
+  run: TuiRunSummary,
+  linkedMessageContent: string | undefined
+): Promise<string[]> {
+  const events = await repositories.runEventRepository.listByRunId(run.id);
+  const agentOutput = extractAgentFacingOutput(
+    { events: events.map(toAgentOutputEvent) },
+    { includeTerminalSummaries: false }
+  );
+  const outputLines = outputTextLines(agentOutput);
+  if (outputLines.length > 0) {
+    return outputLines;
+  }
+  if (linkedMessageContent) {
+    const linkedLines = outputTextLines(linkedMessageContent);
+    if (linkedLines.length > 0) {
+      return linkedLines;
+    }
+  }
+  if (run.evidence.resultSummary) {
+    return [run.evidence.resultSummary];
+  }
+  return [`${run.agentKind} ${run.status}`];
+}
+
 function recentAgentRunOutputLines(events: RunEvent[], run: TuiRunSummary): string[] {
   const agentOutput = extractAgentFacingOutput(
     { events: events.map(toAgentOutputEvent) },
@@ -854,16 +887,12 @@ function activeRunEvidenceLines(run: TuiRunSummary): string[] {
   ].filter((line): line is string => line !== undefined);
 }
 
-function activeRunStatusLabel(state: TuiActiveRunBox["state"]): string {
-  return state;
-}
-
-function activeRunStatusIcon(state: TuiActiveRunBox["state"]): string {
-  return state === "queued" ? "○" : "●";
-}
-
 function activeRunCreatedAt(run: TuiRunSummary): string {
   return run.startedAt ?? run.completedAt ?? run.updatedAt;
+}
+
+function terminalRunStatusLabel(run: TuiRunSummary): string {
+  return run.status === "succeeded" ? "completed" : "failed";
 }
 
 function conversationVerificationLine(
@@ -872,10 +901,14 @@ function conversationVerificationLine(
   if (!evidence.checks) {
     return undefined;
   }
-  const failedNames = evidence.checks.failedNames.length > 0
-    ? `: ${evidence.checks.failedNames.join(", ")}`
-    : "";
-  return `checks ${evidence.checks.passed}/${evidence.checks.failed}/${evidence.checks.skipped}${failedNames}`;
+  const total = evidence.checks.passed + evidence.checks.failed + evidence.checks.skipped;
+  if (evidence.checks.failed > 0) {
+    const failedNames = evidence.checks.failedNames.length > 0
+      ? `: ${evidence.checks.failedNames.join(", ")}`
+      : "";
+    return `verification failed (${total} checks${failedNames})`;
+  }
+  return `verification passed (${total} checks)`;
 }
 
 function conversationRiskLine(evidence: TuiEvidenceSummary): string | undefined {

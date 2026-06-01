@@ -40,17 +40,14 @@ const baseModel = {
       content: "Check the TUI shell."
     },
     {
-      id: "run:run_27984312-fc9a-46bf-9ccf-c06997187091",
-      type: "agent_completed",
+      id: "review-pending:run_27984312-fc9a-46bf-9ccf-c06997187091",
+      type: "review_pending",
       timestamp: "2026-05-29T12:05:00.000Z",
       author: "@codex",
-      content: "Codex exited with code 0",
+      content: "awaiting review — 切换到 [V]iew 查看详情",
       agent: "codex",
       runId: "run_27984312-fc9a-46bf-9ccf-c06997187091",
-      statusLabel: "succeeded",
-      verificationLine: "checks 0/0/1",
-      riskLine: "risk blocking: No changed files were collected.",
-      reviewLine: "review pending: v details"
+      statusLabel: "awaiting review"
     }
   ],
   activeRuns: [],
@@ -183,14 +180,12 @@ describe("Ink TUI renderer", () => {
       { columns: 78 }
     );
 
-    expect(output).toContain("TUI Project #review · @codex");
+    expect(output).toContain("TUI Project · @codex");
     expect(output).toContain("user");
     expect(output).toContain("Check the TUI shell.");
-    expect(output).toContain("@codex run_27984312 ✓ succeeded");
-    expect(output).toContain("checks 0/0/1");
-    expect(output).toContain("risk blocking");
-    expect(output).toContain("review pending: v details");
-    expect(output).not.toContain("awaiting review");
+    expect(output).toContain("@codex run_27984312 △ awaiting review");
+    expect(output).toContain("切换到 [V]iew 查看详情");
+    expect(output).not.toContain("checks 0/0/1");
     expect(output).toContain("> @codex prompt");
     expect(output.indexOf("> @codex prompt")).toBeLessThan(output.indexOf("[W]ork"));
     expect(output).not.toContain("Runs + Review");
@@ -209,7 +204,7 @@ describe("Ink TUI renderer", () => {
 
     expect(output).toContain("@codex run_active ● running");
     expect(output).toContain("Reading logout.ts");
-    expect(output).toContain("checks 1/0/0");
+    expect(output).not.toContain("checks 1/0/0");
     expect(output).toContain("▍");
   });
 
@@ -318,7 +313,7 @@ describe("Ink TUI renderer", () => {
       React.createElement(TuiInkFrame, {
         model,
         state: createInitialInkState(),
-        terminal: { columns: 78, rows: 24 }
+        terminal: { columns: 78, rows: 12 }
       }),
       { columns: 78 }
     );
@@ -327,15 +322,15 @@ describe("Ink TUI renderer", () => {
       React.createElement(TuiInkFrame, {
         model,
         state: scrolledState,
-        terminal: { columns: 78, rows: 24 }
+        terminal: { columns: 78, rows: 12 }
       }),
       { columns: 78 }
     );
 
-    expect(bottomOutput).toContain("Messages 3-10/10");
+    expect(bottomOutput).toContain("Transcript message 9");
     expect(bottomOutput).not.toContain("Transcript message 0");
-    expect(scrolledOutput).toContain("Messages 1-8/10");
-    expect(scrolledOutput).toContain("Transcript message 0");
+    expect(scrolledOutput).toContain("Transcript message 2");
+    expect(scrolledOutput).not.toContain("Transcript message 9");
   });
 
   it("polls the read model while interactive", async () => {
@@ -354,7 +349,7 @@ describe("Ink TUI renderer", () => {
 
     await new Promise((resolve) => setTimeout(resolve, 30));
 
-    expect(instance.lastFrame()).toContain("@codex run_polled01 ✓ succeeded");
+    expect(instance.lastFrame()).toContain("@codex run_polled01 ✓ completed");
     instance.unmount();
   });
 
@@ -456,7 +451,7 @@ describe("Ink TUI renderer", () => {
       expect.objectContaining({ prompt: "@unknown summarize" })
     ]);
     expect(instance.lastFrame()).toContain("Submitted prompt.");
-    expect(instance.lastFrame()).toContain("@codex run_12345678 ✓ succeeded");
+    expect(instance.lastFrame()).toContain("@codex run_12345678 ✓ completed");
     instance.unmount();
   });
 
@@ -477,16 +472,12 @@ describe("Ink TUI renderer", () => {
     await new Promise((resolve) => setTimeout(resolve, 25));
 
     expect(instance.lastFrame()).toContain("> exit");
-    expect(instance.lastFrame()).toContain("enter submit");
-    expect(instance.lastFrame()).toContain("tab focus");
-    expect(instance.lastFrame()).toContain("esc clear");
 
     instance.stdin.write("\u001b");
     await new Promise((resolve) => setTimeout(resolve, 25));
 
     expect(instance.lastFrame()).toContain("Composer cleared.");
     expect(instance.lastFrame()).toContain("> @codex prompt");
-    expect(instance.lastFrame()).toContain("x exit");
     instance.unmount();
   });
 
@@ -600,7 +591,7 @@ describe("Ink TUI renderer", () => {
 
     expect(decisions).toEqual([]);
     expect(instance.lastFrame()).toContain("> a");
-    expect(instance.lastFrame()).not.toContain("awaiting review");
+    expect(instance.lastFrame()).toContain("awaiting review");
     instance.unmount();
   });
 
@@ -655,6 +646,7 @@ function modelWithRuns(ids) {
     id,
     taskId: `task_${index}`,
     taskTitle: `Run ${index}`,
+    reviewDecision: { status: "accepted" },
     updatedAt: `2026-05-29T12:${String(index).padStart(2, "0")}:00.000Z`
   }));
   return {
@@ -666,11 +658,11 @@ function modelWithRuns(ids) {
       type: "agent_completed",
       timestamp: run.updatedAt,
       author: `@${run.agentKind}`,
-      content: `Run ${run.id} completed.`,
+      outputLines: [`Run ${run.id} completed.`],
       agent: run.agentKind,
       runId: run.id,
-      statusLabel: "succeeded",
-      verificationLine: "checks 0/0/1",
+      statusLabel: "completed",
+      verificationLine: "verification passed (1 checks)",
       riskLine: "risk blocking: No changed files were collected."
     }))
   };
@@ -691,10 +683,13 @@ function modelWithTranscript(count) {
     transcript: messages,
     conversation: messages.map((message) => ({
       id: `message:${message.id}`,
-      type: message.role === "user" ? "user_message" : "assistant_message",
+      type: message.role === "user" ? "user_message" : "agent_completed",
       timestamp: message.createdAt,
       author: message.author,
-      content: message.content
+      content: message.role === "user" ? message.content : undefined,
+      outputLines: message.role === "user" ? undefined : [message.content],
+      agent: message.role === "user" ? undefined : "codex",
+      statusLabel: message.role === "user" ? undefined : "completed"
     })),
     activeRuns: []
   };
@@ -707,13 +702,8 @@ function modelWithActiveRun() {
       {
         runId: "run_active",
         agent: "codex",
-        state: "running",
-        tone: "green",
         title: "@codex run_active ● running",
-        outputLines: ["Reading logout.ts", "Running tests"],
-        evidenceLines: ["checks 1/0/0", "risk low"],
-        createdAt: "2026-05-29T12:06:00.000Z",
-        updatedAt: "2026-05-29T12:07:00.000Z"
+        outputLines: ["Reading logout.ts", "Running tests"]
       }
     ]
   };

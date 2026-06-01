@@ -61,17 +61,10 @@ describe("TUI current-context read model", () => {
       "message_2",
       "message_3"
     ]);
-    expect(model.activeRuns.map((run) => `${run.runId}:${run.state}`)).toEqual([
-      "run_active:running"
-    ]);
+    expect(model.activeRuns.map((run) => run.runId)).toEqual(["run_active"]);
     expect(model.activeRuns.find((run) => run.runId === "run_active")).toMatchObject({
       title: "@fake run_active ● running",
-      outputLines: ["adapter started", "verification started"],
-      evidenceLines: [
-        "checks 1/1/1: pnpm test",
-        "risk medium: partial verification",
-        "files 2 +12 -4"
-      ]
+      outputLines: ["adapter started", "verification started"]
     });
     expect(model.conversation.map((entry) => entry.id)).toEqual([
       "message:message_1",
@@ -81,12 +74,11 @@ describe("TUI current-context read model", () => {
       "delegation:call_succeeded",
       "delegation:call_waiting_approval",
       "delegation:call_waiting_context",
-      "run:run_done"
+      "review-pending:run_done"
     ]);
-    expect(model.conversation.find((entry) => entry.id === "run:run_done")).toMatchObject({
-      type: "agent_completed",
-      content: "I changed the cleanup summary.",
-      reviewLine: "review pending: v details"
+    expect(model.conversation.find((entry) => entry.id === "review-pending:run_done")).toMatchObject({
+      type: "review_pending",
+      content: "awaiting review — 切换到 [V]iew 查看详情"
     });
     expect(model.runs.map((run) => run.id)).toEqual(["run_active", "run_done"]);
     expect(model.runs[0]).toMatchObject({
@@ -217,15 +209,14 @@ describe("TUI current-context read model", () => {
         diff: { changedFiles: 1, insertions: 4, deletions: 1 }
       }
     });
-    expect(model.activeRuns.map((run) => `${run.runId}:${run.state}`)).toEqual([
-      "run_active:running"
-    ]);
+    expect(model.activeRuns.map((run) => run.runId)).toEqual(["run_active"]);
     expect(model.conversation.map((entry) => entry.id)).toContain("run:run_completed");
-    expect(model.conversation.map((entry) => entry.id)).toContain("run:run_no_change");
-    expect(model.conversation.find((entry) => entry.id === "run:run_no_change")).toMatchObject({
-      reviewLine: "review pending: v details"
+    expect(model.conversation.map((entry) => entry.id)).toContain("review-pending:run_no_change");
+    expect(model.conversation.find((entry) => entry.id === "review-pending:run_no_change")).toMatchObject({
+      type: "review_pending",
+      content: "awaiting review — 切换到 [V]iew 查看详情"
     });
-    expect(model.conversation.map((entry) => entry.id)).toContain("review:run_completed:accepted");
+    expect(model.conversation.map((entry) => entry.id)).not.toContain("review:run_completed:accepted");
   });
 
   it("reports bounded loop stop reasons for terminal, pending, waiting, blocking, and limits", async () => {

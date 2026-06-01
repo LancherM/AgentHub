@@ -1,4 +1,5 @@
 import type {
+  TuiConversationEntry,
   TuiCurrentContextModel,
   TuiRoleCallNodeSummary,
   TuiRunSummary,
@@ -185,13 +186,6 @@ export function reduceInkState(
     return next;
   }
   if (key === "enter") {
-    const pendingRun = state.focus === "work"
-      ? selectedPendingReviewRun(model, state)
-      : undefined;
-    if (pendingRun) {
-      next.selectedRunId = pendingRun.id;
-    }
-    next.focus = "review";
     return next;
   }
   if (key === "up" || key === "down" || key === "page_up" || key === "page_down" || key === "home" || key === "end") {
@@ -392,7 +386,7 @@ function moveSelection(
     return;
   }
   if (state.focus === "work") {
-    moveConversationScroll(state, key, model.conversation.length);
+    moveConversationScroll(state, key, conversationLineCount(model.conversation));
     return;
   }
   if (state.focus === "team" || state.focus === "memory" || state.focus === "help") {
@@ -416,9 +410,9 @@ function moveSelection(
 function moveConversationScroll(
   state: TuiInkState,
   key: "up" | "down" | "page_up" | "page_down" | "home" | "end",
-  conversationLength: number
+  conversationLineLength: number
 ): void {
-  const maxOffset = Math.max(0, conversationLength - defaultConversationWindowSize);
+  const maxOffset = Math.max(0, conversationLineLength - defaultConversationWindowSize);
   if (key === "home") {
     state.conversationScrollOffset = maxOffset;
     return;
@@ -432,6 +426,34 @@ function moveConversationScroll(
     Math.max(state.conversationScrollOffset + delta, 0),
     maxOffset
   );
+}
+
+function conversationLineCount(entries: TuiConversationEntry[]): number {
+  return entries.reduce((count, entry) => count + conversationEntryLineCount(entry), 0);
+}
+
+function conversationEntryLineCount(entry: TuiConversationEntry): number {
+  if (entry.type === "review_pending" || entry.type === "delegation") {
+    return 1;
+  }
+  const contentLines = Array.isArray(entry.outputLines)
+    ? entry.outputLines.length
+    : textLineCount(entry.content);
+  if (entry.type === "agent_completed" || entry.type === "agent_failed") {
+    return 1 +
+      Math.max(1, contentLines) +
+      (entry.verificationLine ? 1 : 0) +
+      (entry.riskLine ? 1 : 0);
+  }
+  return 1 + Math.max(1, contentLines);
+}
+
+function textLineCount(content: string | undefined): number {
+  return (content ?? "")
+    .split(/\r?\n/)
+    .map((value) => value.trim())
+    .filter(Boolean)
+    .length;
 }
 
 function toggleSelectedRoleCallCollapse(

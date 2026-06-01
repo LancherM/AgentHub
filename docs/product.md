@@ -67,13 +67,14 @@ registration, failed context reads, unavailable agent CLIs, reserved role
 executors, and missing linked-run evidence render concise status text plus
 equivalent CLI recovery commands instead of opening broad browsers or applying
 side effects.
-The Work focus is a conversation terminal. User and assistant messages,
-delegations, terminal run summaries, review decisions, checks, and risks are
-folded into a chronological conversation flow. Queued/running runs appear as
-stable active-run boxes with bounded agent-facing output tails and evidence
-lines. Terminal runs fold back into the conversation as ordinary assistant
-text; runs that still need a local audit decision show a compact `v details`
-hint so the Review pane can handle accept/reject without stealing prompt text.
+The Work focus is a conversation terminal. User messages, RoleCall
+delegations, completed or failed terminal run output, verification summaries,
+and risk summaries are folded into a chronological conversation flow. Running
+runs appear as stable fixed-height active-run boxes with only the latest
+agent-facing stdout/stderr tail plus the active cursor indicator. Runs awaiting
+local review leave the active box and become a single awaiting-review
+conversation line pointing at `[V]iew`, so the Review pane can handle
+accept/reject without stealing prompt text.
 The default tab bar matches the
 conversation-terminal scheme: Work, Runs, View, Graph, Tasks, Memory, and Help
 stay one key away instead of being embedded into the first screen. Team roles
@@ -91,9 +92,8 @@ changing the governance boundaries above.
 The TUI composer is prompt-first while editing: printable keys append to the
 prompt, `/team` opens the Team roles view without submitting a prompt, `Enter`
 submits non-command prompts when a submission callback is available, `Esc`
-clears the in-progress prompt, and `Tab` remains available for focus navigation.
-The status bar switches to composer-specific hints so exit shortcuts are not
-advertised while a prompt is being edited. Interactive
+clears the in-progress prompt, and empty-composer `Enter` does not switch
+panes. `Tab` remains available for focus navigation. Interactive
 submit and review-decision actions show bounded busy states without locking the
 keyboard: users can still switch focus, open command hints, and draft the next
 prompt while the current local action is running. The TUI only blocks duplicate
@@ -105,9 +105,10 @@ chat/run records and then shown through TUI panes, not dumped directly into the
 Ink alternate screen during an interactive submit.
 Interactive TUI sessions periodically refresh the same current-context read
 model so externally changing run, task, conversation, RoleCall, and review
-state can appear without a manual keypress. The conversation can scroll back
-from Work focus, Runs and Tasks panes expand on taller terminals, direct
-lowercase focus keys switch Work/Runs/View/Graph/Tasks/Memory when the composer
+state can appear without a manual keypress. New conversation or active-run
+output anchors Work back to the bottom. The conversation can scroll back by
+rendered line from Work focus, Runs and Tasks panes expand on taller terminals,
+direct lowercase or uppercase focus keys switch Work/Runs/View/Graph/Tasks/Memory when the composer
 is empty, and the Review reject shortcut is uppercase `R` so vim-style `j`
 remains navigation rather than an audit write.
 When the graph has no selected RoleCall, the TUI command hint and command
