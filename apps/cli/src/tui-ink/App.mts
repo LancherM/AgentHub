@@ -22,8 +22,10 @@ import {
   selectedReviewRunId,
   selectedRun,
   selectedTask,
+  selectedTaskIndex,
   unavailableRoleExecutorCommands,
   visibleRoleCalls,
+  selectedRoleCallIndex,
   type TuiInkKey,
   type TuiInkState
 } from "./state.mjs";
@@ -347,8 +349,10 @@ function RunsPane({
     return block(line("No runs in the current context.", { dimColor: true }));
   }
   const activeRun = selectedRun(model, state);
+  const offset = Math.min(state.scrollOffsets.runs, Math.max(0, model.runs.length - 8));
+  const visibleRuns = model.runs.slice(offset, offset + 8);
   return block(
-    ...model.runs.slice(0, 8).map((run, index) =>
+    ...visibleRuns.map((run) =>
       line(runLine(run, run.id === activeRun?.id), {
         color: run.id === activeRun?.id ? "green" : undefined
       })
@@ -406,13 +410,17 @@ function RoleCallsPane({
       )
     );
   }
+  const selectedIndex = selectedRoleCallIndex(model, state);
+  const offset = Math.min(state.scrollOffsets.roleCalls, Math.max(0, nodes.length - 8));
+  const visibleNodes = nodes.slice(offset, offset + (detail ? 12 : 5));
   return block(
     line(
       `active ${model.roleCalls.counts.active} waiting ${model.roleCalls.counts.waiting} pending ${model.roleCalls.counts.pending} stop ${model.roleCalls.loop.stopReason}`,
       { dimColor: true }
     ),
-    ...nodes.slice(0, detail ? 12 : 5).map((node, index) => {
-      const selected = index === state.selectedRoleCallIndex;
+    ...visibleNodes.map((node, index) => {
+      const absoluteIndex = offset + index;
+      const selected = absoluteIndex === selectedIndex;
       const indent = "  ".repeat(node.depth);
       const run = node.linkedRunId ? ` ${compactId(node.linkedRunId)}` : "";
       return line(
@@ -427,9 +435,10 @@ function TranscriptPane({ model }: { model: TuiCurrentContextModel }): React.Rea
   if (model.transcript.length === 0) {
     return block(line("Transcript", { bold: true }), line("No messages in the current context.", { dimColor: true }));
   }
+  const offset = Math.max(0, model.transcript.length - 5);
   return block(
     line("Transcript", { bold: true }),
-    ...model.transcript.slice(-5).flatMap((message) => [
+    ...model.transcript.slice(offset, offset + 5).flatMap((message) => [
       line(`${message.author}${message.runId ? ` ${compactId(message.runId)}` : ""}`, {
         color: "cyan"
       }),
@@ -443,11 +452,13 @@ function TasksPane({ model, state }: { model: TuiCurrentContextModel; state: Tui
     return h(Pane, { title: "Tasks" }, line("No current-context tasks.", { dimColor: true }));
   }
   const task = selectedTask(model, state);
+  const offset = Math.min(state.scrollOffsets.tasks, Math.max(0, model.tasks.length - 8));
+  const selectedIndex = selectedTaskIndex(model, state);
   return h(
     Pane,
     { title: `Tasks ${model.tasks.length}` },
-    ...model.tasks.slice(0, 8).map((item, index) =>
-      line(`${index === state.selectedTaskIndex ? ">" : " "} ${item.id} ${item.status} ${truncateText(item.title, 72)}${item.nextAction ? ` next ${item.nextAction}` : ""}`)
+    ...model.tasks.slice(offset, offset + 8).map((item, index) =>
+      line(`${offset + index === selectedIndex ? ">" : " "} ${item.id} ${item.status} ${truncateText(item.title, 72)}${item.nextAction ? ` next ${item.nextAction}` : ""}`)
     ),
     ...(task
       ? [
@@ -570,6 +581,18 @@ function keyToAction(input: string, key: Key, focus: string): TuiInkKey | undefi
   }
   if (key.downArrow || input === "j") {
     return focus === "review" ? undefined : "down";
+  }
+  if (key.pageUp) {
+    return "page_up";
+  }
+  if (key.pageDown) {
+    return "page_down";
+  }
+  if (key.home) {
+    return "home";
+  }
+  if (key.end) {
+    return "end";
   }
   if (key.leftArrow) {
     return "left";

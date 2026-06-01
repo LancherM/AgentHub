@@ -88,10 +88,19 @@ export type TuiFocusMode =
 export interface TuiShellState {
   focus: TuiFocusMode;
   selectedRunIndex: number;
+  selectedRunId?: string;
   selectedRoleCallIndex: number;
+  selectedRoleCallId?: string;
   selectedTaskIndex: number;
+  selectedTaskId?: string;
   hideCompletedRoleCalls: boolean;
   collapsedRoleCallIds: string[];
+  scrollOffsets: {
+    runs: number;
+    roleCalls: number;
+    tasks: number;
+    transcript: number;
+  };
   composer: string;
   commandPaletteOpen: boolean;
   statusMessage?: string;
@@ -355,6 +364,12 @@ export function createInitialTuiShellState(composer = ""): TuiShellState {
     selectedTaskIndex: 0,
     hideCompletedRoleCalls: false,
     collapsedRoleCallIds: [],
+    scrollOffsets: {
+      runs: 0,
+      roleCalls: 0,
+      tasks: 0,
+      transcript: 0
+    },
     composer,
     commandPaletteOpen: false
   };

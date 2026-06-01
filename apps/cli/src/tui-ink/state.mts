@@ -17,10 +17,19 @@ export type TuiInkFocus =
 export interface TuiInkState {
   focus: TuiInkFocus;
   selectedRunIndex: number;
+  selectedRunId?: string;
   selectedRoleCallIndex: number;
+  selectedRoleCallId?: string;
   selectedTaskIndex: number;
+  selectedTaskId?: string;
   hideCompletedRoleCalls: boolean;
   collapsedRoleCallIds: string[];
+  scrollOffsets: {
+    runs: number;
+    roleCalls: number;
+    tasks: number;
+    transcript: number;
+  };
   composer: string;
   commandPaletteOpen: boolean;
   statusMessage?: string;
@@ -31,6 +40,10 @@ export type TuiInkKey =
   | "shift_tab"
   | "up"
   | "down"
+  | "page_up"
+  | "page_down"
+  | "home"
+  | "end"
   | "left"
   | "right"
   | "enter"
@@ -65,6 +78,12 @@ export function createInitialInkState(composer = ""): TuiInkState {
     selectedTaskIndex: 0,
     hideCompletedRoleCalls: false,
     collapsedRoleCallIds: [],
+    scrollOffsets: {
+      runs: 0,
+      roleCalls: 0,
+      tasks: 0,
+      transcript: 0
+    },
     composer,
     commandPaletteOpen: false
   };
@@ -140,7 +159,7 @@ export function reduceInkState(
     next.focus = "review";
     return next;
   }
-  if (key === "up" || key === "down") {
+  if (key === "up" || key === "down" || key === "page_up" || key === "page_down" || key === "home" || key === "end") {
     moveSelection(next, key, model);
     return next;
   }
@@ -155,7 +174,18 @@ export function selectedRun(
   model: TuiCurrentContextModel,
   state: TuiInkState
 ): TuiRunSummary | undefined {
-  return model.runs[boundedIndex(state.selectedRunIndex, model.runs.length)];
+  return model.runs[selectedRunIndex(model, state)];
+}
+
+export function selectedRunIndex(
+  model: TuiCurrentContextModel,
+  state: TuiInkState
+): number {
+  return selectedIndexById(
+    model.runs,
+    state.selectedRunId,
+    state.selectedRunIndex
+  );
 }
 
 export function visibleRoleCalls(
@@ -187,14 +217,36 @@ export function selectedRoleCall(
   state: TuiInkState
 ): TuiRoleCallNodeSummary | undefined {
   const nodes = visibleRoleCalls(model, state);
-  return nodes[boundedIndex(state.selectedRoleCallIndex, nodes.length)];
+  return nodes[selectedRoleCallIndex(model, state)];
+}
+
+export function selectedRoleCallIndex(
+  model: TuiCurrentContextModel,
+  state: TuiInkState
+): number {
+  return selectedIndexById(
+    visibleRoleCalls(model, state),
+    state.selectedRoleCallId,
+    state.selectedRoleCallIndex
+  );
 }
 
 export function selectedTask(
   model: TuiCurrentContextModel,
   state: TuiInkState
 ): TuiTaskSummary | undefined {
-  return model.tasks[boundedIndex(state.selectedTaskIndex, model.tasks.length)];
+  return model.tasks[selectedTaskIndex(model, state)];
+}
+
+export function selectedTaskIndex(
+  model: TuiCurrentContextModel,
+  state: TuiInkState
+): number {
+  return selectedIndexById(
+    model.tasks,
+    state.selectedTaskId,
+    state.selectedTaskIndex
+  );
 }
 
 export function selectedReviewRunId(
@@ -245,21 +297,46 @@ export function unavailableRoleExecutorCommands(
 
 function moveSelection(
   state: TuiInkState,
-  key: "up" | "down",
+  key: "up" | "down" | "page_up" | "page_down" | "home" | "end",
   model: TuiCurrentContextModel
 ): void {
-  const delta = key === "down" ? 1 : -1;
+  const delta = selectionDelta(key);
   if (state.focus === "runs") {
-    state.selectedRunIndex = clampIndex(state.selectedRunIndex + delta, model.runs.length);
+    const nextIndex = nextSelectionIndex(selectedRunIndex(model, state), delta, model.runs.length);
+    state.selectedRunIndex = nextIndex;
+    state.selectedRunId = model.runs[nextIndex]?.id;
+    state.scrollOffsets.runs = ensureVisible(
+      state.scrollOffsets.runs,
+      nextIndex,
+      8,
+      model.runs.length
+    );
     return;
   }
   if (state.focus === "tasks") {
-    state.selectedTaskIndex = clampIndex(state.selectedTaskIndex + delta, model.tasks.length);
+    const nextIndex = nextSelectionIndex(selectedTaskIndex(model, state), delta, model.tasks.length);
+    state.selectedTaskIndex = nextIndex;
+    state.selectedTaskId = model.tasks[nextIndex]?.id;
+    state.scrollOffsets.tasks = ensureVisible(
+      state.scrollOffsets.tasks,
+      nextIndex,
+      8,
+      model.tasks.length
+    );
     return;
   }
+  const nodes = visibleRoleCalls(model, state);
+  const nextIndex = nextSelectionIndex(selectedRoleCallIndex(model, state), delta, nodes.length);
   state.selectedRoleCallIndex = clampIndex(
-    state.selectedRoleCallIndex + delta,
-    visibleRoleCalls(model, state).length
+    nextIndex,
+    nodes.length
+  );
+  state.selectedRoleCallId = nodes[state.selectedRoleCallIndex]?.id;
+  state.scrollOffsets.roleCalls = ensureVisible(
+    state.scrollOffsets.roleCalls,
+    state.selectedRoleCallIndex,
+    8,
+    nodes.length
   );
 }
 
@@ -303,6 +380,69 @@ function nextFocus(current: TuiInkFocus, delta: number): TuiInkFocus {
   const index = focusModes.indexOf(current);
   const next = (index + delta + focusModes.length) % focusModes.length;
   return focusModes[next];
+}
+
+function selectedIndexById<T extends { id: string }>(
+  items: T[],
+  selectedId: string | undefined,
+  fallbackIndex: number
+): number {
+  if (items.length <= 0) {
+    return 0;
+  }
+  if (selectedId) {
+    const idIndex = items.findIndex((item) => item.id === selectedId);
+    if (idIndex >= 0) {
+      return idIndex;
+    }
+  }
+  return boundedIndex(fallbackIndex, items.length);
+}
+
+function selectionDelta(
+  key: "up" | "down" | "page_up" | "page_down" | "home" | "end"
+): number {
+  if (key === "page_up") {
+    return -8;
+  }
+  if (key === "page_down") {
+    return 8;
+  }
+  if (key === "home") {
+    return Number.NEGATIVE_INFINITY;
+  }
+  if (key === "end") {
+    return Number.POSITIVE_INFINITY;
+  }
+  return key === "down" ? 1 : -1;
+}
+
+function nextSelectionIndex(current: number, delta: number, length: number): number {
+  if (delta === Number.NEGATIVE_INFINITY) {
+    return 0;
+  }
+  if (delta === Number.POSITIVE_INFINITY) {
+    return Math.max(0, length - 1);
+  }
+  return clampIndex(current + delta, length);
+}
+
+function ensureVisible(
+  offset: number,
+  index: number,
+  windowSize: number,
+  length: number
+): number {
+  if (length <= windowSize) {
+    return 0;
+  }
+  if (index < offset) {
+    return index;
+  }
+  if (index >= offset + windowSize) {
+    return Math.min(index - windowSize + 1, Math.max(0, length - windowSize));
+  }
+  return Math.min(offset, Math.max(0, length - windowSize));
 }
 
 function boundedIndex(index: number, length: number): number {

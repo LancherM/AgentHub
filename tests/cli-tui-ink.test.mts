@@ -2,7 +2,11 @@ import React from "../apps/cli/node_modules/react/index.js";
 import { renderToString } from "../apps/cli/node_modules/ink/build/index.js";
 import { describe, expect, it } from "vitest";
 import { TuiInkFrame } from "../apps/cli/src/tui-ink/App.mts";
-import { createInitialInkState } from "../apps/cli/src/tui-ink/state.mts";
+import {
+  createInitialInkState,
+  reduceInkState,
+  selectedRun
+} from "../apps/cli/src/tui-ink/state.mts";
 
 const baseModel = {
   context: {
@@ -135,4 +139,54 @@ describe("Ink TUI renderer", () => {
     expect(output).toContain("agent-hub runs show run_27984312-fc9a-46bf-9ccf-c06997187091");
     expect(output).toContain("agent-hub memory list --project-id project_1");
   });
+
+  it("preserves selected runs by id when refreshed models insert new runs", () => {
+    const model = modelWithRuns(["run_00000001", "run_00000002", "run_00000003"]);
+    let state = { ...createInitialInkState(), focus: "runs" };
+
+    state = reduceInkState(state, "down", model);
+    state = reduceInkState(state, "down", model);
+
+    expect(selectedRun(model, state)?.id).toBe("run_00000003");
+    expect(selectedRun(modelWithRuns(["run_99999999", "run_00000001", "run_00000002", "run_00000003"]), state)?.id)
+      .toBe("run_00000003");
+  });
+
+  it("scrolls the runs pane to keep keyboard selection visible", () => {
+    const model = modelWithRuns(
+      Array.from({ length: 12 }, (_value, index) => `run_${index.toString(16).padStart(8, "0")}`)
+    );
+    let state = { ...createInitialInkState(), focus: "runs" };
+    for (let index = 0; index < 10; index += 1) {
+      state = reduceInkState(state, "down", model);
+    }
+
+    const output = renderToString(
+      React.createElement(TuiInkFrame, {
+        model,
+        state,
+        terminal: { columns: 120, rows: 40 }
+      }),
+      { columns: 120 }
+    );
+
+    expect(state.scrollOffsets.runs).toBeGreaterThan(0);
+    expect(selectedRun(model, state)?.id).toBe("run_0000000a");
+    expect(output).toContain("> run_0000000a @codex ok");
+    expect(output).not.toContain("run_00000000 @codex ok");
+  });
 });
+
+function modelWithRuns(ids) {
+  const template = baseModel.runs[0];
+  return {
+    ...baseModel,
+    runs: ids.map((id, index) => ({
+      ...template,
+      id,
+      taskId: `task_${index}`,
+      taskTitle: `Run ${index}`,
+      updatedAt: `2026-05-29T12:${String(index).padStart(2, "0")}:00.000Z`
+    }))
+  };
+}

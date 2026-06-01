@@ -113,8 +113,8 @@ Current implementation status:
 - The legacy string workbench renderer and its snapshots have been removed.
 - The renderer receives read models and action callbacks only; it does not
   access SQLite, filesystem, git, shell, or agent adapters directly.
-- Focus, selection, command palette, composer, and review-decision shortcuts
-  exist in the Ink reducer, with scroll offsets still pending.
+- Focus, id-stable selection, pane scroll offsets, command palette, composer,
+  and review-decision shortcuts exist in the Ink reducer.
 
 ## Product Layout
 
@@ -256,7 +256,8 @@ Acceptance:
 
 ### Phase Ink-2: Focus, Selection, And Scrolling
 
-Status: partially implemented
+Status: done for runs, RoleCalls, and tasks; transcript scroll can be added
+later if needed
 
 Goal: make the app feel like a real TUI instead of a static dashboard.
 
