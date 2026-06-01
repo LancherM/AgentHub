@@ -925,6 +925,7 @@ interface CliMentionParseResult {
 
 interface ParsedCliChatTurn extends CliMentionParseResult {
   prompt: string;
+  teamRoles: WorkgroupRoleRunMetadata[];
 }
 
 export interface ChatOptions {
@@ -1371,6 +1372,8 @@ async function runChatTurn(
       deliveryMode: "runtime_injection",
       conversationBrief,
       roleSkillReferences: participant.role?.defaultSkillReferences,
+      role: participant.role,
+      teamRoles: participant.role ? parsed.teamRoles : undefined,
       workspaceBasePath: state.workspaceBasePath,
       workspaceCleanupPolicy: state.retainOnFailure ? "retain_on_failure" : undefined,
       dryRun: state.dryRun,
@@ -2266,10 +2269,14 @@ async function parseCliChatTurn(
   rawLine: string
 ): Promise<ParsedCliChatTurn> {
   const roles = await resolvedRoleValues(runtime, state.project.id);
+  const teamRoles = roles
+    .filter((role) => role.enabled)
+    .map((role) => toWorkgroupRoleRunMetadata(role));
   const parsedMentions = parseCliWorkgroupMentions(rawLine, roles, state.debug);
   if (parsedMentions.participants.length > 0 || parsedMentions.roleMentions.length > 0) {
     return {
       ...parsedMentions,
+      teamRoles,
       prompt: parsedMentions.cleanedPrompt
     };
   }
@@ -2288,6 +2295,7 @@ async function parseCliChatTurn(
       }
     ],
     cleanedPrompt: parsedAgent.prompt,
+    teamRoles,
     prompt: parsedAgent.prompt
   };
 }

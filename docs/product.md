@@ -143,10 +143,16 @@ Context stores are Agent Hub-owned directories containing project context,
 approved memory, and project skills. Runtime context delivery is non-invasive by
 default: generated task briefs and context packs are injected into the adapter
 run rather than written into the source checkout.
+Role-backed runs add an injected role envelope to that same runtime payload:
+the running adapter receives its role handle, persona/instructions, safe
+permission summary, compact team list, and collaboration rules that require
+RoleCall-based delegation instead of simulating other roles.
 
 Skills are explicit `SKILL.md` files. Project skills live in the project
 context store. Global skills live in Agent Hub app data and are selected by task
-or role reference. Skills stay separate from approved memory.
+or role reference. Skills stay separate from approved memory. Runtime injection
+also tells role-backed adapters to ignore user-installed global skills or
+repository-local agent instructions unless Agent Hub explicitly injected them.
 
 Rooms are metadata-backed conversation threads. Rooms group user messages,
 run-card messages, assistant output, timeline events, role assignments, and
@@ -215,7 +221,9 @@ calls. For every run it:
 - compiles a task brief and context pack;
 - creates an isolated git worktree outside the original checkout;
 - materializes runtime files only inside that worktree;
-- invokes the selected adapter from the worktree cwd;
+- invokes the selected adapter from the worktree cwd, including role/team
+  runtime metadata when the run was created from a role mention or accepted
+  RoleCall;
 - captures and incrementally persists stdout, stderr, parsed structured
   messages, status, error, and exit events;
 - runs configured verification commands in the worktree;

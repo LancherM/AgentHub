@@ -484,6 +484,7 @@ export interface CreateRunInput {
   title?: string;
   agentId: AgentId;
   role?: WorkgroupRoleRunMetadata;
+  teamRoles?: WorkgroupRoleRunMetadata[];
   agentSessionId?: string;
   contextMode: ContextMode;
   deliveryMode?: "runtime_injection" | "worktree_overlay";

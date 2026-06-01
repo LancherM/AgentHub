@@ -690,6 +690,11 @@ class RepositoryThreadService implements ThreadService {
           title,
           agentId: participant.agentId,
           role: participant.role,
+          teamRoles: participant.role
+            ? availableRoles
+                .filter((role) => role.enabled)
+                .map((role) => toWorkgroupRoleRunMetadata(role))
+            : undefined,
           agentSessionId,
           assignment,
           contextMode,

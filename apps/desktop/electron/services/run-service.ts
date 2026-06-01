@@ -114,12 +114,14 @@ interface ParsedCreateRunInput
     | "continueFromRunId"
     | "continueFromMessageId"
     | "role"
+    | "teamRoles"
     | "taskId"
   > {
   taskId?: string;
   assignment?: WorkgroupTaskAssignmentMetadata;
   conversationBrief?: string | ConversationContextBrief;
   role?: WorkgroupRoleRunMetadata;
+  teamRoles?: WorkgroupRoleRunMetadata[];
   startImmediately: boolean;
   agentSessionId?: string;
   continueFromRunId?: string;
@@ -626,6 +628,8 @@ class RepositoryRunService implements RunService {
       deliveryMode: input.deliveryMode,
       agentHubHome: this.context.agentHubHome,
       roleSkillReferences: input.role?.defaultSkillReferences,
+      role: input.role,
+      teamRoles: input.teamRoles,
       conversationBrief: input.conversationBrief,
       agentSessionId: input.agentSessionId,
       userConstraints: roleUserConstraints(input.role),
@@ -1020,6 +1024,7 @@ function parseCreateRunInput(
     conversationBrief: input.conversationBrief,
     agentSessionId: input.agentSessionId,
     role: parseRoleMetadata(input.role),
+    teamRoles: parseTeamRoleMetadataArray(input.teamRoles),
     assignment: parseTaskAssignmentMetadata(input.assignment),
     startImmediately: input.startImmediately !== false,
     continueFromRunId: input.continueFromRunId,
@@ -1127,6 +1132,9 @@ function parseRoleMetadata(
     defaultInstructions:
       typeof role.defaultInstructions === "string" ? role.defaultInstructions : "",
     permissions: stringArray(role.permissions),
+    defaultSkillReferences: role.defaultSkillReferences?.map((reference) => ({
+      ...reference
+    })),
     contextPolicy: {
       scope: contextScope,
       includeApprovedMemory: contextPolicy?.includeApprovedMemory === true,
@@ -1139,6 +1147,89 @@ function parseRoleMetadata(
         typeof approvalPolicy?.summary === "string"
           ? approvalPolicy.summary
           : ""
+    }
+  };
+}
+
+function parseTeamRoleMetadataArray(
+  value: unknown
+): WorkgroupRoleRunMetadata[] | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!Array.isArray(value)) {
+    throw new Error("team role metadata must be an array when provided");
+  }
+  return value.map((entry) => parseTeamRoleMetadata(entry));
+}
+
+function parseTeamRoleMetadata(value: unknown): WorkgroupRoleRunMetadata {
+  if (!value || typeof value !== "object") {
+    throw new Error("team role metadata entries must be objects");
+  }
+  const role = value as WorkgroupRoleRunMetadata;
+  if (
+    typeof role.roleId !== "string" ||
+    typeof role.roleHandle !== "string" ||
+    typeof role.displayName !== "string" ||
+    typeof role.executorKind !== "string"
+  ) {
+    throw new Error(
+      "team role metadata must include roleId, roleHandle, displayName, and executorKind"
+    );
+  }
+  const normalizedHandle = normalizeWorkgroupRoleHandle(role.roleHandle);
+  if (
+    role.roleId.trim().length === 0 ||
+    !normalizedHandle ||
+    normalizedHandle !== role.roleHandle ||
+    role.displayName.trim().length === 0
+  ) {
+    throw new Error("team role metadata contains invalid role identity values");
+  }
+  if (
+    !workgroupExecutorKinds.includes(
+      role.executorKind as WorkgroupRoleRunMetadata["executorKind"]
+    )
+  ) {
+    throw new Error("team role metadata executorKind is not supported");
+  }
+  if (
+    role.executorKind === "agent_adapter" &&
+    !isWorkgroupAgentAdapterKind(role.adapterKind)
+  ) {
+    throw new Error("team role metadata adapterKind is required for agent_adapter executors");
+  }
+  const contextPolicy = recordValue(role.contextPolicy);
+  const approvalPolicy = recordValue(role.approvalPolicy);
+  return {
+    roleId: role.roleId,
+    roleHandle: role.roleHandle,
+    displayName: role.displayName,
+    executorKind: role.executorKind,
+    adapterKind:
+      role.executorKind === "agent_adapter" ? role.adapterKind : undefined,
+    persona: typeof role.persona === "string" ? role.persona : "",
+    defaultInstructions:
+      typeof role.defaultInstructions === "string" ? role.defaultInstructions : "",
+    permissions: stringArray(role.permissions),
+    defaultSkillReferences: role.defaultSkillReferences?.map((reference) => ({
+      ...reference
+    })),
+    contextPolicy: {
+      scope:
+        typeof contextPolicy?.scope === "string" &&
+        contextPolicy.scope.trim().length > 0
+          ? contextPolicy.scope
+          : "current_thread_and_project_context",
+      includeApprovedMemory: contextPolicy?.includeApprovedMemory === true,
+      includeThreadSummary: contextPolicy?.includeThreadSummary !== false,
+      instructions: stringArray(contextPolicy?.instructions)
+    },
+    approvalPolicy: {
+      requiredFor: stringArray(approvalPolicy?.requiredFor),
+      summary:
+        typeof approvalPolicy?.summary === "string" ? approvalPolicy.summary : ""
     }
   };
 }

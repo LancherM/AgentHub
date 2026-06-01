@@ -72,7 +72,8 @@ core sequence:
 3. Build the task-specific context pack and task brief.
 4. Create an isolated git worktree under the configured Agent Hub worktree base.
 5. Materialize generated runtime files inside the worktree.
-6. Run the adapter from the worktree cwd with runtime-injected context.
+6. Run the adapter from the worktree cwd with runtime-injected context and,
+   for role-backed runs, role/team metadata.
 7. Persist ordered run events and progress events as they are produced.
 8. Run structured verification commands in the worktree.
 9. Collect diff metadata and a bounded persisted patch artifact.
@@ -98,6 +99,11 @@ diagnostic events according to the existing failure boundary.
 typed context pack and task brief, and adapters receive that payload at runtime.
 Repository-level `AGENTS.md`, `CLAUDE.md`, `.claude/skills`, and
 `.agents/skills` are not written by default.
+When a run is created from a CLI role mention or accepted RoleCall, `TaskRunner`
+passes safe `WorkgroupRoleRunMetadata` into the adapter input. Process-backed
+adapters render a `## Your Role` section, collaboration rules, and a compact
+team list into stdin before the task brief. Direct adapter runs without role
+metadata omit that section.
 
 `worktree_overlay` is a run mode that writes generated `AGENTS.md`, `CLAUDE.md`,
 briefs, context packs, and skill copies only inside the isolated worktree.
@@ -145,6 +151,10 @@ They perform run-scoped preflight with the run environment; missing CLI,
 authentication, or setup failures become persisted error/exit events instead of
 service crashes. JSONL stdout is parsed into bounded message/status/error
 events where possible, while raw stdout/stderr remains preserved.
+The runtime prompt explicitly tells role-backed process adapters that Agent Hub
+coordinates roles externally, delegation must be requested through RoleCalls,
+and user-installed global skills or repository-local agent instructions should
+be ignored unless they were injected by Agent Hub for that run.
 
 `ProcessRunner` builds child environments from a small allowlist and explicit
 overrides. It can add common local CLI directories to `PATH` for GUI-launched
@@ -222,8 +232,9 @@ execute.
 
 CLI chat, room sends, and desktop room turns resolve role handles in the local
 service layer. Runnable participants create TaskRunner-backed runs under one
-shared task when appropriate; non-runnable participants stay visible in
-assignment metadata.
+shared task when appropriate. CLI and desktop role participants pass their role
+metadata and the enabled team roster into `TaskRunner`; non-runnable
+participants stay visible in assignment metadata.
 
 ## Adaptive Role Calls
 
@@ -243,7 +254,8 @@ The flow is:
    created or updated where applicable.
 5. Accepted executable `agent_adapter` calls are started through
    `RoleCallTaskRunnerExecutor`, which reuses the normal TaskRunner path and
-   links the resulting `task_run` to the RoleCall.
+   links the resulting `task_run` to the RoleCall. The callee role is converted
+   into the same safe runtime role metadata used by CLI role mentions.
 6. RoleResult JSON is parsed when available; the summary is promoted to the
    transcript while raw structured payload stays in local evidence.
 7. Caller reinjection and convergence helpers summarize decisions, results,

@@ -10,7 +10,8 @@ import {
   type RoleCallRepository,
   type RoleTodoRepository,
   type RoleDefinition,
-  type RoleResult
+  type RoleResult,
+  type WorkgroupRoleRunMetadata
 } from "@agent-hub/core";
 import { TaskRunner, type RunTaskInput, type TaskRunResult } from "./task-runner";
 
@@ -135,6 +136,8 @@ export class RoleCallTaskRunnerExecutor {
         context: input.context ?? roleCall.context
       }),
       agentKind: calleeRole.executor.adapter,
+      role: roleDefinitionToRunMetadata(calleeRole),
+      teamRoles: this.roles.map((role) => roleDefinitionToRunMetadata(role)),
       deliveryMode: input.taskRunnerOptions?.deliveryMode ?? "runtime_injection",
       workspaceBasePath: input.taskRunnerOptions?.workspaceBasePath,
       runRoot: input.taskRunnerOptions?.runRoot,
@@ -359,6 +362,67 @@ function findStructuredRoleResult(run: TaskRunResult): RoleResult | undefined {
     }
   }
   return undefined;
+}
+
+function roleDefinitionToRunMetadata(
+  role: RoleDefinition
+): WorkgroupRoleRunMetadata {
+  return {
+    roleId: role.id,
+    roleHandle: role.handle,
+    displayName: role.displayName,
+    executorKind: roleExecutorKindForWorkgroup(role),
+    adapterKind:
+      role.executor.kind === "agent_adapter" ? role.executor.adapter : undefined,
+    persona: role.purpose,
+    defaultInstructions: role.defaultInstructions,
+    permissions: rolePermissionLabels(role.permissions),
+    contextPolicy: {
+      ...role.contextPolicy,
+      instructions: [...role.contextPolicy.instructions]
+    },
+    approvalPolicy: {
+      ...role.approvalPolicy,
+      requiredFor: [...role.approvalPolicy.requiredFor]
+    }
+  };
+}
+
+function roleExecutorKindForWorkgroup(
+  role: RoleDefinition
+): WorkgroupRoleRunMetadata["executorKind"] {
+  if (role.executor.kind === "local_workflow") {
+    return "workflow";
+  }
+  return role.executor.kind;
+}
+
+function rolePermissionLabels(
+  permissions: RoleDefinition["permissions"]
+): string[] {
+  const labels: string[] = [];
+  if (permissions.canReadFiles) labels.push("read_files");
+  if (permissions.canEditFiles) labels.push("edit_files");
+  if (permissions.canRunCommands) labels.push("run_commands");
+  if (permissions.canUseNetwork) labels.push("use_network");
+  if (permissions.canAskUser) labels.push("ask_user");
+  if (permissions.requiresApprovalForShell) {
+    labels.push("approval_required_for_shell");
+  }
+  if (permissions.requiresApprovalForFileWrite) {
+    labels.push("approval_required_for_file_write");
+  }
+  labels.push(
+    ...(permissions.allowedCommandPatterns?.map(
+      (pattern) => `allowed_command:${pattern}`
+    ) ?? [])
+  );
+  labels.push(
+    ...(permissions.deniedCommandPatterns?.map(
+      (pattern) => `denied_command:${pattern}`
+    ) ?? [])
+  );
+  return labels;
 }
 
 function roleResultSchemaExample(): RoleResult {

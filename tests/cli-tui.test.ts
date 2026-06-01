@@ -58,7 +58,7 @@ describe("CLI TUI command", () => {
     expect(rendered).toContain("TUI Project · @codex");
     expect(rendered).toContain("@codex");
     expect(rendered).toContain("Check TUI evidence.");
-    expect(rendered).toContain("@codex run_1 ● running");
+    expect(rendered).toContain("@reviewer run_1 ● running");
     expect(rendered).toContain("> @codex prompt");
   });
 

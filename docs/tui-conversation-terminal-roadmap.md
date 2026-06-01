@@ -16,6 +16,9 @@ The current TUI already has the important foundations:
   from existing local repositories.
 - Runs, Review, RoleCalls, Tasks, Memory, Help, prompt submission, polling, and
   audit-only review shortcuts already exist behind local CLI boundaries.
+- Role-backed prompt submission now carries safe role/team metadata through
+  TaskRunner into adapter runtime injection, so the TUI path uses the same role
+  instructions and RoleCall delegation constraints as CLI chat.
 
 The redesign changes the default `Work` surface from a multi-pane operating
 dashboard into a conversation terminal. Auxiliary panes remain available
@@ -228,6 +231,20 @@ Keyboard rules:
 Review decisions keep the same safety boundary: they write review artifacts
 only and never apply files, alter run status, approve memory, clean worktrees,
 merge, push, or open pull requests.
+
+### Role Runtime Injection
+
+TUI prompt submission reuses CLI chat parsing and TaskRunner execution. When a
+prompt targets an enabled role such as `@engineer`, the run input includes that
+role's safe runtime metadata plus the enabled team roster. Process-backed
+adapters render this as `## Your Role`, collaboration rules, and `## Team`
+before the task brief; direct adapter prompts with no role omit the role
+section.
+
+The injected collaboration rules are intentionally narrow: Agent Hub coordinates
+roles externally, adapters should request delegation through RoleCalls instead
+of simulating other roles, and user-installed global skills or repository-local
+agent instructions are ignored unless Agent Hub injected them for that run.
 
 ### Auxiliary Panes
 

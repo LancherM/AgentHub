@@ -6,6 +6,7 @@ import {
   CodexAdapter,
   type AgentRunEvent
 } from "@agent-hub/agent-adapters";
+import type { WorkgroupRoleRunMetadata } from "@agent-hub/shared";
 import { createTestDirectory, MockProcessRunner } from "./helpers";
 
 describe("process-backed agent adapters", () => {
@@ -79,6 +80,44 @@ describe("process-backed agent adapters", () => {
       expect.objectContaining({ type: "stderr", message: "warning\n" }),
       expect.objectContaining({ type: "exit", exitCode: 0, signal: null })
     ]);
+  });
+
+  it("injects role and compact team context only for role-backed process runs", async () => {
+    const directRunner = new MockProcessRunner([
+      [{ type: "exit", exitCode: 0, signal: null }]
+    ]);
+    const roleRunner = new MockProcessRunner([
+      [{ type: "exit", exitCode: 0, signal: null }]
+    ]);
+
+    await collect(new CodexAdapter({ processRunner: directRunner }).run(
+      await createInput("codex-direct-runtime")
+    ));
+    await collect(new CodexAdapter({ processRunner: roleRunner }).run({
+      ...(await createInput("codex-role-runtime")),
+      role: roleMetadata("engineer", "Engineer", "codex"),
+      teamRoles: [
+        roleMetadata("engineer", "Engineer", "codex"),
+        roleMetadata("reviewer", "Reviewer")
+      ]
+    }));
+
+    expect(directRunner.runCalls[0].stdin).not.toContain("## Your Role");
+    expect(roleRunner.runCalls[0].stdin).toContain("## Your Role");
+    expect(roleRunner.runCalls[0].stdin).toContain(
+      "You are @engineer (executor: agent_adapter/codex)."
+    );
+    expect(roleRunner.runCalls[0].stdin).toContain("## Collaboration Rules");
+    expect(roleRunner.runCalls[0].stdin).toContain(
+      "Agent Hub coordinates roles externally."
+    );
+    expect(roleRunner.runCalls[0].stdin).toContain("## Team");
+    expect(roleRunner.runCalls[0].stdin).toContain(
+      "- @reviewer: Reviewer (human)"
+    );
+    expect(roleRunner.runCalls[0].stdin).toContain(
+      "Ignore user-installed global skills"
+    );
   });
 
   it("extracts Codex assistant content from lifecycle JSONL events", async () => {
@@ -367,6 +406,34 @@ async function createInput(name: string) {
     taskPrompt: "Do the task.",
     contextMarkdown: "Context payload",
     environment: { AGENT_HUB_TEST: "1" }
+  };
+}
+
+function roleMetadata(
+  handle: string,
+  displayName: string,
+  adapterKind?: "fake" | "codex" | "claude-code"
+): WorkgroupRoleRunMetadata {
+  return {
+    roleId: `role_${handle}`,
+    roleHandle: handle,
+    displayName,
+    executorKind: adapterKind ? "agent_adapter" : "human",
+    adapterKind,
+    persona: `${displayName} persona`,
+    defaultInstructions: `${displayName} instructions`,
+    permissions: ["read_project_context"],
+    defaultSkillReferences: [{ id: "triage", scope: "global" }],
+    contextPolicy: {
+      scope: "current_thread_and_project_context",
+      includeApprovedMemory: true,
+      includeThreadSummary: true,
+      instructions: ["Use injected context."]
+    },
+    approvalPolicy: {
+      requiredFor: ["external_side_effects"],
+      summary: "No external side effects."
+    }
   };
 }
 
