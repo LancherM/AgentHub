@@ -127,6 +127,8 @@ export interface TuiConversationEntry {
   statusLabel?: string;
   verificationLine?: string;
   riskLine?: string;
+  elapsedLabel?: string;
+  usageLabel?: string;
   delegatedTo?: string;
   delegationTask?: string;
 }
@@ -174,12 +176,22 @@ export interface TuiRunSummary {
   startedAt?: string;
   completedAt?: string;
   updatedAt: string;
+  elapsedLabel?: string;
+  usageLabel?: string;
+  usage?: TuiRunUsageSummary;
   parentRunId?: string;
   parentMessageId?: string;
   retainedWorktree: boolean;
   evidence: TuiEvidenceSummary;
   reviewDecision: TuiRunReviewDecisionSummary;
   commands: string[];
+}
+
+export interface TuiRunUsageSummary {
+  inputTokens?: number;
+  outputTokens?: number;
+  totalTokens?: number;
+  costUsd?: number;
 }
 
 export interface TuiRunReviewDecisionSummary {
@@ -675,6 +687,8 @@ async function summarizeConversation(
         statusLabel: "awaiting review",
         verificationLine: conversationVerificationLine(run.evidence),
         riskLine: conversationRiskLine(run.evidence),
+        elapsedLabel: run.elapsedLabel,
+        usageLabel: run.usageLabel,
         sortRank: 30
       }];
     }
@@ -691,6 +705,8 @@ async function summarizeConversation(
       statusLabel: terminalRunStatusLabel(run),
       verificationLine: conversationVerificationLine(run.evidence),
       riskLine: conversationRiskLine(run.evidence),
+      elapsedLabel: run.elapsedLabel,
+      usageLabel: run.usageLabel,
       sortRank: 30
     }];
   }));
@@ -722,9 +738,13 @@ async function summarizeRun(
   run: TaskRun,
   task: Task | undefined
 ): Promise<TuiRunSummary> {
-  const evidence = await summarizeRunEvidence(repositories, run);
-  const reviewDecision = await summarizeRunReviewDecision(repositories, run.id);
-  const metadata = await repositories.runMetadataRepository.get(run.id);
+  const [evidence, reviewDecision, metadata, events] = await Promise.all([
+    summarizeRunEvidence(repositories, run),
+    summarizeRunReviewDecision(repositories, run.id),
+    repositories.runMetadataRepository.get(run.id),
+    repositories.runEventRepository.listByRunId(run.id)
+  ]);
+  const usage = summarizeRunUsage(events);
   return {
     id: run.id,
     taskId: run.taskId,
@@ -736,6 +756,9 @@ async function summarizeRun(
     startedAt: run.startedAt,
     completedAt: run.completedAt,
     updatedAt: run.updatedAt,
+    elapsedLabel: elapsedRunLabel(run),
+    usageLabel: formatRunUsageLabel(usage),
+    usage,
     parentRunId: run.parentRunId,
     parentMessageId: run.parentMessageId,
     retainedWorktree: Boolean(metadata?.workspaceCleanup?.retained),
@@ -961,6 +984,189 @@ function activeRunEvidenceLines(run: TuiRunSummary): string[] {
 
 function activeRunCreatedAt(run: TuiRunSummary): string {
   return run.startedAt ?? run.completedAt ?? run.updatedAt;
+}
+
+function elapsedRunLabel(run: TaskRun): string | undefined {
+  if (!run.startedAt) {
+    return undefined;
+  }
+  const startedAt = Date.parse(run.startedAt);
+  const endedAt = Date.parse(run.completedAt ?? run.updatedAt);
+  if (!Number.isFinite(startedAt) || !Number.isFinite(endedAt) || endedAt < startedAt) {
+    return undefined;
+  }
+  return formatElapsedDuration(endedAt - startedAt);
+}
+
+function formatElapsedDuration(milliseconds: number): string {
+  const seconds = Math.max(0, Math.round(milliseconds / 1000));
+  if (seconds < 60) {
+    return `${seconds}s`;
+  }
+  const minutes = Math.floor(seconds / 60);
+  const remainingSeconds = seconds % 60;
+  if (minutes < 60) {
+    return remainingSeconds === 0 ? `${minutes}m` : `${minutes}m${remainingSeconds}s`;
+  }
+  const hours = Math.floor(minutes / 60);
+  const remainingMinutes = minutes % 60;
+  return remainingMinutes === 0 ? `${hours}h` : `${hours}h${remainingMinutes}m`;
+}
+
+function summarizeRunUsage(events: RunEvent[]): TuiRunUsageSummary | undefined {
+  const usage: TuiRunUsageSummary = {};
+  for (const event of events) {
+    collectUsageValues(event.metadata, usage);
+    collectUsageValues(parseJsonObject(event.message), usage);
+  }
+  const derivedTotal =
+    usage.totalTokens ??
+    (usage.inputTokens !== undefined || usage.outputTokens !== undefined
+      ? (usage.inputTokens ?? 0) + (usage.outputTokens ?? 0)
+      : undefined);
+  if (derivedTotal !== undefined) {
+    usage.totalTokens = derivedTotal;
+  }
+  return usage.inputTokens !== undefined ||
+    usage.outputTokens !== undefined ||
+    usage.totalTokens !== undefined ||
+    usage.costUsd !== undefined
+    ? usage
+    : undefined;
+}
+
+function collectUsageValues(value: unknown, usage: TuiRunUsageSummary): void {
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      collectUsageValues(item, usage);
+    }
+    return;
+  }
+  if (!isPlainRecord(value)) {
+    return;
+  }
+  for (const [key, rawValue] of Object.entries(value)) {
+    const numericValue = numericScalarValue(rawValue);
+    if (numericValue !== undefined) {
+      collectUsageNumber(key, numericValue, usage);
+    }
+    if (isPlainRecord(rawValue) || Array.isArray(rawValue)) {
+      collectUsageValues(rawValue, usage);
+    }
+  }
+}
+
+function collectUsageNumber(
+  key: string,
+  value: number,
+  usage: TuiRunUsageSummary
+): void {
+  if (value < 0 || !Number.isFinite(value)) {
+    return;
+  }
+  const normalizedKey = key.replace(/[^a-zA-Z0-9]/g, "").toLowerCase();
+  if (normalizedKey.includes("cost")) {
+    usage.costUsd = maxDefined(usage.costUsd, value);
+    return;
+  }
+  if (!normalizedKey.includes("token")) {
+    return;
+  }
+  if (normalizedKey.includes("input") || normalizedKey.includes("prompt")) {
+    usage.inputTokens = maxDefined(usage.inputTokens, Math.round(value));
+    return;
+  }
+  if (normalizedKey.includes("output") || normalizedKey.includes("completion")) {
+    usage.outputTokens = maxDefined(usage.outputTokens, Math.round(value));
+    return;
+  }
+  if (
+    normalizedKey.includes("total") ||
+    normalizedKey === "tokens" ||
+    normalizedKey === "tokencount" ||
+    normalizedKey === "usageTokens".toLowerCase()
+  ) {
+    usage.totalTokens = maxDefined(usage.totalTokens, Math.round(value));
+  }
+}
+
+function formatRunUsageLabel(usage: TuiRunUsageSummary | undefined): string | undefined {
+  if (!usage) {
+    return undefined;
+  }
+  const tokenTotal =
+    usage.totalTokens ??
+    (usage.inputTokens !== undefined || usage.outputTokens !== undefined
+      ? (usage.inputTokens ?? 0) + (usage.outputTokens ?? 0)
+      : undefined);
+  const parts: string[] = [];
+  if (tokenTotal !== undefined) {
+    parts.push(`${formatTokenCount(tokenTotal)} tok`);
+  } else {
+    if (usage.inputTokens !== undefined) {
+      parts.push(`${formatTokenCount(usage.inputTokens)} in`);
+    }
+    if (usage.outputTokens !== undefined) {
+      parts.push(`${formatTokenCount(usage.outputTokens)} out`);
+    }
+  }
+  if (usage.costUsd !== undefined) {
+    parts.push(formatUsd(usage.costUsd));
+  }
+  return parts.length > 0 ? parts.join(" / ") : undefined;
+}
+
+function formatTokenCount(value: number): string {
+  if (value >= 1_000_000) {
+    return `${trimTrailingZeroes(value / 1_000_000)}m`;
+  }
+  if (value >= 1_000) {
+    return `${trimTrailingZeroes(value / 1_000)}k`;
+  }
+  return String(value);
+}
+
+function formatUsd(value: number): string {
+  if (value === 0) {
+    return "$0";
+  }
+  return value < 0.01 ? `$${value.toFixed(4)}` : `$${value.toFixed(2)}`;
+}
+
+function trimTrailingZeroes(value: number): string {
+  return value.toFixed(1).replace(/\.0$/, "");
+}
+
+function maxDefined(current: number | undefined, next: number): number {
+  return current === undefined ? next : Math.max(current, next);
+}
+
+function numericScalarValue(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value !== "string" || value.trim().length === 0) {
+    return undefined;
+  }
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function parseJsonObject(value: string): JsonObject | undefined {
+  const trimmed = value.trim();
+  if (!trimmed.startsWith("{") || !trimmed.endsWith("}")) {
+    return undefined;
+  }
+  try {
+    const parsed = JSON.parse(trimmed) as unknown;
+    return isPlainRecord(parsed) ? parsed : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function runHasChangedFiles(run: TuiRunSummary): boolean {

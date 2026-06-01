@@ -301,6 +301,72 @@ describe("TUI current-context read model", () => {
     expect(model.activeRuns[0]?.outputLines.join("\n")).not.toContain("Using `");
   });
 
+  it("adds elapsed and usage labels for terminal run conversation entries", async () => {
+    const runtime = createCliRuntime({ storageMode: "memory" });
+    await runtime.projectRepository.create({
+      id: "project_usage",
+      name: "Usage",
+      rootPath: "/tmp/usage",
+      createdAt: now,
+      updatedAt: now
+    });
+    await runtime.conversationThreadRepository.create({
+      id: "thread_usage",
+      projectId: "project_usage",
+      title: "Usage",
+      createdAt: now,
+      updatedAt: now
+    });
+    await runtime.taskRepository.create({
+      id: "task_usage",
+      projectId: "project_usage",
+      title: "Track usage",
+      metadata: { threadId: "thread_usage" },
+      status: "completed",
+      createdAt: now,
+      updatedAt: now
+    });
+    await runtime.taskRunRepository.create({
+      id: "run_usage",
+      taskId: "task_usage",
+      agentKind: "codex",
+      status: "succeeded",
+      startedAt: "2026-05-29T10:00:00.000Z",
+      completedAt: "2026-05-29T10:01:30.000Z",
+      createdAt: "2026-05-29T10:00:00.000Z",
+      updatedAt: "2026-05-29T10:01:30.000Z"
+    });
+    await runtime.runEventRepository.createMany([
+      event("event_usage_output", "run_usage", 0, "message", "Usage summary ready."),
+      event("event_usage_tokens", "run_usage", 1, "status", "usage", {
+        usage: {
+          totalTokens: 92000,
+          costUsd: 0.03
+        }
+      })
+    ]);
+
+    const model = await buildTuiCurrentContextModel(runtime, {
+      projectId: "project_usage",
+      threadId: "thread_usage"
+    });
+
+    expect(model.runs[0]).toMatchObject({
+      id: "run_usage",
+      elapsedLabel: "1m30s",
+      usageLabel: "92k tok / $0.03",
+      usage: {
+        totalTokens: 92000,
+        costUsd: 0.03
+      }
+    });
+    expect(model.conversation.find((entry) => entry.id === "run:run_usage")).toMatchObject({
+      type: "agent_completed",
+      elapsedLabel: "1m30s",
+      usageLabel: "92k tok / $0.03"
+    });
+  });
+
   it("reports bounded loop stop reasons for terminal, pending, waiting, blocking, and limits", async () => {
     await expect(loopStopReasonFor([roleCall({ id: "call_ok", status: "succeeded" })]))
       .resolves.toBe("terminal");

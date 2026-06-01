@@ -434,6 +434,12 @@ renders the Work view as a conversation flow plus bounded active-run boxes,
 moves the shortcut-labelled Work/Runs/View/Graph/Tasks/Memory/Team/Help tabs
 below the composer, and uses Ink components for terminal layout instead of
 hand-wrapped string panels.
+The Ink renderer owns only presentation grammar: reverse-color risk-aware
+headers, idle `◈` breathing, agent-message left bars, timestamp/elapsed/usage
+metadata display, path/command/code highlighting, and safe OSC 8 file-link
+wrapping. The core TUI read model exposes derived elapsed and usage labels from
+persisted run timestamps and run-event metadata; it does not change event
+persistence, adapter execution, run status, or review semantics.
 Active-run boxes cover running runs only. They use a fixed eight-line shape:
 title border, five output/progress lines, cursor indicator, and bottom border.
 They prefer structured assistant output, then fall back to recent adapter,

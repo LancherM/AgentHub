@@ -81,6 +81,16 @@ noise. Runs awaiting local review with changed files leave the active box and
 render their completed output plus verification/risk summaries and a final
 `[V]iew` review hint. Runs with no changed files render as completed output
 without an awaiting-review prompt.
+The Work conversation uses a terminal-native visual grammar: the header is a
+reverse-color status bar with project, selected agent, iteration, risk, and the
+current clock; high/blocking risk turns the header red and medium risk turns it
+yellow. Idle sessions show a breathing `◈` indicator, while active sessions use
+the running marker. Agent and role-backed run entries use a colored left `┃`
+bar, role/run/status metadata, elapsed time, optional token/cost usage, and a
+timestamp. User messages stay plain with a timestamp. Conversation content
+keeps file paths underlined and blue with safe OSC 8 file links when the
+terminal supports them, shell-command lines bold, and fenced code blocks lightly
+highlighted for keywords, strings, and comments.
 The default tab bar matches the conversation-terminal scheme: Work, Runs, View,
 Graph, Tasks, Memory, Team, and Help stay one key away instead of being
 embedded into the first screen.

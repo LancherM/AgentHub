@@ -242,6 +242,55 @@ describe("Ink TUI renderer", () => {
     expect(output).toContain("@reviewer run_active ● running");
   });
 
+  it("renders Phase 5A terminal visual grammar in the conversation flow", () => {
+    const output = renderToString(
+      React.createElement(TuiInkFrame, {
+        model: {
+          ...baseModel,
+          conversation: [
+            {
+              id: "message:visual_user",
+              type: "user_message",
+              timestamp: "2026-05-29T12:00:00.000Z",
+              author: "user",
+              content: "Inspect src/auth.ts:42 and run pnpm test."
+            },
+            {
+              id: "run:run_abcdef12-0000-4000-9000-000000000000",
+              type: "agent_completed",
+              timestamp: "2026-05-29T12:06:00.000Z",
+              author: "@reviewer",
+              displayHandle: "reviewer",
+              agent: "codex",
+              runId: "run_abcdef12-0000-4000-9000-000000000000",
+              statusLabel: "completed",
+              elapsedLabel: "1m30s",
+              usageLabel: "92k tok / $0.03",
+              outputLines: [
+                "src/auth.ts:42 needs the guard.",
+                "pnpm test tests/auth.test.ts",
+                "```ts",
+                "const message = \"ok\"; // comment",
+                "```"
+              ]
+            }
+          ]
+        },
+        state: createInitialInkState(),
+        terminal: { columns: 120, rows: 40 }
+      }),
+      { columns: 120 }
+    );
+
+    expect(output).toContain("◈ TUI Project · @codex");
+    expect(output).toContain("user 12:00:00");
+    expect(output).toContain("Inspect src/auth.ts:42 and run pnpm test.");
+    expect(output).toContain("┃ @reviewer run_abcdef12 ✓ completed  1m30s  92k tok / $0.03  12:06:00");
+    expect(output).toContain("┃   src/auth.ts:42 needs the guard.");
+    expect(output).toContain("┃   pnpm test tests/auth.test.ts");
+    expect(output).toContain("┃   const message = \"ok\"; // comment");
+  });
+
   it("keeps full ids and governed commands inside the command palette", () => {
     const output = renderToString(
       React.createElement(TuiInkFrame, {

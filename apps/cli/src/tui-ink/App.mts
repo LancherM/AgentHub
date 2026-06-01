@@ -505,7 +505,7 @@ export function TuiInkFrame({
   return h(
     Box,
     { flexDirection: "column", width },
-    h(HeaderBar, { model, terminal }),
+    h(HeaderBar, { model, state, terminal }),
     ...model.warnings.map((warning) => line(`! ${warning}`, { color: "yellow" })),
     ...(state.statusMessage ? [line(`Status: ${state.statusMessage}`, { color: "green" })] : []),
     h(MainView, { model, state, terminal }),
@@ -517,11 +517,25 @@ export function TuiInkFrame({
 
 function HeaderBar({
   model,
+  state,
   terminal
 }: {
   model: TuiCurrentContextModel;
+  state: TuiInkState;
   terminal: TuiInkTerminalSize;
 }): React.ReactElement {
+  const idle = model.activeRuns.length === 0 && state.composer.length === 0;
+  const [breathOn, setBreathOn] = useState(true);
+  useEffect(() => {
+    if (!idle) {
+      setBreathOn(true);
+      return undefined;
+    }
+    const interval = setInterval(() => {
+      setBreathOn((current) => !current);
+    }, 900);
+    return () => clearInterval(interval);
+  }, [idle]);
   const project = model.context.projectName ?? model.context.projectId ?? "unregistered";
   const agent = model.context.selectedAgent ? `@${model.context.selectedAgent}` : "@agent";
   const loop = model.roleCalls.loop.maxIterations === undefined
@@ -532,20 +546,28 @@ function HeaderBar({
     { text: project, bold: true },
     { text: agent },
     { text: loop },
-    { text: `risk ${risk}`, color: riskHeaderColor(risk) }
+    { text: `risk ${risk}` }
   ];
-  const visibleParts = compactHeaderParts(parts, terminal.columns);
+  const clock = formatHeaderClock(new Date());
+  const symbol = idle ? "◈" : "●";
+  const availableWidth = Math.max(12, terminal.columns - clock.length - 4);
+  const visibleParts = compactHeaderParts(parts, availableWidth);
+  const leftText = headerPartsText(visibleParts);
+  const content = `${leftText}${" ".repeat(Math.max(1, terminal.columns - leftText.length - clock.length - 2))}${clock}`;
+  const headerColor = riskHeaderColor(risk);
   return h(
     Box,
-    { flexDirection: "row" },
-    ...visibleParts.flatMap((part, index) => [
-      ...(index > 0 ? [h(Text, { key: `sep-${index}` }, " · ")] : []),
-      h(Text, {
-        key: part.text,
-        color: part.color,
-        bold: part.bold
-      }, part.text)
-    ])
+    { flexDirection: "row", width: terminal.columns },
+    h(Text, {
+      inverse: true,
+      backgroundColor: headerColor,
+      dimColor: idle && !breathOn
+    }, symbol),
+    h(Text, {
+      inverse: true,
+      backgroundColor: headerColor,
+      bold: true
+    }, ` ${content}`)
   );
 }
 
@@ -671,24 +693,30 @@ function ConversationFlow({
 function conversationEntryLines(entry: TuiConversationEntry): React.ReactElement[] {
   if (entry.type === "agent_completed" || entry.type === "agent_failed") {
     const statusIcon = entry.type === "agent_failed" ? "✗" : "✓";
+    const tone = entry.type === "agent_failed" ? "red" : "cyan";
     return [
-      line(`${conversationEntryHandle(entry)} ${entry.runId ? compactId(entry.runId) : ""} ${statusIcon} ${entry.statusLabel ?? ""}`.trim(), {
-        color: entry.type === "agent_failed" ? "red" : "cyan"
-      }),
-      ...conversationContentLines(entry.outputLines ?? entry.content),
-      ...(entry.verificationLine ? [line(`  ~ ${entry.verificationLine}`)] : []),
-      ...(entry.riskLine ? [line(`  ⚠ ${entry.riskLine}`, { color: "yellow" })] : [])
+      agentEntryHeaderLine(
+        `${conversationEntryHandle(entry)} ${entry.runId ? compactId(entry.runId) : ""} ${statusIcon} ${entry.statusLabel ?? ""}`.trim(),
+        entry,
+        tone
+      ),
+      ...conversationContentLines(entry.outputLines ?? entry.content, { prefix: "┃   ", agent: true, tone, keyPrefix: entry.id }),
+      ...(entry.verificationLine ? [conversationRichLine(`~ ${entry.verificationLine}`, { prefix: "┃   ", agent: true, tone })] : []),
+      ...(entry.riskLine ? [conversationRichLine(`⚠ ${entry.riskLine}`, { prefix: "┃   ", agent: true, tone, color: "yellow" })] : [])
     ];
   }
   if (entry.type === "review_pending") {
+    const tone = "yellow";
     return [
-      line(`${conversationEntryHandle(entry)} ${entry.runId ? compactId(entry.runId) : ""} △ ${entry.statusLabel ?? "awaiting review"}`.trim(), {
-        color: "yellow"
-      }),
-      ...conversationContentLines(entry.outputLines ?? entry.content),
-      ...(entry.verificationLine ? [line(`  ~ ${entry.verificationLine}`)] : []),
-      ...(entry.riskLine ? [line(`  ⚠ ${entry.riskLine}`, { color: "yellow" })] : []),
-      line(`  △ ${entry.content ?? "切换到 [V]iew 查看详情"}`, { color: "yellow" })
+      agentEntryHeaderLine(
+        `${conversationEntryHandle(entry)} ${entry.runId ? compactId(entry.runId) : ""} △ ${entry.statusLabel ?? "awaiting review"}`.trim(),
+        entry,
+        tone
+      ),
+      ...conversationContentLines(entry.outputLines ?? entry.content, { prefix: "┃   ", agent: true, tone, keyPrefix: entry.id }),
+      ...(entry.verificationLine ? [conversationRichLine(`~ ${entry.verificationLine}`, { prefix: "┃   ", agent: true, tone })] : []),
+      ...(entry.riskLine ? [conversationRichLine(`⚠ ${entry.riskLine}`, { prefix: "┃   ", agent: true, tone, color: "yellow" })] : []),
+      conversationRichLine(`△ ${entry.content ?? "切换到 [V]iew 查看详情"}`, { prefix: "┃   ", agent: true, tone, color: "yellow" })
     ];
   }
   if (entry.type === "delegation") {
@@ -697,12 +725,44 @@ function conversationEntryLines(entry: TuiConversationEntry): React.ReactElement
     ];
   }
   return [
-    line(entry.author, { color: entry.type === "user_message" ? undefined : "cyan" }),
-    ...conversationContentLines(entry.content)
+    line(`${entry.author} ${formatConversationTimestamp(entry.timestamp)}`.trim(), { dimColor: true }),
+    ...conversationContentLines(entry.content, { prefix: "  ", agent: false, keyPrefix: entry.id })
   ];
 }
 
-function conversationContentLines(content: string[] | string | undefined): React.ReactElement[] {
+function agentEntryHeaderLine(
+  title: string,
+  entry: TuiConversationEntry,
+  tone: string
+): React.ReactElement {
+  const metadata = [
+    entry.elapsedLabel,
+    entry.usageLabel,
+    formatConversationTimestamp(entry.timestamp)
+  ].filter((value): value is string => Boolean(value));
+  return h(
+    Text,
+    { wrap: "truncate" },
+    h(Text, { color: tone, bold: true }, "┃"),
+    " ",
+    h(Text, { color: tone, bold: true }, title),
+    ...(metadata.length > 0
+      ? [
+          h(Text, { key: "metadata", dimColor: true }, `  ${metadata.join("  ")}`)
+        ]
+      : [])
+  );
+}
+
+function conversationContentLines(
+  content: string[] | string | undefined,
+  options: {
+    prefix: string;
+    agent: boolean;
+    tone?: string;
+    keyPrefix: string;
+  }
+): React.ReactElement[] {
   const lines = Array.isArray(content)
     ? content
     : (content ?? "")
@@ -710,7 +770,149 @@ function conversationContentLines(content: string[] | string | undefined): React
         .map((value) => value.trim())
         .filter(Boolean);
   const visible = lines.length > 0 ? lines : ["(empty)"];
-  return visible.map((value) => line(`  ${value}`));
+  let inCodeBlock = false;
+  return visible.map((value, index) => {
+    const trimmed = value.trim();
+    const isFence = trimmed.startsWith("```");
+    const renderAsCode = inCodeBlock && !isFence;
+    const rendered = conversationRichLine(value, {
+      ...options,
+      key: `${options.keyPrefix}-content-${index}`,
+      code: renderAsCode || isFence,
+      codeFence: isFence
+    });
+    if (isFence) {
+      inCodeBlock = !inCodeBlock;
+    }
+    return rendered;
+  });
+}
+
+function conversationRichLine(
+  value: string,
+  options: {
+    prefix: string;
+    agent: boolean;
+    tone?: string;
+    color?: string;
+    code?: boolean;
+    codeFence?: boolean;
+    key?: string;
+  }
+): React.ReactElement {
+  const prefixText = options.agent
+    ? h(Text, { color: options.tone ?? "cyan", bold: true }, options.prefix.slice(0, 1))
+    : h(Text, null, options.prefix);
+  const spacerText = options.agent ? options.prefix.slice(1) : "";
+  return h(
+    Text,
+    { key: options.key, wrap: "truncate", color: options.color },
+    prefixText,
+    spacerText,
+    ...richTextSegments(value, options)
+  );
+}
+
+function richTextSegments(
+  value: string,
+  options: {
+    code?: boolean;
+    codeFence?: boolean;
+  }
+): React.ReactNode[] {
+  if (options.codeFence) {
+    return [h(Text, { key: "fence", dimColor: true }, value)];
+  }
+  if (options.code) {
+    return codeHighlightSegments(value);
+  }
+  if (isShellCommandLine(value)) {
+    return [h(Text, { key: "command", bold: true }, value)];
+  }
+  return pathHighlightSegments(value);
+}
+
+function pathHighlightSegments(value: string): React.ReactNode[] {
+  const segments: React.ReactNode[] = [];
+  const pathPattern = /((?:\.{1,2}\/|\/)?(?:[\w.-]+\/)+[\w.-]+\.[A-Za-z0-9_-]+(?::\d+(?::\d+)?)?|[\w.-]+\.(?:[cm]?[tj]sx?|json|md|css|scss|html|py|rs|go|ya?ml|toml)(?::\d+(?::\d+)?)?)/g;
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = pathPattern.exec(value)) !== null) {
+    if (match.index > lastIndex) {
+      segments.push(value.slice(lastIndex, match.index));
+    }
+    const matchedPath = match[0];
+    segments.push(
+      h(Text, { key: `path-${match.index}`, color: "blue", underline: true }, osc8FileLink(matchedPath))
+    );
+    lastIndex = match.index + matchedPath.length;
+  }
+  if (lastIndex < value.length) {
+    segments.push(value.slice(lastIndex));
+  }
+  return segments.length > 0 ? segments : [value];
+}
+
+function codeHighlightSegments(value: string): React.ReactNode[] {
+  const segments: React.ReactNode[] = [];
+  const tokenPattern =
+    /\/\/.*|#.*|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`|\b(?:async|await|break|case|catch|class|const|continue|else|export|extends|finally|for|from|function|if|implements|import|interface|let|new|return|switch|throw|try|type|var|while)\b/g;
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = tokenPattern.exec(value)) !== null) {
+    if (match.index > lastIndex) {
+      segments.push(value.slice(lastIndex, match.index));
+    }
+    const token = match[0];
+    if (token.startsWith("//") || token.startsWith("#")) {
+      segments.push(h(Text, { key: `comment-${match.index}`, dimColor: true }, token));
+    } else if (token.startsWith("\"") || token.startsWith("'") || token.startsWith("`")) {
+      segments.push(h(Text, { key: `string-${match.index}`, color: "green" }, token));
+    } else {
+      segments.push(h(Text, { key: `keyword-${match.index}`, color: "cyan" }, token));
+    }
+    lastIndex = match.index + token.length;
+  }
+  if (lastIndex < value.length) {
+    segments.push(value.slice(lastIndex));
+  }
+  return segments.length > 0 ? segments : [value];
+}
+
+function isShellCommandLine(value: string): boolean {
+  const trimmed = value.trim();
+  return (
+    /^(?:[$>]\s*)?(?:agent-hub|codex|claude|git|node|npm|npx|pnpm|tsx|tsc|vitest)\b/.test(trimmed) ||
+    /^(?:command|next|run|running|verification)\s+[`']?(?:agent-hub|codex|claude|git|node|npm|npx|pnpm|tsx|tsc|vitest)\b/i.test(trimmed)
+  );
+}
+
+function osc8FileLink(value: string): string {
+  if (!supportsOsc8Links()) {
+    return value;
+  }
+  const target = fileLinkTarget(value);
+  if (!target) {
+    return value;
+  }
+  return `\u001B]8;;${target}\u0007${value}\u001B]8;;\u0007`;
+}
+
+function supportsOsc8Links(): boolean {
+  return (
+    process.env.AGENT_HUB_TUI_OSC8 !== "0" &&
+    process.env.CI !== "true" &&
+    process.stdout.isTTY === true
+  );
+}
+
+function fileLinkTarget(value: string): string | undefined {
+  const pathPart = value.replace(/:\d+(?::\d+)?$/, "");
+  if (pathPart.startsWith("/")) {
+    return `file://${pathPart}`;
+  }
+  const base = process.cwd().replace(/\/$/, "");
+  return `file://${base}/${pathPart.replace(/^\.\//, "")}`;
 }
 
 function conversationEntryHandle(entry: TuiConversationEntry): string {
@@ -1051,7 +1253,14 @@ function block(...children: React.ReactElement[]): React.ReactElement {
 
 function line(
   value: string,
-  options: { color?: string; bold?: boolean; dimColor?: boolean } = {}
+  options: {
+    color?: string;
+    bold?: boolean;
+    dimColor?: boolean;
+    inverse?: boolean;
+    backgroundColor?: string;
+    underline?: boolean;
+  } = {}
 ): React.ReactElement {
   return h(Text, { wrap: "truncate", ...options }, value);
 }
@@ -1146,6 +1355,22 @@ function formatDuration(milliseconds: number): string {
     return `${seconds}s`;
   }
   return `${Math.round(seconds / 60)}m`;
+}
+
+function formatHeaderClock(date: Date): string {
+  return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
+}
+
+function formatConversationTimestamp(value: string): string {
+  const match = /T(\d{2}:\d{2}:\d{2})/.exec(value);
+  if (match) {
+    return match[1];
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return "";
+  }
+  return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}:${String(date.getSeconds()).padStart(2, "0")}`;
 }
 
 function errorMessage(error: unknown): string {
