@@ -54,11 +54,11 @@ The Memory focus mode is a governance indicator, not a browser: it shows
 proposed/approved/rejected counts, the approved-memory source, explicit
 approval/rejection command hints, selected skills, available skill identifiers,
 and the current context delivery mode.
-The Team focus mode is opened from focus navigation or by typing `/team` in the
-composer. It shows the current project's resolved preset, preset-overridden, and
-custom roles from the same role settings used by `team roles list`, including
-enabled/runnable counts, executor labels, default rooms, and the equivalent CLI
-list command.
+The Team read-model pane is opened by typing `/team` in the composer or from
+the command palette, not from the default tab cycle. It shows the current
+project's resolved preset, preset-overridden, and custom roles from the same
+role settings used by `team roles list`, including enabled/runnable counts,
+executor labels, default rooms, and the equivalent CLI list command.
 The command palette (`:`) collects current-context CLI command hints for runs,
 RoleCalls, review, and memory. It is a terminal aid only; it does not add
 project or room browsing.
@@ -69,11 +69,16 @@ equivalent CLI recovery commands instead of opening broad browsers or applying
 side effects.
 The Work focus is a conversation terminal. User and assistant messages,
 delegations, terminal run summaries, review decisions, checks, and risks are
-folded into a chronological conversation flow. Queued/running runs and the
-newest actionable pending-review run appear as stable active-run boxes with
-bounded event tails and evidence lines. Auxiliary Runs, Review, Graph, Team,
-Tasks, Memory, Help, and Palette views remain available through focus
-switching instead of being embedded into the first screen.
+folded into a chronological conversation flow. Queued/running runs appear as
+stable active-run boxes with bounded agent-facing output tails and evidence
+lines. Terminal runs fold back into the conversation as ordinary assistant
+text; runs that still need a local audit decision show a compact `v details`
+hint so the Review pane can handle accept/reject without stealing prompt text.
+The default tab bar matches the
+conversation-terminal scheme: Work, Runs, View, Graph, Tasks, Memory, and Help
+stay one key away instead of being embedded into the first screen. Team roles
+remain available through `/team` and the command palette rather than occupying
+a default tab.
 One-shot TUI renders (`--once`) are intended for quick smoke checks and return
 to the shell after printing the current workbench. Normal `agent-hub tui`
 launches stay open when stdin/stdout are an interactive terminal with raw-mode
@@ -331,5 +336,5 @@ specification documents. Those files describe direction; this document
 describes the current product state. The conversation-terminal TUI roadmap now
 records the implemented Work-view direction and remaining hardening guidance:
 the current TUI keeps the Ink/local read-model boundary while presenting a
-conversation-first Work surface and moving Runs, Review, Graph, Tasks, Team,
-and Memory into auxiliary views.
+conversation-first Work surface, moving Runs, Review, Graph, Tasks, and Memory
+into explicit auxiliary tabs, and keeping Team behind slash-command access.

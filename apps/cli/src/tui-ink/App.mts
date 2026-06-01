@@ -21,10 +21,8 @@ import {
 import {
   commandHintForFocus,
   createInitialInkState,
-  focusModes,
   reduceInkState,
   roleListCommand,
-  selectedAwaitingReviewRun,
   selectedReviewRunId,
   selectedRun,
   selectedTask,
@@ -32,6 +30,7 @@ import {
   unavailableRoleExecutorCommands,
   visibleRoleCalls,
   selectedRoleCallIndex,
+  type TuiInkFocus,
   type TuiInkKey,
   type TuiInkState
 } from "./state.mjs";
@@ -258,7 +257,7 @@ export function TuiInkApp(props: TuiInkAppProps): React.ReactElement {
         await refreshModel(nextState);
       }
     } catch (error) {
-      setState({
+      setStateNow({
         ...stateRef.current,
         statusMessage: errorMessage(error)
       });
@@ -357,9 +356,7 @@ export function TuiInkApp(props: TuiInkAppProps): React.ReactElement {
         app.exit();
         return;
       }
-      const canRecordReview =
-        currentState.focus === "review" ||
-        (currentState.focus === "work" && selectedAwaitingReviewRun(modelRef.current, currentState));
+      const canRecordReview = currentState.focus === "review";
       if (input === "a" && canRecordReview && currentState.composer.length === 0) {
         if (isBusy) {
           showBusyInputMessage();
@@ -460,7 +457,6 @@ function HeaderBar({
     : `iter ${model.roleCalls.loop.iteration}/${model.roleCalls.loop.maxIterations}`;
   const room = model.context.roomHandle ? `#${model.context.roomHandle}` : undefined;
   const parts = [
-    "Agent Hub",
     room ? `${project} ${room}` : project,
     agent,
     loop,
@@ -470,23 +466,32 @@ function HeaderBar({
     Box,
     { flexDirection: "column" },
     line(
-      truncateText(parts.join(" - "), Math.max(24, terminal.columns)),
+      compactHeaderParts(parts, terminal.columns),
       { bold: true, color: "cyan" }
     )
   );
 }
 
 function FocusTabs({ state }: { state: TuiInkState }): React.ReactElement {
+  const tabs: Array<{ focus: TuiInkFocus; label: string }> = [
+    { focus: "work", label: "[W]ork" },
+    { focus: "runs", label: "[R]uns" },
+    { focus: "review", label: "[V]iew" },
+    { focus: "graph", label: "[G]raph" },
+    { focus: "tasks", label: "[T]asks" },
+    { focus: "memory", label: "[M]em" },
+    { focus: "help", label: "?help" }
+  ];
   return h(
     Box,
     { flexDirection: "row" },
-    ...focusModes.map((mode) =>
+    ...tabs.map((tab) =>
       h(
         Box,
-        { key: mode, marginRight: 1 },
-        line(mode === state.focus ? `[${label(mode)}]` : label(mode), {
-          color: mode === state.focus ? "green" : undefined,
-          bold: mode === state.focus
+        { key: tab.focus, marginRight: 1 },
+        line(tab.label, {
+          color: tab.focus === state.focus ? "green" : undefined,
+          bold: tab.focus === state.focus
         })
       )
     )
@@ -568,30 +573,47 @@ function ConversationFlow({
 
 function conversationEntryLines(entry: TuiConversationEntry): React.ReactElement[] {
   if (entry.type === "agent_completed" || entry.type === "agent_failed") {
+    const statusIcon = entry.type === "agent_failed" ? "✗" : "✓";
     return [
-      line(`${entry.agent ? `@${entry.agent}` : entry.author} ${entry.runId ? compactId(entry.runId) : ""} ${entry.statusLabel ?? ""}`.trim(), {
+      line(`${entry.agent ? `@${entry.agent}` : entry.author} ${entry.runId ? compactId(entry.runId) : ""} ${statusIcon} ${entry.statusLabel ?? ""}`.trim(), {
         color: entry.type === "agent_failed" ? "red" : "cyan"
       }),
-      line(`  ${entry.content}`),
-      ...(entry.verificationLine ? [line(`  ${entry.verificationLine}`)] : []),
-      ...(entry.riskLine ? [line(`  ${entry.riskLine}`)] : [])
+      ...conversationContentLines(entry.content),
+      ...(entry.verificationLine ? [line(`  ~ ${entry.verificationLine}`)] : []),
+      ...(entry.riskLine ? [line(`  ⚠ ${entry.riskLine}`, { color: "yellow" })] : []),
+      ...(entry.reviewLine ? [line(`  △ ${entry.reviewLine}`, { color: "yellow" })] : [])
     ];
   }
   if (entry.type === "review_decided") {
+    const decisionIcon = entry.decision === "rejected" ? "✗" : "✓";
     return [
-      line(`review ${entry.runId ? compactId(entry.runId) : ""} ${entry.decision ?? ""}`.trim(), { color: "green" }),
-      line(`  ${entry.content}`)
+      line(`review ${entry.runId ? compactId(entry.runId) : ""}`.trim(), { color: entry.decision === "rejected" ? "red" : "green" }),
+      line(`  ${decisionIcon} ${entry.content}`)
     ];
   }
   if (entry.type === "delegation") {
     return [
       line(`${entry.author} -> ${entry.roleCallId ? compactId(entry.roleCallId) : "role"}`, { color: "cyan" }),
-      line(`  ${entry.content}`)
+      line(`  → ${entry.content}`)
     ];
   }
   return [
     line(entry.author, { color: entry.type === "user_message" ? undefined : "cyan" }),
-    line(`  ${entry.content}`)
+    ...conversationContentLines(entry.content)
+  ];
+}
+
+function conversationContentLines(content: string): React.ReactElement[] {
+  const lines = content
+    .split(/\r?\n/)
+    .map((value) => value.trim())
+    .filter(Boolean);
+  const visible = lines.length > 0 ? lines.slice(0, 6) : ["(empty)"];
+  return [
+    ...visible.map((value) => line(`  ${value}`)),
+    ...(lines.length > visible.length
+      ? [line(`  ... ${lines.length - visible.length} more lines`, { dimColor: true })]
+      : [])
   ];
 }
 
@@ -612,23 +634,23 @@ function ActiveRunBoxView({
     ...contentLines,
     ...Array.from({ length: Math.max(0, contentHeight - contentLines.length) }, () => "")
   ];
-  const hint = box.actionHint ?? "_";
+  const hint = box.actionHint ?? "▍";
   return block(
     line(top, { color: toneColor(box.tone) }),
-    ...paddedLines.map((value) => line(`| ${truncateText(value, innerWidth - 2).padEnd(innerWidth - 2)} |`, { color: toneColor(box.tone) })),
-    line(`| ${truncateText(hint, innerWidth - 2).padEnd(innerWidth - 2)} |`, { color: toneColor(box.tone) }),
-    line(`+${"-".repeat(innerWidth)}+`, { color: toneColor(box.tone) })
+    ...paddedLines.map((value) => line(`│ ${truncateText(value, innerWidth - 2).padEnd(innerWidth - 2)} │`, { color: toneColor(box.tone) })),
+    line(`│ ${truncateText(hint, innerWidth - 2).padEnd(innerWidth - 2)} │`, { color: toneColor(box.tone) }),
+    line(`╰${"─".repeat(innerWidth)}╯`, { color: toneColor(box.tone) })
   );
 }
 
 function activeRunTitle(box: TuiActiveRunBox): string {
-  const label = box.state === "awaiting_review" ? "awaiting review" : box.state;
-  return `@${box.agent} ${compactId(box.runId)} ${label}`;
+  const icon = box.state === "queued" ? "○" : "●";
+  return `@${box.agent} ${compactId(box.runId)} ${icon} ${box.state}`;
 }
 
 function borderedTitle(title: string, innerWidth: number): string {
-  const decorated = `-- ${truncateText(title, Math.max(8, innerWidth - 4))} `;
-  return `+${decorated}${"-".repeat(Math.max(0, innerWidth - decorated.length))}+`;
+  const decorated = `─ ${truncateText(title, Math.max(8, innerWidth - 4))} `;
+  return `╭${decorated}${"─".repeat(Math.max(0, innerWidth - decorated.length))}╮`;
 }
 
 function RunsPane({
@@ -910,7 +932,9 @@ function Composer({ model, state }: { model: TuiCurrentContextModel; state: TuiI
 function StatusBar({ model, state }: { model: TuiCurrentContextModel; state: TuiInkState }): React.ReactElement {
   const hints = state.composer
     ? "enter submit | /team roles | tab focus | esc clear | ctrl+c exit"
-    : "tab focus | enter review | : palette | p command | a accept | R reject | ? help | x exit";
+    : state.focus === "review"
+      ? "tab focus | enter review | : palette | p command | a accept | R reject | ? help | x exit"
+      : "tab focus | enter review | : palette | p command | ? help | x exit";
   return line(
     `${hints} | ${commandHintForFocus(model, state)}`,
     { dimColor: true }
@@ -983,7 +1007,7 @@ function activeRunContentHeight(terminal: TuiInkTerminalSize): number {
 }
 
 function activeRunBoxWidth(terminal: TuiInkTerminalSize): number {
-  return Math.max(28, terminal.columns - 2);
+  return Math.max(28, terminal.columns - 4);
 }
 
 function toneColor(tone: TuiActiveRunBox["tone"]): string {
@@ -1140,6 +1164,11 @@ function isPrintableInput(input: string, key: Key): boolean {
   );
 }
 
-function label(value: string): string {
-  return value[0].toUpperCase() + value.slice(1);
+function compactHeaderParts(parts: string[], columns: number): string {
+  const minimumColumns = Math.max(12, columns);
+  const visible = [...parts];
+  while (visible.length > 1 && visible.join(" · ").length > minimumColumns) {
+    visible.pop();
+  }
+  return truncateText(visible.join(" · "), minimumColumns);
 }

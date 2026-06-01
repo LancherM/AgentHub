@@ -2,6 +2,7 @@ import {
   evaluateRoleCallGraphConvergence,
   type RoleCallGraphConvergenceReason
 } from "./role-call-convergence";
+import { extractAgentFacingOutput } from "./run-output";
 import {
   isAgentKindEnabled,
   presetWorkgroupRoles,
@@ -126,12 +127,13 @@ export interface TuiConversationEntry {
   verificationLine?: string;
   riskLine?: string;
   decision?: "accepted" | "rejected";
+  reviewLine?: string;
 }
 
 export interface TuiActiveRunBox {
   runId: string;
   agent: string;
-  state: "queued" | "running" | "awaiting_review";
+  state: "queued" | "running";
   tone: "green" | "yellow" | "red";
   title: string;
   outputLines: string[];
@@ -372,7 +374,8 @@ const defaultLimits = {
   todos: 12,
   tasks: 8,
   skills: 12,
-  contentChars: 180
+  contentChars: 180,
+  agentOutputChars: 1_200
 };
 
 const activeRunStatuses = new Set<TaskRunStatus>(["queued", "running"]);
@@ -553,17 +556,9 @@ async function summarizeActiveRunBoxes(
   repositories: TuiReadModelRepositories,
   runs: TuiRunSummary[]
 ): Promise<TuiActiveRunBox[]> {
-  const active = runs.filter((run) => activeRunStatuses.has(run.status));
-  const pendingReview = [...runs]
-    .filter((run) => terminalRunStatuses.has(run.status) && run.reviewDecision.status === "pending")
-    .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
-    .at(0);
-  const selected = pendingReview && !active.some((run) => run.id === pendingReview.id)
-    ? [...active, pendingReview]
-    : active;
-  const sorted = selected.sort((left, right) =>
-    activeRunCreatedAt(left).localeCompare(activeRunCreatedAt(right))
-  );
+  const sorted = runs
+    .filter((run) => activeRunStatuses.has(run.status))
+    .sort((left, right) => activeRunCreatedAt(left).localeCompare(activeRunCreatedAt(right)));
   return Promise.all(sorted.map((run) => summarizeActiveRunBox(repositories, run)));
 }
 
@@ -572,22 +567,17 @@ async function summarizeActiveRunBox(
   run: TuiRunSummary
 ): Promise<TuiActiveRunBox> {
   const events = await repositories.runEventRepository.listByRunId(run.id);
-  const state: TuiActiveRunBox["state"] = run.status === "queued" || run.status === "running"
-    ? run.status
-    : "awaiting_review";
+  const state: TuiActiveRunBox["state"] = run.status === "queued" ? "queued" : "running";
   const evidenceLines = activeRunEvidenceLines(run);
-  const actionHint = state === "awaiting_review"
-    ? "a accept | R reject | v details"
-    : undefined;
   return {
     runId: run.id,
     agent: run.agentKind,
     state,
-    tone: state === "awaiting_review" ? "yellow" : "green",
-    title: `@${run.agentKind} ${run.id} ${activeRunStatusLabel(state)}`,
-    outputLines: recentRunOutputLines(events),
+    tone: "green",
+    title: `@${run.agentKind} ${run.id} ${activeRunStatusIcon(state)} ${activeRunStatusLabel(state)}`,
+    outputLines: recentAgentRunOutputLines(events, run),
     evidenceLines,
-    actionHint,
+    actionHint: undefined,
     createdAt: activeRunCreatedAt(run),
     updatedAt: run.updatedAt
   };
@@ -644,13 +634,16 @@ function summarizeConversation(input: {
         runLinkedMessages.get(run.id) ??
           run.evidence.resultSummary ??
           `${run.agentKind} ${run.status}`,
-        defaultLimits.contentChars
+        defaultLimits.agentOutputChars
       ),
       agent: run.agentKind,
       runId: run.id,
       statusLabel: run.status,
       verificationLine: conversationVerificationLine(run.evidence),
       riskLine: conversationRiskLine(run.evidence),
+      reviewLine: run.reviewDecision.status === "pending"
+        ? "review pending: v details"
+        : undefined,
       sortRank: 30
     });
     if (run.reviewDecision.status !== "pending") {
@@ -777,15 +770,17 @@ async function summarizeRunEvidence(
   };
 }
 
-function recentRunOutputLines(events: RunEvent[]): string[] {
-  return events
-    .filter((event) =>
-      event.type === "stdout" ||
-      event.type === "stderr" ||
-      event.type === "message" ||
-      event.type === "status" ||
-      event.type === "error"
-    )
+function recentAgentRunOutputLines(events: RunEvent[], run: TuiRunSummary): string[] {
+  const agentOutput = extractAgentFacingOutput(
+    { events: events.map(toAgentOutputEvent) },
+    { includeTerminalSummaries: false }
+  );
+  const outputLines = outputTextLines(agentOutput);
+  if (outputLines.length > 0) {
+    return outputLines.slice(-6);
+  }
+  const progressLines = events
+    .filter(isAgentProgressEvent)
     .sort((left, right) => left.sequence - right.sequence)
     .flatMap((event) =>
       event.message
@@ -795,6 +790,58 @@ function recentRunOutputLines(events: RunEvent[]): string[] {
     )
     .map((line) => truncate(line, 120))
     .slice(-6);
+  return progressLines.length > 0 ? progressLines : [`${run.agentKind} ${run.status}`];
+}
+
+function outputTextLines(value: string): string[] {
+  return value
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => truncate(line, 120));
+}
+
+function toAgentOutputEvent(event: RunEvent): {
+  type: string;
+  message: string;
+  metadata?: JsonObject;
+} {
+  return {
+    type: event.type,
+    message: event.message,
+    metadata: event.metadata
+  };
+}
+
+function isAgentProgressEvent(event: RunEvent): boolean {
+  if (event.metadata?.assistantOutput === false) {
+    return false;
+  }
+  if (event.metadata?.assistantOutput === true) {
+    return true;
+  }
+  const phase = typeof event.metadata?.phase === "string" ? event.metadata.phase : undefined;
+  if (phase && phase !== "agent") {
+    return false;
+  }
+  const desktopEventType =
+    typeof event.metadata?.desktopEventType === "string"
+      ? event.metadata.desktopEventType
+      : undefined;
+  if (
+    desktopEventType &&
+    !desktopEventType.startsWith("agent_") &&
+    desktopEventType !== "run_failed"
+  ) {
+    return false;
+  }
+  return (
+    event.type === "stdout" ||
+    event.type === "stderr" ||
+    event.type === "message" ||
+    event.type === "status" ||
+    event.type === "error"
+  );
 }
 
 function activeRunEvidenceLines(run: TuiRunSummary): string[] {
@@ -808,10 +855,11 @@ function activeRunEvidenceLines(run: TuiRunSummary): string[] {
 }
 
 function activeRunStatusLabel(state: TuiActiveRunBox["state"]): string {
-  if (state === "awaiting_review") {
-    return "awaiting review";
-  }
   return state;
+}
+
+function activeRunStatusIcon(state: TuiActiveRunBox["state"]): string {
+  return state === "queued" ? "○" : "●";
 }
 
 function activeRunCreatedAt(run: TuiRunSummary): string {
@@ -1433,10 +1481,23 @@ function runStage(run: TaskRun, latestEvent: string | undefined): string {
 }
 
 function resultSummary(events: RunEvent[], run: TaskRun): string {
+  const agentOutput = extractAgentFacingOutput(
+    { events: events.map(toAgentOutputEvent) },
+    {
+      includeRawStreams: false,
+      includeTerminalSummaries: false
+    }
+  ).trim();
+  if (agentOutput) {
+    return agentOutput;
+  }
   const finalMessage = [...events]
     .sort((left, right) => left.sequence - right.sequence)
     .reverse()
-    .find((event) => event.type === "message" || event.type === "exit");
+    .find((event) =>
+      (event.type === "message" || event.type === "exit") &&
+      event.metadata?.assistantOutput !== false
+    );
   return finalMessage?.message ?? `${run.agentKind} ${run.status}`;
 }
 

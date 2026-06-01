@@ -30,27 +30,27 @@ auxiliary panes keep their original data and callback boundaries.
 The target experience is:
 
 ```text
-my-project - @codex - iter 2/5 - risk low
+my-project · @codex · iter 2/5 · risk low
 
 user
   Fix the login validation bug
 
-@codex run_2798 ok
+@codex run_2798 ✓ succeeded
   Found issue in auth.ts:42 and patched it.
-  check passed: pnpm test
-  risk medium: .env.example modified
+  ~ check passed: pnpm test
+  ⚠ risk medium: .env.example modified
 
 user
   Now fix the logout handler too
 
-+-- @codex run_3012 running ------------------------------+
-| Reading logout.ts...                                    |
-| Found stale session cleanup missing                     |
-| Editing logout.ts:28-35                                 |
-| Running tests...                                        |
-| 4 tests passed                                          |
-| _                                                       |
-+---------------------------------------------------------+
+╭─ @codex run_3012 ● running ─────────────────────────────╮
+│ Reading logout.ts...                                    │
+│ Found stale session cleanup missing                     │
+│ Editing logout.ts:28-35                                 │
+│ Running tests...                                        │
+│ 4 tests passed                                          │
+│ ▍                                                       │
+╰─────────────────────────────────────────────────────────╯
 
 > @codex prompt
 [W]ork [R]uns [V]iew [G]raph [T]asks [M]em ?help
@@ -114,7 +114,7 @@ interface TuiConversationEntry {
 interface TuiActiveRunBox {
   runId: string;
   agent: string;
-  state: "queued" | "running" | "awaiting_review";
+  state: "queued" | "running";
   tone: "green" | "yellow" | "red";
   title: string;
   outputLines: string[];
@@ -136,11 +136,12 @@ Build rules:
 - Exclude runs represented in `activeRuns` from folded `agent_completed` or
   `agent_failed` entries to prevent duplicate first-screen state.
 - Treat queued/running task runs as active boxes.
-- Treat the newest terminal run with `reviewDecision.status === "pending"` as
-  an optional `awaiting_review` box when it is the current selected or most
-  recent actionable run.
-- Populate `outputLines` from the latest bounded `RunEvent` messages of type
-  `stdout`, `stderr`, `message`, `status`, or `error`.
+- Fold terminal runs with pending review into ordinary conversation text with a
+  compact `v details` hint. Accept/reject shortcuts remain in the Review pane
+  so Work stays prompt-first.
+- Populate `outputLines` from bounded agent-facing output first, with
+  adapter-progress lines as the fallback. Verification and final lifecycle
+  status lines should not crowd out actual agent output.
 - Populate `evidenceLines` from existing verification, risk, and diff
   summaries. Do not read raw patches or full logs for the Work view.
 - Bound line counts and characters at the read-model layer so the renderer can
@@ -168,8 +169,8 @@ StatusBar
 `WorkView` becomes the conversation terminal:
 
 - `ConversationFlow` renders bounded historical entries and scroll state.
-- `ActiveRunBox` renders active or awaiting-review runs after the latest
-  conversation entry.
+- `ActiveRunBox` renders queued/running runs after the latest conversation
+  entry.
 - Auxiliary panes are not shown inside Work.
 - Runs, Review, Graph, Tasks, Memory, Help, and Palette keep using the existing
   pane components as focused auxiliary views.
@@ -177,7 +178,7 @@ StatusBar
 `HeaderBar` should compress to one line:
 
 ```text
-project - @agent - iter N/M - risk level
+project · @agent · iter N/M · risk level
 ```
 
 Narrow terminals hide fields from the right side first: risk, iteration, agent.
@@ -187,8 +188,7 @@ Narrow terminals hide fields from the right side first: risk, iteration, agent.
 - fixed height by default: one title line, six content lines, one action or
   cursor line;
 - truncate long lines rather than wrapping them into layout shifts;
-- green for queued/running, yellow for awaiting review, red only for failed
-  active-state errors;
+- green for queued/running, red only for failed active-state errors;
 - show at most three boxes; if more exist, collapse the oldest boxes to title
   lines.
 
@@ -221,10 +221,8 @@ Keyboard rules:
   Runs from uppercase `R` for reject.
 - `?` opens Help; `:` opens Palette.
 - `tab` and `shift-tab` keep cycling focus modes.
-- `a` accepts the current awaiting-review run only through the existing
-  audit-only review decision callback.
-- `R` rejects the current awaiting-review run only through the existing
-  audit-only review decision callback.
+- `a` and `R` accept or reject only while the Review pane is focused, through
+  the existing audit-only review decision callback.
 - `c` prepares an explicit continuation prompt; it does not start background
   work.
 - `x`, `q`, and `ctrl+c` exit only when doing so will not discard visible
@@ -320,10 +318,10 @@ pnpm test tests/cli-tui-ink.test.mts
 
 Scope:
 
-- Tail recent run event messages into `ActiveRunBox.outputLines`.
-- Render queued/running and awaiting-review states with distinct tones.
-- Wire Work-level `a` and `R` shortcuts to the existing review-decision
-  callback for the current awaiting-review run.
+- Tail agent-facing run output into `ActiveRunBox.outputLines`.
+- Render queued/running states as active boxes.
+- Wire Review-pane `a` and `R` shortcuts to the existing review-decision
+  callback for the selected pending terminal run.
 - Refresh immediately after review decisions.
 
 Acceptance:
@@ -348,7 +346,7 @@ Scope:
 - Make Work scroll operate on `conversationScrollOffset`.
 - Preserve selection and scroll state across model refreshes.
 - Tighten StatusBar hints for composer, Work, auxiliary panes, and
-  awaiting-review state.
+  pending-review conversation entries.
 
 Acceptance:
 

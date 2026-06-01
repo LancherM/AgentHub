@@ -408,8 +408,14 @@ metadata; no executor backend, database table, daemon, or desktop behavior is
 added for the TUI.
 Terminal polish is also contained in the CLI renderer. It compacts identifiers,
 renders the Work view as a conversation flow plus bounded active-run boxes,
-moves focus tabs below the composer, and uses Ink components for terminal
-layout instead of hand-wrapped string panels.
+moves the shortcut-labelled Work/Runs/View/Graph/Tasks/Memory/Help tabs below
+the composer, and uses Ink components for terminal layout instead of
+hand-wrapped string panels.
+Active-run boxes cover queued/running runs only. They show bounded
+agent-facing output before verification/risk evidence. Terminal pending-review
+runs fold into the conversation projection with a compact Review-pane hint, so
+the Work view remains prompt-first and printable keys do not trigger audit
+mutations.
 The direct CLI entrypoint exits after command completion, so one-shot TUI smoke
 renders do not leave local SQLite helper processes holding the terminal open.
 For interactive launches, the CLI default IO includes `process.stdin`, and the
@@ -461,5 +467,5 @@ The Work-view conversation-terminal architecture is documented in
 `docs/tui-conversation-terminal-roadmap.md`. It extends the same core read
 model with conversation and active-run projections, then keeps the Ink Work
 surface scoped to `ConversationFlow` and `ActiveRunBox` components. Auxiliary
-Runs, Review, Graph, Team, Tasks, Memory, Help, and Palette panes continue to
-use the existing local evidence and callback boundaries.
+Runs, Review, Graph, Tasks, Memory, Help, Palette, and the slash-command Team
+pane continue to use the existing local evidence and callback boundaries.

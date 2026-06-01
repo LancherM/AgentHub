@@ -49,7 +49,8 @@ const baseModel = {
       runId: "run_27984312-fc9a-46bf-9ccf-c06997187091",
       statusLabel: "succeeded",
       verificationLine: "checks 0/0/1",
-      riskLine: "risk blocking: No changed files were collected."
+      riskLine: "risk blocking: No changed files were collected.",
+      reviewLine: "review pending: v details"
     }
   ],
   activeRuns: [],
@@ -182,14 +183,16 @@ describe("Ink TUI renderer", () => {
       { columns: 78 }
     );
 
-    expect(output).toContain("Agent Hub");
+    expect(output).toContain("TUI Project #review · @codex");
     expect(output).toContain("user");
     expect(output).toContain("Check the TUI shell.");
-    expect(output).toContain("@codex run_27984312 succeeded");
+    expect(output).toContain("@codex run_27984312 ✓ succeeded");
     expect(output).toContain("checks 0/0/1");
     expect(output).toContain("risk blocking");
+    expect(output).toContain("review pending: v details");
+    expect(output).not.toContain("awaiting review");
     expect(output).toContain("> @codex prompt");
-    expect(output.indexOf("> @codex prompt")).toBeLessThan(output.indexOf("[Work]"));
+    expect(output.indexOf("> @codex prompt")).toBeLessThan(output.indexOf("[W]ork"));
     expect(output).not.toContain("Runs + Review");
     expect(output).not.toContain("-- more hidden --");
   });
@@ -204,10 +207,10 @@ describe("Ink TUI renderer", () => {
       { columns: 78 }
     );
 
-    expect(output).toContain("+-- @codex run_active running");
+    expect(output).toContain("@codex run_active ● running");
     expect(output).toContain("Reading logout.ts");
     expect(output).toContain("checks 1/0/0");
-    expect(output).toContain("_");
+    expect(output).toContain("▍");
   });
 
   it("keeps full ids and governed commands inside the command palette", () => {
@@ -250,7 +253,6 @@ describe("Ink TUI renderer", () => {
     await waitForFrame(instance, "Team roles shown.");
 
     expect(submissions).toEqual([]);
-    expect(instance.lastFrame()).toContain("[Team]");
     expect(instance.lastFrame()).toContain("Team Roles 2");
     expect(instance.lastFrame()).toContain("@engineer preset agent_adapter / codex #planning");
     expect(instance.lastFrame()).toContain("@reviewer preset human reserved #review");
@@ -352,7 +354,7 @@ describe("Ink TUI renderer", () => {
 
     await new Promise((resolve) => setTimeout(resolve, 30));
 
-    expect(instance.lastFrame()).toContain("@codex run_polled01 succeeded");
+    expect(instance.lastFrame()).toContain("@codex run_polled01 ✓ succeeded");
     instance.unmount();
   });
 
@@ -376,12 +378,12 @@ describe("Ink TUI renderer", () => {
 
     await waitForFrame(instance, "Prompt submission timed out after 5ms.");
 
-    for (const character of "again") {
+    for (const character of "next") {
       instance.stdin.write(character);
       await new Promise((resolve) => setTimeout(resolve, 1));
     }
 
-    await waitForFrame(instance, "> again");
+    await waitForFrame(instance, "> next");
     instance.unmount();
   });
 
@@ -416,7 +418,7 @@ describe("Ink TUI renderer", () => {
       await new Promise((resolve) => setTimeout(resolve, 1));
     }
 
-    await waitForFrame(instance, "[Runs]");
+    await waitForFrame(instance, "[R]uns");
     await waitForFrame(instance, "> next");
 
     resolveSubmission({ ok: true, message: "Submitted prompt.", model: baseModel });
@@ -454,7 +456,7 @@ describe("Ink TUI renderer", () => {
       expect.objectContaining({ prompt: "@unknown summarize" })
     ]);
     expect(instance.lastFrame()).toContain("Submitted prompt.");
-    expect(instance.lastFrame()).toContain("@codex run_12345678 succeeded");
+    expect(instance.lastFrame()).toContain("@codex run_12345678 ✓ succeeded");
     instance.unmount();
   });
 
@@ -505,7 +507,7 @@ describe("Ink TUI renderer", () => {
     instance.stdin.write("\t");
     await new Promise((resolve) => setTimeout(resolve, 25));
 
-    expect(instance.lastFrame()).toContain("[Runs]");
+    expect(instance.lastFrame()).toContain("[R]uns");
     expect(instance.lastFrame()).toContain("> draft");
     instance.unmount();
   });
@@ -536,8 +538,7 @@ describe("Ink TUI renderer", () => {
       expect.objectContaining({ prompt: "execute command" })
     ]);
     expect(instance.lastFrame()).toContain("Submitted prompt.");
-    expect(instance.lastFrame()).toContain("[Work]");
-    expect(instance.lastFrame()).not.toContain("[Review]");
+    expect(instance.lastFrame()).toContain("[W]ork");
     instance.unmount();
   });
 
@@ -576,6 +577,30 @@ describe("Ink TUI renderer", () => {
     ]);
     expect(instance.lastFrame()).toContain("Review accepted.");
     expect(instance.lastFrame()).toContain("review accepted");
+    instance.unmount();
+  });
+
+  it("keeps pending-review Work entries prompt-first", async () => {
+    const decisions = [];
+    const instance = render(
+      React.createElement(TuiInkApp, {
+        model: baseModel,
+        state: createInitialInkState(),
+        terminal: { columns: 120, rows: 40 },
+        interactive: true,
+        recordReviewDecision: async (input) => {
+          decisions.push(input);
+          return { ok: true, message: "Review accepted.", model: baseModel };
+        }
+      })
+    );
+
+    instance.stdin.write("a");
+    await new Promise((resolve) => setTimeout(resolve, 25));
+
+    expect(decisions).toEqual([]);
+    expect(instance.lastFrame()).toContain("> a");
+    expect(instance.lastFrame()).not.toContain("awaiting review");
     instance.unmount();
   });
 
@@ -684,7 +709,7 @@ function modelWithActiveRun() {
         agent: "codex",
         state: "running",
         tone: "green",
-        title: "@codex run_active running",
+        title: "@codex run_active ● running",
         outputLines: ["Reading logout.ts", "Running tests"],
         evidenceLines: ["checks 1/0/0", "risk low"],
         createdAt: "2026-05-29T12:06:00.000Z",

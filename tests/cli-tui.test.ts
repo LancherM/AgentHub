@@ -55,10 +55,10 @@ describe("CLI TUI command", () => {
 
     const rendered = output.join("");
     expect(errors.join("")).toBe("");
-    expect(rendered).toContain("Agent Hub - TUI Project #review - @codex");
+    expect(rendered).toContain("TUI Project #review · @codex");
     expect(rendered).toContain("@codex");
     expect(rendered).toContain("Check TUI evidence.");
-    expect(rendered).toContain("+-- @codex run_1 running");
+    expect(rendered).toContain("@codex run_1 ● running");
     expect(rendered).toContain("> @codex prompt");
   });
 
@@ -78,7 +78,7 @@ describe("CLI TUI command", () => {
 
     const rendered = output.join("");
     expect(errors.join("")).toBe("");
-    expect(rendered).toContain("Agent Hub - unregistered");
+    expect(rendered).toContain("unregistered");
     expect(rendered).toContain("recovery: agent-hub project add --name <name>");
     expect(rendered).toContain("No messages in the current context.");
   });
@@ -139,7 +139,7 @@ describe("CLI TUI command", () => {
       )
     ).resolves.toBe(0);
     expect(errors.join("")).toBe("");
-    expect(output.join("")).toContain("Agent Hub - TUI Project #review");
+    expect(output.join("")).toContain("TUI Project #review");
   });
 
   it("submits prompts through the CLI chat path and keeps unknown mentions as text", async () => {

@@ -1,5 +1,4 @@
 import type {
-  TuiActiveRunBox,
   TuiCurrentContextModel,
   TuiRoleCallNodeSummary,
   TuiRunSummary,
@@ -77,7 +76,6 @@ export const focusModes: TuiInkFocus[] = [
   "runs",
   "review",
   "graph",
-  "team",
   "tasks",
   "memory",
   "help"
@@ -134,6 +132,12 @@ export function reduceInkState(
     return next;
   }
   if (key === "review") {
+    const pendingRun = state.focus === "work"
+      ? selectedPendingReviewRun(model, state)
+      : undefined;
+    if (pendingRun) {
+      next.selectedRunId = pendingRun.id;
+    }
     next.focus = "review";
     return next;
   }
@@ -181,6 +185,12 @@ export function reduceInkState(
     return next;
   }
   if (key === "enter") {
+    const pendingRun = state.focus === "work"
+      ? selectedPendingReviewRun(model, state)
+      : undefined;
+    if (pendingRun) {
+      next.selectedRunId = pendingRun.id;
+    }
     next.focus = "review";
     return next;
   }
@@ -278,11 +288,11 @@ export function selectedReviewRunId(
   model: TuiCurrentContextModel,
   state: TuiInkState
 ): string | undefined {
-  const awaitingReviewRun = state.focus === "work"
-    ? selectedAwaitingReviewRun(model, state)
+  const pendingReviewRun = state.focus === "work"
+    ? selectedPendingReviewRun(model, state)
     : undefined;
-  if (awaitingReviewRun) {
-    return awaitingReviewRun.runId;
+  if (pendingReviewRun) {
+    return pendingReviewRun.id;
   }
   if (model.review.kind === "run") {
     return model.review.selectedId;
@@ -290,15 +300,20 @@ export function selectedReviewRunId(
   return model.review.evidence.linkedRunId ?? selectedRun(model, state)?.id;
 }
 
-export function selectedAwaitingReviewRun(
+export function selectedPendingReviewRun(
   model: TuiCurrentContextModel,
   state: TuiInkState
-): TuiActiveRunBox | undefined {
-  const awaiting = model.activeRuns.filter((run) => run.state === "awaiting_review");
-  if (awaiting.length === 0) {
+): TuiRunSummary | undefined {
+  const pending = model.runs
+    .filter((run) =>
+      (run.status === "succeeded" || run.status === "failed" || run.status === "cancelled") &&
+      run.reviewDecision.status === "pending"
+    )
+    .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+  if (pending.length === 0) {
     return undefined;
   }
-  return awaiting[Math.min(Math.max(state.selectedActiveRunIndex, 0), awaiting.length - 1)];
+  return pending[Math.min(Math.max(state.selectedActiveRunIndex, 0), pending.length - 1)];
 }
 
 export function commandHintForFocus(

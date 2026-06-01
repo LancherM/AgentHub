@@ -62,11 +62,10 @@ describe("TUI current-context read model", () => {
       "message_3"
     ]);
     expect(model.activeRuns.map((run) => `${run.runId}:${run.state}`)).toEqual([
-      "run_done:awaiting_review",
       "run_active:running"
     ]);
     expect(model.activeRuns.find((run) => run.runId === "run_active")).toMatchObject({
-      title: "@fake run_active running",
+      title: "@fake run_active ● running",
       outputLines: ["adapter started", "verification started"],
       evidenceLines: [
         "checks 1/1/1: pnpm test",
@@ -81,8 +80,14 @@ describe("TUI current-context read model", () => {
       "delegation:call_running",
       "delegation:call_succeeded",
       "delegation:call_waiting_approval",
-      "delegation:call_waiting_context"
+      "delegation:call_waiting_context",
+      "run:run_done"
     ]);
+    expect(model.conversation.find((entry) => entry.id === "run:run_done")).toMatchObject({
+      type: "agent_completed",
+      content: "I changed the cleanup summary.",
+      reviewLine: "review pending: v details"
+    });
     expect(model.runs.map((run) => run.id)).toEqual(["run_active", "run_done"]);
     expect(model.runs[0]).toMatchObject({
       id: "run_active",
@@ -213,10 +218,13 @@ describe("TUI current-context read model", () => {
       }
     });
     expect(model.activeRuns.map((run) => `${run.runId}:${run.state}`)).toEqual([
-      "run_no_change:awaiting_review",
       "run_active:running"
     ]);
     expect(model.conversation.map((entry) => entry.id)).toContain("run:run_completed");
+    expect(model.conversation.map((entry) => entry.id)).toContain("run:run_no_change");
+    expect(model.conversation.find((entry) => entry.id === "run:run_no_change")).toMatchObject({
+      reviewLine: "review pending: v details"
+    });
     expect(model.conversation.map((entry) => entry.id)).toContain("review:run_completed:accepted");
   });
 
