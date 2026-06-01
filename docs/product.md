@@ -164,6 +164,13 @@ and `@memory`. Users can save project-level role overrides or custom roles.
 Only `agent_adapter` roles are executable today; reserved `human`, `llm_api`,
 and `workflow` roles remain visible metadata until explicit local executors are
 implemented.
+Advanced users may keep project role configuration in `.agent-hub/team.yaml`.
+Agent Hub reads that file only when it already exists in the registered project
+or when a user explicitly imports/exports it. Merge precedence is presets,
+SQLite role settings, then YAML overrides/custom roles. `team roles save`
+continues to write SQLite by default; `team roles export` previews YAML unless
+`--write` is supplied, and `team roles import` writes back to SQLite only with
+`--write`.
 
 Adaptive Role Calls are an auditable local collaboration graph. A role-backed
 assistant response can emit line-start syntax such as `@reviewer check the

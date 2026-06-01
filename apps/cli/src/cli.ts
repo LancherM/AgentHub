@@ -1,7 +1,10 @@
 #!/usr/bin/env node
 import { createHash } from "node:crypto";
+import fs from "node:fs/promises";
 import path from "node:path";
 import { createInterface } from "node:readline/promises";
+import { dump as dumpYaml, load as loadYaml } from "js-yaml";
+import { z } from "zod";
 import { parseAgentPrompt } from "@agent-hub/agent-adapters";
 import {
   appendApprovedMemory,
@@ -493,6 +496,28 @@ export async function main(
   }
 
   if (
+    (command === "team" && rest[0] === "roles" && rest[1] === "import") ||
+    (command === "roles" && rest[0] === "import")
+  ) {
+    return importTeamRoles(
+      command === "roles" ? rest.slice(1) : rest.slice(2),
+      io,
+      activeRuntime
+    );
+  }
+
+  if (
+    (command === "team" && rest[0] === "roles" && rest[1] === "export") ||
+    (command === "roles" && rest[0] === "export")
+  ) {
+    return exportTeamRoles(
+      command === "roles" ? rest.slice(1) : rest.slice(2),
+      io,
+      activeRuntime
+    );
+  }
+
+  if (
     (command === "team" && rest[0] === "roles" && rest[1] === "executor") ||
     (command === "roles" && rest[0] === "executor")
   ) {
@@ -616,6 +641,8 @@ export function helpText(debug = isEnvironmentDebugEnabled()): string {
     "  agent-hub [--db <path>] team roles list --project-id <project-id>",
     "  agent-hub [--db <path>] team roles show --project-id <project-id> --role <handle>",
     `  agent-hub [--db <path>] team roles save --project-id <project-id> --handle <handle> [--display-name <name>] [--executor ${agentChoices}|human|llm_api|workflow] [--skill [scope:]id]`,
+    "  agent-hub [--db <path>] team roles import --project-id <project-id> [--path .agent-hub/team.yaml] [--preview|--write]",
+    "  agent-hub [--db <path>] team roles export --project-id <project-id> [--path .agent-hub/team.yaml] [--preview|--write]",
     "  agent-hub [--db <path>] team roles executor --project-id <project-id> --role <handle>",
     "  agent-hub runs list",
     "  agent-hub runs events <run-id>",
@@ -867,6 +894,60 @@ const roleSettingsPrefix = "desktop.project.";
 const roleSettingsSuffix = ".workgroupRoles";
 const maxStoredRoles = 32;
 const reservedExecutorReason = "Reserved executor is not runnable in this phase.";
+const defaultTeamYamlPath = ".agent-hub/team.yaml";
+
+const teamYamlSkillReferenceSchema = z.object({
+  id: z.string().min(1),
+  scope: z.enum(["task", "role", "project", "global"]).optional()
+}).strict();
+
+const teamYamlContextPolicySchema = z.object({
+  scope: z.string().min(1),
+  includeApprovedMemory: z.boolean(),
+  includeThreadSummary: z.boolean(),
+  instructions: z.array(z.string())
+}).strict();
+
+const teamYamlApprovalPolicySchema = z.object({
+  requiredFor: z.array(z.string()),
+  summary: z.string().min(1)
+}).strict();
+
+const teamYamlExecutorSchema = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("agent_adapter"),
+    adapterKind: z.enum(agentKinds),
+    configRef: z.string().optional()
+  }).strict(),
+  z.object({
+    kind: z.enum(["human", "llm_api", "workflow"]),
+    configRef: z.string().optional(),
+    unavailableReason: z.string().optional()
+  }).strict()
+]);
+
+const teamYamlRoleSchema = z.object({
+  id: z.string().min(1),
+  handle: z.string().min(1),
+  displayName: z.string().min(1),
+  purpose: z.string().min(1),
+  capabilitySummary: z.string().min(1),
+  persona: z.string().min(1),
+  defaultInstructions: z.string().min(1),
+  permissions: z.array(z.string()),
+  contextPolicy: teamYamlContextPolicySchema,
+  approvalPolicy: teamYamlApprovalPolicySchema,
+  executor: teamYamlExecutorSchema,
+  enabled: z.boolean(),
+  defaultSkillReferences: z.array(teamYamlSkillReferenceSchema).optional(),
+  defaultRoom: z.string().optional(),
+  tags: z.array(z.string()).optional(),
+  metadata: z.record(z.string(), z.unknown()).optional()
+}).strict();
+
+const teamYamlSchema = z.object({
+  roles: z.array(teamYamlRoleSchema).max(maxStoredRoles)
+}).strict();
 
 const defaultRoomDefinitions = [
   {
@@ -907,7 +988,7 @@ interface CliRoomMetadata extends JsonObject {
 
 interface ResolvedRole {
   role: WorkgroupRole;
-  source: "preset" | "preset_override" | "custom";
+  source: "preset" | "preset_override" | "custom" | "yaml_override" | "yaml_custom";
 }
 
 interface CliMentionParticipant {
@@ -2063,6 +2144,97 @@ async function saveTeamRole(
   }
 }
 
+async function importTeamRoles(
+  args: string[],
+  io: CliIO,
+  runtime: CliRuntime
+): Promise<number> {
+  try {
+    const projectId = requiredFlag(args, "--project-id");
+    const project = await requireProject(runtime, projectId);
+    const filePath = resolveTeamYamlPath(project, optionalFlag(args, "--path"));
+    const roles = await readTeamYamlRoles(filePath, { optional: false });
+    const write = teamYamlWriteMode(args);
+    if (write) {
+      const existing = await storedWorkgroupRoles(runtime, projectId);
+      const next = roles.reduce(upsertStoredRole, existing);
+      await saveStoredWorkgroupRoles(runtime, projectId, next);
+      io.stdout.write(
+        [
+          "Imported team roles",
+          `project_id: ${projectId}`,
+          `path: ${filePath}`,
+          `roles: ${roles.length}`,
+          "mode: write",
+          ""
+        ].join("\n")
+      );
+      return 0;
+    }
+    io.stdout.write(
+      [
+        "Team roles import preview",
+        `project_id: ${projectId}`,
+        `path: ${filePath}`,
+        `roles: ${roles.length}`,
+        "mode: preview",
+        ...roles.map((role) => `@${role.handle}\t${executorLabel(role.executor)}`),
+        ""
+      ].join("\n")
+    );
+    return 0;
+  } catch (error) {
+    io.stderr.write(`error: ${error instanceof Error ? error.message : String(error)}\n`);
+    return 1;
+  }
+}
+
+async function exportTeamRoles(
+  args: string[],
+  io: CliIO,
+  runtime: CliRuntime
+): Promise<number> {
+  try {
+    const projectId = requiredFlag(args, "--project-id");
+    const project = await requireProject(runtime, projectId);
+    const filePath = resolveTeamYamlPath(project, optionalFlag(args, "--path"));
+    const write = teamYamlWriteMode(args);
+    const roles = exportableTeamRoles(await resolvedWorkgroupRoles(runtime, projectId));
+    const content = renderTeamYaml(roles);
+    if (write) {
+      await fs.mkdir(path.dirname(filePath), { recursive: true });
+      await fs.writeFile(filePath, content, "utf8");
+      io.stdout.write(
+        [
+          "Exported team roles",
+          `project_id: ${projectId}`,
+          `path: ${filePath}`,
+          `roles: ${roles.length}`,
+          "mode: write",
+          ""
+        ].join("\n")
+      );
+      return 0;
+    }
+    io.stdout.write(
+      [
+        "Team roles export preview",
+        `project_id: ${projectId}`,
+        `path: ${filePath}`,
+        `roles: ${roles.length}`,
+        "mode: preview",
+        "---",
+        content.trimEnd(),
+        ""
+      ].join("\n")
+    );
+    return 0;
+  } catch (error) {
+    io.stderr.write(`error: ${error instanceof Error ? error.message : String(error)}\n`);
+    return 1;
+  }
+}
+
 async function renderChatThreads(
   io: CliIO,
   runtime: CliRuntime
@@ -2721,21 +2893,33 @@ async function resolvedWorkgroupRoles(
   runtime: CliRuntime,
   projectId: string
 ): Promise<ResolvedRole[]> {
-  await requireProject(runtime, projectId);
+  const project = await requireProject(runtime, projectId);
   const stored = await storedWorkgroupRoles(runtime, projectId);
+  const yaml = await projectTeamYamlRoles(project);
   const storedByHandle = new Map(stored.map((role) => [role.handle, role]));
+  const yamlByHandle = new Map(yaml.map((role) => [role.handle, role]));
   const presetHandles = new Set(presetWorkgroupRoles.map((role) => role.handle));
   const resolved: ResolvedRole[] = presetWorkgroupRoles.map((preset) => {
+    const yamlOverride = yamlByHandle.get(preset.handle);
+    if (yamlOverride) {
+      return { role: yamlOverride, source: "yaml_override" };
+    }
     const override = storedByHandle.get(preset.handle);
     return override
       ? { role: override, source: "preset_override" }
       : { role: preset, source: "preset" };
   });
   for (const role of stored) {
-    if (presetHandles.has(role.handle)) {
+    if (presetHandles.has(role.handle) || yamlByHandle.has(role.handle)) {
       continue;
     }
     resolved.push({ role, source: "custom" });
+  }
+  for (const role of yaml) {
+    if (presetHandles.has(role.handle)) {
+      continue;
+    }
+    resolved.push({ role, source: "yaml_custom" });
   }
   return resolved.sort((left, right) => {
     const leftPreset = presetHandles.has(left.role.handle) ? 0 : 1;
@@ -2775,6 +2959,79 @@ async function storedWorkgroupRoles(
   }
   const roles = settingValueRoles(setting.value);
   return roles.map((role) => validateWorkgroupRole(role as WorkgroupRole));
+}
+
+async function projectTeamYamlRoles(project: Project): Promise<WorkgroupRole[]> {
+  return readTeamYamlRoles(resolveTeamYamlPath(project), { optional: true });
+}
+
+async function readTeamYamlRoles(
+  filePath: string,
+  options: { optional: boolean }
+): Promise<WorkgroupRole[]> {
+  let content: string;
+  try {
+    content = await fs.readFile(filePath, "utf8");
+  } catch (error) {
+    if (
+      options.optional &&
+      error &&
+      typeof error === "object" &&
+      "code" in error &&
+      error.code === "ENOENT"
+    ) {
+      return [];
+    }
+    throw error;
+  }
+  return parseTeamYamlRoles(content, filePath);
+}
+
+function parseTeamYamlRoles(content: string, filePath: string): WorkgroupRole[] {
+  let parsed: unknown;
+  try {
+    parsed = loadYaml(content);
+  } catch (error) {
+    throw new Error(
+      `invalid team.yaml at ${filePath}: ${
+        error instanceof Error ? error.message : String(error)
+      }`
+    );
+  }
+  const result = teamYamlSchema.safeParse(parsed);
+  if (!result.success) {
+    throw new Error(
+      `invalid team.yaml at ${filePath}: ${result.error.issues
+        .map((issue) => `${issue.path.join(".") || "root"} ${issue.message}`)
+        .join("; ")}`
+    );
+  }
+  const seen = new Set<string>();
+  return result.data.roles.map((role) => {
+    const normalizedHandle = normalizeWorkgroupRoleHandle(role.handle);
+    if (!normalizedHandle || normalizedHandle !== role.handle) {
+      throw new Error(
+        `invalid team.yaml at ${filePath}: role handle ${role.handle} must be normalized`
+      );
+    }
+    if (seen.has(role.handle)) {
+      throw new Error(
+        `invalid team.yaml at ${filePath}: duplicate role @${role.handle}`
+      );
+    }
+    seen.add(role.handle);
+    return validateWorkgroupRole(role as WorkgroupRole);
+  });
+}
+
+function resolveTeamYamlPath(
+  project: Project,
+  inputPath = defaultTeamYamlPath
+): string {
+  if (path.isAbsolute(inputPath)) {
+    return path.resolve(inputPath);
+  }
+  return path.resolve(project.rootPath, inputPath);
 }
 
 async function saveStoredWorkgroupRoles(
@@ -2942,6 +3199,36 @@ function upsertStoredRole(
     throw new Error(`team roles must contain ${maxStoredRoles} or fewer entries`);
   }
   return next.sort((left, right) => left.handle.localeCompare(right.handle));
+}
+
+function teamYamlWriteMode(args: string[]): boolean {
+  const write = args.includes("--write");
+  const preview = args.includes("--preview");
+  if (write && preview) {
+    throw new Error("--write and --preview are mutually exclusive");
+  }
+  return write;
+}
+
+function exportableTeamRoles(entries: ResolvedRole[]): WorkgroupRole[] {
+  return entries
+    .filter((entry) => entry.source !== "preset")
+    .map((entry) => entry.role);
+}
+
+function renderTeamYaml(roles: WorkgroupRole[]): string {
+  return dumpYaml(
+    {
+      roles: roles.map((role) =>
+        JSON.parse(JSON.stringify(role)) as Record<string, unknown>
+      )
+    },
+    {
+      lineWidth: 100,
+      noRefs: true,
+      sortKeys: false
+    }
+  );
 }
 
 function executorLabel(executor: WorkgroupExecutor): string {

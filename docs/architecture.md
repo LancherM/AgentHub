@@ -229,6 +229,13 @@ permissions, context policy, approval policy, default skill references, enabled
 state, and executor. `agent_adapter` roles map to existing adapters. Reserved
 `human`, `llm_api`, and `workflow` roles are stored and displayed but do not
 execute.
+CLI role resolution can also read `.agent-hub/team.yaml` from a registered
+project when that file already exists or when a user explicitly imports or
+exports it. YAML is schema-validated, then merged after SQLite settings, so the
+documented precedence is presets -> SQLite overrides/custom roles -> YAML
+overrides/custom roles. `team roles save` still writes SQLite only. `team roles
+export` prints a preview unless `--write` is passed, and `team roles import`
+persists YAML roles into SQLite only with `--write`.
 
 CLI chat, room sends, and desktop room turns resolve role handles in the local
 service layer. Runnable participants create TaskRunner-backed runs under one

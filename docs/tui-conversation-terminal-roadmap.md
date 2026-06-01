@@ -19,6 +19,9 @@ The current TUI already has the important foundations:
 - Role-backed prompt submission now carries safe role/team metadata through
   TaskRunner into adapter runtime injection, so the TUI path uses the same role
   instructions and RoleCall delegation constraints as CLI chat.
+- CLI team-role commands can read existing `.agent-hub/team.yaml` files,
+  preview/write exports, and explicitly import YAML roles into SQLite while
+  keeping default role saves SQLite-backed.
 
 The redesign changes the default `Work` surface from a multi-pane operating
 dashboard into a conversation terminal. Auxiliary panes remain available
