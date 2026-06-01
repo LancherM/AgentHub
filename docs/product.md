@@ -234,6 +234,6 @@ Not implemented as product behavior today:
   stdout/status/message/error model.
 
 Roadmaps for future work live in `docs/local-ai-workgroup-roadmap.md`,
-`docs/interaction-optimization-roadmap.md`, and the Adaptive Role Calls
-specification documents. Those files describe direction; this document describes
-the current product state.
+`docs/interaction-optimization-roadmap.md`, `docs/tui-roadmap.md`, and the
+Adaptive Role Calls specification documents. Those files describe direction;
+this document describes the current product state.

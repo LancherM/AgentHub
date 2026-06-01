@@ -352,6 +352,9 @@ deploy services or change the local-first runtime model.
 Future changes should preserve these boundaries:
 
 - keep CLI behavior functional without the desktop;
+- keep any future terminal UI inside the CLI/local package boundary as a
+  complete current-context workbench, not a project/room browser or desktop
+  inspector clone;
 - keep desktop orchestration out of the renderer;
 - prefer local core packages over app-specific orchestration;
 - keep generated context out of target repository roots unless explicitly
@@ -362,3 +365,8 @@ Future changes should preserve these boundaries:
   review boundaries;
 - never turn review, comparison, role collaboration, or memory proposals into
   automatic acceptance, merge, push, PR creation, or memory promotion.
+
+The planned terminal UI direction is captured in `docs/tui-roadmap.md`. It
+should reuse persisted transcript, task, run, RoleCall, verification, risk,
+memory, skill, and review evidence while keeping deep audit in explicit CLI or
+desktop review commands.
