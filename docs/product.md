@@ -78,11 +78,19 @@ The TUI composer is prompt-first while editing: printable keys append to the
 prompt, `Enter` submits non-empty prompts when a submission callback is
 available, `Esc` clears the in-progress prompt, and `Tab` remains available for
 focus navigation. The status bar switches to composer-specific hints so exit
-shortcuts are not advertised while a prompt is being edited.
+shortcuts are not advertised while a prompt is being edited. Interactive
+submit and review-decision actions show bounded busy states and time out back
+to keyboard control instead of trapping the terminal indefinitely.
 Prompt submission keeps the terminal workbench in control of the screen: agent
 stdout, run debug details, and raw adapter text are persisted through the normal
 chat/run records and then shown through TUI panes, not dumped directly into the
 Ink alternate screen during an interactive submit.
+Interactive TUI sessions periodically refresh the same current-context read
+model so externally changing run, task, transcript, RoleCall, and review state
+can appear without a manual keypress. The transcript can scroll back from Work
+focus, Runs and Tasks panes expand on taller terminals, and the Review reject
+shortcut is uppercase `R` so vim-style `j` remains navigation rather than an
+audit write.
 When the graph has no selected RoleCall, the TUI command hint and command
 palette surface `agent-hub team roles list --project-id <project-id>` as the
 next useful role command.

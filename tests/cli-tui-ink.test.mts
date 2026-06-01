@@ -167,7 +167,7 @@ describe("Ink TUI renderer", () => {
       React.createElement(TuiInkFrame, {
         model,
         state,
-        terminal: { columns: 120, rows: 40 }
+        terminal: { columns: 120, rows: 22 }
       }),
       { columns: 120 }
     );
@@ -176,6 +176,96 @@ describe("Ink TUI renderer", () => {
     expect(selectedRun(model, state)?.id).toBe("run_0000000a");
     expect(output).toContain("> run_0000000a @codex ok");
     expect(output).not.toContain("run_00000000 @codex ok");
+  });
+
+  it("expands run rows when the terminal has enough height", () => {
+    const model = modelWithRuns(
+      Array.from({ length: 14 }, (_value, index) => `run_${index.toString(16).padStart(8, "0")}`)
+    );
+    const output = renderToString(
+      React.createElement(TuiInkFrame, {
+        model,
+        state: { ...createInitialInkState(), focus: "runs" },
+        terminal: { columns: 120, rows: 60 }
+      }),
+      { columns: 120 }
+    );
+
+    expect(output).toContain("run_0000000d @codex ok");
+  });
+
+  it("scrolls transcript history from the work focus", () => {
+    const model = modelWithTranscript(10);
+    const bottomOutput = renderToString(
+      React.createElement(TuiInkFrame, {
+        model,
+        state: createInitialInkState(),
+        terminal: { columns: 78, rows: 24 }
+      }),
+      { columns: 78 }
+    );
+    const scrolledState = reduceInkState(createInitialInkState(), "page_up", model);
+    const scrolledOutput = renderToString(
+      React.createElement(TuiInkFrame, {
+        model,
+        state: scrolledState,
+        terminal: { columns: 78, rows: 24 }
+      }),
+      { columns: 78 }
+    );
+
+    expect(bottomOutput).toContain("Transcript 6-10/10");
+    expect(bottomOutput).not.toContain("Transcript message 0");
+    expect(scrolledOutput).toContain("Transcript 1-5/10");
+    expect(scrolledOutput).toContain("Transcript message 0");
+  });
+
+  it("polls the read model while interactive", async () => {
+    const polledModel = modelWithRuns(["run_polled01"]);
+    const instance = render(
+      React.createElement(TuiInkApp, {
+        model: baseModel,
+        state: createInitialInkState(),
+        terminal: { columns: 120, rows: 40 },
+        interactive: true,
+        loadModel: async () => polledModel,
+        pollIntervalMs: 5,
+        modelRefreshTimeoutMs: 50
+      })
+    );
+
+    await new Promise((resolve) => setTimeout(resolve, 30));
+
+    expect(instance.lastFrame()).toContain("run_polled01 @codex ok");
+    instance.unmount();
+  });
+
+  it("recovers keyboard input after a hung prompt submission timeout", async () => {
+    const instance = render(
+      React.createElement(TuiInkApp, {
+        model: baseModel,
+        state: createInitialInkState(),
+        terminal: { columns: 120, rows: 40 },
+        interactive: true,
+        operationTimeoutMs: 5,
+        submitPrompt: async () => new Promise<never>(() => undefined)
+      })
+    );
+
+    for (const character of "hang") {
+      instance.stdin.write(character);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+    instance.stdin.write("\r");
+    await new Promise((resolve) => setTimeout(resolve, 25));
+
+    expect(instance.lastFrame()).toContain("Prompt submission timed out after 5ms.");
+
+    instance.stdin.write("\u001b");
+    await new Promise((resolve) => setTimeout(resolve, 25));
+
+    expect(instance.lastFrame()).toContain("Composer cleared.");
+    instance.unmount();
   });
 
   it("submits composer text without interpreting unknown mentions", async () => {
@@ -330,6 +420,49 @@ describe("Ink TUI renderer", () => {
     expect(instance.lastFrame()).toContain("review accepted");
     instance.unmount();
   });
+
+  it("does not reject review on vim down and requires uppercase R", async () => {
+    const decisions = [];
+    const rejectedModel = {
+      ...baseModel,
+      runs: [
+        {
+          ...baseModel.runs[0],
+          reviewDecision: { status: "rejected" }
+        }
+      ]
+    };
+    const instance = render(
+      React.createElement(TuiInkApp, {
+        model: baseModel,
+        state: { ...createInitialInkState(), focus: "review" },
+        terminal: { columns: 120, rows: 40 },
+        interactive: true,
+        recordReviewDecision: async (input) => {
+          decisions.push(input);
+          return { ok: true, message: "Review rejected.", model: rejectedModel };
+        }
+      })
+    );
+
+    instance.stdin.write("j");
+    await new Promise((resolve) => setTimeout(resolve, 25));
+
+    expect(decisions).toEqual([]);
+    expect(instance.lastFrame()).not.toContain("Review rejected.");
+
+    instance.stdin.write("R");
+    await new Promise((resolve) => setTimeout(resolve, 25));
+
+    expect(decisions).toEqual([
+      expect.objectContaining({
+        runId: "run_27984312-fc9a-46bf-9ccf-c06997187091",
+        status: "rejected"
+      })
+    ]);
+    expect(instance.lastFrame()).toContain("Review rejected.");
+    instance.unmount();
+  });
 });
 
 function modelWithRuns(ids) {
@@ -342,6 +475,21 @@ function modelWithRuns(ids) {
       taskId: `task_${index}`,
       taskTitle: `Run ${index}`,
       updatedAt: `2026-05-29T12:${String(index).padStart(2, "0")}:00.000Z`
+    }))
+  };
+}
+
+function modelWithTranscript(count) {
+  return {
+    ...baseModel,
+    transcript: Array.from({ length: count }, (_value, index) => ({
+      id: `message_${index}`,
+      sequence: index,
+      role: index % 2 === 0 ? "user" : "assistant",
+      kind: "text",
+      author: index % 2 === 0 ? "user" : "codex",
+      content: `Transcript message ${index}`,
+      createdAt: `2026-05-29T12:${String(index).padStart(2, "0")}:00.000Z`
     }))
   };
 }
