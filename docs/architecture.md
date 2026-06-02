@@ -259,6 +259,9 @@ The flow is:
 3. The RoleCall orchestrator validates caller/callee roles, policy, graph
    limits, duplicate suppression, todo capacity, permissions, approval gates,
    executor capability, and dangerous command text through safety policy.
+   Preset roles use core defaults, while coordinator-style custom roles such as
+   `@pm` can initiate bounded RoleCalls through explicit metadata policy or the
+   conservative coordinator default.
 4. Accepted, deferred, rejected, waiting-context, or waiting-approval decisions
    are persisted as RoleCall and RoleCallEvent records. Callee todos are
    created or updated where applicable.

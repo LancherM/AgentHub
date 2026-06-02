@@ -234,7 +234,9 @@ risk evidence`. Agent Hub parses the intent, validates policy, persists
 RoleCall, RoleTodo, and RoleCallEvent records, and executes accepted
 `agent_adapter` calls through the same TaskRunner path. CLI chat, TUI prompt
 submission, and desktop room turns all use this same closed loop after a
-role-backed assistant message is persisted.
+role-backed assistant message is persisted. Coordinator-style custom roles such
+as `@pm` can initiate bounded RoleCalls to other local roles when their role
+policy or coordinator defaults allow it.
 
 ## CLI Surface
 

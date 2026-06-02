@@ -15,7 +15,11 @@ import type {
   DiffCollectionResult,
   DiffCollectorService
 } from "@agent-hub/task-runner";
-import { presetWorkgroupRoles, type RiskReport } from "@agent-hub/core";
+import {
+  presetWorkgroupRoles,
+  type RiskReport,
+  type WorkgroupRole
+} from "@agent-hub/core";
 import { createSqliteRepositories } from "@agent-hub/db";
 import { RiskReportGenerator, type RiskReportInput } from "@agent-hub/safety";
 import { SequenceIdGenerator, FixedClock } from "@agent-hub/task-runner";
@@ -1466,7 +1470,7 @@ describe("CLI", () => {
     expect(output.join("")).toContain("@researcher");
   });
 
-  it("orchestrates RoleCalls emitted by CLI role output", async () => {
+  it("orchestrates RoleCalls emitted by custom PM role output", async () => {
     const projectRoot = await createTestDirectory("cli-rolecall-chat-project");
     const runRoot = path.join(await createTestDirectory("cli-rolecall-chat-runs"), "runs");
     const roleResultJson = JSON.stringify({
@@ -1525,19 +1529,34 @@ describe("CLI", () => {
       createdAt: "2026-01-01T00:00:00.000Z",
       updatedAt: "2026-01-01T00:00:00.000Z"
     });
+    const analyst = presetWorkgroupRoles.find((role) => role.handle === "analyst");
+    const pmRole: WorkgroupRole = {
+      ...(analyst ?? presetWorkgroupRoles[0]),
+      id: "custom:pm",
+      handle: "pm",
+      displayName: "PM",
+      purpose: "Coordinate role delegation for local work.",
+      capabilitySummary: "Planning, coordination, delegation.",
+      persona: "Project manager who routes bounded work to other roles.",
+      defaultInstructions: "Delegate bounded work to the right role.",
+      executor: { kind: "agent_adapter", adapterKind: "codex" },
+      tags: ["coordination"],
+      metadata: { source: "custom" }
+    };
     await runtime.settingsRepository.set({
       key: "desktop.project.project_cli_rolecall.workgroupRoles",
       value: {
-        roles: presetWorkgroupRoles.map((role) =>
-          role.handle === "analyst" ||
-          role.handle === "researcher" ||
-          role.handle === "engineer"
-            ? {
-                ...role,
-                executor: { kind: "agent_adapter", adapterKind: "codex" }
-              }
-            : role
-        )
+        roles: [
+          ...presetWorkgroupRoles.map((role) =>
+            role.handle === "researcher" || role.handle === "engineer"
+              ? {
+                  ...role,
+                  executor: { kind: "agent_adapter", adapterKind: "codex" }
+                }
+              : role
+          ),
+          pmRole
+        ]
       },
       updatedAt: "2026-01-01T00:00:00.000Z"
     });
@@ -1557,7 +1576,7 @@ describe("CLI", () => {
         "--room",
         "general",
         "--message",
-        "@analyst ask other roles for the number"
+        "@pm ask other roles for the number"
       ], io, projectRoot, runtime)
     ).resolves.toBe(0);
 
@@ -1569,25 +1588,27 @@ describe("CLI", () => {
     const roleCalls = await runtime.roleCallRepository.list({
       threadId: thread?.id ?? ""
     });
-    const analystRunId = messages.find(
+    const pmRunId = messages.find(
       (message) =>
         message.role === "assistant" &&
         message.metadata?.role &&
-        (message.metadata.role as { roleHandle?: string }).roleHandle === "analyst"
+        (message.metadata.role as { roleHandle?: string }).roleHandle === "pm"
     )?.runId;
-    const analystBrief = await runtime.runArtifactRepository.getLatestByRunIdAndKind(
-      analystRunId ?? "",
+    const pmBrief = await runtime.runArtifactRepository.getLatestByRunIdAndKind(
+      pmRunId ?? "",
       "conversation_brief"
     );
 
     expect(errors.join("")).toBe("");
     expect(processRunner.runCalls).toHaveLength(3);
-    expect(analystBrief?.content).toContain("role_call_protocol:");
-    expect(analystBrief?.content).toContain("available_role_calls:");
+    expect(pmBrief?.content).toContain("role_call_protocol:");
+    expect(pmBrief?.content).toContain("available_role_calls:");
+    expect(pmBrief?.content).toContain("@researcher:");
+    expect(pmBrief?.content).toContain("@engineer:");
     expect(roleCalls).toHaveLength(2);
     expect(roleCalls).toEqual(expect.arrayContaining([
       expect.objectContaining({
-        callerRole: "analyst",
+        callerRole: "pm",
         calleeRole: "researcher",
         task: "output exactly 3",
         status: "succeeded",
@@ -1595,7 +1616,7 @@ describe("CLI", () => {
         result: expect.objectContaining({ summary: "3" })
       }),
       expect.objectContaining({
-        callerRole: "analyst",
+        callerRole: "pm",
         calleeRole: "engineer",
         task: "output exactly 3",
         status: "succeeded",

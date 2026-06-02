@@ -151,7 +151,9 @@ function validateCallerDelegation(
     );
   }
 
-  const directRoleAllowed = policy.allowedTargetRoles?.includes(calleeRole.handle);
+  const directRoleAllowed =
+    policy.allowedTargetRoles?.includes("*") ||
+    policy.allowedTargetRoles?.includes(calleeRole.handle);
   const capabilityAllowed = calleeRole.capabilities.some((capability) =>
     policy.allowedTargetCapabilities?.includes(capability)
   );
