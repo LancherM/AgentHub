@@ -556,6 +556,85 @@ describe("TUI current-context read model", () => {
       .toBe("inline");
   });
 
+  it("redacts sensitive git diffs from inline TUI review evidence", async () => {
+    const runtime = createCliRuntime({ storageMode: "memory" });
+    await runtime.projectRepository.create({
+      id: "project_sensitive_diff",
+      name: "Sensitive Diff",
+      rootPath: "/tmp/sensitive-diff",
+      createdAt: now,
+      updatedAt: now
+    });
+    await runtime.conversationThreadRepository.create({
+      id: "thread_sensitive_diff",
+      projectId: "project_sensitive_diff",
+      title: "Sensitive Diff",
+      createdAt: now,
+      updatedAt: now
+    });
+    await runtime.taskRepository.create({
+      id: "task_sensitive_diff",
+      projectId: "project_sensitive_diff",
+      title: "Project sensitive diff",
+      metadata: { threadId: "thread_sensitive_diff" },
+      status: "completed",
+      createdAt: now,
+      updatedAt: now
+    });
+    await runtime.taskRunRepository.create({
+      id: "run_sensitive_diff",
+      taskId: "task_sensitive_diff",
+      agentKind: "codex",
+      status: "succeeded",
+      startedAt: "2026-05-29T10:00:00.000Z",
+      completedAt: "2026-05-29T10:01:00.000Z",
+      createdAt: "2026-05-29T10:00:00.000Z",
+      updatedAt: "2026-05-29T10:01:00.000Z"
+    });
+    await runtime.runEventRepository.create(
+      event("event_sensitive_diff", "run_sensitive_diff", 0, "message", "diff ready")
+    );
+    await runtime.runArtifactRepository.create({
+      id: "artifact_sensitive_diff_inline",
+      taskRunId: "run_sensitive_diff",
+      kind: "git_diff",
+      content: [
+        "diff --git a/.env.local b/.env.local",
+        "@@ -1,2 +1,2 @@",
+        "-API_TOKEN=old-value",
+        "+API_TOKEN=secret-value"
+      ].join("\n"),
+      metadata: {
+        changedFiles: [".env.local"],
+        stat: { filesChanged: 1, insertions: 1, deletions: 1 }
+      },
+      createdAt: now
+    });
+
+    const model = await buildTuiCurrentContextModel(runtime, {
+      projectId: "project_sensitive_diff",
+      threadId: "thread_sensitive_diff",
+      selectedRunId: "run_sensitive_diff"
+    });
+
+    expect(model.runs[0]?.evidence.inlineDiff).toEqual({
+      mode: "summary",
+      summary: "Patch redacted because sensitive file path changed: .env.local",
+      lines: []
+    });
+    expect(model.review.evidence.inlineDiff?.summary).toContain(
+      "Patch redacted because sensitive file path changed"
+    );
+    expect(
+      model.conversation.find((entry) => entry.id === "review-pending:run_sensitive_diff")?.inlineDiff
+    ).toEqual({
+      mode: "summary",
+      summary: "Patch redacted because sensitive file path changed: .env.local",
+      lines: []
+    });
+    expect(JSON.stringify(model)).not.toContain("secret-value");
+  });
+
   it("reports bounded loop stop reasons for terminal, pending, waiting, blocking, and limits", async () => {
     await expect(loopStopReasonFor([roleCall({ id: "call_ok", status: "succeeded" })]))
       .resolves.toBe("terminal");

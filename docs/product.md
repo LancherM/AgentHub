@@ -114,11 +114,13 @@ submitting it.
 Small run diffs are projected directly into Work when the collected git diff
 has five or fewer changed lines; file/hunk headers are dim, additions are
 green, deletions are red, and context stays plain. Larger diffs collapse to a
-compact `(+N/-M in F files)` summary. Dense runs of more than three pending
-reviews collapse into a single Work line with a `[V]iew` hint. In Review,
-`Enter` or `Space` expands the selected run diff and `Esc` collapses it; `s`
-shows a read-only split compare summary only when the selected task has at
-least two runs.
+compact `(+N/-M in F files)` summary. Inline TUI diff projections use the same
+sensitive-path guard as review patch previews and redact patch text when
+changed-file metadata or diff headers identify `.env`, key, token, credential,
+or secret paths. Dense runs of more than three pending reviews collapse into a
+single Work line with a `[V]iew` hint. In Review, `Enter` or `Space` expands the
+selected run diff and `Esc` collapses it; `s` shows a read-only split compare
+summary only when the selected task has at least two runs.
 Search is local to the TUI renderer. `Ctrl+F` or `/search` opens a search
 overlay over rendered conversation text, shows match count/current match, and
 uses Up/Down to move between matches; `Esc` closes it without corrupting the
@@ -378,7 +380,8 @@ dangerous generated instructions in run events.
 Blocking risks remain blocking. They prevent automatic acceptance and block
 desktop local apply. Patch previews are redacted when changed-file metadata or
 diff headers identify sensitive paths such as `.env`, private keys, tokens,
-secrets, or credentials.
+secrets, or credentials; TUI inline diff summaries apply the same redaction
+before rendering small patch projections.
 
 Verification commands are structured executable-plus-args entries. Dangerous
 commands are represented as failed verification results. Desktop verification
