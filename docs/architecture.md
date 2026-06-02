@@ -177,8 +177,8 @@ hooks to `/dev/null`.
 Diff collection reads git status, filters unchanged generated overlays, captures
 tracked/staged/unstaged changes, synthesizes bounded patches for untracked text
 files, records binary metadata, and records untracked symlinks without reading
-their targets. Sensitive patch text is redacted before CLI or desktop review
-rendering.
+their targets. Sensitive patch text is redacted before CLI, desktop review, or
+TUI inline-diff rendering.
 
 Verification uses structured executable-plus-args commands. Dangerous commands
 are refused by `ShellExecutor` and represented as failed verification results.
@@ -479,10 +479,12 @@ shortcut only prepares a continuation prompt in local Ink state.
 Inline diff display is also a read-model projection over existing `git_diff`
 run artifacts or run metadata. Small diffs with five or fewer changed lines are
 projected into bounded file/add/delete/context lines; larger diffs expose only
-a stat summary. The Ink renderer can group dense adjacent pending-review
-entries, expand/collapse Review-pane diff lines, and show a read-only compare
-summary for tasks with multiple runs, but it does not generate comparison
-reports, apply patches, or mutate review decisions.
+a stat summary. Before projecting patch lines, the core read model checks
+changed-file metadata and diff headers for sensitive paths and replaces matching
+patches with a redacted summary. The Ink renderer can group dense adjacent
+pending-review entries, expand/collapse Review-pane diff lines, and show a
+read-only compare summary for tasks with multiple runs, but it does not generate
+comparison reports, apply patches, or mutate review decisions.
 Search and command-palette input are local Ink state. Conversation search reads
 only the rendered read-model text already present in memory, highlights matches,
 and never mutates composer contents. Palette filtering is fuzzy over safe focus
