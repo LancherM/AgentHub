@@ -232,7 +232,9 @@ Adaptive Role Calls are an auditable local collaboration graph. A role-backed
 assistant response can emit line-start syntax such as `@reviewer check the
 risk evidence`. Agent Hub parses the intent, validates policy, persists
 RoleCall, RoleTodo, and RoleCallEvent records, and executes accepted
-`agent_adapter` calls through the same TaskRunner path.
+`agent_adapter` calls through the same TaskRunner path. CLI chat, TUI prompt
+submission, and desktop room turns all use this same closed loop after a
+role-backed assistant message is persisted.
 
 ## CLI Surface
 

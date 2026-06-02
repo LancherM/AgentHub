@@ -31,9 +31,10 @@ Desktop renderer
   contracts, process-environment helpers, and built-in workgroup pack metadata.
 - `packages/core` owns domain validation, lifecycle state-transition guards,
   repository interfaces, in-memory repository implementations, agent-facing
-  output extraction, RoleCall parsing, RoleCall orchestration, RoleCall context,
-  RoleResult helpers, graph convergence helpers, and bounded current-context
-  TUI read models over existing persisted evidence.
+  output extraction, RoleCall parsing, RoleCall orchestration, assistant-output
+  RoleCall reconciliation, RoleCall context, WorkgroupRole-to-RoleDefinition
+  mapping, RoleResult helpers, graph convergence helpers, and bounded
+  current-context TUI read models over existing persisted evidence.
 - `packages/db` owns SQLite migrations, default database path resolution, a
   queued `sqlite3` session driver, and SQLite implementations of the core
   repository interfaces.
@@ -251,8 +252,10 @@ They are not direct role chat and not a remote workflow engine.
 The flow is:
 
 1. A role-backed assistant response emits line-start `@role task` syntax.
-2. The Electron main-process thread service parses the output with the core
-   RoleCall parser, ignoring fenced code and unknown roles.
+2. CLI chat, TUI prompt submission, and the Electron main-process thread service
+   pass assistant output through the shared core RoleCall output processor,
+   which parses with the core parser while ignoring fenced code and unknown
+   roles.
 3. The RoleCall orchestrator validates caller/callee roles, policy, graph
    limits, duplicate suppression, todo capacity, permissions, approval gates,
    executor capability, and dangerous command text through safety policy.
