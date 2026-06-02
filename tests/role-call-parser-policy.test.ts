@@ -185,6 +185,33 @@ describe("role call parser and policy", () => {
       })
     ).toMatchObject({ allowed: true, status: "allowed" });
 
+    const pm = role({
+      id: "role_pm",
+      handle: "pm",
+      displayName: "PM",
+      capabilities: ["coordination", "delegation"],
+      trustLevel: "user_defined",
+      delegationPolicy: {
+        canInitiateRoleCalls: true,
+        allowedIntentTypes: ["delegate"],
+        allowedTargetRoles: ["*"]
+      }
+    });
+
+    const pmIntent: RoleIntent = {
+      type: "delegate",
+      targetRole: "researcher",
+      task: intent.task,
+      reason: intent.reason,
+      expectedOutput: { format: "summary" }
+    };
+    const pmPolicy = validateRoleCallPolicy({
+      callerRole: pm,
+      calleeRole: researcher,
+      intent: pmIntent
+    });
+    expect(pmPolicy).toMatchObject({ allowed: true, status: "allowed" });
+
     const random = role({
       id: "role_random",
       handle: "random",

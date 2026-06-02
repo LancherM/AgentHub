@@ -1,3 +1,5 @@
+import type { DelegationPolicy } from "./role-calls";
+
 export const workgroupExecutorKinds = [
   "agent_adapter",
   "llm_api",
@@ -52,6 +54,7 @@ export interface WorkgroupRole {
   permissions: string[];
   contextPolicy: WorkgroupContextPolicy;
   approvalPolicy: WorkgroupApprovalPolicy;
+  delegationPolicy?: DelegationPolicy;
   executor: WorkgroupExecutor;
   enabled: boolean;
   defaultSkillReferences?: WorkgroupSkillReference[];

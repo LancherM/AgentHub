@@ -1,7 +1,10 @@
 #!/usr/bin/env node
 import { createHash } from "node:crypto";
+import fs from "node:fs/promises";
 import path from "node:path";
 import { createInterface } from "node:readline/promises";
+import { dump as dumpYaml, load as loadYaml } from "js-yaml";
+import { z } from "zod";
 import { parseAgentPrompt } from "@agent-hub/agent-adapters";
 import {
   appendApprovedMemory,
@@ -27,7 +30,12 @@ import {
   memoryCategories,
   runEventTypes,
   roleCallStatuses,
+  roleIntentTypes,
   roleTodoStatuses,
+  processAssistantRoleCallOutput,
+  roleDefinitionsForWorkgroupRoles,
+  roleDelegationPolicy,
+  roleDelegationPolicyAllowsTarget,
   findWorkgroupRoleByHandle,
   normalizeWorkgroupRoleHandle,
   parseAgentKindAlias,
@@ -58,6 +66,8 @@ import {
   type RoleCall,
   type RoleCallEvent,
   type RoleCallStatus,
+  type RoleDefinition,
+  type RoleIntentType,
   type RoleTodo,
   type RoleTodoStatus,
   type SkillReference,
@@ -75,13 +85,14 @@ import {
   loadRunDiffReview,
   loadRunEventsReview,
   recordRunReviewDecision,
+  RoleCallTaskRunnerExecutor,
   TaskRunner,
   type RunDiffReview,
   type RunContinuationInput,
   type RunTaskInput,
   type TaskRunnerDependencies
 } from "@agent-hub/task-runner";
-import { scanSensitivePaths } from "@agent-hub/safety";
+import { scanSensitivePaths, validateRoleCallPolicy } from "@agent-hub/safety";
 import { createSqliteRepositories } from "@agent-hub/db";
 import { runTuiCommand, type TuiPromptSubmissionInput } from "./tui";
 import {
@@ -493,6 +504,28 @@ export async function main(
   }
 
   if (
+    (command === "team" && rest[0] === "roles" && rest[1] === "import") ||
+    (command === "roles" && rest[0] === "import")
+  ) {
+    return importTeamRoles(
+      command === "roles" ? rest.slice(1) : rest.slice(2),
+      io,
+      activeRuntime
+    );
+  }
+
+  if (
+    (command === "team" && rest[0] === "roles" && rest[1] === "export") ||
+    (command === "roles" && rest[0] === "export")
+  ) {
+    return exportTeamRoles(
+      command === "roles" ? rest.slice(1) : rest.slice(2),
+      io,
+      activeRuntime
+    );
+  }
+
+  if (
     (command === "team" && rest[0] === "roles" && rest[1] === "executor") ||
     (command === "roles" && rest[0] === "executor")
   ) {
@@ -615,7 +648,9 @@ export function helpText(debug = isEnvironmentDebugEnabled()): string {
     "  agent-hub [--db <path>] tui [--thread <thread-id>|--room <handle-or-thread-id>] [--agent codex|claude-code] [--max-iterations <n>]",
     "  agent-hub [--db <path>] team roles list --project-id <project-id>",
     "  agent-hub [--db <path>] team roles show --project-id <project-id> --role <handle>",
-    `  agent-hub [--db <path>] team roles save --project-id <project-id> --handle <handle> [--display-name <name>] [--executor ${agentChoices}|human|llm_api|workflow] [--skill [scope:]id]`,
+    `  agent-hub [--db <path>] team roles save --project-id <project-id> --handle <handle> [--display-name <name>] [--executor ${agentChoices}|human|llm_api|workflow] [--skill [scope:]id] [--can-call-role --role-call-target <role>]`,
+    "  agent-hub [--db <path>] team roles import --project-id <project-id> [--path .agent-hub/team.yaml] [--preview|--write]",
+    "  agent-hub [--db <path>] team roles export --project-id <project-id> [--path .agent-hub/team.yaml] [--preview|--write]",
     "  agent-hub [--db <path>] team roles executor --project-id <project-id> --role <handle>",
     "  agent-hub runs list",
     "  agent-hub runs events <run-id>",
@@ -867,6 +902,69 @@ const roleSettingsPrefix = "desktop.project.";
 const roleSettingsSuffix = ".workgroupRoles";
 const maxStoredRoles = 32;
 const reservedExecutorReason = "Reserved executor is not runnable in this phase.";
+const defaultTeamYamlPath = ".agent-hub/team.yaml";
+
+const teamYamlSkillReferenceSchema = z.object({
+  id: z.string().min(1),
+  scope: z.enum(["task", "role", "project", "global"]).optional()
+}).strict();
+
+const teamYamlContextPolicySchema = z.object({
+  scope: z.string().min(1),
+  includeApprovedMemory: z.boolean(),
+  includeThreadSummary: z.boolean(),
+  instructions: z.array(z.string())
+}).strict();
+
+const teamYamlApprovalPolicySchema = z.object({
+  requiredFor: z.array(z.string()),
+  summary: z.string().min(1)
+}).strict();
+
+const teamYamlDelegationPolicySchema = z.object({
+  canInitiateRoleCalls: z.boolean(),
+  allowedIntentTypes: z.array(z.enum(roleIntentTypes)),
+  allowedTargetRoles: z.array(z.string()).optional(),
+  allowedTargetCapabilities: z.array(z.string()).optional(),
+  requiresApprovalForTargets: z.array(z.string()).optional()
+}).strict();
+
+const teamYamlExecutorSchema = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("agent_adapter"),
+    adapterKind: z.enum(agentKinds),
+    configRef: z.string().optional()
+  }).strict(),
+  z.object({
+    kind: z.enum(["human", "llm_api", "workflow"]),
+    configRef: z.string().optional(),
+    unavailableReason: z.string().optional()
+  }).strict()
+]);
+
+const teamYamlRoleSchema = z.object({
+  id: z.string().min(1),
+  handle: z.string().min(1),
+  displayName: z.string().min(1),
+  purpose: z.string().min(1),
+  capabilitySummary: z.string().min(1),
+  persona: z.string().min(1),
+  defaultInstructions: z.string().min(1),
+  permissions: z.array(z.string()),
+  contextPolicy: teamYamlContextPolicySchema,
+  approvalPolicy: teamYamlApprovalPolicySchema,
+  delegationPolicy: teamYamlDelegationPolicySchema.optional(),
+  executor: teamYamlExecutorSchema,
+  enabled: z.boolean(),
+  defaultSkillReferences: z.array(teamYamlSkillReferenceSchema).optional(),
+  defaultRoom: z.string().optional(),
+  tags: z.array(z.string()).optional(),
+  metadata: z.record(z.string(), z.unknown()).optional()
+}).strict();
+
+const teamYamlSchema = z.object({
+  roles: z.array(teamYamlRoleSchema).max(maxStoredRoles)
+}).strict();
 
 const defaultRoomDefinitions = [
   {
@@ -907,7 +1005,7 @@ interface CliRoomMetadata extends JsonObject {
 
 interface ResolvedRole {
   role: WorkgroupRole;
-  source: "preset" | "preset_override" | "custom";
+  source: "preset" | "preset_override" | "custom" | "yaml_override" | "yaml_custom";
 }
 
 interface CliMentionParticipant {
@@ -925,6 +1023,8 @@ interface CliMentionParseResult {
 
 interface ParsedCliChatTurn extends CliMentionParseResult {
   prompt: string;
+  teamRoles: WorkgroupRoleRunMetadata[];
+  workgroupRoles: readonly WorkgroupRole[];
 }
 
 export interface ChatOptions {
@@ -1357,6 +1457,7 @@ async function runChatTurn(
       currentMessageCreatedAt: userMessage.createdAt,
       agentKind: participant.agentKind,
       role: participant.role,
+      workgroupRoles: parsed.workgroupRoles,
       priorMessages
     });
     const runInput: RunTaskInput = {
@@ -1371,6 +1472,8 @@ async function runChatTurn(
       deliveryMode: "runtime_injection",
       conversationBrief,
       roleSkillReferences: participant.role?.defaultSkillReferences,
+      role: participant.role,
+      teamRoles: participant.role ? parsed.teamRoles : undefined,
       workspaceBasePath: state.workspaceBasePath,
       workspaceCleanupPolicy: state.retainOnFailure ? "retain_on_failure" : undefined,
       dryRun: state.dryRun,
@@ -1419,7 +1522,7 @@ async function runChatTurn(
         assignment: linkedAssignment
       }
     });
-    await appendChatMessage(runtime, currentThread.id, {
+    const assistantMessage = await appendChatMessage(runtime, currentThread.id, {
       role: "assistant",
       kind: "text",
       content: chatAssistantContent(result),
@@ -1439,11 +1542,268 @@ async function runChatTurn(
     if (state.debug) {
       io.stdout.write(renderRunDebug(result, runInput, "runtime_injection"));
     }
+    const roleCallOk = await processCliRoleCallOutput({
+      runtime,
+      state,
+      thread: currentThread,
+      message: assistantMessage,
+      workgroupRoles: parsed.workgroupRoles,
+      io
+    });
     ok &&= result.ok;
+    ok &&= roleCallOk;
   }
 
   await refreshChatThreadSummary(runtime, currentThread.id);
   return ok ? 0 : 1;
+}
+
+async function processCliRoleCallOutput(input: {
+  runtime: CliRuntime;
+  state: ChatState;
+  thread: ConversationThread;
+  message: ConversationMessage;
+  workgroupRoles: readonly WorkgroupRole[];
+  io: CliIO;
+}): Promise<boolean> {
+  const role = metadataRoleRun(input.message.metadata);
+  if (!role) {
+    return true;
+  }
+  const roleDefinitions = roleDefinitionsForWorkgroupRoles(input.workgroupRoles);
+  const result = await processAssistantRoleCallOutput({
+    repositories: {
+      conversationMessageRepository: input.runtime.conversationMessageRepository,
+      roleCallRepository: input.runtime.roleCallRepository,
+      roleCallEventRepository: input.runtime.roleCallEventRepository,
+      roleTodoRepository: input.runtime.roleTodoRepository
+    },
+    threadId: input.thread.id,
+    callerRole: role.roleHandle,
+    message: input.message,
+    roles: roleDefinitions,
+    userGoal: await cliRoleCallUserGoal(input.runtime, input.message),
+    currentPlan: input.message.content,
+    policyValidator: (request) =>
+      validateRoleCallPolicy({
+        callerRole: request.callerRole,
+        calleeRole: request.calleeRole,
+        intent: request.intent,
+        currentDepth: request.currentDepth,
+        activeRoleCalls: request.activeRoleCalls,
+        existingRoleCalls: request.existingRoleCalls,
+        roleTodos: request.roleTodos
+      }),
+    idFactory: createId,
+    now: nowIso,
+    executeAcceptedRoleCalls: ({ parentMessageId, roleDefinitions: definitions }) =>
+      executeAcceptedCliRoleCalls({
+        runtime: input.runtime,
+        state: input.state,
+        thread: input.thread,
+        parentMessageId,
+        workgroupRoles: input.workgroupRoles,
+        roleDefinitions: definitions,
+        io: input.io
+      })
+  });
+  return result.ok;
+}
+
+async function executeAcceptedCliRoleCalls(input: {
+  runtime: CliRuntime;
+  state: ChatState;
+  thread: ConversationThread;
+  parentMessageId: string;
+  workgroupRoles: readonly WorkgroupRole[];
+  roleDefinitions: readonly RoleDefinition[];
+  io: CliIO;
+}): Promise<{ ok: boolean; warnings: string[] }> {
+  const warnings: string[] = [];
+  let ok = true;
+  const executableRoles = new Set(
+    input.roleDefinitions
+      .filter((role) => role.executor.kind === "agent_adapter")
+      .map((role) => role.handle)
+  );
+  const calls = (await input.runtime.roleCallRepository.list({
+    threadId: input.thread.id
+  })).filter(
+    (call) =>
+      call.parentMessageId === input.parentMessageId &&
+      call.status === "accepted" &&
+      !call.taskRunId &&
+      executableRoles.has(call.calleeRole)
+  );
+  const executor = new RoleCallTaskRunnerExecutor({
+    taskRunner: input.runtime.taskRunner,
+    repositories: {
+      roleCallRepository: input.runtime.roleCallRepository,
+      roleCallEventRepository: input.runtime.roleCallEventRepository,
+      roleTodoRepository: input.runtime.roleTodoRepository
+    },
+    roles: input.roleDefinitions,
+    idFactory: createId,
+    now: nowIso
+  });
+
+  for (const call of calls) {
+    const role = input.workgroupRoles.find((entry) => entry.handle === call.calleeRole);
+    const roleMetadata = role ? toWorkgroupRoleRunMetadata(role) : undefined;
+    try {
+      const executed = await executor.execute({
+        roleCallId: call.id,
+        projectId: input.thread.projectId,
+        projectRoot: input.state.projectRoot,
+        taskRunnerOptions: {
+          agentAvailability: cliAgentAvailability(input.state.debug),
+          deliveryMode: "runtime_injection",
+          workspaceBasePath: input.state.workspaceBasePath,
+          workspaceCleanupPolicy: input.state.retainOnFailure
+            ? "retain_on_failure"
+            : undefined,
+          dryRun: input.state.dryRun
+        }
+      });
+      if (!executed.run) {
+        ok = false;
+        if (executed.error) {
+          warnings.push(`@${call.calleeRole} execution failed: ${executed.error}`);
+        }
+        continue;
+      }
+      const assignment = cliRoleCallAssignment({
+        roleCall: executed.roleCall,
+        role: roleMetadata,
+        runId: executed.run.run.id
+      });
+      await appendChatMessage(input.runtime, input.thread.id, {
+        role: "tool",
+        kind: "run_card",
+        content: `@${executed.roleCall.calleeRole} ${executed.run.run.status}`,
+        agentKind: executed.run.run.agentKind,
+        runId: executed.run.run.id,
+        status: executed.run.run.status,
+        metadata: {
+          source: "cli_chat",
+          agentKind: executed.run.run.agentKind,
+          role: roleMetadata,
+          taskId: executed.roleCall.id,
+          roleCallId: executed.roleCall.id,
+          assignment
+        }
+      });
+      const assistantMessage = await appendChatMessage(input.runtime, input.thread.id, {
+        role: "assistant",
+        kind: "text",
+        content: chatAssistantContent(executed.run),
+        agentKind: executed.run.run.agentKind,
+        runId: executed.run.run.id,
+        status: executed.run.run.status,
+        metadata: {
+          source: "cli_chat",
+          assistantOutput: true,
+          terminalStatus: executed.run.run.status,
+          role: roleMetadata,
+          taskId: executed.roleCall.id,
+          roleCallId: executed.roleCall.id,
+          assignment
+        }
+      });
+      input.io.stdout.write(renderAgentOutput(executed.run));
+      if (input.state.debug) {
+        input.io.stdout.write(renderRunDebug(executed.run, {
+          projectRoot: input.state.projectRoot,
+          projectId: input.thread.projectId,
+          taskId: executed.roleCall.id,
+          title: `Role call: @${executed.roleCall.calleeRole} ${executed.roleCall.task}`,
+          taskPrompt: executed.roleCall.task,
+          agentKind: executed.run.run.agentKind
+        }, "runtime_injection"));
+      }
+      ok &&= executed.ok;
+      ok &&= await processCliRoleCallOutput({
+        runtime: input.runtime,
+        state: input.state,
+        thread: input.thread,
+        message: assistantMessage,
+        workgroupRoles: input.workgroupRoles,
+        io: input.io
+      });
+    } catch (error) {
+      ok = false;
+      warnings.push(`@${call.calleeRole} execution failed: ${errorMessage(error)}`);
+    }
+  }
+  return { ok, warnings };
+}
+
+async function cliRoleCallUserGoal(
+  runtime: CliRuntime,
+  message: ConversationMessage
+): Promise<string> {
+  const assignment = metadataAssignment(message.metadata);
+  if (assignment?.sourceMessageId) {
+    const sourceMessage = await runtime.conversationMessageRepository.get(
+      assignment.sourceMessageId
+    );
+    if (sourceMessage?.content.trim()) {
+      return sourceMessage.content;
+    }
+  }
+  const taskId = metadataString(message.metadata, "taskId") ?? assignment?.taskId;
+  if (taskId) {
+    const task = await runtime.taskRepository.get(taskId);
+    if (task?.description?.trim()) {
+      return task.description;
+    }
+    if (task?.title.trim()) {
+      return task.title;
+    }
+  }
+  return message.content;
+}
+
+function cliRoleCallAssignment(input: {
+  roleCall: RoleCall;
+  role?: WorkgroupRoleRunMetadata;
+  runId: string;
+}): WorkgroupTaskAssignmentMetadata {
+  const adapterKind =
+    input.role?.executorKind === "agent_adapter" ? input.role.adapterKind : undefined;
+  return {
+    assignmentId: createId("assignment"),
+    taskId: input.roleCall.id,
+    threadId: input.roleCall.threadId,
+    sourceMessageId: input.roleCall.parentMessageId ?? input.roleCall.id,
+    assignmentRole: "role",
+    agentId: adapterKind === "claude-code" ? "claude" : adapterKind,
+    roleHandle: input.roleCall.calleeRole,
+    displayName: input.role?.displayName ?? `@${input.roleCall.calleeRole}`,
+    executorKind: input.role?.executorKind ?? "agent_adapter",
+    adapterKind,
+    executable: true,
+    runId: input.runId,
+    status: roleCallAssignmentStatus(input.roleCall)
+  };
+}
+
+function roleCallAssignmentStatus(
+  roleCall: RoleCall
+): WorkgroupTaskAssignmentMetadata["status"] {
+  if (roleCall.status === "succeeded") {
+    return "completed";
+  }
+  if (roleCall.status === "failed") {
+    return "failed";
+  }
+  if (roleCall.status === "cancelled") {
+    return "cancelled";
+  }
+  if (roleCall.status === "running") {
+    return "running";
+  }
+  return "queued";
 }
 
 async function buildChatConversationBrief(input: {
@@ -1453,6 +1813,7 @@ async function buildChatConversationBrief(input: {
   currentMessageCreatedAt: string;
   agentKind: AgentKind;
   role?: WorkgroupRoleRunMetadata;
+  workgroupRoles: readonly WorkgroupRole[];
   priorMessages: ConversationMessage[];
 }) {
   const contextSourceMessages = chatContextSourceMessagesForAgent(
@@ -1485,7 +1846,8 @@ async function buildChatConversationBrief(input: {
       `project:${input.thread.projectId}`,
       "Agent Hub-owned project context store",
       "Approved memory only; thread context is not promoted automatically",
-      ...roleContextReferences(input.role)
+      ...roleContextReferences(input.role),
+      ...roleProtocolReferences(input.role, input.workgroupRoles)
     ]
   });
 }
@@ -2060,6 +2422,97 @@ async function saveTeamRole(
   }
 }
 
+async function importTeamRoles(
+  args: string[],
+  io: CliIO,
+  runtime: CliRuntime
+): Promise<number> {
+  try {
+    const projectId = requiredFlag(args, "--project-id");
+    const project = await requireProject(runtime, projectId);
+    const filePath = resolveTeamYamlPath(project, optionalFlag(args, "--path"));
+    const roles = await readTeamYamlRoles(filePath, { optional: false });
+    const write = teamYamlWriteMode(args);
+    if (write) {
+      const existing = await storedWorkgroupRoles(runtime, projectId);
+      const next = roles.reduce(upsertStoredRole, existing);
+      await saveStoredWorkgroupRoles(runtime, projectId, next);
+      io.stdout.write(
+        [
+          "Imported team roles",
+          `project_id: ${projectId}`,
+          `path: ${filePath}`,
+          `roles: ${roles.length}`,
+          "mode: write",
+          ""
+        ].join("\n")
+      );
+      return 0;
+    }
+    io.stdout.write(
+      [
+        "Team roles import preview",
+        `project_id: ${projectId}`,
+        `path: ${filePath}`,
+        `roles: ${roles.length}`,
+        "mode: preview",
+        ...roles.map((role) => `@${role.handle}\t${executorLabel(role.executor)}`),
+        ""
+      ].join("\n")
+    );
+    return 0;
+  } catch (error) {
+    io.stderr.write(`error: ${error instanceof Error ? error.message : String(error)}\n`);
+    return 1;
+  }
+}
+
+async function exportTeamRoles(
+  args: string[],
+  io: CliIO,
+  runtime: CliRuntime
+): Promise<number> {
+  try {
+    const projectId = requiredFlag(args, "--project-id");
+    const project = await requireProject(runtime, projectId);
+    const filePath = resolveTeamYamlPath(project, optionalFlag(args, "--path"));
+    const write = teamYamlWriteMode(args);
+    const roles = exportableTeamRoles(await resolvedWorkgroupRoles(runtime, projectId));
+    const content = renderTeamYaml(roles);
+    if (write) {
+      await fs.mkdir(path.dirname(filePath), { recursive: true });
+      await fs.writeFile(filePath, content, "utf8");
+      io.stdout.write(
+        [
+          "Exported team roles",
+          `project_id: ${projectId}`,
+          `path: ${filePath}`,
+          `roles: ${roles.length}`,
+          "mode: write",
+          ""
+        ].join("\n")
+      );
+      return 0;
+    }
+    io.stdout.write(
+      [
+        "Team roles export preview",
+        `project_id: ${projectId}`,
+        `path: ${filePath}`,
+        `roles: ${roles.length}`,
+        "mode: preview",
+        "---",
+        content.trimEnd(),
+        ""
+      ].join("\n")
+    );
+    return 0;
+  } catch (error) {
+    io.stderr.write(`error: ${error instanceof Error ? error.message : String(error)}\n`);
+    return 1;
+  }
+}
+
 async function renderChatThreads(
   io: CliIO,
   runtime: CliRuntime
@@ -2195,6 +2648,7 @@ async function renderTeamRole(
       `executor: ${executorLabel(role.executor)}`,
       `default_room: ${role.defaultRoom ? `#${role.defaultRoom}` : "none"}`,
       `permissions: ${role.permissions.length === 0 ? "none" : role.permissions.join(", ")}`,
+      `role_calls: ${roleCallPolicySummary(role)}`,
       `context: ${role.contextPolicy.scope}`,
       `approved_memory: ${role.contextPolicy.includeApprovedMemory}`,
       `thread_summary: ${role.contextPolicy.includeThreadSummary}`,
@@ -2266,10 +2720,15 @@ async function parseCliChatTurn(
   rawLine: string
 ): Promise<ParsedCliChatTurn> {
   const roles = await resolvedRoleValues(runtime, state.project.id);
+  const teamRoles = roles
+    .filter((role) => role.enabled)
+    .map((role) => toWorkgroupRoleRunMetadata(role));
   const parsedMentions = parseCliWorkgroupMentions(rawLine, roles, state.debug);
   if (parsedMentions.participants.length > 0 || parsedMentions.roleMentions.length > 0) {
     return {
       ...parsedMentions,
+      teamRoles,
+      workgroupRoles: roles,
       prompt: parsedMentions.cleanedPrompt
     };
   }
@@ -2288,6 +2747,8 @@ async function parseCliChatTurn(
       }
     ],
     cleanedPrompt: parsedAgent.prompt,
+    teamRoles,
+    workgroupRoles: roles,
     prompt: parsedAgent.prompt
   };
 }
@@ -2544,6 +3005,43 @@ function roleContextReferences(role: WorkgroupRoleRunMetadata | undefined): stri
   ];
 }
 
+function roleProtocolReferences(
+  role: WorkgroupRoleRunMetadata | undefined,
+  roles: readonly WorkgroupRole[]
+): string[] {
+  if (!role) {
+    return [];
+  }
+  const caller = roles.find((entry) => entry.handle === role.roleHandle);
+  const callerPolicy = caller ? roleDelegationPolicy(caller) : undefined;
+  const available = roles
+    .filter(
+      (entry) =>
+        entry.enabled &&
+        entry.handle !== role.roleHandle &&
+        callerPolicy !== undefined &&
+        roleDelegationPolicyAllowsTarget(callerPolicy, entry)
+    )
+    .slice(0, 12)
+    .map((entry) =>
+      `@${entry.handle}: ${entry.purpose}; executor=${roleExecutorReference(entry)}; capability=${entry.capabilitySummary}`
+    );
+  return [
+    "role_call_protocol: Agent Hub owns delegation. Do not simulate subagents, worker roles, or hidden role chats inside your own response.",
+    "role_call_protocol: To request another role, emit a line-start role call exactly as '@role bounded task'. Agent Hub will parse it into a RoleCall.",
+    "role_call_protocol: Delegation-only requests do not require repository reconnaissance. Emit the role call first and let Agent Hub schedule the callee.",
+    "role_call_protocol: Do not inspect the repository merely to discover available roles or delegation syntax; use the role directory below.",
+    "role_call_protocol: Mentions inside prose or code blocks are not delegation requests. Use separate line-start calls only.",
+    `available_role_calls: ${available.length > 0 ? available.join(" | ") : "none"}`
+  ];
+}
+
+function roleExecutorReference(role: WorkgroupRole): string {
+  return role.executor.kind === "agent_adapter"
+    ? `agent_adapter/${role.executor.adapterKind}`
+    : `${role.executor.kind}/reserved`;
+}
+
 async function requireProject(
   runtime: CliRuntime,
   projectId: string
@@ -2713,21 +3211,33 @@ async function resolvedWorkgroupRoles(
   runtime: CliRuntime,
   projectId: string
 ): Promise<ResolvedRole[]> {
-  await requireProject(runtime, projectId);
+  const project = await requireProject(runtime, projectId);
   const stored = await storedWorkgroupRoles(runtime, projectId);
+  const yaml = await projectTeamYamlRoles(project);
   const storedByHandle = new Map(stored.map((role) => [role.handle, role]));
+  const yamlByHandle = new Map(yaml.map((role) => [role.handle, role]));
   const presetHandles = new Set(presetWorkgroupRoles.map((role) => role.handle));
   const resolved: ResolvedRole[] = presetWorkgroupRoles.map((preset) => {
+    const yamlOverride = yamlByHandle.get(preset.handle);
+    if (yamlOverride) {
+      return { role: yamlOverride, source: "yaml_override" };
+    }
     const override = storedByHandle.get(preset.handle);
     return override
       ? { role: override, source: "preset_override" }
       : { role: preset, source: "preset" };
   });
   for (const role of stored) {
-    if (presetHandles.has(role.handle)) {
+    if (presetHandles.has(role.handle) || yamlByHandle.has(role.handle)) {
       continue;
     }
     resolved.push({ role, source: "custom" });
+  }
+  for (const role of yaml) {
+    if (presetHandles.has(role.handle)) {
+      continue;
+    }
+    resolved.push({ role, source: "yaml_custom" });
   }
   return resolved.sort((left, right) => {
     const leftPreset = presetHandles.has(left.role.handle) ? 0 : 1;
@@ -2767,6 +3277,79 @@ async function storedWorkgroupRoles(
   }
   const roles = settingValueRoles(setting.value);
   return roles.map((role) => validateWorkgroupRole(role as WorkgroupRole));
+}
+
+async function projectTeamYamlRoles(project: Project): Promise<WorkgroupRole[]> {
+  return readTeamYamlRoles(resolveTeamYamlPath(project), { optional: true });
+}
+
+async function readTeamYamlRoles(
+  filePath: string,
+  options: { optional: boolean }
+): Promise<WorkgroupRole[]> {
+  let content: string;
+  try {
+    content = await fs.readFile(filePath, "utf8");
+  } catch (error) {
+    if (
+      options.optional &&
+      error &&
+      typeof error === "object" &&
+      "code" in error &&
+      error.code === "ENOENT"
+    ) {
+      return [];
+    }
+    throw error;
+  }
+  return parseTeamYamlRoles(content, filePath);
+}
+
+function parseTeamYamlRoles(content: string, filePath: string): WorkgroupRole[] {
+  let parsed: unknown;
+  try {
+    parsed = loadYaml(content);
+  } catch (error) {
+    throw new Error(
+      `invalid team.yaml at ${filePath}: ${
+        error instanceof Error ? error.message : String(error)
+      }`
+    );
+  }
+  const result = teamYamlSchema.safeParse(parsed);
+  if (!result.success) {
+    throw new Error(
+      `invalid team.yaml at ${filePath}: ${result.error.issues
+        .map((issue) => `${issue.path.join(".") || "root"} ${issue.message}`)
+        .join("; ")}`
+    );
+  }
+  const seen = new Set<string>();
+  return result.data.roles.map((role) => {
+    const normalizedHandle = normalizeWorkgroupRoleHandle(role.handle);
+    if (!normalizedHandle || normalizedHandle !== role.handle) {
+      throw new Error(
+        `invalid team.yaml at ${filePath}: role handle ${role.handle} must be normalized`
+      );
+    }
+    if (seen.has(role.handle)) {
+      throw new Error(
+        `invalid team.yaml at ${filePath}: duplicate role @${role.handle}`
+      );
+    }
+    seen.add(role.handle);
+    return validateWorkgroupRole(role as WorkgroupRole);
+  });
+}
+
+function resolveTeamYamlPath(
+  project: Project,
+  inputPath = defaultTeamYamlPath
+): string {
+  if (path.isAbsolute(inputPath)) {
+    return path.resolve(inputPath);
+  }
+  return path.resolve(project.rootPath, inputPath);
 }
 
 async function saveStoredWorkgroupRoles(
@@ -2876,6 +3459,7 @@ async function roleFromSaveArgs(
         base?.approvalPolicy.summary ??
         "User approval is required for memory approval and external effects."
     },
+    delegationPolicy: roleDelegationPolicyFromSaveArgs(args, base?.delegationPolicy),
     executor,
     enabled: args.includes("--disabled") ? false : base?.enabled ?? true,
     defaultRoom: optionalFlag(args, "--default-room") ?? base?.defaultRoom,
@@ -2903,6 +3487,133 @@ function parseRoleExecutor(value: string, debug = isEnvironmentDebugEnabled()): 
     };
   }
   throw new Error("--executor must be fake, codex, claude-code, human, llm_api, or workflow");
+}
+
+function roleCallPolicySummary(role: WorkgroupRole): string {
+  const policy = role.delegationPolicy;
+  if (!policy?.canInitiateRoleCalls) {
+    return "disabled";
+  }
+  const targets = [
+    ...(policy.allowedTargetRoles?.map((target) =>
+      target === "*" ? "*" : `@${target}`
+    ) ?? []),
+    ...(policy.allowedTargetCapabilities?.map((capability) => `capability:${capability}`) ?? [])
+  ];
+  const approvalTargets =
+    policy.requiresApprovalForTargets?.map((target) => `approval:${target}`) ?? [];
+  return [
+    `enabled intents=${policy.allowedIntentTypes.join(",") || "none"}`,
+    `targets=${[...targets, ...approvalTargets].join(",") || "none"}`
+  ].join(" ");
+}
+
+function roleDelegationPolicyFromSaveArgs(
+  args: string[],
+  base: WorkgroupRole["delegationPolicy"] | undefined
+): WorkgroupRole["delegationPolicy"] {
+  const explicit =
+    args.includes("--can-call-role") ||
+    args.includes("--no-role-calls") ||
+    repeatedFlag(args, "--role-call-target").length > 0 ||
+    repeatedFlag(args, "--role-call-capability").length > 0 ||
+    repeatedFlag(args, "--role-call-intent").length > 0 ||
+    repeatedFlag(args, "--role-call-approval-target").length > 0;
+  if (!explicit) {
+    return base;
+  }
+  if (args.includes("--can-call-role") && args.includes("--no-role-calls")) {
+    throw new Error("--can-call-role and --no-role-calls cannot be used together");
+  }
+  const canInitiateRoleCalls = args.includes("--no-role-calls")
+    ? false
+    : args.includes("--can-call-role") || base?.canInitiateRoleCalls === true;
+  const allowedIntentTypes = canInitiateRoleCalls
+    ? parseRoleCallIntentFlags(repeatedFlag(args, "--role-call-intent"), base)
+    : [];
+  const allowedTargetRoles = targetListFromFlags(
+    repeatedFlag(args, "--role-call-target"),
+    base?.allowedTargetRoles,
+    parseRoleCallTargetFlag,
+    "--role-call-target"
+  );
+  const allowedTargetCapabilities = targetListFromFlags(
+    repeatedFlag(args, "--role-call-capability"),
+    base?.allowedTargetCapabilities,
+    parseNonEmptyRoleCallFlag,
+    "--role-call-capability"
+  );
+  const requiresApprovalForTargets = targetListFromFlags(
+    repeatedFlag(args, "--role-call-approval-target"),
+    base?.requiresApprovalForTargets,
+    parseRoleCallTargetFlag,
+    "--role-call-approval-target"
+  );
+  if (
+    canInitiateRoleCalls &&
+    (allowedTargetRoles?.length ?? 0) === 0 &&
+    (allowedTargetCapabilities?.length ?? 0) === 0 &&
+    (requiresApprovalForTargets?.length ?? 0) === 0
+  ) {
+    throw new Error(
+      "--can-call-role requires --role-call-target, --role-call-capability, or --role-call-approval-target"
+    );
+  }
+  return {
+    canInitiateRoleCalls,
+    allowedIntentTypes,
+    allowedTargetRoles,
+    allowedTargetCapabilities,
+    requiresApprovalForTargets
+  };
+}
+
+function parseRoleCallIntentFlags(
+  values: string[],
+  base: WorkgroupRole["delegationPolicy"] | undefined
+): RoleIntentType[] {
+  if (values.length === 0) {
+    return base?.allowedIntentTypes.length ? [...base.allowedIntentTypes] : ["delegate"];
+  }
+  return values.map((value) => {
+    const normalized = value.trim();
+    if (!roleIntentTypes.includes(normalized as RoleIntentType)) {
+      throw new Error(`--role-call-intent must be one of ${roleIntentTypes.join(", ")}`);
+    }
+    return normalized as RoleIntentType;
+  });
+}
+
+function targetListFromFlags(
+  values: string[],
+  base: readonly string[] | undefined,
+  parse: (value: string, flag: string) => string,
+  flag: string
+): string[] | undefined {
+  if (values.length > 0) {
+    return values.map((value) => parse(value, flag));
+  }
+  return base ? [...base] : undefined;
+}
+
+function parseRoleCallTargetFlag(value: string, flag: string): string {
+  const trimmed = value.trim();
+  if (trimmed === "*") {
+    return trimmed;
+  }
+  const handle = normalizeWorkgroupRoleHandle(trimmed);
+  if (!handle) {
+    throw new Error(`${flag} must be a role handle or *`);
+  }
+  return handle;
+}
+
+function parseNonEmptyRoleCallFlag(value: string, flag: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    throw new Error(`${flag} requires a value`);
+  }
+  return trimmed;
 }
 
 function parseSkillReferenceFlag(value: string): {
@@ -2934,6 +3645,36 @@ function upsertStoredRole(
     throw new Error(`team roles must contain ${maxStoredRoles} or fewer entries`);
   }
   return next.sort((left, right) => left.handle.localeCompare(right.handle));
+}
+
+function teamYamlWriteMode(args: string[]): boolean {
+  const write = args.includes("--write");
+  const preview = args.includes("--preview");
+  if (write && preview) {
+    throw new Error("--write and --preview are mutually exclusive");
+  }
+  return write;
+}
+
+function exportableTeamRoles(entries: ResolvedRole[]): WorkgroupRole[] {
+  return entries
+    .filter((entry) => entry.source !== "preset")
+    .map((entry) => entry.role);
+}
+
+function renderTeamYaml(roles: WorkgroupRole[]): string {
+  return dumpYaml(
+    {
+      roles: roles.map((role) =>
+        JSON.parse(JSON.stringify(role)) as Record<string, unknown>
+      )
+    },
+    {
+      lineWidth: 100,
+      noRefs: true,
+      sortKeys: false
+    }
+  );
 }
 
 function executorLabel(executor: WorkgroupExecutor): string {
@@ -2971,6 +3712,25 @@ function metadataAssignment(
     return undefined;
   }
   return assignment;
+}
+
+function metadataRoleRun(
+  metadata: JsonObject | undefined
+): WorkgroupRoleRunMetadata | undefined {
+  const value = metadata?.role;
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  const role = value as WorkgroupRoleRunMetadata;
+  if (
+    typeof role.roleId !== "string" ||
+    typeof role.roleHandle !== "string" ||
+    typeof role.displayName !== "string" ||
+    typeof role.executorKind !== "string"
+  ) {
+    return undefined;
+  }
+  return role;
 }
 
 function metadataString(metadata: JsonObject | undefined, key: string): string | undefined {

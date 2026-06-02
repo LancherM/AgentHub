@@ -31,9 +31,10 @@ Desktop renderer
   contracts, process-environment helpers, and built-in workgroup pack metadata.
 - `packages/core` owns domain validation, lifecycle state-transition guards,
   repository interfaces, in-memory repository implementations, agent-facing
-  output extraction, RoleCall parsing, RoleCall orchestration, RoleCall context,
-  RoleResult helpers, graph convergence helpers, and bounded current-context
-  TUI read models over existing persisted evidence.
+  output extraction, RoleCall parsing, RoleCall orchestration, assistant-output
+  RoleCall reconciliation, RoleCall context, WorkgroupRole-to-RoleDefinition
+  mapping, RoleResult helpers, graph convergence helpers, and bounded
+  current-context TUI read models over existing persisted evidence.
 - `packages/db` owns SQLite migrations, default database path resolution, a
   queued `sqlite3` session driver, and SQLite implementations of the core
   repository interfaces.
@@ -72,7 +73,8 @@ core sequence:
 3. Build the task-specific context pack and task brief.
 4. Create an isolated git worktree under the configured Agent Hub worktree base.
 5. Materialize generated runtime files inside the worktree.
-6. Run the adapter from the worktree cwd with runtime-injected context.
+6. Run the adapter from the worktree cwd with runtime-injected context and,
+   for role-backed runs, role/team metadata.
 7. Persist ordered run events and progress events as they are produced.
 8. Run structured verification commands in the worktree.
 9. Collect diff metadata and a bounded persisted patch artifact.
@@ -98,6 +100,11 @@ diagnostic events according to the existing failure boundary.
 typed context pack and task brief, and adapters receive that payload at runtime.
 Repository-level `AGENTS.md`, `CLAUDE.md`, `.claude/skills`, and
 `.agents/skills` are not written by default.
+When a run is created from a CLI role mention or accepted RoleCall, `TaskRunner`
+passes safe `WorkgroupRoleRunMetadata` into the adapter input. Process-backed
+adapters render a `## Your Role` section, collaboration rules, and a compact
+team list into stdin before the task brief. Direct adapter runs without role
+metadata omit that section.
 
 `worktree_overlay` is a run mode that writes generated `AGENTS.md`, `CLAUDE.md`,
 briefs, context packs, and skill copies only inside the isolated worktree.
@@ -145,6 +152,10 @@ They perform run-scoped preflight with the run environment; missing CLI,
 authentication, or setup failures become persisted error/exit events instead of
 service crashes. JSONL stdout is parsed into bounded message/status/error
 events where possible, while raw stdout/stderr remains preserved.
+The runtime prompt explicitly tells role-backed process adapters that Agent Hub
+coordinates roles externally, delegation must be requested through RoleCalls,
+and user-installed global skills or repository-local agent instructions should
+be ignored unless they were injected by Agent Hub for that run.
 
 `ProcessRunner` builds child environments from a small allowlist and explicit
 overrides. It can add common local CLI directories to `PATH` for GUI-launched
@@ -219,11 +230,21 @@ permissions, context policy, approval policy, default skill references, enabled
 state, and executor. `agent_adapter` roles map to existing adapters. Reserved
 `human`, `llm_api`, and `workflow` roles are stored and displayed but do not
 execute.
+CLI role resolution can also read `.agent-hub/team.yaml` from a registered
+project when that file already exists or when a user explicitly imports or
+exports it. YAML is schema-validated, then merged after SQLite settings, so the
+documented precedence is presets -> SQLite overrides/custom roles -> YAML
+overrides/custom roles. `team roles save` still writes SQLite only. `team roles
+export` prints a preview unless `--write` is passed, and `team roles import`
+persists YAML roles into SQLite only with `--write`. Team-role
+`delegationPolicy` is the explicit local configuration surface for whether a
+role can initiate RoleCalls and which targets or capabilities it can call.
 
 CLI chat, room sends, and desktop room turns resolve role handles in the local
 service layer. Runnable participants create TaskRunner-backed runs under one
-shared task when appropriate; non-runnable participants stay visible in
-assignment metadata.
+shared task when appropriate. CLI and desktop role participants pass their role
+metadata and the enabled team roster into `TaskRunner`; non-runnable
+participants stay visible in assignment metadata.
 
 ## Adaptive Role Calls
 
@@ -233,17 +254,23 @@ They are not direct role chat and not a remote workflow engine.
 The flow is:
 
 1. A role-backed assistant response emits line-start `@role task` syntax.
-2. The Electron main-process thread service parses the output with the core
-   RoleCall parser, ignoring fenced code and unknown roles.
+2. CLI chat, TUI prompt submission, and the Electron main-process thread service
+   pass assistant output through the shared core RoleCall output processor,
+   which parses with the core parser while ignoring fenced code and unknown
+   roles.
 3. The RoleCall orchestrator validates caller/callee roles, policy, graph
    limits, duplicate suppression, todo capacity, permissions, approval gates,
    executor capability, and dangerous command text through safety policy.
+   Preset roles use core defaults, while custom roles such as `@pm` can
+   initiate bounded RoleCalls only when their team-role `delegationPolicy`
+   explicitly enables targets or capabilities.
 4. Accepted, deferred, rejected, waiting-context, or waiting-approval decisions
    are persisted as RoleCall and RoleCallEvent records. Callee todos are
    created or updated where applicable.
 5. Accepted executable `agent_adapter` calls are started through
    `RoleCallTaskRunnerExecutor`, which reuses the normal TaskRunner path and
-   links the resulting `task_run` to the RoleCall.
+   links the resulting `task_run` to the RoleCall. The callee role is converted
+   into the same safe runtime role metadata used by CLI role mentions.
 6. RoleResult JSON is parsed when available; the summary is promoted to the
    transcript while raw structured payload stays in local evidence.
 7. Caller reinjection and convergence helpers summarize decisions, results,
@@ -412,19 +439,69 @@ metadata; no executor backend, database table, daemon, or desktop behavior is
 added for the TUI.
 Terminal polish is also contained in the CLI renderer. It compacts identifiers,
 renders the Work view as a conversation flow plus bounded active-run boxes,
-moves the shortcut-labelled Work/Runs/View/Graph/Tasks/Memory/Help tabs below
-the composer, and uses Ink components for terminal layout instead of
+moves the shortcut-labelled Work/Runs/View/Graph/Tasks/Memory/Team/Help tabs
+below the composer, and uses Ink components for terminal layout instead of
 hand-wrapped string panels.
-Active-run boxes cover running runs only. They use a fixed eight-line shape:
-title border, five output/progress lines, cursor indicator, and bottom border.
-They prefer structured assistant output, then fall back to recent lifecycle,
-adapter, stdout, and stderr events while filtering raw JSON protocol frames.
-Verification, risk, diff, and review evidence stay out of active boxes.
-Terminal pending-review runs fold into the conversation projection as a single
-awaiting-review line pointing to the View pane, while completed or failed runs
-with a recorded review decision render their agent-facing output plus
-verification and risk summary lines. The Work view remains prompt-first, and
-printable keys do not trigger audit mutations.
+The Ink renderer owns only presentation grammar: reverse-color risk-aware
+headers, a low-flicker idle `◈` indicator, agent-message left bars,
+timestamp/elapsed/usage metadata display, path/command/code highlighting, and safe OSC 8 file-link
+wrapping. The core TUI read model exposes derived elapsed and usage labels from
+persisted run timestamps and run-event metadata, and derives compact run
+stage/latest text from presentation-filtered events; it does not change event
+persistence, adapter execution, run status, or review semantics.
+Active-run boxes cover running runs only. They use a rounded fixed eight-line
+shape: title border, five output/progress lines, a progress-or-cursor footer,
+and bottom border. The renderer owns low-frequency spinner frame selection,
+live elapsed calculation from the run start timestamp, best-effort percentage
+or `N/M` progress parsing, and transient completion/failure feedback. None of
+that state is persisted or sent back into adapters.
+They prefer structured assistant output, then fall back to recent adapter,
+stdout, and stderr events while filtering raw JSON protocol frames, setup
+lifecycle lines, internal agent protocol summaries, runtime warnings, Codex
+internal diagnostics, and skill activation noise. Verification, risk, diff, and
+review evidence stay out of active boxes. Role-backed run display is
+resolved in the core read model from linked RoleCalls, run/message role
+metadata, and task assignment metadata before falling back to adapter kind. The
+read model also forwards run start timestamps and usage labels to active boxes,
+derived from existing run rows and run-event
+metadata. Terminal pending-review runs with changed files fold into the
+conversation projection with their agent-facing output,
+verification/risk summaries, and a final View-pane review hint. Terminal runs
+without changed files render as completed output instead of awaiting review.
+The Work view remains prompt-first, and printable keys do not trigger audit
+mutations.
+Quick replies are derived in the core TUI read model for only the latest visible
+agent-result conversation entry. They are prompt templates, not actions:
+`1`/`2`/`3` route through the same CLI `submitPrompt` callback used by manual
+composer submissions, and they are disabled as soon as the composer contains
+text or the Work conversation is scrolled away from the bottom. The `c`
+shortcut only prepares a continuation prompt in local Ink state.
+Inline diff display is also a read-model projection over existing `git_diff`
+run artifacts or run metadata. Small diffs with five or fewer changed lines are
+projected into bounded file/add/delete/context lines; larger diffs expose only
+a stat summary. The Ink renderer can group dense adjacent pending-review
+entries, expand/collapse Review-pane diff lines, and show a read-only compare
+summary for tasks with multiple runs, but it does not generate comparison
+reports, apply patches, or mutate review decisions.
+Search and command-palette input are local Ink state. Conversation search reads
+only the rendered read-model text already present in memory, highlights matches,
+and never mutates composer contents. Palette filtering is fuzzy over safe focus
+items and existing CLI command hints; `Enter` either changes TUI focus or copies
+a command hint into the composer for explicit user submission. It never invokes
+shell commands directly.
+Notifications, timeline, badge flash, and splash remain CLI renderer concerns.
+`/notify` toggles an in-memory flag for the current Ink session; when enabled,
+the renderer may write only terminal escape output (bell plus OSC 9) after a
+previously active run disappears from the active-run projection and its recorded
+start time is more than 30 seconds old. `/timeline` and empty-composer `l`
+render a compact chronological overlay from the same read model. Badge flash is
+derived from newly observed active runs or pending-review entries, and
+`--splash`/`--no-splash` only affect whether the renderer includes a
+non-blocking startup banner. In interactive mode the splash is removed from
+the frame after the initial paint, and unchanged read-model refreshes are
+discarded before `setModel` so the terminal avoids avoidable full-screen
+repaints. None of these states adds tables, settings, filesystem writes, shell
+execution, adapter calls, or run lifecycle mutations.
 The direct CLI entrypoint exits after command completion, so one-shot TUI smoke
 renders do not leave local SQLite helper processes holding the terminal open.
 For interactive launches, the CLI default IO includes `process.stdin`, and the
@@ -432,12 +509,15 @@ TUI also falls back to `process.stdin` for TTY/raw-mode detection when a custom
 test IO object omits stdin. This keeps `agent-hub tui` interactive in a real
 terminal while preserving deterministic `--once` and non-TTY smoke renders.
 Composer editing is handled in the Ink component state before shortcut
-dispatch: printable keys update the composer, `/team` clears the composer and
-switches to the Team view, `Enter` submits other non-empty composer text,
-empty-composer `Enter` is a no-op, `Esc` clears composer text or returns
-auxiliary panes to Work, and `Tab` remains a focus-navigation key even while
-text is present. This keeps role/review shortcuts from stealing normal prompt
-text without trapping focus inside the composer.
+dispatch: printable lowercase keys update the composer from any focus,
+uppercase tab shortcuts switch Work/Runs/View/Graph/Tasks/Memory/Team,
+`/team` clears the composer and switches to the Team view, `Enter` submits
+other non-empty composer text, empty-composer `Enter` is a no-op, `Esc` clears
+composer text or returns auxiliary panes to Work, and `Tab` remains a
+focus-navigation key even while text is present. The composer tracks a cursor
+offset for left/right, Home/End, Backspace/Delete, and Ctrl+A/E/U/D editing.
+This keeps normal prompt text from being stolen by global focus shortcuts
+without trapping focus inside the composer.
 Interactive TUI prompt submission reuses the CLI chat/task-runner path with a
 buffered CLI IO adapter. The run still persists messages, run cards, run
 events, diffs, risks, and review evidence through the shared repositories, but
@@ -461,8 +541,9 @@ tasks, and RoleCalls continue to resolve through the existing read-model
 summaries.
 The command hint helper falls back from an absent selected RoleCall to
 `agent-hub team roles list --project-id <project-id>`, the command palette
-includes the same role-list command beside run, review, and memory commands, and
-the `/team` slash command changes local Ink focus to the Team read-model pane.
+includes the same role-list command beside run, review, and memory commands,
+the `[E]am` tab participates in the default focus cycle, and the `/team` slash
+command changes local Ink focus to the Team read-model pane.
 Because the Ink renderer is a NodeNext composite TypeScript project that imports
 workspace package types, root validation runs its TUI check through
 `tsc -b apps/cli/tsconfig.tui-ink.json` so project references emit the required

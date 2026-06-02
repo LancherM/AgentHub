@@ -175,6 +175,11 @@ describe("role call TaskRunner executor", () => {
       expect.objectContaining({
         workspace: expect.objectContaining({
           path: expect.stringContaining(runRoot)
+        }),
+        role: expect.objectContaining({
+          roleHandle: "operator",
+          displayName: "Operator",
+          adapterKind: "fake"
         })
       })
     );

@@ -40,11 +40,14 @@ records.
 Its Runs and Tasks focus modes are current-context operating views: they show
 active/recent run status, stage, checks, risk, diff counts, retained-worktree
 state, linked CLI commands, assignments, RoleTodos, deferred/rejected follow-up
-signals, and the next action without exposing raw logs or full patches.
+signals, and the next action without exposing raw logs or full patches. Compact
+run stage/latest summaries use the same TUI presentation filter as active-run
+boxes, so internal setup or Codex diagnostic lines remain in raw evidence rather
+than the operator-facing summary.
 The RoleCall graph shows bounded loop state, including iteration count,
 pending/waiting/active counts, convergence reason, max-iteration stops,
 blocking-risk stops, and waiting-for-approval or waiting-for-context stops.
-The continue key prepares an explicit composer prompt; it does not continue
+Continuation helpers prepare an explicit composer prompt; they do not continue
 work in the background.
 Review decisions can be recorded with `agent-hub reviews accept|reject` or the
 TUI review shortcuts. These decisions create local `review_decision` artifacts
@@ -54,8 +57,8 @@ The Memory focus mode is a governance indicator, not a browser: it shows
 proposed/approved/rejected counts, the approved-memory source, explicit
 approval/rejection command hints, selected skills, available skill identifiers,
 and the current context delivery mode.
-The Team read-model pane is opened by typing `/team` in the composer or from
-the command palette, not from the default tab cycle. It shows the current
+The Team read-model pane is available from the default tab cycle, the `[E]am`
+tab shortcut, typing `/team` in the composer, or the command palette. It shows the current
 project's resolved preset, preset-overridden, and custom roles from the same
 role settings used by `team roles list`, including enabled/runnable counts,
 executor labels, default rooms, and the equivalent CLI list command.
@@ -69,19 +72,73 @@ equivalent CLI recovery commands instead of opening broad browsers or applying
 side effects.
 The Work focus is a conversation terminal. User messages, RoleCall
 delegations, completed or failed terminal run output, verification summaries,
-and risk summaries are folded into a chronological conversation flow. Running
-runs appear as stable fixed-height active-run boxes with only the latest
-agent-facing output or observable runtime events plus the active cursor
-indicator. When an adapter has not emitted assistant text yet, the active box
-shows recent lifecycle, adapter, stdout, and stderr lines while filtering raw
-JSON protocol frames. Runs awaiting local review leave the active box and
-become a single awaiting-review conversation line pointing at `[V]iew`, so the
-Review pane can handle accept/reject without stealing prompt text.
-The default tab bar matches the
-conversation-terminal scheme: Work, Runs, View, Graph, Tasks, Memory, and Help
-stay one key away instead of being embedded into the first screen. Team roles
-remain available through `/team` and the command palette rather than occupying
-a default tab.
+and risk summaries are folded into a chronological conversation flow. Role
+backed runs display the role handle from linked RoleCalls, run/message metadata,
+or task assignments before falling back to the adapter kind. Running runs appear
+as stable fixed-height active-run boxes with only the latest agent-facing output
+or observable runtime events plus the active cursor indicator. When an adapter
+has not emitted assistant text yet, the active box shows recent adapter, stdout,
+and stderr lines while filtering raw JSON protocol frames, setup lifecycle
+noise, internal agent protocol summaries, runtime warnings, Codex internal
+diagnostics, and skill activation noise. Runs awaiting local review with changed
+files leave the active box and render their completed output plus
+verification/risk summaries and a final `[V]iew` review hint. Runs with no
+changed files render as completed output without an awaiting-review prompt.
+The Work conversation uses a terminal-native visual grammar: the header is a
+reverse-color status bar with project, selected agent, iteration, risk, and the
+current clock; high/blocking risk turns the header red and medium risk turns it
+yellow. Idle sessions show a low-flicker `◈` indicator that does not drive a
+constant screen repaint, while active sessions use the running marker. Agent
+and role-backed run entries use a colored left `┃` bar, role/run/status
+metadata, elapsed time, optional token/cost usage, and a timestamp. User
+messages stay plain with a timestamp. Conversation content
+keeps file paths underlined and blue with safe OSC 8 file links when the
+terminal supports them, shell-command lines bold, and fenced code blocks lightly
+highlighted for keywords, strings, and comments.
+Active run boxes use rounded fixed-height frames so the layout does not jump
+while output streams. Titles show the compact run identity, role/agent handle,
+low-frequency braille spinner, running status, elapsed time, and live token
+usage when the run emits usage metadata. The footer keeps an active cursor when
+no reliable progress exists, or a best-effort progress bar when recent output
+includes an obvious percentage or `N/M` pattern. At most three active runs
+render as full boxes; older active runs collapse to one-line titles. Completion
+and failure feedback is transient renderer state only and never writes
+persistence records.
+When the latest agent result is visible and the composer is empty, Work may show
+two or three dim quick replies such as running more tests, fixing verification,
+reviewing risk, continuing, or fixing similar issues. Pressing `1`, `2`, or `3`
+submits the selected suggestion through the same prompt callback as manual
+composer text; numeric keys remain normal text while the composer is non-empty.
+Typing hides suggestions, and `c` prepares a continuation prompt without
+submitting it.
+Small run diffs are projected directly into Work when the collected git diff
+has five or fewer changed lines; file/hunk headers are dim, additions are
+green, deletions are red, and context stays plain. Larger diffs collapse to a
+compact `(+N/-M in F files)` summary. Dense runs of more than three pending
+reviews collapse into a single Work line with a `[V]iew` hint. In Review,
+`Enter` or `Space` expands the selected run diff and `Esc` collapses it; `s`
+shows a read-only split compare summary only when the selected task has at
+least two runs.
+Search is local to the TUI renderer. `Ctrl+F` or `/search` opens a search
+overlay over rendered conversation text, shows match count/current match, and
+uses Up/Down to move between matches; `Esc` closes it without corrupting the
+composer. The command palette accepts input, fuzzy filters safe focus actions
+and existing local CLI command hints, highlights matches, and uses `Enter` to
+either switch focus or prepare the selected command in the composer.
+The optional mini timeline is also local renderer state. `/timeline` or
+empty-composer `l` opens a compact chronological view over the current rendered
+conversation, active runs, and recent runs; `Esc` or `l` closes it. `/notify`
+toggles in-memory completion notifications for the current terminal session
+only. When enabled, the TUI emits a terminal bell plus OSC 9 notification only
+after a previously active run leaves the active list and had been running for
+more than 30 seconds. Notifications, timeline state, and transient badge flashes
+do not persist settings, alter run behavior, or invoke external services.
+Startup splash is explicit: `--splash` shows a short non-blocking banner on
+launch and then removes it from the interactive frame to avoid continuous
+terminal repaint; `--no-splash` suppresses it.
+The default tab bar matches the conversation-terminal scheme: Work, Runs, View,
+Graph, Tasks, Memory, Team, and Help stay one key away instead of being
+embedded into the first screen.
 One-shot TUI renders (`--once`) are intended for quick smoke checks and return
 to the shell after printing the current workbench. Normal `agent-hub tui`
 launches stay open when stdin/stdout are an interactive terminal with raw-mode
@@ -91,11 +148,14 @@ same shared read models and action callbacks. The legacy hand-rendered string
 workbench has been removed as a runtime path; the remaining TUI roadmap work is
 interaction polish, scroll behavior, and broader state coverage without
 changing the governance boundaries above.
-The TUI composer is prompt-first while editing: printable keys append to the
-prompt, `/team` opens the Team roles view without submitting a prompt, `Enter`
-submits non-command prompts when a submission callback is available, `Esc`
-clears the in-progress prompt, and empty-composer `Enter` does not switch
-panes. `Tab` remains available for focus navigation. Interactive
+The TUI composer is prompt-first while editing: printable lowercase keys append
+to the prompt from any focus, uppercase tab shortcuts switch
+Work/Runs/View/Graph/Tasks/Memory/Team, `/team` opens the Team roles view
+without submitting a prompt, `Enter` submits non-command prompts when a
+submission callback is available, `Esc` clears the in-progress prompt, and
+empty-composer `Enter` does not switch panes. `Tab` remains available for focus
+navigation, and the composer supports cursor movement plus Home/End,
+Backspace/Delete, and Ctrl+A/E/U/D editing controls. Interactive
 submit and review-decision actions show bounded busy states without locking the
 keyboard: users can still switch focus, open command hints, and draft the next
 prompt while the current local action is running. The TUI only blocks duplicate
@@ -107,14 +167,15 @@ chat/run records and then shown through TUI panes, not dumped directly into the
 Ink alternate screen during an interactive submit.
 Interactive TUI sessions periodically refresh the same current-context read
 model so externally changing run, task, conversation, RoleCall, and review
-state can appear without a manual keypress. New conversation or active-run
-output anchors Work back to the bottom. TaskRunner persists run events as they
+state can appear without a manual keypress. Refreshes with no renderable
+read-model change are ignored to avoid unnecessary full-screen redraws. New
+conversation or active-run output anchors Work back to the bottom. TaskRunner persists run events as they
 are produced, so running boxes can show live progress from the local evidence
 store instead of waiting for final run completion. The conversation can scroll back by
 rendered line from Work focus, Runs and Tasks panes expand on taller terminals,
-direct lowercase or uppercase focus keys switch Work/Runs/View/Graph/Tasks/Memory when the composer
-is empty, and the Review reject shortcut is uppercase `R` so vim-style `j`
-remains navigation rather than an audit write.
+uppercase focus keys switch Work/Runs/View/Graph/Tasks/Memory/Team when the
+composer is empty, and the Review reject shortcut is uppercase `R` so
+vim-style `j` remains navigation rather than an audit write.
 When the graph has no selected RoleCall, the TUI command hint and command
 palette surface `agent-hub team roles list --project-id <project-id>` as the
 next useful role command; `/team` is the in-TUI shortcut for viewing that list
@@ -138,10 +199,16 @@ Context stores are Agent Hub-owned directories containing project context,
 approved memory, and project skills. Runtime context delivery is non-invasive by
 default: generated task briefs and context packs are injected into the adapter
 run rather than written into the source checkout.
+Role-backed runs add an injected role envelope to that same runtime payload:
+the running adapter receives its role handle, persona/instructions, safe
+permission summary, compact team list, and collaboration rules that require
+RoleCall-based delegation instead of simulating other roles.
 
 Skills are explicit `SKILL.md` files. Project skills live in the project
 context store. Global skills live in Agent Hub app data and are selected by task
-or role reference. Skills stay separate from approved memory.
+or role reference. Skills stay separate from approved memory. Runtime injection
+also tells role-backed adapters to ignore user-installed global skills or
+repository-local agent instructions unless Agent Hub explicitly injected them.
 
 Rooms are metadata-backed conversation threads. Rooms group user messages,
 run-card messages, assistant output, timeline events, role assignments, and
@@ -153,12 +220,23 @@ and `@memory`. Users can save project-level role overrides or custom roles.
 Only `agent_adapter` roles are executable today; reserved `human`, `llm_api`,
 and `workflow` roles remain visible metadata until explicit local executors are
 implemented.
+Advanced users may keep project role configuration in `.agent-hub/team.yaml`.
+Agent Hub reads that file only when it already exists in the registered project
+or when a user explicitly imports/exports it. Merge precedence is presets,
+SQLite role settings, then YAML overrides/custom roles. `team roles save`
+continues to write SQLite by default; `team roles export` previews YAML unless
+`--write` is supplied, and `team roles import` writes back to SQLite only with
+`--write`.
 
 Adaptive Role Calls are an auditable local collaboration graph. A role-backed
 assistant response can emit line-start syntax such as `@reviewer check the
 risk evidence`. Agent Hub parses the intent, validates policy, persists
 RoleCall, RoleTodo, and RoleCallEvent records, and executes accepted
-`agent_adapter` calls through the same TaskRunner path.
+`agent_adapter` calls through the same TaskRunner path. CLI chat, TUI prompt
+submission, and desktop room turns all use this same closed loop after a
+role-backed assistant message is persisted. Custom roles such as `@pm` can
+initiate bounded RoleCalls to other local roles only when their team-role
+`delegationPolicy` explicitly allows those targets or capabilities.
 
 ## CLI Surface
 
@@ -180,7 +258,9 @@ The current CLI exposes these command groups:
   review, tasks, memory, and help.
 - Team roles: `team roles list`, `team roles show`, `team roles save`, and
   `team roles executor`. Saved roles can reference default skills with
-  `--skill [scope:]id`.
+  `--skill [scope:]id`, and custom RoleCall fan-out is configured with
+  `--can-call-role`, `--role-call-target`, `--role-call-capability`, and
+  `--role-call-intent`.
 - Run review: `runs list`, `runs show`, `runs events`, `runs diff`, and
   `risks show`.
 - Review decisions: `reviews show`, `reviews accept`, and `reviews reject`
@@ -210,7 +290,9 @@ calls. For every run it:
 - compiles a task brief and context pack;
 - creates an isolated git worktree outside the original checkout;
 - materializes runtime files only inside that worktree;
-- invokes the selected adapter from the worktree cwd;
+- invokes the selected adapter from the worktree cwd, including role/team
+  runtime metadata when the run was created from a role mention or accepted
+  RoleCall;
 - captures and incrementally persists stdout, stderr, parsed structured
   messages, status, error, and exit events;
 - runs configured verification commands in the worktree;

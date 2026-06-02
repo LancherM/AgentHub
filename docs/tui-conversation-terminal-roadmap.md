@@ -16,6 +16,12 @@ The current TUI already has the important foundations:
   from existing local repositories.
 - Runs, Review, RoleCalls, Tasks, Memory, Help, prompt submission, polling, and
   audit-only review shortcuts already exist behind local CLI boundaries.
+- Role-backed prompt submission now carries safe role/team metadata through
+  TaskRunner into adapter runtime injection, so the TUI path uses the same role
+  instructions and RoleCall delegation constraints as CLI chat.
+- CLI team-role commands can read existing `.agent-hub/team.yaml` files,
+  preview/write exports, and explicitly import YAML roles into SQLite while
+  keeping default role saves SQLite-backed.
 
 The redesign changes the default `Work` surface from a multi-pane operating
 dashboard into a conversation terminal. Auxiliary panes remain available
@@ -130,13 +136,16 @@ Build rules:
 - Exclude runs represented in `activeRuns` from folded `agent_completed` or
   `agent_failed` entries to prevent duplicate first-screen state.
 - Treat running task runs as active boxes.
-- Fold terminal runs with pending review into a one-line `review_pending`
-  conversation entry pointing to `[V]iew`; accept/reject shortcuts remain in
-  the Review pane so Work stays prompt-first.
+- Fold terminal runs with pending review and changed files into a
+  `review_pending` conversation entry containing the completed output,
+  verification/risk summaries, and a final `[V]iew` hint; accept/reject
+  shortcuts remain in the Review pane so Work stays prompt-first. Terminal runs
+  without changed files render as completed output without a review prompt.
 - Populate active `outputLines` from recent structured assistant output, with
-  persisted lifecycle, adapter, stdout, and stderr lines as the fallback.
-  Filter raw JSON protocol frames from the fallback stream. Verification, risk,
-  and diff evidence do not render inside active boxes.
+  persisted adapter, stdout, and stderr lines as the fallback. Filter raw JSON
+  protocol frames, setup lifecycle lines, internal agent protocol summaries,
+  runtime warnings, and skill activation noise from the fallback stream.
+  Verification, risk, and diff evidence do not render inside active boxes.
 - Populate terminal completed/failed entries with agent-facing output plus
   verification and risk summary lines.
 
@@ -210,14 +219,14 @@ Keyboard rules:
 
 - `enter` submits the composer when non-empty.
 - `esc` clears the composer when non-empty.
-- `w/r/v/g/t/m` switch Work, Runs, Review, Graph, Tasks, and Memory when the
-  composer is empty. The implementation can distinguish lowercase `r` for
-  Runs from uppercase `R` for reject.
+- Uppercase `W/R/V/G/T/M/E` switch Work, Runs, Review, Graph, Tasks, Memory,
+  and Team when the composer is empty. Lowercase printable characters start or
+  edit prompt text so normal typing is not swallowed by global focus shortcuts.
 - `?` opens Help; `:` opens Palette.
 - `tab` and `shift-tab` keep cycling focus modes.
 - `a` and `R` accept or reject only while the Review pane is focused, through
   the existing audit-only review decision callback.
-- `c` prepares an explicit continuation prompt; it does not start background
+- Continuation helpers prepare an explicit prompt; they do not start background
   work.
 - `x`, `q`, and `ctrl+c` exit only when doing so will not discard visible
   composer text unexpectedly.
@@ -225,6 +234,20 @@ Keyboard rules:
 Review decisions keep the same safety boundary: they write review artifacts
 only and never apply files, alter run status, approve memory, clean worktrees,
 merge, push, or open pull requests.
+
+### Role Runtime Injection
+
+TUI prompt submission reuses CLI chat parsing and TaskRunner execution. When a
+prompt targets an enabled role such as `@engineer`, the run input includes that
+role's safe runtime metadata plus the enabled team roster. Process-backed
+adapters render this as `## Your Role`, collaboration rules, and `## Team`
+before the task brief; direct adapter prompts with no role omit the role
+section.
+
+The injected collaboration rules are intentionally narrow: Agent Hub coordinates
+roles externally, adapters should request delegation through RoleCalls instead
+of simulating other roles, and user-installed global skills or repository-local
+agent instructions are ignored unless Agent Hub injected them for that run.
 
 ### Auxiliary Panes
 
@@ -335,7 +358,7 @@ pnpm test tests/cli-tui-ink.test.mts tests/cli-tui.test.ts
 
 Scope:
 
-- Add direct `w/r/v/g/t/m` focus keys.
+- Add direct uppercase `W/R/V/G/T/M/E` focus keys.
 - Make Work scroll operate on `conversationScrollOffset`.
 - Preserve selection and scroll state across model refreshes.
 - Tighten composer, Work, auxiliary pane, and pending-review keyboard behavior.

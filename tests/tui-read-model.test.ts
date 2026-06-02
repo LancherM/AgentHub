@@ -64,7 +64,11 @@ describe("TUI current-context read model", () => {
     ]);
     expect(model.activeRuns.map((run) => run.runId)).toEqual(["run_active"]);
     expect(model.activeRuns.find((run) => run.runId === "run_active")).toMatchObject({
-      title: "@fake run_active ● running",
+      title: "@reviewer run_active ● running",
+      displayHandle: "reviewer",
+      startedAt: "2026-05-29T10:03:00.000Z",
+      elapsedLabel: "1m",
+      usageLabel: "42k tok",
       outputLines: ["adapter started", "verification started"]
     });
     expect(model.conversation.map((entry) => entry.id)).toEqual([
@@ -79,7 +83,9 @@ describe("TUI current-context read model", () => {
     ]);
     expect(model.conversation.find((entry) => entry.id === "review-pending:run_done")).toMatchObject({
       type: "review_pending",
-      content: "awaiting review — 切换到 [V]iew 查看详情"
+      displayHandle: "engineer",
+      content: "awaiting review — 切换到 [V]iew 查看详情",
+      outputLines: ["Cleanup summary updated."]
     });
     expect(model.runs.map((run) => run.id)).toEqual(["run_active", "run_done"]);
     expect(model.runs[0]).toMatchObject({
@@ -216,10 +222,11 @@ describe("TUI current-context read model", () => {
       outputLines: ["tests failed"]
     });
     expect(model.conversation.map((entry) => entry.id)).toContain("run:run_completed");
-    expect(model.conversation.map((entry) => entry.id)).toContain("review-pending:run_no_change");
-    expect(model.conversation.find((entry) => entry.id === "review-pending:run_no_change")).toMatchObject({
-      type: "review_pending",
-      content: "awaiting review — 切换到 [V]iew 查看详情"
+    expect(model.conversation.map((entry) => entry.id)).toContain("run:run_no_change");
+    expect(model.conversation.map((entry) => entry.id)).not.toContain("review-pending:run_no_change");
+    expect(model.conversation.find((entry) => entry.id === "run:run_no_change")).toMatchObject({
+      type: "agent_completed",
+      statusLabel: "completed"
     });
     expect(model.conversation.map((entry) => entry.id)).not.toContain("review:run_completed:accepted");
   });
@@ -271,13 +278,29 @@ describe("TUI current-context read model", () => {
         phase: "agent",
         desktopEventType: "agent_step"
       }),
-      event("event_preflight", "run_live", 3, "status", "Codex preflight passed"),
-      event("event_starting", "run_live", 4, "status", "starting Codex"),
-      event("event_json_stdout", "run_live", 5, "stdout", "{\"type\":\"session.created\"}\n"),
-      event("event_session", "run_live", 6, "status", "Codex session.created", {
+      event("event_adapter_started", "run_live", 3, "status", "Agent adapter started."),
+      event("event_preflight", "run_live", 4, "status", "Codex preflight passed"),
+      event("event_starting", "run_live", 5, "status", "starting Codex"),
+      event("event_json_stdout", "run_live", 6, "stdout", "{\"type\":\"session.created\"}\n"),
+      event("event_session", "run_live", 7, "status", "Codex session.created", {
         adapterEvent: { type: "session.created" }
       }),
-      event("event_stderr", "run_live", 7, "stderr", "waiting for network\n")
+      event("event_skill", "run_live", 8, "message", "Using `noisy-skill` to satisfy setup."),
+      event(
+        "event_memory_stderr",
+        "run_live",
+        9,
+        "stderr",
+        "2026-06-02T02:40:36.818458Z ERROR codex_memories_write::phase2::job: failed to claim job\n"
+      ),
+      event(
+        "event_models_stderr",
+        "run_live",
+        10,
+        "stderr",
+        "2026-06-01T15:04:04.298814Z ERROR codex_models_manager::manager: failed to refresh models\n"
+      ),
+      event("event_stderr", "run_live", 11, "stderr", "waiting for network\n")
     ]);
 
     const model = await buildTuiCurrentContextModel(runtime, {
@@ -288,17 +311,249 @@ describe("TUI current-context read model", () => {
     expect(model.activeRuns).toEqual([
       expect.objectContaining({
         runId: "run_live",
-        outputLines: [
-          "TaskRunner execution started.",
-          "Isolated worktree is ready.",
-          "Codex preflight passed",
-          "starting Codex",
-          "Codex session.created",
-          "stderr: waiting for network"
-        ]
+        outputLines: ["stderr: waiting for network"]
       })
     ]);
+    expect(model.runs.find((run) => run.id === "run_live")).toEqual(
+      expect.objectContaining({
+        stage: "stderr: waiting for network",
+        evidence: expect.objectContaining({
+          latestEvent: "stderr: waiting for network"
+        })
+      })
+    );
     expect(model.activeRuns[0]?.outputLines.join("\n")).not.toContain("{\"type\"");
+    expect(model.activeRuns[0]?.outputLines.join("\n")).not.toContain("Agent adapter started");
+    expect(model.activeRuns[0]?.outputLines.join("\n")).not.toContain("Codex session.created");
+    expect(model.activeRuns[0]?.outputLines.join("\n")).not.toContain("Using `");
+    expect(model.activeRuns[0]?.outputLines.join("\n")).not.toContain("codex_memories_write");
+    expect(model.activeRuns[0]?.outputLines.join("\n")).not.toContain("codex_models_manager");
+  });
+
+  it("adds elapsed and usage labels for terminal run conversation entries", async () => {
+    const runtime = createCliRuntime({ storageMode: "memory" });
+    await runtime.projectRepository.create({
+      id: "project_usage",
+      name: "Usage",
+      rootPath: "/tmp/usage",
+      createdAt: now,
+      updatedAt: now
+    });
+    await runtime.conversationThreadRepository.create({
+      id: "thread_usage",
+      projectId: "project_usage",
+      title: "Usage",
+      createdAt: now,
+      updatedAt: now
+    });
+    await runtime.taskRepository.create({
+      id: "task_usage",
+      projectId: "project_usage",
+      title: "Track usage",
+      metadata: { threadId: "thread_usage" },
+      status: "completed",
+      createdAt: now,
+      updatedAt: now
+    });
+    await runtime.taskRunRepository.create({
+      id: "run_usage",
+      taskId: "task_usage",
+      agentKind: "codex",
+      status: "succeeded",
+      startedAt: "2026-05-29T10:00:00.000Z",
+      completedAt: "2026-05-29T10:01:30.000Z",
+      createdAt: "2026-05-29T10:00:00.000Z",
+      updatedAt: "2026-05-29T10:01:30.000Z"
+    });
+    await runtime.runEventRepository.createMany([
+      event("event_usage_output", "run_usage", 0, "message", "Usage summary ready."),
+      event("event_usage_tokens", "run_usage", 1, "status", "usage", {
+        usage: {
+          totalTokens: 92000,
+          costUsd: 0.03
+        }
+      })
+    ]);
+
+    const model = await buildTuiCurrentContextModel(runtime, {
+      projectId: "project_usage",
+      threadId: "thread_usage"
+    });
+
+    expect(model.runs[0]).toMatchObject({
+      id: "run_usage",
+      elapsedLabel: "1m30s",
+      usageLabel: "92k tok / $0.03",
+      usage: {
+        totalTokens: 92000,
+        costUsd: 0.03
+      }
+    });
+    expect(model.conversation.find((entry) => entry.id === "run:run_usage")).toMatchObject({
+      type: "agent_completed",
+      elapsedLabel: "1m30s",
+      usageLabel: "92k tok / $0.03"
+    });
+  });
+
+  it("adds quick reply suggestions only to the latest agent result", async () => {
+    const runtime = createCliRuntime({ storageMode: "memory" });
+    await runtime.projectRepository.create({
+      id: "project_suggestions",
+      name: "Suggestions",
+      rootPath: "/tmp/suggestions",
+      createdAt: now,
+      updatedAt: now
+    });
+    await runtime.conversationThreadRepository.create({
+      id: "thread_suggestions",
+      projectId: "project_suggestions",
+      title: "Suggestions",
+      createdAt: now,
+      updatedAt: now
+    });
+    await runtime.taskRepository.create({
+      id: "task_suggestions",
+      projectId: "project_suggestions",
+      title: "Suggest replies",
+      metadata: { threadId: "thread_suggestions" },
+      status: "completed",
+      createdAt: now,
+      updatedAt: now
+    });
+    await runtime.taskRunRepository.create({
+      id: "run_older",
+      taskId: "task_suggestions",
+      agentKind: "codex",
+      status: "succeeded",
+      startedAt: "2026-05-29T10:00:00.000Z",
+      completedAt: "2026-05-29T10:00:30.000Z",
+      createdAt: "2026-05-29T10:00:00.000Z",
+      updatedAt: "2026-05-29T10:00:30.000Z"
+    });
+    await runtime.taskRunRepository.create({
+      id: "run_newer",
+      taskId: "task_suggestions",
+      agentKind: "codex",
+      status: "failed",
+      startedAt: "2026-05-29T10:01:00.000Z",
+      completedAt: "2026-05-29T10:02:00.000Z",
+      createdAt: "2026-05-29T10:01:00.000Z",
+      updatedAt: "2026-05-29T10:02:00.000Z"
+    });
+    await runtime.runEventRepository.createMany([
+      event("event_older", "run_older", 0, "message", "older done"),
+      event("event_newer", "run_newer", 0, "error", "tests failed")
+    ]);
+    await runtime.verificationResultRepository.create(
+      verification("verification_newer", "run_newer", "pnpm test", "failed")
+    );
+    await runtime.riskReportRepository.create({
+      id: "risk_newer",
+      taskRunId: "run_newer",
+      level: "high",
+      summary: "Failed verification.",
+      changedFiles: ["src/fail.ts"],
+      verificationSummary: "failed",
+      failedChecks: ["pnpm test"],
+      riskFactors: ["failed checks"],
+      manualReviewChecklist: ["Inspect failed tests."],
+      acceptanceRecommendation: "Do not accept.",
+      findings: [],
+      createdAt: now
+    });
+
+    const model = await buildTuiCurrentContextModel(runtime, {
+      projectId: "project_suggestions",
+      threadId: "thread_suggestions"
+    });
+
+    expect(model.conversation.find((entry) => entry.id === "run:run_older")?.suggestions)
+      .toBeUndefined();
+    expect(model.conversation.find((entry) => entry.id === "run:run_newer")?.suggestions)
+      .toEqual([
+        expect.objectContaining({ key: "1", label: "Run more tests" }),
+        expect.objectContaining({ key: "2", label: "Fix verification" }),
+        expect.objectContaining({ key: "3", label: "Review changes" })
+      ]);
+  });
+
+  it("projects small git diffs into inline TUI review evidence", async () => {
+    const runtime = createCliRuntime({ storageMode: "memory" });
+    await runtime.projectRepository.create({
+      id: "project_diff",
+      name: "Diff",
+      rootPath: "/tmp/diff",
+      createdAt: now,
+      updatedAt: now
+    });
+    await runtime.conversationThreadRepository.create({
+      id: "thread_diff",
+      projectId: "project_diff",
+      title: "Diff",
+      createdAt: now,
+      updatedAt: now
+    });
+    await runtime.taskRepository.create({
+      id: "task_diff",
+      projectId: "project_diff",
+      title: "Project diff",
+      metadata: { threadId: "thread_diff" },
+      status: "completed",
+      createdAt: now,
+      updatedAt: now
+    });
+    await runtime.taskRunRepository.create({
+      id: "run_diff",
+      taskId: "task_diff",
+      agentKind: "codex",
+      status: "succeeded",
+      startedAt: "2026-05-29T10:00:00.000Z",
+      completedAt: "2026-05-29T10:01:00.000Z",
+      createdAt: "2026-05-29T10:00:00.000Z",
+      updatedAt: "2026-05-29T10:01:00.000Z"
+    });
+    await runtime.runEventRepository.create(
+      event("event_diff", "run_diff", 0, "message", "diff ready")
+    );
+    await runtime.runArtifactRepository.create({
+      id: "artifact_diff_inline",
+      taskRunId: "run_diff",
+      kind: "git_diff",
+      content: [
+        "diff --git a/src/auth.ts b/src/auth.ts",
+        "@@ -1,3 +1,3 @@",
+        " const keep = true;",
+        "-const mode = \"old\";",
+        "+const mode = \"new\";"
+      ].join("\n"),
+      metadata: {
+        changedFiles: ["src/auth.ts"],
+        stat: { filesChanged: 1, insertions: 1, deletions: 1 }
+      },
+      createdAt: now
+    });
+
+    const model = await buildTuiCurrentContextModel(runtime, {
+      projectId: "project_diff",
+      threadId: "thread_diff",
+      selectedRunId: "run_diff"
+    });
+
+    expect(model.runs[0]?.evidence.inlineDiff).toMatchObject({
+      mode: "inline",
+      summary: "(+1/-1 in 1 files)",
+      lines: [
+        expect.objectContaining({ kind: "file" }),
+        expect.objectContaining({ kind: "file" }),
+        expect.objectContaining({ kind: "context", text: "const keep = true;" }),
+        expect.objectContaining({ kind: "delete", text: "-const mode = \"old\";" }),
+        expect.objectContaining({ kind: "add", text: "+const mode = \"new\";" })
+      ]
+    });
+    expect(model.review.evidence.inlineDiff?.mode).toBe("inline");
+    expect(model.conversation.find((entry) => entry.id === "review-pending:run_diff")?.inlineDiff?.mode)
+      .toBe("inline");
   });
 
   it("reports bounded loop stop reasons for terminal, pending, waiting, blocking, and limits", async () => {
@@ -482,7 +737,9 @@ async function seedCurrentContext(runtime: ReturnType<typeof createCliRuntime>) 
   });
   await runtime.runEventRepository.createMany([
     event("event_1", "run_active", 0, "status", "adapter started"),
-    event("event_2", "run_active", 1, "status", "verification started"),
+    event("event_2", "run_active", 1, "status", "verification started", {
+      usage: { totalTokens: 42000 }
+    }),
     event("event_3", "run_done", 0, "message", "Cleanup summary updated.")
   ]);
   await runtime.verificationResultRepository.createMany([
@@ -498,6 +755,17 @@ async function seedCurrentContext(runtime: ReturnType<typeof createCliRuntime>) 
     metadata: {
       changedFiles: ["src/a.ts", "src/b.ts"],
       stat: { filesChanged: 2, insertions: 12, deletions: 4 }
+    },
+    createdAt: now
+  });
+  await runtime.runArtifactRepository.create({
+    id: "artifact_diff_done",
+    taskRunId: "run_done",
+    kind: "git_diff",
+    content: "diff --git a/src/done.ts b/src/done.ts",
+    metadata: {
+      changedFiles: ["src/done.ts"],
+      stat: { filesChanged: 1, insertions: 3, deletions: 1 }
     },
     createdAt: now
   });

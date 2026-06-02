@@ -5,6 +5,8 @@ import {
   CodexAdapter,
   DefaultAgentRegistry,
   FakeAgentAdapter,
+  type AgentAdapter,
+  type AgentRunInput,
   type ProcessDetectionInput,
   type ProcessDetectionResult,
   type ProcessRunEvent,
@@ -37,6 +39,7 @@ import {
   extractAgentFacingOutput,
   type RunEvent,
   type RunMetadata,
+  type WorkgroupRoleRunMetadata,
   validateTask,
   validateRunEvent
 } from "@agent-hub/core";
@@ -1733,6 +1736,55 @@ describe("task runner", () => {
       ]
     });
   });
+
+  it("passes role runtime metadata to adapters and persists it on the run", async () => {
+    const projectRoot = await createTestDirectory("role-runtime-project");
+    const runRoot = await createTestDirectory("role-runtime-runs");
+    const adapter = new CapturingAgentAdapter();
+    const runMetadataRepository = new InMemoryRunMetadataRepository();
+    const role = roleRunMetadata("engineer", "Engineer", "fake");
+    const reviewer = roleRunMetadata("reviewer", "Reviewer");
+    const runner = new TaskRunner({
+      defaultRunRoot: runRoot,
+      workspaceManager: new TestWorkspaceManager(runRoot),
+      diffCollector: new StaticDiffCollector(),
+      verificationRunner: new VerificationRunner(new MockShellExecutor()),
+      agentRegistry: new DefaultAgentRegistry([adapter]),
+      runMetadataRepository,
+      idGenerator: new SequenceIdGenerator(),
+      clock: new FixedClock("2026-01-01T00:00:00.000Z")
+    });
+
+    const result = await runner.run({
+      projectRoot,
+      taskPrompt: "Run as a role-backed participant",
+      agentKind: "fake",
+      role,
+      teamRoles: [role, reviewer]
+    });
+
+    expect(result.status).toBe("succeeded");
+    expect(adapter.inputs[0]).toMatchObject({
+      role: expect.objectContaining({
+        roleHandle: "engineer",
+        displayName: "Engineer",
+        adapterKind: "fake"
+      }),
+      teamRoles: [
+        expect.objectContaining({ roleHandle: "engineer" }),
+        expect.objectContaining({ roleHandle: "reviewer" })
+      ]
+    });
+    await expect(runMetadataRepository.get(result.run.id)).resolves.toEqual(
+      expect.objectContaining({
+        role: expect.objectContaining({
+          roleHandle: "engineer",
+          displayName: "Engineer",
+          adapterKind: "fake"
+        })
+      })
+    );
+  });
 });
 
 async function seedParentRun(input: {
@@ -1889,6 +1941,57 @@ class BlockingFakeAgentAdapter {
     yield { type: "stdout", message: "blocking adapter released\n" };
     yield { type: "exit", message: "blocking fake completed", exitCode: 0 };
   }
+}
+
+class CapturingAgentAdapter implements AgentAdapter {
+  readonly kind = "fake";
+  readonly displayName = "Capturing Fake";
+  readonly inputs: AgentRunInput[] = [];
+
+  async detect(): Promise<{ available: true; version: string }> {
+    return { available: true, version: "capturing" };
+  }
+
+  async *run(input: AgentRunInput): AsyncIterable<AgentRunEvent> {
+    this.inputs.push(input);
+    yield {
+      type: "message",
+      message: `capturing adapter role ${input.role?.roleHandle ?? "none"}`,
+      metadata: { assistantOutput: true }
+    };
+    yield {
+      type: "exit",
+      message: "capturing fake completed",
+      exitCode: 0
+    };
+  }
+}
+
+function roleRunMetadata(
+  handle: string,
+  displayName: string,
+  adapterKind?: WorkgroupRoleRunMetadata["adapterKind"]
+): WorkgroupRoleRunMetadata {
+  return {
+    roleId: `role_${handle}`,
+    roleHandle: handle,
+    displayName,
+    executorKind: adapterKind ? "agent_adapter" : "human",
+    adapterKind,
+    persona: `${displayName} persona`,
+    defaultInstructions: `${displayName} instructions`,
+    permissions: ["read_project_context"],
+    contextPolicy: {
+      scope: "current_thread_and_project_context",
+      includeApprovedMemory: true,
+      includeThreadSummary: true,
+      instructions: ["Use injected context."]
+    },
+    approvalPolicy: {
+      requiredFor: ["external_side_effects"],
+      summary: "No external side effects."
+    }
+  };
 }
 
 function deferred(): {

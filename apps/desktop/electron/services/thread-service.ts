@@ -1,12 +1,13 @@
 import {
   extractAgentFacingOutput,
-  parseRoleCallIntents,
-  RoleCallOrchestrator,
+  processAssistantRoleCallOutput,
+  roleDefinitionsForWorkgroupRoles,
+  roleDelegationPolicy,
+  roleDelegationPolicyAllowsTarget,
   validateTask,
   validateConversationMessage,
   validateConversationThread,
   validateConversationThreadSummary,
-  validateRoleDefinition,
   type ConversationMessage,
   type ConversationMessageRepository,
   type ConversationThread,
@@ -690,6 +691,11 @@ class RepositoryThreadService implements ThreadService {
           title,
           agentId: participant.agentId,
           role: participant.role,
+          teamRoles: participant.role
+            ? availableRoles
+                .filter((role) => role.enabled)
+                .map((role) => toWorkgroupRoleRunMetadata(role))
+            : undefined,
           agentSessionId,
           assignment,
           contextMode,
@@ -1414,42 +1420,24 @@ class RepositoryThreadService implements ThreadService {
     message: ConversationMessage
   ): Promise<void> {
     const role = metadataRoleRun(message.metadata);
-    if (
-      !role ||
-      message.role !== "assistant" ||
-      message.status !== "succeeded" ||
-      message.metadata?.roleCallProcessed === true
-    ) {
+    if (!role) {
       return;
     }
-    const existingForMessage = (await this.roleCalls.list({ threadId: thread.id }))
-      .filter((call) => call.parentMessageId === message.id);
-    if (existingForMessage.length > 0) {
-      await this.markRoleCallProcessed(message, []);
-      return;
-    }
-
     const roles = await this.rolesForProject(thread.projectId);
     const roleDefinitions = roleDefinitionsForWorkgroupRoles(roles);
-    const parsed = parseRoleCallIntents(message.content, {
-      knownRoles: roleDefinitions,
-      defaultReason: `Line-start role mention emitted by @${role.roleHandle}.`,
-      defaultExpectedOutput: { format: "summary" }
-    });
-    if (parsed.intents.length === 0) {
-      if (parsed.warnings.length > 0) {
-        await this.markRoleCallProcessed(message, parsed.warnings.map((warning) => warning.message));
-      }
-      return;
-    }
-
-    const orchestrator = new RoleCallOrchestrator({
+    await processAssistantRoleCallOutput({
       repositories: {
+        conversationMessageRepository: this.messages,
         roleCallRepository: this.roleCalls,
         roleCallEventRepository: this.roleCallEvents,
         roleTodoRepository: this.roleTodos
       },
+      threadId: thread.id,
+      callerRole: role.roleHandle,
+      message,
       roles: roleDefinitions,
+      userGoal: await this.roleCallUserGoal(message),
+      currentPlan: message.content,
       policyValidator: (request) =>
         validateRoleCallPolicy({
           callerRole: request.callerRole,
@@ -1461,45 +1449,19 @@ class RepositoryThreadService implements ThreadService {
           roleTodos: request.roleTodos
         }),
       idFactory: (prefix) => this.dependencies.context.nextId(prefix),
-      now: () => this.dependencies.context.now()
+      now: () => this.dependencies.context.now(),
+      executeAcceptedRoleCalls: async ({ parentMessageId, roleDefinitions: definitions }) => ({
+        ok: true,
+        warnings: await this.startAcceptedRoleCalls(
+          thread,
+          roles,
+          definitions,
+          parentMessageId
+        )
+      }),
+      roleCallSummary: async () =>
+        (await this.roleCallSummariesByParentMessage(thread.id)).get(message.id)
     });
-    const summaries = await orchestrator.processRoleIntents({
-      threadId: thread.id,
-      callerRole: role.roleHandle,
-      intents: parsed.intents.map((entry) => entry.intent),
-      userGoal: await this.roleCallUserGoal(message),
-      parentMessageId: message.id,
-      currentPlan: message.content
-    });
-    const executionWarnings = await this.startAcceptedRoleCalls(
-      thread,
-      roles,
-      roleDefinitions,
-      message.id
-    );
-    const summary = (await this.roleCallSummariesByParentMessage(thread.id)).get(message.id);
-    await this.messages.update(
-      validateConversationMessage({
-        ...message,
-        metadata: {
-          ...(message.metadata ?? {}),
-          roleCallProcessed: true,
-          roleCallProcessedAt: this.dependencies.context.now(),
-          roleCallParseWarnings: [
-            ...parsed.warnings.map((warning) => warning.message),
-            ...executionWarnings
-          ],
-          roleCallLedgerSummaries: summaries.map((entry) => ({
-            roleCallId: entry.roleCallId,
-            targetRole: entry.targetRole,
-            status: entry.status,
-            message: entry.message,
-            reasons: entry.reasons
-          })),
-          roleCallSummary: summary
-        }
-      })
-    );
   }
 
   private async startAcceptedRoleCalls(
@@ -1592,23 +1554,6 @@ class RepositoryThreadService implements ThreadService {
       }
     }
     return message.content;
-  }
-
-  private async markRoleCallProcessed(
-    message: ConversationMessage,
-    warnings: string[]
-  ): Promise<void> {
-    await this.messages.update(
-      validateConversationMessage({
-        ...message,
-        metadata: {
-          ...(message.metadata ?? {}),
-          roleCallProcessed: true,
-          roleCallProcessedAt: this.dependencies.context.now(),
-          roleCallParseWarnings: warnings
-        }
-      })
-    );
   }
 
   private async markRunCardTerminalEvent(
@@ -2694,185 +2639,10 @@ function roleProtocolReferences(
   ];
 }
 
-function roleDefinitionsForWorkgroupRoles(
-  roles: readonly WorkgroupRole[]
-): RoleDefinition[] {
-  return roles
-    .filter((role) => role.enabled)
-    .map((role) =>
-      validateRoleDefinition({
-        id: role.id,
-        handle: role.handle,
-        displayName: role.displayName,
-        purpose: role.purpose,
-        defaultInstructions: role.defaultInstructions,
-        capabilities: roleCapabilities(role),
-        permissions: rolePermissions(role),
-        contextPolicy: {
-          scope: role.contextPolicy.scope,
-          includeApprovedMemory: role.contextPolicy.includeApprovedMemory,
-          includeThreadSummary: role.contextPolicy.includeThreadSummary,
-          instructions: [...role.contextPolicy.instructions]
-        },
-        approvalPolicy: {
-          requiredFor: [...role.approvalPolicy.requiredFor],
-          summary: role.approvalPolicy.summary
-        },
-        delegationPolicy: roleDelegationPolicy(role),
-        intakePolicy: roleIntakePolicy(role),
-        executor: roleExecutor(role),
-        trustLevel: presetWorkgroupRoles.some((preset) => preset.handle === role.handle)
-          ? "preset"
-          : "user_defined",
-        enabled: role.enabled
-      })
-    );
-}
-
 function executorReference(role: WorkgroupRole): string {
   return role.executor.kind === "agent_adapter"
     ? `agent_adapter/${role.executor.adapterKind}`
     : `${role.executor.kind}/reserved`;
-}
-
-function roleCapabilities(role: WorkgroupRole): string[] {
-  const explicit = String(role.metadata?.capabilities ?? "")
-    .split(",")
-    .map((entry) => entry.trim())
-    .filter(Boolean);
-  if (explicit.length > 0) {
-    return explicit;
-  }
-  const defaults: Record<string, string[]> = {
-    analyst: ["analysis", "planning"],
-    operator: ["operations", "local_execution"],
-    reviewer: ["review", "risk"],
-    researcher: ["research", "context"],
-    writer: ["writing", "documentation"],
-    engineer: ["implementation", "local_execution"],
-    memory: ["memory", "knowledge"]
-  };
-  return defaults[role.handle] ?? [role.handle];
-}
-
-function rolePermissions(role: WorkgroupRole): RoleDefinition["permissions"] {
-  const permissionSet = new Set(role.permissions);
-  const canRunCommands =
-    permissionSet.has("run_commands") ||
-    permissionSet.has("local_execution") ||
-    permissionSet.has("write_isolated_worktree");
-  const canEditFiles =
-    permissionSet.has("write_files") || permissionSet.has("write_isolated_worktree");
-  return {
-    canReadFiles:
-      permissionSet.has("read_project_context") ||
-      permissionSet.has("read_thread_context") ||
-      permissionSet.has("read_run_evidence"),
-    canEditFiles,
-    canRunCommands,
-    canUseNetwork: permissionSet.has("network"),
-    canAskUser: permissionSet.has("ask_user"),
-    requiresApprovalForShell: true,
-    requiresApprovalForFileWrite: true
-  };
-}
-
-function roleDelegationPolicy(role: WorkgroupRole): RoleDefinition["delegationPolicy"] {
-  if (role.handle === "analyst") {
-    return {
-      canInitiateRoleCalls: true,
-      allowedIntentTypes: ["delegate", "request_analysis", "request_review", "request_evidence"],
-      allowedTargetRoles: ["operator", "reviewer", "researcher", "writer", "engineer"]
-    };
-  }
-  if (role.handle === "operator") {
-    return {
-      canInitiateRoleCalls: true,
-      allowedIntentTypes: ["delegate", "request_review", "request_evidence"],
-      allowedTargetRoles: ["reviewer", "researcher"],
-      requiresApprovalForTargets: ["engineer"]
-    };
-  }
-  if (role.handle === "engineer") {
-    return {
-      canInitiateRoleCalls: true,
-      allowedIntentTypes: ["request_review", "request_evidence"],
-      allowedTargetRoles: ["reviewer", "operator"]
-    };
-  }
-  return {
-    canInitiateRoleCalls: false,
-    allowedIntentTypes: [],
-    allowedTargetRoles: [],
-    allowedTargetCapabilities: [],
-    requiresApprovalForTargets: ["operator", "engineer"]
-  };
-}
-
-function roleDelegationPolicyAllowsTarget(
-  policy: RoleDefinition["delegationPolicy"],
-  target: WorkgroupRole
-): boolean {
-  if (!policy.canInitiateRoleCalls) {
-    return false;
-  }
-  const allowedTargetRoles = policy.allowedTargetRoles ?? [];
-  const allowedTargetCapabilities = policy.allowedTargetCapabilities ?? [];
-  if (allowedTargetRoles.includes(target.handle) || allowedTargetRoles.includes("*")) {
-    return true;
-  }
-  const targetCapabilities = roleCapabilities(target);
-  if (
-    targetCapabilities.some((capability) =>
-      allowedTargetCapabilities.includes(capability)
-    )
-  ) {
-    return true;
-  }
-  return allowedTargetRoles.length === 0 && allowedTargetCapabilities.length === 0;
-}
-
-function roleIntakePolicy(role: WorkgroupRole): RoleDefinition["intakePolicy"] {
-  const acceptedIntentTypes: RoleDefinition["intakePolicy"]["acceptedIntentTypes"] =
-    role.handle === "reviewer"
-      ? ["delegate", "request_review"]
-      : role.handle === "operator"
-        ? ["delegate", "request_evidence"]
-        : role.handle === "analyst"
-          ? ["delegate", "request_analysis", "request_review"]
-          : ["delegate", "request_analysis", "request_review", "request_evidence"];
-  return {
-    acceptsRoleCalls: true,
-    acceptedIntentTypes,
-    canReject: true,
-    canDefer: true
-  };
-}
-
-function roleExecutor(role: WorkgroupRole): RoleDefinition["executor"] {
-  if (role.executor.kind === "agent_adapter") {
-    return {
-      kind: "agent_adapter",
-      adapter: role.executor.adapterKind
-    };
-  }
-  if (role.executor.kind === "workflow") {
-    return {
-      kind: "local_workflow",
-      workflowId: role.executor.configRef ?? role.handle
-    };
-  }
-  if (role.executor.kind === "llm_api") {
-    return {
-      kind: "llm_api",
-      modelRef: role.executor.configRef ?? role.handle
-    };
-  }
-  return {
-    kind: "human",
-    configRef: role.executor.configRef,
-    unavailableReason: role.executor.unavailableReason
-  };
 }
 
 function toThreadSummary(thread: ThreadDetail): ThreadSummary {

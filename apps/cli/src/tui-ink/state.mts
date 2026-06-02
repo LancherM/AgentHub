@@ -1,5 +1,6 @@
 import type {
   TuiConversationEntry,
+  TuiConversationSuggestion,
   TuiCurrentContextModel,
   TuiRoleCallNodeSummary,
   TuiRunSummary,
@@ -34,11 +35,20 @@ export interface TuiInkState {
     runs: number;
     roleCalls: number;
     tasks: number;
-    transcript: number;
   };
   conversationScrollOffset: number;
+  reviewDiffExpanded: boolean;
+  reviewCompareMode: boolean;
+  searchOpen: boolean;
+  searchQuery: string;
+  searchMatchIndex: number;
+  notifyEnabled: boolean;
+  timelineOpen: boolean;
   composer: string;
+  composerCursorPosition: number;
   commandPaletteOpen: boolean;
+  paletteQuery: string;
+  paletteSelectedIndex: number;
   statusMessage?: string;
 }
 
@@ -66,6 +76,10 @@ export type TuiInkKey =
   | "skills"
   | "hide_done"
   | "continue_loop"
+  | "toggle_review_diff"
+  | "toggle_compare"
+  | "toggle_notify"
+  | "toggle_timeline"
   | "cancel"
   | "accept_review"
   | "reject_review"
@@ -79,6 +93,7 @@ export const focusModes: TuiInkFocus[] = [
   "graph",
   "tasks",
   "memory",
+  "team",
   "help"
 ];
 
@@ -94,12 +109,21 @@ export function createInitialInkState(composer = ""): TuiInkState {
     scrollOffsets: {
       runs: 0,
       roleCalls: 0,
-      tasks: 0,
-      transcript: 0
+      tasks: 0
     },
     conversationScrollOffset: 0,
+    reviewDiffExpanded: false,
+    reviewCompareMode: false,
+    searchOpen: false,
+    searchQuery: "",
+    searchMatchIndex: 0,
+    notifyEnabled: false,
+    timelineOpen: false,
     composer,
-    commandPaletteOpen: false
+    composerCursorPosition: composer.length,
+    commandPaletteOpen: false,
+    paletteQuery: "",
+    paletteSelectedIndex: 0
   };
 }
 
@@ -125,10 +149,15 @@ export function reduceInkState(
   if (key === "work" || key === "graph" || key === "runs" || key === "tasks") {
     next.focus = key;
     next.commandPaletteOpen = false;
+    next.searchOpen = false;
+    next.timelineOpen = false;
     return next;
   }
   if (key === "team") {
     next.focus = "team";
+    next.commandPaletteOpen = false;
+    next.searchOpen = false;
+    next.timelineOpen = false;
     next.statusMessage = "Team roles shown.";
     return next;
   }
@@ -140,10 +169,17 @@ export function reduceInkState(
       next.selectedRunId = pendingRun.id;
     }
     next.focus = "review";
+    next.reviewCompareMode = false;
+    next.commandPaletteOpen = false;
+    next.searchOpen = false;
+    next.timelineOpen = false;
     return next;
   }
   if (key === "memory") {
     next.focus = "memory";
+    next.commandPaletteOpen = false;
+    next.searchOpen = false;
+    next.timelineOpen = false;
     return next;
   }
   if (key === "skills") {
@@ -162,6 +198,28 @@ export function reduceInkState(
     applyContinuePrompt(next, model);
     return next;
   }
+  if (key === "toggle_review_diff" || (key === "enter" && state.focus === "review")) {
+    toggleReviewDiff(next, model);
+    return next;
+  }
+  if (key === "toggle_compare") {
+    toggleCompareMode(next, model);
+    return next;
+  }
+  if (key === "toggle_notify") {
+    next.notifyEnabled = !next.notifyEnabled;
+    next.statusMessage = next.notifyEnabled
+      ? "Completion notifications enabled."
+      : "Completion notifications disabled.";
+    return next;
+  }
+  if (key === "toggle_timeline") {
+    next.timelineOpen = !next.timelineOpen;
+    next.commandPaletteOpen = false;
+    next.searchOpen = false;
+    next.statusMessage = next.timelineOpen ? "Timeline shown." : "Timeline hidden.";
+    return next;
+  }
   if (key === "cancel") {
     next.statusMessage =
       "Cancellation is unavailable for this CLI TUI context; use the owning run service when supported.";
@@ -178,9 +236,36 @@ export function reduceInkState(
   }
   if (key === "palette") {
     next.commandPaletteOpen = !next.commandPaletteOpen;
+    next.searchOpen = false;
+    next.paletteQuery = "";
+    next.paletteSelectedIndex = 0;
     return next;
   }
   if (key === "escape") {
+    if (next.searchOpen) {
+      next.searchOpen = false;
+      next.searchQuery = "";
+      next.searchMatchIndex = 0;
+      next.statusMessage = "Search closed.";
+      return next;
+    }
+    if (next.commandPaletteOpen) {
+      next.commandPaletteOpen = false;
+      next.paletteQuery = "";
+      next.paletteSelectedIndex = 0;
+      next.statusMessage = "Command palette closed.";
+      return next;
+    }
+    if (next.timelineOpen) {
+      next.timelineOpen = false;
+      next.statusMessage = "Timeline hidden.";
+      return next;
+    }
+    if (next.focus === "review" && next.reviewDiffExpanded) {
+      next.reviewDiffExpanded = false;
+      next.statusMessage = "Review diff collapsed.";
+      return next;
+    }
     next.commandPaletteOpen = false;
     next.focus = "work";
     return next;
@@ -310,6 +395,24 @@ export function selectedPendingReviewRun(
   return pending[Math.min(Math.max(state.selectedActiveRunIndex, 0), pending.length - 1)];
 }
 
+export function visibleConversationSuggestions(
+  model: TuiCurrentContextModel,
+  state: TuiInkState
+): TuiConversationSuggestion[] {
+  if (
+    state.focus !== "work" ||
+    state.composer.length > 0 ||
+    state.conversationScrollOffset !== 0
+  ) {
+    return [];
+  }
+  const entry = findLast(
+    model.conversation,
+    (item) => (item.suggestions?.length ?? 0) > 0
+  );
+  return entry?.suggestions ?? [];
+}
+
 export function commandHintForFocus(
   model: TuiCurrentContextModel,
   state: TuiInkState
@@ -433,17 +536,23 @@ function conversationLineCount(entries: TuiConversationEntry[]): number {
 }
 
 function conversationEntryLineCount(entry: TuiConversationEntry): number {
-  if (entry.type === "review_pending" || entry.type === "delegation") {
+  if (entry.type === "delegation") {
     return 1;
   }
   const contentLines = Array.isArray(entry.outputLines)
     ? entry.outputLines.length
     : textLineCount(entry.content);
-  if (entry.type === "agent_completed" || entry.type === "agent_failed") {
+  if (
+    entry.type === "agent_completed" ||
+    entry.type === "agent_failed" ||
+    entry.type === "review_pending"
+  ) {
     return 1 +
       Math.max(1, contentLines) +
       (entry.verificationLine ? 1 : 0) +
-      (entry.riskLine ? 1 : 0);
+      (entry.riskLine ? 1 : 0) +
+      (entry.type === "review_pending" ? 1 : 0) +
+      (entry.suggestions?.length ?? 0);
   }
   return 1 + Math.max(1, contentLines);
 }
@@ -489,7 +598,46 @@ function applyContinuePrompt(
   state.composer = selected
     ? `Continue @${selected.calleeRole} on RoleCall ${selected.id}: ${selected.task}`
     : "Continue the current task with the selected agent.";
+  state.composerCursorPosition = state.composer.length;
   state.statusMessage = "Continuation prompt prepared; press ctrl+j to submit.";
+}
+
+function toggleReviewDiff(
+  state: TuiInkState,
+  model: TuiCurrentContextModel
+): void {
+  if (state.focus !== "review") {
+    return;
+  }
+  if (!model.review.evidence.inlineDiff) {
+    state.statusMessage = "No review diff is available for the selected run.";
+    return;
+  }
+  state.reviewDiffExpanded = !state.reviewDiffExpanded;
+  state.statusMessage = state.reviewDiffExpanded
+    ? "Review diff expanded."
+    : "Review diff collapsed.";
+}
+
+function toggleCompareMode(
+  state: TuiInkState,
+  model: TuiCurrentContextModel
+): void {
+  if (state.focus !== "review") {
+    return;
+  }
+  const run = selectedRun(model, state);
+  const comparableRuns = run
+    ? model.runs.filter((candidate) => candidate.taskId === run.taskId)
+    : [];
+  if (comparableRuns.length < 2) {
+    state.statusMessage = "Split compare requires at least two runs for the selected task.";
+    return;
+  }
+  state.reviewCompareMode = !state.reviewCompareMode;
+  state.statusMessage = state.reviewCompareMode
+    ? "Split compare shown read-only."
+    : "Split compare hidden.";
 }
 
 function nextFocus(current: TuiInkFocus, delta: number): TuiInkFocus {
@@ -513,6 +661,15 @@ function selectedIndexById<T extends { id: string }>(
     }
   }
   return boundedIndex(fallbackIndex, items.length);
+}
+
+function findLast<T>(values: T[], predicate: (value: T) => boolean): T | undefined {
+  for (let index = values.length - 1; index >= 0; index -= 1) {
+    if (predicate(values[index])) {
+      return values[index];
+    }
+  }
+  return undefined;
 }
 
 function selectionDelta(

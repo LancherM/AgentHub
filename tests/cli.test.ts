@@ -15,7 +15,11 @@ import type {
   DiffCollectionResult,
   DiffCollectorService
 } from "@agent-hub/task-runner";
-import type { RiskReport } from "@agent-hub/core";
+import {
+  presetWorkgroupRoles,
+  type RiskReport,
+  type WorkgroupRole
+} from "@agent-hub/core";
 import { createSqliteRepositories } from "@agent-hub/db";
 import { RiskReportGenerator, type RiskReportInput } from "@agent-hub/safety";
 import { SequenceIdGenerator, FixedClock } from "@agent-hub/task-runner";
@@ -1347,7 +1351,12 @@ describe("CLI", () => {
         "--default-room",
         "release",
         "--skill",
-        "global:review"
+        "global:review",
+        "--can-call-role",
+        "--role-call-target",
+        "researcher",
+        "--role-call-intent",
+        "delegate"
       ], io, projectRoot, runtime)
     ).resolves.toBe(0);
     await expect(
@@ -1383,6 +1392,7 @@ describe("CLI", () => {
     expect(rendered).toContain("Saved role");
     expect(rendered).toContain("Role @qa");
     expect(rendered).toContain("executor: agent_adapter / fake");
+    expect(rendered).toContain("role_calls: enabled intents=delegate targets=@researcher");
     expect(
       (await runtime.settingsRepository.get(
         "desktop.project.project_workgroup.workgroupRoles"
@@ -1391,7 +1401,12 @@ describe("CLI", () => {
       roles: [
         expect.objectContaining({
           handle: "qa",
-          defaultSkillReferences: [{ scope: "global", id: "review" }]
+          defaultSkillReferences: [{ scope: "global", id: "review" }],
+          delegationPolicy: expect.objectContaining({
+            canInitiateRoleCalls: true,
+            allowedIntentTypes: ["delegate"],
+            allowedTargetRoles: ["researcher"]
+          })
         })
       ]
     });
@@ -1464,6 +1479,187 @@ describe("CLI", () => {
     ).resolves.toBe(0);
     expect(output.join("")).toContain("Room #general");
     expect(output.join("")).toContain("@researcher");
+  });
+
+  it("orchestrates RoleCalls emitted by custom PM role output", async () => {
+    const projectRoot = await createTestDirectory("cli-rolecall-chat-project");
+    const runRoot = path.join(await createTestDirectory("cli-rolecall-chat-runs"), "runs");
+    const roleResultJson = JSON.stringify({
+      summary: "3",
+      evidence: ["RoleCall.task asked for output exactly 3."],
+      commandsRun: [],
+      filesTouched: [],
+      patchSummary: "No changes.",
+      risks: [],
+      nextSteps: ["none"]
+    });
+    const processRunner = new MockProcessRunner([
+      [
+        {
+          type: "stdout",
+          data:
+            "{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"@researcher output exactly 3 @engineer output exactly 3\"}}\n"
+        },
+        { type: "exit", exitCode: 0, signal: null }
+      ],
+      [
+        {
+          type: "stdout",
+          data: JSON.stringify({
+            type: "item.completed",
+            item: { type: "agent_message", text: roleResultJson }
+          }) + "\n"
+        },
+        { type: "exit", exitCode: 0, signal: null }
+      ],
+      [
+        {
+          type: "stdout",
+          data: JSON.stringify({
+            type: "item.completed",
+            item: { type: "agent_message", text: roleResultJson }
+          }) + "\n"
+        },
+        { type: "exit", exitCode: 0, signal: null }
+      ]
+    ]);
+    const runtime = createCliRuntime({
+      storageMode: "memory",
+      defaultRunRoot: runRoot,
+      workspaceManager: new TestWorkspaceManager(runRoot),
+      diffCollector: new StaticDiffCollector(),
+      verificationRunner: new VerificationRunner(new MockShellExecutor()),
+      processRunner,
+      idGenerator: new SequenceIdGenerator(),
+      clock: new FixedClock("2026-01-01T00:00:00.000Z")
+    });
+    await runtime.projectRepository.create({
+      id: "project_cli_rolecall",
+      name: "CLI RoleCall",
+      rootPath: projectRoot,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z"
+    });
+    const analyst = presetWorkgroupRoles.find((role) => role.handle === "analyst");
+    const pmRole: WorkgroupRole = {
+      ...(analyst ?? presetWorkgroupRoles[0]),
+      id: "custom:pm",
+      handle: "pm",
+      displayName: "PM",
+      purpose: "Coordinate role delegation for local work.",
+      capabilitySummary: "Planning, coordination, delegation.",
+      persona: "Project manager who routes bounded work to other roles.",
+      defaultInstructions: "Delegate bounded work to the right role.",
+      executor: { kind: "agent_adapter", adapterKind: "codex" },
+      delegationPolicy: {
+        canInitiateRoleCalls: true,
+        allowedIntentTypes: ["delegate"],
+        allowedTargetRoles: ["researcher", "engineer"]
+      },
+      tags: ["coordination"],
+      metadata: { source: "custom" }
+    };
+    await runtime.settingsRepository.set({
+      key: "desktop.project.project_cli_rolecall.workgroupRoles",
+      value: {
+        roles: [
+          ...presetWorkgroupRoles.map((role) =>
+            role.handle === "researcher" || role.handle === "engineer"
+              ? {
+                  ...role,
+                  executor: { kind: "agent_adapter", adapterKind: "codex" }
+                }
+              : role
+          ),
+          pmRole
+        ]
+      },
+      updatedAt: "2026-01-01T00:00:00.000Z"
+    });
+    const output: string[] = [];
+    const errors: string[] = [];
+    const io = {
+      stdout: { write: (chunk: string) => { output.push(chunk); return true; } },
+      stderr: { write: (chunk: string) => { errors.push(chunk); return true; } }
+    };
+
+    await expect(
+      main([
+        "rooms",
+        "send",
+        "--project-id",
+        "project_cli_rolecall",
+        "--room",
+        "general",
+        "--message",
+        "@pm ask other roles for the number"
+      ], io, projectRoot, runtime)
+    ).resolves.toBe(0);
+
+    const threads = await runtime.conversationThreadRepository.list("project_cli_rolecall");
+    const thread = threads.find((entry) => entry.title.includes("#general")) ?? threads[0];
+    const messages = await runtime.conversationMessageRepository.listByThreadId(
+      thread?.id ?? ""
+    );
+    const roleCalls = await runtime.roleCallRepository.list({
+      threadId: thread?.id ?? ""
+    });
+    const pmRunId = messages.find(
+      (message) =>
+        message.role === "assistant" &&
+        message.metadata?.role &&
+        (message.metadata.role as { roleHandle?: string }).roleHandle === "pm"
+    )?.runId;
+    const pmBrief = await runtime.runArtifactRepository.getLatestByRunIdAndKind(
+      pmRunId ?? "",
+      "conversation_brief"
+    );
+
+    expect(errors.join("")).toBe("");
+    expect(processRunner.runCalls).toHaveLength(3);
+    expect(pmBrief?.content).toContain("role_call_protocol:");
+    expect(pmBrief?.content).toContain("available_role_calls:");
+    expect(pmBrief?.content).toContain("@researcher:");
+    expect(pmBrief?.content).toContain("@engineer:");
+    expect(roleCalls).toHaveLength(2);
+    expect(roleCalls).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        callerRole: "pm",
+        calleeRole: "researcher",
+        task: "output exactly 3",
+        status: "succeeded",
+        taskRunId: expect.any(String),
+        result: expect.objectContaining({ summary: "3" })
+      }),
+      expect.objectContaining({
+        callerRole: "pm",
+        calleeRole: "engineer",
+        task: "output exactly 3",
+        status: "succeeded",
+        taskRunId: expect.any(String),
+        result: expect.objectContaining({ summary: "3" })
+      })
+    ]));
+    expect(messages.filter((message) => message.kind === "run_card")).toHaveLength(3);
+    expect(messages.filter((message) => message.role === "assistant")).toHaveLength(3);
+    expect(
+      messages.filter(
+        (message) =>
+          message.role === "assistant" &&
+          message.metadata?.roleCallProcessed === true
+      )
+    ).toHaveLength(1);
+    expect(
+      messages.filter((message) => message.metadata?.roleCallId)
+        .map((message) => (message.metadata?.assignment as { roleHandle?: string })?.roleHandle)
+        .sort()
+    ).toEqual(["engineer", "engineer", "researcher", "researcher"]);
+    await expect(runtime.roleTodoRepository.list({ threadId: thread?.id ?? "" }))
+      .resolves.toEqual(expect.arrayContaining([
+        expect.objectContaining({ role: "researcher", status: "done" }),
+        expect.objectContaining({ role: "engineer", status: "done" })
+      ]));
+    expect(output.join("")).toContain("3");
   });
 
   it("persists CLI chat turns and injects prior thread context", async () => {

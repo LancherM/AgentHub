@@ -27,6 +27,8 @@ describe("CLI TUI command", () => {
     expect(errors.join("")).toBe("");
     expect(output.join("")).toContain("agent-hub tui");
     expect(output.join("")).toContain("--thread <thread-id>");
+    expect(output.join("")).toContain("--splash");
+    expect(output.join("")).toContain("--no-splash");
   });
 
   it("renders a read-only current-context workbench by room selector", async () => {
@@ -58,8 +60,39 @@ describe("CLI TUI command", () => {
     expect(rendered).toContain("TUI Project · @codex");
     expect(rendered).toContain("@codex");
     expect(rendered).toContain("Check TUI evidence.");
-    expect(rendered).toContain("@codex run_1 ● running");
+    expect(rendered).toContain("@reviewer run_1 ⠋ running");
     expect(rendered).toContain("> @codex prompt");
+  });
+
+  it("honors explicit splash and no-splash flags for one-shot renders", async () => {
+    const runtime = createCliRuntime({ storageMode: "memory" });
+    await seedTuiContext(runtime);
+    const splashOutput: string[] = [];
+    const splashErrors: string[] = [];
+    const noSplashOutput: string[] = [];
+    const noSplashErrors: string[] = [];
+
+    await expect(
+      main(
+        ["--project", projectRoot, "tui", "--room", "review", "--splash", "--once"],
+        testIo(splashOutput, splashErrors),
+        process.cwd(),
+        runtime
+      )
+    ).resolves.toBe(0);
+    await expect(
+      main(
+        ["--project", projectRoot, "tui", "--room", "review", "--splash", "--no-splash", "--once"],
+        testIo(noSplashOutput, noSplashErrors),
+        process.cwd(),
+        runtime
+      )
+    ).resolves.toBe(0);
+
+    expect(splashErrors.join("")).toBe("");
+    expect(noSplashErrors.join("")).toBe("");
+    expect(splashOutput.join("")).toContain("Agent Hub TUI");
+    expect(noSplashOutput.join("")).not.toContain("Agent Hub TUI");
   });
 
   it("renders missing registration recovery instead of failing launch", async () => {

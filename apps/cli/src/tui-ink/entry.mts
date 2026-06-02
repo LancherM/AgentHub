@@ -31,6 +31,7 @@ export interface RunInkTuiInput {
   terminal: TuiInkTerminalSize;
   io: TuiInkIO;
   interactive: boolean;
+  showSplash?: boolean;
   loadModel?: (state: TuiInkState) => Promise<TuiCurrentContextModel>;
   submitPrompt?: (input: TuiInkSubmitInput) => Promise<TuiInkSubmitResult>;
   recordReviewDecision?: (input: TuiInkReviewInput) => Promise<TuiInkReviewResult>;
@@ -42,7 +43,8 @@ export async function runInkTui(input: RunInkTuiInput): Promise<void> {
       h(TuiInkFrame, {
         model: input.model,
         state: input.state,
-        terminal: input.terminal
+        terminal: input.terminal,
+        showSplash: input.showSplash === true
       }),
       { columns: input.terminal.columns }
     );
@@ -58,7 +60,11 @@ export async function runInkTui(input: RunInkTuiInput): Promise<void> {
       interactive: true,
       loadModel: input.loadModel,
       submitPrompt: input.submitPrompt,
-      recordReviewDecision: input.recordReviewDecision
+      recordReviewDecision: input.recordReviewDecision,
+      showSplash: input.showSplash === true,
+      notify: (message) => {
+        input.io.stdout.write(terminalNotificationSequence(message));
+      }
     }),
     {
       stdin: input.io.stdin as NodeJS.ReadStream | undefined,
@@ -101,4 +107,9 @@ function toWriteStream(
     get: () => target.isTTY ?? false
   });
   return stream;
+}
+
+function terminalNotificationSequence(message: string): string {
+  const sanitized = message.replace(/[\u0000-\u001F\u007F]/g, " ").trim();
+  return `\u0007\u001B]9;${sanitized}\u0007`;
 }

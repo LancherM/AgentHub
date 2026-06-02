@@ -43,6 +43,7 @@ import type {
   RoleCallRepository,
   RoleTodoRepository,
   RunArtifactRepository,
+  ComparisonReportRepository,
   RunMetadataRepository,
   SkillRepository,
   SettingsRepository,
@@ -64,6 +65,7 @@ export interface TuiReadModelRepositories {
   verificationResultRepository: VerificationResultRepository;
   riskReportRepository: RiskReportRepository;
   runMetadataRepository: RunMetadataRepository;
+  comparisonReportRepository: ComparisonReportRepository;
   memoryItemRepository: MemoryItemRepository;
   skillRepository: SkillRepository;
   roleCallRepository: RoleCallRepository;
@@ -118,6 +120,7 @@ export interface TuiConversationEntry {
   type: TuiConversationEntryType;
   timestamp: string;
   author: string;
+  displayHandle?: string;
   content?: string;
   agent?: string;
   runId?: string;
@@ -126,14 +129,29 @@ export interface TuiConversationEntry {
   statusLabel?: string;
   verificationLine?: string;
   riskLine?: string;
+  elapsedLabel?: string;
+  usageLabel?: string;
+  inlineDiff?: TuiInlineDiffSummary;
   delegatedTo?: string;
   delegationTask?: string;
+  suggestions?: TuiConversationSuggestion[];
+}
+
+export interface TuiConversationSuggestion {
+  key: "1" | "2" | "3";
+  label: string;
+  prompt: string;
 }
 
 export interface TuiActiveRunBox {
   runId: string;
   agent: string;
+  displayHandle?: string;
   title: string;
+  startedAt?: string;
+  elapsedLabel?: string;
+  usageLabel?: string;
+  usage?: TuiRunUsageSummary;
   outputLines: string[];
 }
 
@@ -166,17 +184,39 @@ export interface TuiRunSummary {
   taskId: string;
   taskTitle?: string;
   agentKind: AgentKind;
+  roleHandle?: string;
   status: TaskRunStatus;
   stage: string;
   startedAt?: string;
   completedAt?: string;
   updatedAt: string;
+  elapsedLabel?: string;
+  usageLabel?: string;
+  usage?: TuiRunUsageSummary;
   parentRunId?: string;
   parentMessageId?: string;
   retainedWorktree: boolean;
   evidence: TuiEvidenceSummary;
   reviewDecision: TuiRunReviewDecisionSummary;
   commands: string[];
+}
+
+export interface TuiRunUsageSummary {
+  inputTokens?: number;
+  outputTokens?: number;
+  totalTokens?: number;
+  costUsd?: number;
+}
+
+export interface TuiInlineDiffSummary {
+  mode: "inline" | "summary";
+  summary: string;
+  lines: TuiInlineDiffLine[];
+}
+
+export interface TuiInlineDiffLine {
+  kind: "file" | "add" | "delete" | "context";
+  text: string;
 }
 
 export interface TuiRunReviewDecisionSummary {
@@ -359,6 +399,7 @@ export interface TuiEvidenceSummary {
     insertions?: number;
     deletions?: number;
   };
+  inlineDiff?: TuiInlineDiffSummary;
 }
 
 const defaultLimits = {
@@ -459,7 +500,13 @@ export async function buildTuiCurrentContextModel(
     runs.map((run) => summarizeRun(repositories, run, taskById(contextTasks, run.taskId)))
   );
   const boundedRuns = sortRuns(runSummaries).slice(0, input.maxRuns ?? defaultLimits.runs);
-  const activeRuns = await summarizeActiveRunBoxes(repositories, boundedRuns);
+  const runDisplayHandles = displayHandlesForRuns({
+    runs: boundedRuns,
+    messages,
+    tasks: contextTasks,
+    roleCalls
+  });
+  const activeRuns = await summarizeActiveRunBoxes(repositories, boundedRuns, runDisplayHandles);
   const roleCallNodes = await Promise.all(
     sortRoleCalls(roleCalls).map((call) =>
       summarizeRoleCall(repositories, call, roleEvents, input.hideCompletedRoleCalls === true)
@@ -474,6 +521,7 @@ export async function buildTuiCurrentContextModel(
     runs: boundedRuns,
     roleCalls,
     activeRuns,
+    runDisplayHandles,
     limit: Math.max(input.maxMessages ?? defaultLimits.messages, defaultLimits.messages)
   });
 
@@ -550,23 +598,32 @@ function summarizeTranscript(
 
 async function summarizeActiveRunBoxes(
   repositories: TuiReadModelRepositories,
-  runs: TuiRunSummary[]
+  runs: TuiRunSummary[],
+  runDisplayHandles: Map<string, string>
 ): Promise<TuiActiveRunBox[]> {
   const sorted = runs
     .filter((run) => activeRunStatuses.has(run.status))
     .sort((left, right) => activeRunCreatedAt(left).localeCompare(activeRunCreatedAt(right)));
-  return Promise.all(sorted.map((run) => summarizeActiveRunBox(repositories, run)));
+  return Promise.all(sorted.map((run) => summarizeActiveRunBox(repositories, run, runDisplayHandles)));
 }
 
 async function summarizeActiveRunBox(
   repositories: TuiReadModelRepositories,
-  run: TuiRunSummary
+  run: TuiRunSummary,
+  runDisplayHandles: Map<string, string>
 ): Promise<TuiActiveRunBox> {
   const events = await repositories.runEventRepository.listByRunId(run.id);
+  const displayHandle = runDisplayHandles.get(run.id) ?? run.roleHandle;
+  const renderedHandle = displayHandle ?? run.agentKind;
   return {
     runId: run.id,
     agent: run.agentKind,
-    title: `@${run.agentKind} ${run.id} ● running`,
+    displayHandle,
+    title: `@${renderedHandle} ${run.id} ● running`,
+    startedAt: run.startedAt,
+    elapsedLabel: run.elapsedLabel,
+    usageLabel: run.usageLabel,
+    usage: run.usage,
     outputLines: recentAgentRunOutputLines(events, run)
   };
 }
@@ -578,6 +635,7 @@ async function summarizeConversation(
   runs: TuiRunSummary[];
   roleCalls: RoleCall[];
   activeRuns: TuiActiveRunBox[];
+  runDisplayHandles: Map<string, string>;
   limit: number;
 }
 ): Promise<TuiConversationEntry[]> {
@@ -621,6 +679,7 @@ async function summarizeConversation(
       type: "agent_completed",
       timestamp: message.createdAt,
       author: messageAuthor(message),
+      displayHandle: displayHandleFromMessage(message),
       outputLines: outputTextLines(message.content),
       agent: message.agentKind,
       runId: message.runId,
@@ -633,16 +692,34 @@ async function summarizeConversation(
     if (!terminalRunStatuses.has(run.status) || activeRunIds.has(run.id)) {
       return [];
     }
-    if (run.status === "succeeded" && run.reviewDecision.status === "pending") {
+    const displayHandle = input.runDisplayHandles.get(run.id) ?? run.roleHandle;
+    const renderedHandle = displayHandle ?? run.agentKind;
+    const outputLines = await terminalRunOutputLines(
+      repositories,
+      run,
+      runLinkedMessages.get(run.id)
+    );
+    if (
+      run.status === "succeeded" &&
+      run.reviewDecision.status === "pending" &&
+      runHasChangedFiles(run)
+    ) {
       return [{
         id: `review-pending:${run.id}`,
         type: "review_pending" as const,
         timestamp: run.completedAt ?? run.updatedAt,
-        author: `@${run.agentKind}`,
+        author: `@${renderedHandle}`,
+        displayHandle,
         content: "awaiting review — 切换到 [V]iew 查看详情",
+        outputLines,
         agent: run.agentKind,
         runId: run.id,
         statusLabel: "awaiting review",
+        verificationLine: conversationVerificationLine(run.evidence),
+        riskLine: conversationRiskLine(run.evidence),
+        elapsedLabel: run.elapsedLabel,
+        usageLabel: run.usageLabel,
+        inlineDiff: run.evidence.inlineDiff,
         sortRank: 30
       }];
     }
@@ -651,17 +728,17 @@ async function summarizeConversation(
       id: `run:${run.id}`,
       type: entryType as "agent_completed" | "agent_failed",
       timestamp: run.completedAt ?? run.updatedAt,
-      author: `@${run.agentKind}`,
-      outputLines: await terminalRunOutputLines(
-        repositories,
-        run,
-        runLinkedMessages.get(run.id)
-      ),
+      author: `@${renderedHandle}`,
+      displayHandle,
+      outputLines,
       agent: run.agentKind,
       runId: run.id,
       statusLabel: terminalRunStatusLabel(run),
       verificationLine: conversationVerificationLine(run.evidence),
       riskLine: conversationRiskLine(run.evidence),
+      elapsedLabel: run.elapsedLabel,
+      usageLabel: run.usageLabel,
+      inlineDiff: run.evidence.inlineDiff,
       sortRank: 30
     }];
   }));
@@ -682,10 +759,11 @@ async function summarizeConversation(
     });
   }
 
-  return entries
+  const visibleEntries = entries
     .sort(compareConversationEntries)
     .slice(-input.limit)
     .map(({ sortRank: _sortRank, ...entry }) => entry);
+  return withLatestConversationSuggestions(visibleEntries);
 }
 
 async function summarizeRun(
@@ -693,21 +771,30 @@ async function summarizeRun(
   run: TaskRun,
   task: Task | undefined
 ): Promise<TuiRunSummary> {
-  const evidence = await summarizeRunEvidence(repositories, run);
-  const reviewDecision = await summarizeRunReviewDecision(repositories, run.id);
+  const [evidence, reviewDecision, metadata, events] = await Promise.all([
+    summarizeRunEvidence(repositories, run),
+    summarizeRunReviewDecision(repositories, run.id),
+    repositories.runMetadataRepository.get(run.id),
+    repositories.runEventRepository.listByRunId(run.id)
+  ]);
+  const usage = summarizeRunUsage(events);
   return {
     id: run.id,
     taskId: run.taskId,
     taskTitle: task?.title,
     agentKind: run.agentKind,
+    roleHandle: metadata?.role?.roleHandle,
     status: run.status,
     stage: runStage(run, evidence.latestEvent),
     startedAt: run.startedAt,
     completedAt: run.completedAt,
     updatedAt: run.updatedAt,
+    elapsedLabel: elapsedRunLabel(run),
+    usageLabel: formatRunUsageLabel(usage),
+    usage,
     parentRunId: run.parentRunId,
     parentMessageId: run.parentMessageId,
-    retainedWorktree: Boolean((await repositories.runMetadataRepository.get(run.id))?.workspaceCleanup?.retained),
+    retainedWorktree: Boolean(metadata?.workspaceCleanup?.retained),
     evidence,
     reviewDecision,
     commands: [
@@ -759,12 +846,13 @@ async function summarizeRunEvidence(
     repositories.runMetadataRepository.get(run.id),
     repositories.runArtifactRepository.getLatestByRunIdAndKind(run.id, "git_diff")
   ]);
-  const latestEvent = [...events].sort((left, right) => left.sequence - right.sequence).at(-1);
+  const latestEventLine = latestTuiEventLine(events);
   const risk = riskReport ?? metadata?.riskReport;
   const diff = diffSummary(diffArtifact, metadata?.diff);
+  const inlineDiff = inlineDiffSummary(diffArtifact, metadata?.diff, diff);
   return {
     linkedRunId: run.id,
-    latestEvent: latestEvent ? truncate(latestEvent.message, defaultLimits.contentChars) : undefined,
+    latestEvent: latestEventLine ? truncate(latestEventLine, defaultLimits.contentChars) : undefined,
     resultSummary: resultSummary(events, run),
     checks: verification.length > 0 ? summarizeChecks(verification) : undefined,
     risk: risk
@@ -773,7 +861,8 @@ async function summarizeRunEvidence(
           primaryReason: risk.riskFactors[0] ?? risk.summary
         }
       : undefined,
-    diff
+    diff,
+    inlineDiff
   };
 }
 
@@ -823,11 +912,15 @@ function recentAgentRunOutputLines(events: RunEvent[], run: TuiRunSummary): stri
 }
 
 function outputTextLines(value: string): string[] {
+  return visibleTuiOutputLines(value)
+    .map((line) => truncate(line, 120));
+}
+
+function visibleTuiOutputLines(value: string): string[] {
   return value
     .split(/\r?\n/)
     .map((line) => line.trim())
-    .filter(Boolean)
-    .map((line) => truncate(line, 120));
+    .filter((line) => line.length > 0 && !isTuiOutputNoiseLine(line));
 }
 
 function toAgentOutputEvent(event: RunEvent): {
@@ -867,11 +960,7 @@ function activeRunEventLines(event: RunEvent): string[] {
     return [];
   }
   const prefix = event.type === "error" ? "error: " : event.type === "exit" ? "exit: " : "";
-  return runEventDisplayText(event)
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .map((line) => `${prefix}${line}`);
+  return visibleTuiOutputLines(runEventDisplayText(event)).map((line) => `${prefix}${line}`);
 }
 
 function runEventDisplayText(event: RunEvent): string {
@@ -887,10 +976,32 @@ function runEventDisplayText(event: RunEvent): string {
 }
 
 function humanReadableStreamLines(value: string): string[] {
-  return value
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0 && !isJsonObjectLine(line));
+  return visibleTuiOutputLines(value);
+}
+
+function latestTuiEventLine(events: RunEvent[]): string | undefined {
+  return [...events]
+    .sort((left, right) => right.sequence - left.sequence)
+    .flatMap(activeRunEventLines)
+    .find((line) => line.length > 0);
+}
+
+function isTuiOutputNoiseLine(value: string): boolean {
+  return (
+    isJsonObjectLine(value) ||
+    /^Context compiled/i.test(value) ||
+    /^TaskRunner execution started\.?$/i.test(value) ||
+    /^Isolated worktree is ready\.?$/i.test(value) ||
+    /^Agent adapter started\.?$/i.test(value) ||
+    /^starting (Codex|Claude Code|Claude|Fake Agent)/i.test(value) ||
+    /^(Codex|Claude Code|Claude) preflight passed/i.test(value) ||
+    /^(Codex|Claude Code|Claude) (thread|turn|session|item)\.[A-Za-z_]+/i.test(value) ||
+    /^Using [`'"].+[`'"] to satisfy/i.test(value) ||
+    /\bcodex_[A-Za-z0-9_]+::/.test(value) ||
+    /\bExperimentalWarning\b/.test(value) ||
+    /Unsupported engine: wanted:/i.test(value) ||
+    /Vite's Node API is deprecated/i.test(value)
+  );
 }
 
 function isJsonObjectLine(value: string): boolean {
@@ -917,6 +1028,285 @@ function activeRunEvidenceLines(run: TuiRunSummary): string[] {
 
 function activeRunCreatedAt(run: TuiRunSummary): string {
   return run.startedAt ?? run.completedAt ?? run.updatedAt;
+}
+
+function withLatestConversationSuggestions(
+  entries: TuiConversationEntry[]
+): TuiConversationEntry[] {
+  const suggestionIndex = findLastIndex(entries, isSuggestibleConversationEntry);
+  if (suggestionIndex < 0) {
+    return entries;
+  }
+  return entries.map((entry, index) =>
+    index === suggestionIndex
+      ? { ...entry, suggestions: suggestionsForConversationEntry(entry) }
+      : entry
+  );
+}
+
+function findLastIndex<T>(values: T[], predicate: (value: T) => boolean): number {
+  for (let index = values.length - 1; index >= 0; index -= 1) {
+    if (predicate(values[index])) {
+      return index;
+    }
+  }
+  return -1;
+}
+
+function isSuggestibleConversationEntry(entry: TuiConversationEntry): boolean {
+  return (
+    entry.type === "agent_completed" ||
+    entry.type === "agent_failed" ||
+    entry.type === "review_pending"
+  );
+}
+
+function suggestionsForConversationEntry(
+  entry: TuiConversationEntry
+): TuiConversationSuggestion[] {
+  const runLabel = entry.runId ? `run ${entry.runId}` : "the latest result";
+  if (entry.verificationLine && !/verification passed/i.test(entry.verificationLine)) {
+    return keyedSuggestions([
+      {
+        label: "Run more tests",
+        prompt: `Run more targeted tests for ${runLabel} and summarize the failures.`
+      },
+      {
+        label: "Fix verification",
+        prompt: `Fix the verification issues from ${runLabel}, then report what changed.`
+      },
+      {
+        label: "Review changes",
+        prompt: `Review the changes from ${runLabel} before continuing.`
+      }
+    ]);
+  }
+  if (entry.riskLine && /\brisk (medium|high|blocking)\b/i.test(entry.riskLine)) {
+    return keyedSuggestions([
+      {
+        label: "Review changes",
+        prompt: `Review the risk findings for ${runLabel} and identify the safest next step.`
+      },
+      {
+        label: "Run more tests",
+        prompt: `Run additional verification for ${runLabel} before accepting the result.`
+      },
+      {
+        label: "Continue",
+        prompt: `Continue from ${runLabel} with the selected agent.`
+      }
+    ]);
+  }
+  return keyedSuggestions([
+    {
+      label: "Continue",
+      prompt: `Continue from ${runLabel} with the selected agent.`
+    },
+    {
+      label: "Run tests",
+      prompt: `Run the relevant tests for ${runLabel} and summarize the result.`
+    },
+    {
+      label: "Fix similar",
+      prompt: `Look for similar issues related to ${runLabel} and fix the smallest safe set.`
+    }
+  ]);
+}
+
+function keyedSuggestions(
+  suggestions: Array<Omit<TuiConversationSuggestion, "key">>
+): TuiConversationSuggestion[] {
+  return suggestions.slice(0, 3).map((suggestion, index) => ({
+    key: String(index + 1) as TuiConversationSuggestion["key"],
+    ...suggestion
+  }));
+}
+
+function elapsedRunLabel(run: TaskRun): string | undefined {
+  if (!run.startedAt) {
+    return undefined;
+  }
+  const startedAt = Date.parse(run.startedAt);
+  const endedAt = Date.parse(run.completedAt ?? run.updatedAt);
+  if (!Number.isFinite(startedAt) || !Number.isFinite(endedAt) || endedAt < startedAt) {
+    return undefined;
+  }
+  return formatElapsedDuration(endedAt - startedAt);
+}
+
+function formatElapsedDuration(milliseconds: number): string {
+  const seconds = Math.max(0, Math.round(milliseconds / 1000));
+  if (seconds < 60) {
+    return `${seconds}s`;
+  }
+  const minutes = Math.floor(seconds / 60);
+  const remainingSeconds = seconds % 60;
+  if (minutes < 60) {
+    return remainingSeconds === 0 ? `${minutes}m` : `${minutes}m${remainingSeconds}s`;
+  }
+  const hours = Math.floor(minutes / 60);
+  const remainingMinutes = minutes % 60;
+  return remainingMinutes === 0 ? `${hours}h` : `${hours}h${remainingMinutes}m`;
+}
+
+function summarizeRunUsage(events: RunEvent[]): TuiRunUsageSummary | undefined {
+  const usage: TuiRunUsageSummary = {};
+  for (const event of events) {
+    collectUsageValues(event.metadata, usage);
+    collectUsageValues(parseJsonObject(event.message), usage);
+  }
+  const derivedTotal =
+    usage.totalTokens ??
+    (usage.inputTokens !== undefined || usage.outputTokens !== undefined
+      ? (usage.inputTokens ?? 0) + (usage.outputTokens ?? 0)
+      : undefined);
+  if (derivedTotal !== undefined) {
+    usage.totalTokens = derivedTotal;
+  }
+  return usage.inputTokens !== undefined ||
+    usage.outputTokens !== undefined ||
+    usage.totalTokens !== undefined ||
+    usage.costUsd !== undefined
+    ? usage
+    : undefined;
+}
+
+function collectUsageValues(value: unknown, usage: TuiRunUsageSummary): void {
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      collectUsageValues(item, usage);
+    }
+    return;
+  }
+  if (!isPlainRecord(value)) {
+    return;
+  }
+  for (const [key, rawValue] of Object.entries(value)) {
+    const numericValue = numericScalarValue(rawValue);
+    if (numericValue !== undefined) {
+      collectUsageNumber(key, numericValue, usage);
+    }
+    if (isPlainRecord(rawValue) || Array.isArray(rawValue)) {
+      collectUsageValues(rawValue, usage);
+    }
+  }
+}
+
+function collectUsageNumber(
+  key: string,
+  value: number,
+  usage: TuiRunUsageSummary
+): void {
+  if (value < 0 || !Number.isFinite(value)) {
+    return;
+  }
+  const normalizedKey = key.replace(/[^a-zA-Z0-9]/g, "").toLowerCase();
+  if (normalizedKey.includes("cost")) {
+    usage.costUsd = maxDefined(usage.costUsd, value);
+    return;
+  }
+  if (!normalizedKey.includes("token")) {
+    return;
+  }
+  if (normalizedKey.includes("input") || normalizedKey.includes("prompt")) {
+    usage.inputTokens = maxDefined(usage.inputTokens, Math.round(value));
+    return;
+  }
+  if (normalizedKey.includes("output") || normalizedKey.includes("completion")) {
+    usage.outputTokens = maxDefined(usage.outputTokens, Math.round(value));
+    return;
+  }
+  if (
+    normalizedKey.includes("total") ||
+    normalizedKey === "tokens" ||
+    normalizedKey === "tokencount" ||
+    normalizedKey === "usageTokens".toLowerCase()
+  ) {
+    usage.totalTokens = maxDefined(usage.totalTokens, Math.round(value));
+  }
+}
+
+function formatRunUsageLabel(usage: TuiRunUsageSummary | undefined): string | undefined {
+  if (!usage) {
+    return undefined;
+  }
+  const tokenTotal =
+    usage.totalTokens ??
+    (usage.inputTokens !== undefined || usage.outputTokens !== undefined
+      ? (usage.inputTokens ?? 0) + (usage.outputTokens ?? 0)
+      : undefined);
+  const parts: string[] = [];
+  if (tokenTotal !== undefined) {
+    parts.push(`${formatTokenCount(tokenTotal)} tok`);
+  } else {
+    if (usage.inputTokens !== undefined) {
+      parts.push(`${formatTokenCount(usage.inputTokens)} in`);
+    }
+    if (usage.outputTokens !== undefined) {
+      parts.push(`${formatTokenCount(usage.outputTokens)} out`);
+    }
+  }
+  if (usage.costUsd !== undefined) {
+    parts.push(formatUsd(usage.costUsd));
+  }
+  return parts.length > 0 ? parts.join(" / ") : undefined;
+}
+
+function formatTokenCount(value: number): string {
+  if (value >= 1_000_000) {
+    return `${trimTrailingZeroes(value / 1_000_000)}m`;
+  }
+  if (value >= 1_000) {
+    return `${trimTrailingZeroes(value / 1_000)}k`;
+  }
+  return String(value);
+}
+
+function formatUsd(value: number): string {
+  if (value === 0) {
+    return "$0";
+  }
+  return value < 0.01 ? `$${value.toFixed(4)}` : `$${value.toFixed(2)}`;
+}
+
+function trimTrailingZeroes(value: number): string {
+  return value.toFixed(1).replace(/\.0$/, "");
+}
+
+function maxDefined(current: number | undefined, next: number): number {
+  return current === undefined ? next : Math.max(current, next);
+}
+
+function numericScalarValue(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value !== "string" || value.trim().length === 0) {
+    return undefined;
+  }
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function parseJsonObject(value: string): JsonObject | undefined {
+  const trimmed = value.trim();
+  if (!trimmed.startsWith("{") || !trimmed.endsWith("}")) {
+    return undefined;
+  }
+  try {
+    const parsed = JSON.parse(trimmed) as unknown;
+    return isPlainRecord(parsed) ? parsed : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function runHasChangedFiles(run: TuiRunSummary): boolean {
+  return (run.evidence.diff?.changedFiles ?? 0) > 0;
 }
 
 function terminalRunStatusLabel(run: TuiRunSummary): string {
@@ -1601,6 +1991,99 @@ function diffSummary(
   };
 }
 
+function inlineDiffSummary(
+  artifact: RunArtifact | undefined,
+  diff: unknown,
+  summary: TuiEvidenceSummary["diff"]
+): TuiInlineDiffSummary | undefined {
+  const diffText = typeof artifact?.content === "string" && artifact.content.trim().length > 0
+    ? artifact.content
+    : stringValue(diff, "diff");
+  if (!diffText) {
+    return summary && summary.changedFiles > 0
+      ? {
+          mode: "summary",
+          summary: diffSummaryText(summary),
+          lines: []
+        }
+      : undefined;
+  }
+  const rawLines = diffText.split(/\r?\n/);
+  const changedLines = rawLines.filter(isChangedDiffLine);
+  if (changedLines.length === 0) {
+    return summary && summary.changedFiles > 0
+      ? {
+          mode: "summary",
+          summary: diffSummaryText(summary),
+          lines: []
+        }
+      : undefined;
+  }
+  if (changedLines.length > 5) {
+    return {
+      mode: "summary",
+      summary: diffSummaryText(summary, changedLines),
+      lines: []
+    };
+  }
+  const lines: TuiInlineDiffLine[] = [];
+  for (const rawLine of rawLines) {
+    const projected = projectDiffLine(rawLine);
+    if (!projected) {
+      continue;
+    }
+    lines.push(projected);
+    if (lines.length >= 16) {
+      break;
+    }
+  }
+  return {
+    mode: "inline",
+    summary: diffSummaryText(summary, changedLines),
+    lines
+  };
+}
+
+function isChangedDiffLine(value: string): boolean {
+  return (
+    (value.startsWith("+") && !value.startsWith("+++")) ||
+    (value.startsWith("-") && !value.startsWith("---"))
+  );
+}
+
+function projectDiffLine(value: string): TuiInlineDiffLine | undefined {
+  if (value.startsWith("diff --git") || value.startsWith("@@")) {
+    return { kind: "file", text: truncate(value, 100) };
+  }
+  if (value.startsWith("+++") || value.startsWith("---") || value.startsWith("index ")) {
+    return undefined;
+  }
+  if (value.startsWith("+")) {
+    return { kind: "add", text: truncate(value, 100) };
+  }
+  if (value.startsWith("-")) {
+    return { kind: "delete", text: truncate(value, 100) };
+  }
+  if (value.startsWith(" ") && value.trim().length > 0) {
+    return { kind: "context", text: truncate(value, 100) };
+  }
+  return undefined;
+}
+
+function diffSummaryText(
+  summary: TuiEvidenceSummary["diff"],
+  changedLines: string[] = []
+): string {
+  const additions =
+    summary?.insertions ??
+    changedLines.filter((line) => line.startsWith("+")).length;
+  const deletions =
+    summary?.deletions ??
+    changedLines.filter((line) => line.startsWith("-")).length;
+  const files = summary?.changedFiles ?? 0;
+  return `(+${additions}/-${deletions}${files > 0 ? ` in ${files} files` : ""})`;
+}
+
 async function requiredRunForEvidence(
   repositories: TuiReadModelRepositories,
   runId: string
@@ -1617,6 +2100,39 @@ function taskAssignments(task: Task): WorkgroupTaskAssignmentMetadata[] {
     ? task.metadata.assignments
     : [];
   return assignments.filter(isTaskAssignment);
+}
+
+function displayHandlesForRuns(input: {
+  runs: TuiRunSummary[];
+  messages: ConversationMessage[];
+  tasks: Task[];
+  roleCalls: RoleCall[];
+}): Map<string, string> {
+  const handles = new Map<string, string>();
+  for (const task of input.tasks) {
+    for (const assignment of taskAssignments(task)) {
+      if (assignment.runId && assignment.roleHandle) {
+        handles.set(assignment.runId, assignment.roleHandle);
+      }
+    }
+  }
+  for (const message of input.messages) {
+    const displayHandle = displayHandleFromMessage(message);
+    if (message.runId && displayHandle) {
+      handles.set(message.runId, displayHandle);
+    }
+  }
+  for (const run of input.runs) {
+    if (run.roleHandle) {
+      handles.set(run.id, run.roleHandle);
+    }
+  }
+  for (const call of input.roleCalls) {
+    if (call.taskRunId) {
+      handles.set(call.taskRunId, call.calleeRole);
+    }
+  }
+  return handles;
 }
 
 function isTaskAssignment(value: unknown): value is WorkgroupTaskAssignmentMetadata {
@@ -1663,16 +2179,24 @@ function nextTaskAction(
 }
 
 function messageAuthor(message: ConversationMessage): string {
-  if (message.metadata?.role && isObject(message.metadata.role)) {
-    const roleHandle = message.metadata.role.roleHandle;
-    if (typeof roleHandle === "string") {
-      return `@${roleHandle}`;
-    }
+  const displayHandle = displayHandleFromMessage(message);
+  if (displayHandle) {
+    return `@${displayHandle}`;
   }
   if (message.agentKind) {
     return `@${message.agentKind}`;
   }
   return message.role;
+}
+
+function displayHandleFromMessage(message: ConversationMessage): string | undefined {
+  if (message.metadata?.role && isObject(message.metadata.role)) {
+    const roleHandle = message.metadata.role.roleHandle;
+    if (typeof roleHandle === "string") {
+      return roleHandle;
+    }
+  }
+  return undefined;
 }
 
 function roleCallStatusLabel(status: RoleCallStatus): string {
@@ -1715,6 +2239,16 @@ function arrayValue(value: unknown, key: string): unknown[] | undefined {
   }
   const candidate = value[key];
   return Array.isArray(candidate) ? candidate : undefined;
+}
+
+function stringValue(value: unknown, key: string): string | undefined {
+  if (!isObject(value)) {
+    return undefined;
+  }
+  const candidate = value[key];
+  return typeof candidate === "string" && candidate.trim().length > 0
+    ? candidate
+    : undefined;
 }
 
 function numberValue(value: unknown, key: string): number | undefined {

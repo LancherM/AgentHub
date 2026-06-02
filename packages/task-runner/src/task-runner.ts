@@ -60,6 +60,7 @@ import {
   type TaskBrief,
   type TaskRun,
   type VerificationResult,
+  type WorkgroupRoleRunMetadata,
   type SkillReference
 } from "@agent-hub/core";
 import { RiskReportGenerator } from "@agent-hub/safety";
@@ -124,6 +125,8 @@ export interface RunTaskInput {
   agentHubHome?: string;
   selectedSkillReferences?: SkillReference[];
   roleSkillReferences?: SkillReference[];
+  role?: WorkgroupRoleRunMetadata;
+  teamRoles?: WorkgroupRoleRunMetadata[];
   runRoot?: string;
   workspaceBasePath?: string;
   workspaceCleanupPolicy?: WorkspaceCleanupPolicy;
@@ -606,7 +609,8 @@ export class TaskRunner {
     try {
       await this.runMetadataRepository.save({
         runId: run.id,
-        workspace: workspaceSession.workspace
+        workspace: workspaceSession.workspace,
+        ...(input.role ? { role: input.role } : {})
       });
     } catch (error) {
       recordDiagnostic("workspace metadata persistence", error);
@@ -701,6 +705,8 @@ export class TaskRunner {
             contextPackPath: path.join(runtimeDirectory, "context-pack.json"),
             contextBundle,
             contextMarkdown,
+            role: input.role,
+            teamRoles: input.teamRoles,
             runtimeDirectory,
             taskId: task.id,
             taskTitle: task.title,
@@ -915,6 +921,7 @@ export class TaskRunner {
       await this.runMetadataRepository.save({
         runId: run.id,
         workspace: workspaceSession.workspace,
+        ...(input.role ? { role: input.role } : {}),
         diff,
         verification,
         riskReport
@@ -952,6 +959,7 @@ export class TaskRunner {
       await this.runMetadataRepository.save({
         runId: run.id,
         workspace: workspaceSession.workspace,
+        ...(input.role ? { role: input.role } : {}),
         workspaceCleanup
       });
     } catch (error) {

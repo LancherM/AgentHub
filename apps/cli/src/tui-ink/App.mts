@@ -9,7 +9,10 @@ import {
 import type {
   TuiActiveRunBox,
   TuiConversationEntry,
-  TuiCurrentContextModel
+  TuiConversationSuggestion,
+  TuiCurrentContextModel,
+  TuiInlineDiffSummary,
+  TuiRunSummary
 } from "@agent-hub/core";
 import {
   compactId,
@@ -28,6 +31,7 @@ import {
   selectedTask,
   selectedTaskIndex,
   unavailableRoleExecutorCommands,
+  visibleConversationSuggestions,
   visibleRoleCalls,
   selectedRoleCallIndex,
   type TuiInkFocus,
@@ -39,6 +43,14 @@ const h = React.createElement;
 const defaultTuiOperationTimeoutMs = 10 * 60 * 1000;
 const defaultTuiPollIntervalMs = 2_500;
 const defaultTuiModelRefreshTimeoutMs = 30_000;
+const activeRunSpinnerFrames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+const activeRunAnimationIntervalMs = 1_000;
+const runFeedbackDurationMs = 200;
+const badgeFlashDurationMs = 350;
+const completionNotificationMinimumMs = 30_000;
+const startupSplashDurationMs = 700;
+
+type RunFeedbackKind = "success" | "failure";
 
 export interface TuiInkTerminalSize {
   columns: number;
@@ -73,6 +85,10 @@ export interface TuiInkFrameProps {
   model: TuiCurrentContextModel;
   state?: TuiInkState;
   terminal: TuiInkTerminalSize;
+  animationTick?: number;
+  feedbackByRunId?: Partial<Record<string, RunFeedbackKind>>;
+  badgeFlash?: boolean;
+  showSplash?: boolean;
 }
 
 export interface TuiInkAppProps extends TuiInkFrameProps {
@@ -80,9 +96,11 @@ export interface TuiInkAppProps extends TuiInkFrameProps {
   loadModel?: (state: TuiInkState) => Promise<TuiCurrentContextModel>;
   submitPrompt?: (input: TuiInkSubmitInput) => Promise<TuiInkSubmitResult>;
   recordReviewDecision?: (input: TuiInkReviewInput) => Promise<TuiInkReviewResult>;
+  notify?: (message: string) => void;
   operationTimeoutMs?: number;
   pollIntervalMs?: number;
   modelRefreshTimeoutMs?: number;
+  splashDurationMs?: number;
 }
 
 export function TuiInkApp(props: TuiInkAppProps): React.ReactElement {
@@ -91,6 +109,7 @@ export function TuiInkApp(props: TuiInkAppProps): React.ReactElement {
   const [state, setState] = useState(props.state ?? createInitialInkState());
   const [busy, setBusy] = useState(false);
   const [busyMessage, setBusyMessage] = useState<string | undefined>();
+  const [showStartupSplash, setShowStartupSplash] = useState(props.showSplash === true);
   const stateRef = useRef(state);
   const modelRef = useRef(model);
   const busyRef = useRef(busy);
@@ -113,6 +132,20 @@ export function TuiInkApp(props: TuiInkAppProps): React.ReactElement {
   useEffect(() => {
     busyMessageRef.current = busyMessage;
   }, [busyMessage]);
+
+  useCompletionNotifications(model, state.notifyEnabled, props.notify);
+
+  useEffect(() => {
+    if (!props.showSplash) {
+      setShowStartupSplash(false);
+      return undefined;
+    }
+    setShowStartupSplash(true);
+    const timeout = setTimeout(() => {
+      setShowStartupSplash(false);
+    }, props.splashDurationMs ?? startupSplashDurationMs);
+    return () => clearTimeout(timeout);
+  }, [props.showSplash, props.splashDurationMs]);
 
   useEffect(() => {
     if (!props.interactive || !props.loadModel) {
@@ -195,6 +228,9 @@ export function TuiInkApp(props: TuiInkAppProps): React.ReactElement {
 
   const setModelFromRefresh = (nextModel: TuiCurrentContextModel) => {
     const previousModel = modelRef.current;
+    if (modelRenderSignature(previousModel) === modelRenderSignature(nextModel)) {
+      return;
+    }
     modelRef.current = nextModel;
     setModel(nextModel);
     if (workContentSignature(previousModel) !== workContentSignature(nextModel)) {
@@ -213,8 +249,41 @@ export function TuiInkApp(props: TuiInkAppProps): React.ReactElement {
         ...currentState,
         focus: "team",
         composer: "",
+        composerCursorPosition: 0,
         commandPaletteOpen: false,
         statusMessage: "Team roles shown."
+      });
+      return true;
+    }
+    if (command === "/search") {
+      setStateNow(openSearchState({
+        ...currentState,
+        composer: "",
+        composerCursorPosition: 0
+      }));
+      return true;
+    }
+    if (command === "/timeline") {
+      setStateNow({
+        ...currentState,
+        timelineOpen: true,
+        searchOpen: false,
+        commandPaletteOpen: false,
+        composer: "",
+        composerCursorPosition: 0,
+        statusMessage: "Timeline shown."
+      });
+      return true;
+    }
+    if (command === "/notify") {
+      setStateNow({
+        ...currentState,
+        notifyEnabled: !currentState.notifyEnabled,
+        composer: "",
+        composerCursorPosition: 0,
+        statusMessage: currentState.notifyEnabled
+          ? "Completion notifications disabled."
+          : "Completion notifications enabled."
       });
       return true;
     }
@@ -223,12 +292,28 @@ export function TuiInkApp(props: TuiInkAppProps): React.ReactElement {
 
   const submitComposer = async () => {
     const currentState = stateRef.current;
-    const currentModel = modelRef.current;
     const prompt = currentState.composer.trim();
     if (!prompt) {
       setState({ ...currentState, statusMessage: "Composer is empty." });
       return;
     }
+    await submitPromptText(prompt, currentState, "Submitting prompt...");
+  };
+
+  const submitSuggestion = async (suggestion: TuiConversationSuggestion) => {
+    await submitPromptText(
+      suggestion.prompt,
+      stateRef.current,
+      `Submitting suggestion: ${suggestion.label}...`
+    );
+  };
+
+  const submitPromptText = async (
+    prompt: string,
+    currentState: TuiInkState,
+    busyLabel: string
+  ) => {
+    const currentModel = modelRef.current;
     if (!props.submitPrompt) {
       setState({ ...currentState, statusMessage: "Prompt submission is unavailable." });
       return;
@@ -240,11 +325,12 @@ export function TuiInkApp(props: TuiInkAppProps): React.ReactElement {
     const submittingState = {
       ...currentState,
       composer: "",
-      statusMessage: "Submitting prompt..."
+      composerCursorPosition: 0,
+      statusMessage: busyLabel
     };
     setStateNow(submittingState);
-    setBusyMessage("Submitting prompt...");
-    busyMessageRef.current = "Submitting prompt...";
+    setBusyMessage(busyLabel);
+    busyMessageRef.current = busyLabel;
     busyRef.current = true;
     setBusy(true);
     try {
@@ -331,12 +417,178 @@ export function TuiInkApp(props: TuiInkAppProps): React.ReactElement {
     }
   };
 
+  const handleSearchInput = (input: string, key: Key) => {
+    if (key.escape) {
+      applyKey("escape");
+      return;
+    }
+    if (key.upArrow || input === "\u001B[A") {
+      moveSearchMatch(-1);
+      return;
+    }
+    if (key.downArrow || input === "\u001B[B" || input === "\n" || input === "\r" || key.return) {
+      moveSearchMatch(1);
+      return;
+    }
+    if (key.backspace) {
+      setState((current) => ({
+        ...current,
+        searchQuery: current.searchQuery.slice(0, -1),
+        searchMatchIndex: 0
+      }));
+      return;
+    }
+    if (isPrintableInput(input, key)) {
+      setState((current) => ({
+        ...current,
+        searchQuery: `${current.searchQuery}${input}`,
+        searchMatchIndex: 0
+      }));
+    }
+  };
+
+  const moveSearchMatch = (delta: number) => {
+    setState((current) => {
+      const count = conversationSearchMatches(modelRef.current, current.searchQuery).length;
+      if (count === 0) {
+        return current;
+      }
+      return {
+        ...current,
+        searchMatchIndex: (current.searchMatchIndex + delta + count) % count
+      };
+    });
+  };
+
+  const handlePaletteInput = (input: string, key: Key) => {
+    if (key.escape) {
+      applyKey("escape");
+      return;
+    }
+    if (key.upArrow || input === "k") {
+      movePaletteSelection(-1);
+      return;
+    }
+    if (key.downArrow || input === "j") {
+      movePaletteSelection(1);
+      return;
+    }
+    if (input === "\n" || input === "\r" || key.return) {
+      executeSelectedPaletteItem();
+      return;
+    }
+    if (key.backspace) {
+      setState((current) => ({
+        ...current,
+        paletteQuery: current.paletteQuery.slice(0, -1),
+        paletteSelectedIndex: 0
+      }));
+      return;
+    }
+    if (isPrintableInput(input, key)) {
+      setState((current) => ({
+        ...current,
+        paletteQuery: `${current.paletteQuery}${input}`,
+        paletteSelectedIndex: 0
+      }));
+    }
+  };
+
+  const movePaletteSelection = (delta: number) => {
+    setState((current) => {
+      const count = filteredPaletteItems(modelRef.current, current).length;
+      if (count === 0) {
+        return current;
+      }
+      return {
+        ...current,
+        paletteSelectedIndex: (current.paletteSelectedIndex + delta + count) % count
+      };
+    });
+  };
+
+  const executeSelectedPaletteItem = () => {
+    const currentState = stateRef.current;
+    const items = filteredPaletteItems(modelRef.current, currentState);
+    const item = items[Math.min(currentState.paletteSelectedIndex, Math.max(0, items.length - 1))];
+    if (!item) {
+      setStateNow({
+        ...currentState,
+        statusMessage: "No palette command matches."
+      });
+      return;
+    }
+    if (item.kind === "focus") {
+      const nextState = reduceInkState(
+        {
+          ...currentState,
+          commandPaletteOpen: false,
+          paletteQuery: "",
+          paletteSelectedIndex: 0
+        },
+        item.focus,
+        modelRef.current
+      );
+      setStateNow({
+        ...nextState,
+        statusMessage: `Opened ${item.label}.`
+      });
+      return;
+    }
+    setStateNow({
+      ...currentState,
+      commandPaletteOpen: false,
+      paletteQuery: "",
+      paletteSelectedIndex: 0,
+      composer: item.command,
+      composerCursorPosition: item.command.length,
+      statusMessage: "Command prepared in composer."
+    });
+  };
+
   useInput(
     (input, key) => {
       const currentState = stateRef.current;
       const isBusy = busyRef.current;
       if (key.ctrl && (input === "c" || input === "C")) {
         app.exit();
+        return;
+      }
+      if (currentState.searchOpen) {
+        handleSearchInput(input, key);
+        return;
+      }
+      if (currentState.commandPaletteOpen) {
+        handlePaletteInput(input, key);
+        return;
+      }
+      if (key.ctrl && (input === "f" || input === "F")) {
+        setStateNow(openSearchState(currentState));
+        return;
+      }
+      const suggestion = suggestionForInput(input, modelRef.current, currentState);
+      if (suggestion) {
+        if (isBusy) {
+          showBusyInputMessage();
+          return;
+        }
+        void submitSuggestion(suggestion);
+        return;
+      }
+      if (input === "c" && currentState.focus === "work" && currentState.composer.length === 0) {
+        applyKey("continue_loop");
+        return;
+      }
+      if (input === "l" && currentState.composer.length === 0) {
+        applyKey("toggle_timeline");
+        return;
+      }
+      if (input === " " && currentState.focus === "review" && currentState.composer.length === 0) {
+        applyKey("toggle_review_diff");
+        return;
+      }
+      if (input === "s" && currentState.focus === "review" && currentState.composer.length === 0) {
+        applyKey("toggle_compare");
         return;
       }
       const wantsSubmit =
@@ -361,6 +613,33 @@ export function TuiInkApp(props: TuiInkAppProps): React.ReactElement {
           return;
         }
         void submitComposer();
+        return;
+      }
+      if (key.ctrl && (input === "a" || input === "A")) {
+        setState((current) => ({
+          ...current,
+          composerCursorPosition: 0
+        }));
+        return;
+      }
+      if (key.ctrl && (input === "e" || input === "E")) {
+        setState((current) => ({
+          ...current,
+          composerCursorPosition: current.composer.length
+        }));
+        return;
+      }
+      if (key.ctrl && (input === "u" || input === "U")) {
+        setState((current) => ({
+          ...current,
+          composer: "",
+          composerCursorPosition: 0,
+          statusMessage: "Composer cleared."
+        }));
+        return;
+      }
+      if (key.ctrl && (input === "d" || input === "D")) {
+        setState(deleteComposerCharacterAfterCursor);
         return;
       }
       if ((input === "x" || input === "q") && currentState.composer.length === 0) {
@@ -399,28 +678,62 @@ export function TuiInkApp(props: TuiInkAppProps): React.ReactElement {
         setState((current) => ({
           ...current,
           composer: "",
+          composerCursorPosition: 0,
           statusMessage: "Composer cleared."
         }));
         return;
       }
-      if (
-        isPrintableInput(input, key) &&
-        (currentState.focus === "work" || currentState.composer.length > 0)
-      ) {
-        setState((current) => ({ ...current, composer: `${current.composer}${input}` }));
+      if (key.leftArrow && currentState.composer.length > 0) {
+        setState((current) => ({
+          ...current,
+          composerCursorPosition: Math.max(0, current.composerCursorPosition - 1)
+        }));
+        return;
+      }
+      if (key.rightArrow && currentState.composer.length > 0) {
+        setState((current) => ({
+          ...current,
+          composerCursorPosition: Math.min(current.composer.length, current.composerCursorPosition + 1)
+        }));
+        return;
+      }
+      if (key.home && currentState.composer.length > 0) {
+        setState((current) => ({
+          ...current,
+          composerCursorPosition: 0
+        }));
+        return;
+      }
+      if (key.end && currentState.composer.length > 0) {
+        setState((current) => ({
+          ...current,
+          composerCursorPosition: current.composer.length
+        }));
+        return;
+      }
+      if (key.backspace) {
+        setState(deleteComposerCharacterBeforeCursor);
+        return;
+      }
+      if (key.delete) {
+        setState(deleteComposerCharacterAfterCursor);
+        return;
+      }
+      const navigationMapped = currentState.composer.length === 0
+        ? keyToAction(input, key, currentState.focus)
+        : undefined;
+      if (navigationMapped && isNavigationAction(navigationMapped)) {
+        applyKey(navigationMapped);
+        return;
+      }
+      if (isPrintableInput(input, key)) {
+        setState((current) => insertComposerText(current, input));
         return;
       }
       const mapped = keyToAction(input, key, currentState.focus);
       if (mapped) {
         applyKey(mapped);
         return;
-      }
-      if (key.backspace || key.delete) {
-        setState((current) => ({ ...current, composer: current.composer.slice(0, -1) }));
-        return;
-      }
-      if (isPrintableInput(input, key)) {
-        setState((current) => ({ ...current, composer: `${current.composer}${input}` }));
       }
     },
     { isActive: props.interactive }
@@ -429,23 +742,52 @@ export function TuiInkApp(props: TuiInkAppProps): React.ReactElement {
   return h(TuiInkFrame, {
     model,
     state: busy ? { ...state, statusMessage: busyMessage ?? "Working..." } : state,
-    terminal: props.terminal
+    terminal: props.terminal,
+    showSplash: showStartupSplash
   });
 }
 
 export function TuiInkFrame({
   model,
   state = createInitialInkState(),
-  terminal
+  terminal,
+  animationTick: providedAnimationTick,
+  feedbackByRunId: providedFeedbackByRunId = {},
+  badgeFlash: providedBadgeFlash = false,
+  showSplash = false
 }: TuiInkFrameProps): React.ReactElement {
   const width = terminal.columns;
+  const [animationTick, setAnimationTick] = useState(0);
+  useEffect(() => {
+    if (model.activeRuns.length === 0) {
+      return undefined;
+    }
+    const interval = setInterval(() => {
+      setAnimationTick((current) => current + 1);
+    }, activeRunAnimationIntervalMs);
+    return () => clearInterval(interval);
+  }, [model.activeRuns.length]);
+  const transientFeedbackByRunId = useTerminalRunFeedback(model);
+  const effectiveFeedbackByRunId = {
+    ...transientFeedbackByRunId,
+    ...providedFeedbackByRunId
+  };
+  const badgeFlash = useBadgeFlash(model) || providedBadgeFlash;
   return h(
     Box,
     { flexDirection: "column", width },
-    h(HeaderBar, { model, terminal }),
+    ...(showSplash ? [h(SplashPane, { key: "splash" })] : []),
+    h(HeaderBar, { model, state, terminal, badgeFlash }),
     ...model.warnings.map((warning) => line(`! ${warning}`, { color: "yellow" })),
     ...(state.statusMessage ? [line(`Status: ${state.statusMessage}`, { color: "green" })] : []),
-    h(MainView, { model, state, terminal }),
+    h(MainView, {
+      model,
+      state,
+      terminal,
+      animationTick: providedAnimationTick ?? animationTick,
+      feedbackByRunId: effectiveFeedbackByRunId
+    }),
+    h(StatusBar, { model, state }),
     h(Composer, { model, state }),
     h(FocusTabs, { state })
   );
@@ -453,11 +795,16 @@ export function TuiInkFrame({
 
 function HeaderBar({
   model,
-  terminal
+  state,
+  terminal,
+  badgeFlash
 }: {
   model: TuiCurrentContextModel;
+  state: TuiInkState;
   terminal: TuiInkTerminalSize;
+  badgeFlash: boolean;
 }): React.ReactElement {
+  const idle = model.activeRuns.length === 0 && state.composer.length === 0;
   const project = model.context.projectName ?? model.context.projectId ?? "unregistered";
   const agent = model.context.selectedAgent ? `@${model.context.selectedAgent}` : "@agent";
   const loop = model.roleCalls.loop.maxIterations === undefined
@@ -468,20 +815,28 @@ function HeaderBar({
     { text: project, bold: true },
     { text: agent },
     { text: loop },
-    { text: `risk ${risk}`, color: riskHeaderColor(risk) }
+    { text: `risk ${risk}` }
   ];
-  const visibleParts = compactHeaderParts(parts, terminal.columns);
+  const clock = formatHeaderClock(new Date());
+  const symbol = badgeFlash ? "!" : idle ? "◈" : "●";
+  const availableWidth = Math.max(12, terminal.columns - clock.length - 4);
+  const visibleParts = compactHeaderParts(parts, availableWidth);
+  const leftText = headerPartsText(visibleParts);
+  const content = `${leftText}${" ".repeat(Math.max(1, terminal.columns - leftText.length - clock.length - 2))}${clock}`;
+  const headerColor = riskHeaderColor(risk);
   return h(
     Box,
-    { flexDirection: "row" },
-    ...visibleParts.flatMap((part, index) => [
-      ...(index > 0 ? [h(Text, { key: `sep-${index}` }, " · ")] : []),
-      h(Text, {
-        key: part.text,
-        color: part.color,
-        bold: part.bold
-      }, part.text)
-    ])
+    { flexDirection: "row", width: terminal.columns },
+    h(Text, {
+      inverse: true,
+      backgroundColor: headerColor,
+      dimColor: idle && !badgeFlash
+    }, symbol),
+    h(Text, {
+      inverse: true,
+      backgroundColor: headerColor,
+      bold: true
+    }, ` ${content}`)
   );
 }
 
@@ -489,6 +844,170 @@ interface HeaderPart {
   text: string;
   color?: string;
   bold?: boolean;
+}
+
+function SplashPane(): React.ReactElement {
+  return block(
+    line("Agent Hub TUI", { bold: true, color: "cyan" }),
+    line("local-first terminal workbench", { dimColor: true })
+  );
+}
+
+function activeRunDurationMs(run: TuiActiveRunBox): number | undefined {
+  if (!run.startedAt) {
+    return undefined;
+  }
+  const startedAt = Date.parse(run.startedAt);
+  if (!Number.isFinite(startedAt)) {
+    return undefined;
+  }
+  return Date.now() - startedAt;
+}
+
+function terminalConversationEntryForRun(
+  model: TuiCurrentContextModel,
+  runId: string
+): TuiConversationEntry | undefined {
+  return model.conversation.find((entry) =>
+    entry.runId === runId &&
+    (entry.type === "agent_completed" ||
+      entry.type === "agent_failed" ||
+      entry.type === "review_pending")
+  );
+}
+
+function notificationMessageForEntry(entry: TuiConversationEntry): string {
+  const status = entry.type === "agent_failed"
+    ? "failed"
+    : entry.type === "review_pending"
+      ? "awaiting review"
+      : "completed";
+  return `Agent Hub run ${entry.runId ? compactId(entry.runId) : entry.id} ${status}`;
+}
+
+function activePendingSignature(model: TuiCurrentContextModel): {
+  activeRunIds: Set<string>;
+  pendingReviewIds: Set<string>;
+} {
+  return {
+    activeRunIds: new Set(model.activeRuns.map((run) => run.runId)),
+    pendingReviewIds: new Set(
+      model.conversation
+        .filter((entry) => entry.type === "review_pending" && entry.runId)
+        .map((entry) => entry.runId as string)
+    )
+  };
+}
+
+function useTerminalRunFeedback(
+  model: TuiCurrentContextModel
+): Partial<Record<string, RunFeedbackKind>> {
+  const [feedbackByRunId, setFeedbackByRunId] = useState<Partial<Record<string, RunFeedbackKind>>>({});
+  const previousActiveRunIdsRef = useRef<Set<string>>(new Set(model.activeRuns.map((run) => run.runId)));
+  const timeoutRef = useRef<ReturnType<typeof setTimeout>[]>([]);
+
+  useEffect(() => {
+    const previousActiveRunIds = previousActiveRunIdsRef.current;
+    const currentActiveRunIds = new Set(model.activeRuns.map((run) => run.runId));
+    const endedRunIds = [...previousActiveRunIds].filter((runId) => !currentActiveRunIds.has(runId));
+    if (endedRunIds.length > 0) {
+      const nextFeedback: Partial<Record<string, RunFeedbackKind>> = {};
+      for (const runId of endedRunIds) {
+        const entry = model.conversation.find((item) => item.runId === runId);
+        if (entry?.type === "agent_failed") {
+          nextFeedback[runId] = "failure";
+        } else if (entry?.type === "agent_completed" || entry?.type === "review_pending") {
+          nextFeedback[runId] = "success";
+        }
+      }
+      if (Object.keys(nextFeedback).length > 0) {
+        setFeedbackByRunId((current) => ({ ...current, ...nextFeedback }));
+        const timeout = setTimeout(() => {
+          setFeedbackByRunId((current) => {
+            const updated = { ...current };
+            for (const runId of Object.keys(nextFeedback)) {
+              delete updated[runId];
+            }
+            return updated;
+          });
+        }, runFeedbackDurationMs);
+        timeoutRef.current.push(timeout);
+      }
+    }
+    previousActiveRunIdsRef.current = currentActiveRunIds;
+  }, [model.activeRuns, model.conversation]);
+
+  useEffect(() => () => {
+    for (const timeout of timeoutRef.current) {
+      clearTimeout(timeout);
+    }
+  }, []);
+
+  return feedbackByRunId;
+}
+
+function useCompletionNotifications(
+  model: TuiCurrentContextModel,
+  notifyEnabled: boolean,
+  notify: ((message: string) => void) | undefined
+): void {
+  const previousActiveRunsRef = useRef<Map<string, TuiActiveRunBox>>(
+    new Map(model.activeRuns.map((run) => [run.runId, run]))
+  );
+
+  useEffect(() => {
+    const previousActiveRuns = previousActiveRunsRef.current;
+    const currentActiveRuns = new Map(model.activeRuns.map((run) => [run.runId, run]));
+    if (notifyEnabled && notify) {
+      for (const [runId, run] of previousActiveRuns.entries()) {
+        if (currentActiveRuns.has(runId)) {
+          continue;
+        }
+        const duration = activeRunDurationMs(run);
+        if (duration === undefined || duration <= completionNotificationMinimumMs) {
+          continue;
+        }
+        const entry = terminalConversationEntryForRun(model, runId);
+        if (entry) {
+          notify(notificationMessageForEntry(entry));
+        }
+      }
+    }
+    previousActiveRunsRef.current = currentActiveRuns;
+  }, [model, notify, notifyEnabled]);
+}
+
+function useBadgeFlash(model: TuiCurrentContextModel): boolean {
+  const [flash, setFlash] = useState(false);
+  const previousSignatureRef = useRef(activePendingSignature(model));
+  const timeoutRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+
+  useEffect(() => {
+    const previousSignature = previousSignatureRef.current;
+    const nextSignature = activePendingSignature(model);
+    const hasNewActive = [...nextSignature.activeRunIds]
+      .some((runId) => !previousSignature.activeRunIds.has(runId));
+    const hasNewPending = [...nextSignature.pendingReviewIds]
+      .some((runId) => !previousSignature.pendingReviewIds.has(runId));
+    if (hasNewActive || hasNewPending) {
+      setFlash(true);
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current);
+      }
+      timeoutRef.current = setTimeout(() => {
+        setFlash(false);
+      }, badgeFlashDurationMs);
+    }
+    previousSignatureRef.current = nextSignature;
+  }, [model]);
+
+  useEffect(() => () => {
+    if (timeoutRef.current) {
+      clearTimeout(timeoutRef.current);
+    }
+  }, []);
+
+  return flash;
 }
 
 function FocusTabs({ state }: { state: TuiInkState }): React.ReactElement {
@@ -499,6 +1018,7 @@ function FocusTabs({ state }: { state: TuiInkState }): React.ReactElement {
     { focus: "graph", shortcut: "G", suffix: "raph", prefix: "[" },
     { focus: "tasks", shortcut: "T", suffix: "asks", prefix: "[" },
     { focus: "memory", shortcut: "M", suffix: "em", prefix: "[" },
+    { focus: "team", shortcut: "E", suffix: "am", prefix: "[" },
     { focus: "help", shortcut: "?", suffix: "" }
   ];
   return h(
@@ -535,10 +1055,24 @@ function FocusTab({
   );
 }
 
-function MainView(props: TuiInkFrameProps): React.ReactElement {
+interface TuiInkRenderProps {
+  model: TuiCurrentContextModel;
+  state: TuiInkState;
+  terminal: TuiInkTerminalSize;
+  animationTick: number;
+  feedbackByRunId: Partial<Record<string, RunFeedbackKind>>;
+}
+
+function MainView(props: TuiInkRenderProps): React.ReactElement {
   const { model, state = createInitialInkState(), terminal } = props;
+  if (state.searchOpen) {
+    return h(SearchPane, { model, state });
+  }
   if (state.commandPaletteOpen) {
     return h(CommandPalette, { model, state });
+  }
+  if (state.timelineOpen) {
+    return h(TimelinePane, { model, state });
   }
   if (state.focus === "help") {
     return h(HelpPane);
@@ -561,39 +1095,58 @@ function MainView(props: TuiInkFrameProps): React.ReactElement {
   if (state.focus === "memory") {
     return h(MemoryPane, { model });
   }
-  return h(WorkView, { model, state, terminal });
+  return h(WorkView, {
+    model,
+    state,
+    terminal,
+    animationTick: props.animationTick,
+    feedbackByRunId: props.feedbackByRunId
+  });
 }
 
-function WorkView({ model, state, terminal }: Required<TuiInkFrameProps>): React.ReactElement {
+function WorkView({
+  model,
+  state,
+  terminal,
+  animationTick,
+  feedbackByRunId
+}: TuiInkRenderProps): React.ReactElement {
   const { collapsedBoxes, fullBoxes } = activeRunLayout(model.activeRuns, terminal);
   const activeLineCost = collapsedBoxes.length + fullBoxes.length * activeRunBoxLineCount(terminal);
   const conversationLines = conversationWindowSize(terminal, activeLineCost);
   return h(
     Box,
     { flexDirection: "column" },
-    h(ConversationFlow, { model, state, visibleLines: conversationLines }),
+    h(ConversationFlow, { model, state, visibleLines: conversationLines, feedbackByRunId }),
     ...(collapsedBoxes.length > 0
       ? collapsedBoxes.map((box) =>
-          line(`${activeRunTitle(box)} ...`, { color: "green" })
+          line(`${activeRunTitle(box, animationTick)} ...`, { color: "green" })
         )
       : []),
-    ...fullBoxes.map((box) => h(ActiveRunBoxView, { key: box.runId, box, terminal }))
+    ...fullBoxes.map((box) => h(ActiveRunBoxView, { key: box.runId, box, terminal, animationTick }))
   );
 }
 
 function ConversationFlow({
   model,
   state,
-  visibleLines
+  visibleLines,
+  feedbackByRunId
 }: {
   model: TuiCurrentContextModel;
   state: TuiInkState;
   visibleLines: number;
+  feedbackByRunId: Partial<Record<string, RunFeedbackKind>>;
 }): React.ReactElement {
   if (model.conversation.length === 0) {
     return block(line("No messages in the current context.", { dimColor: true }));
   }
-  const renderedLines = model.conversation.flatMap((entry) => conversationEntryLines(entry));
+  const showSuggestions = state.composer.length === 0 && state.conversationScrollOffset === 0;
+  const renderedLines = conversationRenderItems(model.conversation).flatMap((item) =>
+    item.kind === "review_group"
+      ? [reviewPendingGroupLine(item.count)]
+      : conversationEntryLines(item.entry, feedbackByRunId, showSuggestions)
+  );
   const maxOffset = Math.max(0, renderedLines.length - visibleLines);
   const offsetFromBottom = Math.min(state.conversationScrollOffset, maxOffset);
   const start = Math.max(0, renderedLines.length - visibleLines - offsetFromBottom);
@@ -603,23 +1156,78 @@ function ConversationFlow({
   );
 }
 
-function conversationEntryLines(entry: TuiConversationEntry): React.ReactElement[] {
+type ConversationRenderItem =
+  | { kind: "entry"; entry: TuiConversationEntry }
+  | { kind: "review_group"; count: number };
+
+function conversationRenderItems(entries: TuiConversationEntry[]): ConversationRenderItem[] {
+  const items: ConversationRenderItem[] = [];
+  for (let index = 0; index < entries.length; index += 1) {
+    const entry = entries[index];
+    if (entry.type !== "review_pending") {
+      items.push({ kind: "entry", entry });
+      continue;
+    }
+    const group: TuiConversationEntry[] = [];
+    while (entries[index]?.type === "review_pending") {
+      group.push(entries[index]);
+      index += 1;
+    }
+    index -= 1;
+    if (group.length > 3) {
+      items.push({ kind: "review_group", count: group.length });
+    } else {
+      items.push(...group.map((value) => ({ kind: "entry" as const, entry: value })));
+    }
+  }
+  return items;
+}
+
+function reviewPendingGroupLine(count: number): React.ReactElement {
+  return line(`┃ △ ${count} pending reviews collapsed — [V]iew review queue`, {
+    color: "yellow"
+  });
+}
+
+function conversationEntryLines(
+  entry: TuiConversationEntry,
+  feedbackByRunId: Partial<Record<string, RunFeedbackKind>>,
+  showSuggestions: boolean
+): React.ReactElement[] {
   if (entry.type === "agent_completed" || entry.type === "agent_failed") {
     const statusIcon = entry.type === "agent_failed" ? "✗" : "✓";
+    const tone = entry.type === "agent_failed" ? "red" : "cyan";
+    const feedback = entry.runId ? feedbackByRunId[entry.runId] : undefined;
     return [
-      line(`${entry.agent ? `@${entry.agent}` : entry.author} ${entry.runId ? compactId(entry.runId) : ""} ${statusIcon} ${entry.statusLabel ?? ""}`.trim(), {
-        color: entry.type === "agent_failed" ? "red" : "cyan"
-      }),
-      ...conversationContentLines(entry.outputLines ?? entry.content),
-      ...(entry.verificationLine ? [line(`  ~ ${entry.verificationLine}`)] : []),
-      ...(entry.riskLine ? [line(`  ⚠ ${entry.riskLine}`, { color: "yellow" })] : [])
+      agentEntryHeaderLine(
+        `${conversationEntryHandle(entry)} ${entry.runId ? compactId(entry.runId) : ""} ${statusIcon} ${entry.statusLabel ?? ""}`.trim(),
+        entry,
+        tone,
+        feedback
+      ),
+      ...conversationContentLines(entry.outputLines ?? entry.content, { prefix: "┃   ", agent: true, tone, keyPrefix: entry.id }),
+      ...(entry.verificationLine ? [conversationRichLine(`~ ${entry.verificationLine}`, { prefix: "┃   ", agent: true, tone })] : []),
+      ...(entry.riskLine ? [conversationRichLine(`⚠ ${entry.riskLine}`, { prefix: "┃   ", agent: true, tone, color: "yellow" })] : []),
+      ...inlineDiffLines(entry.inlineDiff, "┃   ", entry.id),
+      ...conversationSuggestionLines(entry, showSuggestions, tone)
     ];
   }
   if (entry.type === "review_pending") {
+    const tone = "yellow";
+    const feedback = entry.runId ? feedbackByRunId[entry.runId] : undefined;
     return [
-      line(`${entry.agent ? `@${entry.agent}` : entry.author} ${entry.runId ? compactId(entry.runId) : ""} △ ${entry.content ?? "awaiting review"}`.trim(), {
-        color: "yellow"
-      })
+      agentEntryHeaderLine(
+        `${conversationEntryHandle(entry)} ${entry.runId ? compactId(entry.runId) : ""} △ ${entry.statusLabel ?? "awaiting review"}`.trim(),
+        entry,
+        tone,
+        feedback
+      ),
+      ...conversationContentLines(entry.outputLines ?? entry.content, { prefix: "┃   ", agent: true, tone, keyPrefix: entry.id }),
+      ...(entry.verificationLine ? [conversationRichLine(`~ ${entry.verificationLine}`, { prefix: "┃   ", agent: true, tone })] : []),
+      ...(entry.riskLine ? [conversationRichLine(`⚠ ${entry.riskLine}`, { prefix: "┃   ", agent: true, tone, color: "yellow" })] : []),
+      ...inlineDiffLines(entry.inlineDiff, "┃   ", entry.id),
+      conversationRichLine(`△ ${entry.content ?? "切换到 [V]iew 查看详情"}`, { prefix: "┃   ", agent: true, tone, color: "yellow" }),
+      ...conversationSuggestionLines(entry, showSuggestions, tone)
     ];
   }
   if (entry.type === "delegation") {
@@ -628,12 +1236,51 @@ function conversationEntryLines(entry: TuiConversationEntry): React.ReactElement
     ];
   }
   return [
-    line(entry.author, { color: entry.type === "user_message" ? undefined : "cyan" }),
-    ...conversationContentLines(entry.content)
+    line(`${entry.author} ${formatConversationTimestamp(entry.timestamp)}`.trim(), { dimColor: true }),
+    ...conversationContentLines(entry.content, { prefix: "  ", agent: false, keyPrefix: entry.id })
   ];
 }
 
-function conversationContentLines(content: string[] | string | undefined): React.ReactElement[] {
+function agentEntryHeaderLine(
+  title: string,
+  entry: TuiConversationEntry,
+  tone: string,
+  feedback?: RunFeedbackKind
+): React.ReactElement {
+  const metadata = [
+    entry.elapsedLabel,
+    entry.usageLabel,
+    formatConversationTimestamp(entry.timestamp)
+  ].filter((value): value is string => Boolean(value));
+  const backgroundColor = feedback === "success"
+    ? "green"
+    : feedback === "failure"
+      ? "red"
+      : undefined;
+  const feedbackPrefix = feedback === "failure" ? "!! " : "";
+  return h(
+    Text,
+    { wrap: "truncate", backgroundColor },
+    h(Text, { color: tone, bold: true }, "┃"),
+    " ",
+    h(Text, { color: tone, bold: true }, `${feedbackPrefix}${title}`),
+    ...(metadata.length > 0
+      ? [
+          h(Text, { key: "metadata", dimColor: true }, `  ${metadata.join("  ")}`)
+        ]
+      : [])
+  );
+}
+
+function conversationContentLines(
+  content: string[] | string | undefined,
+  options: {
+    prefix: string;
+    agent: boolean;
+    tone?: string;
+    keyPrefix: string;
+  }
+): React.ReactElement[] {
   const lines = Array.isArray(content)
     ? content
     : (content ?? "")
@@ -641,41 +1288,321 @@ function conversationContentLines(content: string[] | string | undefined): React
         .map((value) => value.trim())
         .filter(Boolean);
   const visible = lines.length > 0 ? lines : ["(empty)"];
-  return visible.map((value) => line(`  ${value}`));
+  let inCodeBlock = false;
+  return visible.map((value, index) => {
+    const trimmed = value.trim();
+    const isFence = trimmed.startsWith("```");
+    const renderAsCode = inCodeBlock && !isFence;
+    const rendered = conversationRichLine(value, {
+      ...options,
+      key: `${options.keyPrefix}-content-${index}`,
+      code: renderAsCode || isFence,
+      codeFence: isFence
+    });
+    if (isFence) {
+      inCodeBlock = !inCodeBlock;
+    }
+    return rendered;
+  });
+}
+
+function conversationSuggestionLines(
+  entry: TuiConversationEntry,
+  showSuggestions: boolean,
+  tone: string
+): React.ReactElement[] {
+  if (!showSuggestions || !entry.suggestions || entry.suggestions.length === 0) {
+    return [];
+  }
+  return entry.suggestions.map((suggestion) =>
+    conversationRichLine(`[${suggestion.key}] ${suggestion.label}`, {
+      prefix: "┃   ",
+      agent: true,
+      tone,
+      dimColor: true,
+      key: `${entry.id}-suggestion-${suggestion.key}`
+    })
+  );
+}
+
+function inlineDiffLines(
+  diff: TuiInlineDiffSummary | undefined,
+  prefix: string,
+  keyPrefix: string
+): React.ReactElement[] {
+  if (!diff) {
+    return [];
+  }
+  if (diff.mode === "summary") {
+    return [
+      conversationRichLine(diff.summary, {
+        prefix,
+        agent: true,
+        tone: "cyan",
+        dimColor: true
+      })
+    ];
+  }
+  return diff.lines.map((lineItem, index) =>
+    conversationRichLine(lineItem.text, {
+      prefix,
+      agent: true,
+      tone: "cyan",
+      color: diffLineColor(lineItem.kind),
+      dimColor: lineItem.kind === "file",
+      key: `${keyPrefix}-diff-${index}`
+    })
+  );
+}
+
+function diffLineColor(kind: TuiInlineDiffSummary["lines"][number]["kind"]): string | undefined {
+  if (kind === "add") {
+    return "green";
+  }
+  if (kind === "delete") {
+    return "red";
+  }
+  return undefined;
+}
+
+function conversationRichLine(
+  value: string,
+  options: {
+    prefix: string;
+    agent: boolean;
+    tone?: string;
+    color?: string;
+    dimColor?: boolean;
+    code?: boolean;
+    codeFence?: boolean;
+    key?: string;
+  }
+): React.ReactElement {
+  const prefixText = options.agent
+    ? h(Text, { color: options.tone ?? "cyan", bold: true }, options.prefix.slice(0, 1))
+    : h(Text, null, options.prefix);
+  const spacerText = options.agent ? options.prefix.slice(1) : "";
+  return h(
+    Text,
+    { key: options.key, wrap: "truncate", color: options.color, dimColor: options.dimColor },
+    prefixText,
+    spacerText,
+    ...richTextSegments(value, options)
+  );
+}
+
+function richTextSegments(
+  value: string,
+  options: {
+    code?: boolean;
+    codeFence?: boolean;
+  }
+): React.ReactNode[] {
+  if (options.codeFence) {
+    return [h(Text, { key: "fence", dimColor: true }, value)];
+  }
+  if (options.code) {
+    return codeHighlightSegments(value);
+  }
+  if (isShellCommandLine(value)) {
+    return [h(Text, { key: "command", bold: true }, value)];
+  }
+  return pathHighlightSegments(value);
+}
+
+function pathHighlightSegments(value: string): React.ReactNode[] {
+  const segments: React.ReactNode[] = [];
+  const pathPattern = /((?:\.{1,2}\/|\/)?(?:[\w.-]+\/)+[\w.-]+\.[A-Za-z0-9_-]+(?::\d+(?::\d+)?)?|[\w.-]+\.(?:[cm]?[tj]sx?|json|md|css|scss|html|py|rs|go|ya?ml|toml)(?::\d+(?::\d+)?)?)/g;
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = pathPattern.exec(value)) !== null) {
+    if (match.index > lastIndex) {
+      segments.push(value.slice(lastIndex, match.index));
+    }
+    const matchedPath = match[0];
+    segments.push(
+      h(Text, { key: `path-${match.index}`, color: "blue", underline: true }, osc8FileLink(matchedPath))
+    );
+    lastIndex = match.index + matchedPath.length;
+  }
+  if (lastIndex < value.length) {
+    segments.push(value.slice(lastIndex));
+  }
+  return segments.length > 0 ? segments : [value];
+}
+
+function codeHighlightSegments(value: string): React.ReactNode[] {
+  const segments: React.ReactNode[] = [];
+  const tokenPattern =
+    /\/\/.*|#.*|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`|\b(?:async|await|break|case|catch|class|const|continue|else|export|extends|finally|for|from|function|if|implements|import|interface|let|new|return|switch|throw|try|type|var|while)\b/g;
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = tokenPattern.exec(value)) !== null) {
+    if (match.index > lastIndex) {
+      segments.push(value.slice(lastIndex, match.index));
+    }
+    const token = match[0];
+    if (token.startsWith("//") || token.startsWith("#")) {
+      segments.push(h(Text, { key: `comment-${match.index}`, dimColor: true }, token));
+    } else if (token.startsWith("\"") || token.startsWith("'") || token.startsWith("`")) {
+      segments.push(h(Text, { key: `string-${match.index}`, color: "green" }, token));
+    } else {
+      segments.push(h(Text, { key: `keyword-${match.index}`, color: "cyan" }, token));
+    }
+    lastIndex = match.index + token.length;
+  }
+  if (lastIndex < value.length) {
+    segments.push(value.slice(lastIndex));
+  }
+  return segments.length > 0 ? segments : [value];
+}
+
+function isShellCommandLine(value: string): boolean {
+  const trimmed = value.trim();
+  return (
+    /^(?:[$>]\s*)?(?:agent-hub|codex|claude|git|node|npm|npx|pnpm|tsx|tsc|vitest)\b/.test(trimmed) ||
+    /^(?:command|next|run|running|verification)\s+[`']?(?:agent-hub|codex|claude|git|node|npm|npx|pnpm|tsx|tsc|vitest)\b/i.test(trimmed)
+  );
+}
+
+function osc8FileLink(value: string): string {
+  if (!supportsOsc8Links()) {
+    return value;
+  }
+  const target = fileLinkTarget(value);
+  if (!target) {
+    return value;
+  }
+  return `\u001B]8;;${target}\u0007${value}\u001B]8;;\u0007`;
+}
+
+function supportsOsc8Links(): boolean {
+  return (
+    process.env.AGENT_HUB_TUI_OSC8 !== "0" &&
+    process.env.CI !== "true" &&
+    process.stdout.isTTY === true
+  );
+}
+
+function fileLinkTarget(value: string): string | undefined {
+  const pathPart = value.replace(/:\d+(?::\d+)?$/, "");
+  if (pathPart.startsWith("/")) {
+    return `file://${pathPart}`;
+  }
+  const base = process.cwd().replace(/\/$/, "");
+  return `file://${base}/${pathPart.replace(/^\.\//, "")}`;
+}
+
+function conversationEntryHandle(entry: TuiConversationEntry): string {
+  if (entry.displayHandle) {
+    return `@${entry.displayHandle}`;
+  }
+  return entry.agent ? `@${entry.agent}` : entry.author;
 }
 
 function ActiveRunBoxView({
   box,
-  terminal
+  terminal,
+  animationTick
 }: {
   box: TuiActiveRunBox;
   terminal: TuiInkTerminalSize;
+  animationTick: number;
 }): React.ReactElement {
   const width = activeRunBoxWidth(terminal);
   const innerWidth = Math.max(12, width - 2);
-  const title = activeRunTitle(box);
-  const top = borderedTitle(title, innerWidth);
+  const title = activeRunTitle(box, animationTick);
+  const top = roundedBorderedTitle(title, innerWidth);
   const contentHeight = activeRunContentHeight(terminal);
   const contentLines = box.outputLines.slice(-contentHeight);
   const paddedLines = [
     ...contentLines,
     ...Array.from({ length: Math.max(0, contentHeight - contentLines.length) }, () => "")
   ];
+  const progress = activeRunProgress(box.outputLines);
   return block(
     line(top, { color: "green" }),
     ...paddedLines.map((value) => line(`│ ${truncateText(value, innerWidth - 2).padEnd(innerWidth - 2)} │`, { color: "green" })),
-    line(`│ ${"▍".padEnd(innerWidth - 2)} │`, { color: "green" }),
-    line(`└${"─".repeat(innerWidth)}┘`, { color: "green" })
+    line(`│ ${activeRunFooter(progress, innerWidth - 2)} │`, { color: "green" }),
+    line(`╰${"─".repeat(innerWidth)}╯`, { color: "green" })
   );
 }
 
-function activeRunTitle(box: TuiActiveRunBox): string {
-  return `@${box.agent} ${compactId(box.runId)} ● running`;
+function activeRunTitle(box: TuiActiveRunBox, animationTick: number): string {
+  const metadata = [
+    activeRunSpinnerFrame(animationTick),
+    "running",
+    activeRunElapsedLabel(box),
+    box.usageLabel
+  ].filter((value): value is string => Boolean(value));
+  return `@${box.displayHandle ?? box.agent} ${compactId(box.runId)} ${metadata.join(" ")}`;
 }
 
-function borderedTitle(title: string, innerWidth: number): string {
+function activeRunSpinnerFrame(animationTick: number): string {
+  return activeRunSpinnerFrames[animationTick % activeRunSpinnerFrames.length] ?? activeRunSpinnerFrames[0];
+}
+
+function activeRunElapsedLabel(box: TuiActiveRunBox): string | undefined {
+  if (!box.startedAt) {
+    return box.elapsedLabel;
+  }
+  const startedAt = Date.parse(box.startedAt);
+  if (!Number.isFinite(startedAt)) {
+    return box.elapsedLabel;
+  }
+  const elapsed = Date.now() - startedAt;
+  if (elapsed < 0) {
+    return box.elapsedLabel;
+  }
+  return formatDuration(elapsed);
+}
+
+function roundedBorderedTitle(title: string, innerWidth: number): string {
   const decorated = `─ ${truncateText(title, Math.max(8, innerWidth - 4))} `;
-  return `┌${decorated}${"─".repeat(Math.max(0, innerWidth - decorated.length))}┐`;
+  return `╭${decorated}${"─".repeat(Math.max(0, innerWidth - decorated.length))}╮`;
+}
+
+interface ActiveRunProgress {
+  ratio: number;
+  label: string;
+}
+
+function activeRunProgress(lines: string[]): ActiveRunProgress | undefined {
+  for (const lineText of [...lines].reverse()) {
+    const percentage = /\b(\d{1,3})\s*%/.exec(lineText);
+    if (percentage) {
+      const value = Number(percentage[1]);
+      if (value >= 0 && value <= 100) {
+        return {
+          ratio: value / 100,
+          label: `${value}%`
+        };
+      }
+    }
+    const fraction = /\b(?:step\s*)?(\d{1,4})\s*\/\s*(\d{1,4})\b/i.exec(lineText);
+    if (fraction) {
+      const current = Number(fraction[1]);
+      const total = Number(fraction[2]);
+      if (total > 0 && current >= 0 && current <= total) {
+        return {
+          ratio: current / total,
+          label: `${current}/${total}`
+        };
+      }
+    }
+  }
+  return undefined;
+}
+
+function activeRunFooter(progress: ActiveRunProgress | undefined, width: number): string {
+  if (!progress) {
+    return "▍".padEnd(width);
+  }
+  const label = ` ${progress.label}`;
+  const barWidth = Math.max(4, width - label.length);
+  const filled = Math.min(barWidth, Math.max(0, Math.round(progress.ratio * barWidth)));
+  const bar = `${"█".repeat(filled)}${"░".repeat(Math.max(0, barWidth - filled))}`;
+  return truncateText(`${bar}${label}`, width).padEnd(width);
 }
 
 function RunsPane({
@@ -724,6 +1651,9 @@ function ReviewPane({
   detail?: boolean;
 }): React.ReactElement {
   const run = selectedRun(model, state);
+  const compareRuns = run
+    ? model.runs.filter((candidate) => candidate.taskId === run.taskId).slice(0, 2)
+    : [];
   return block(
     line(
       model.review.selectedId
@@ -734,6 +1664,25 @@ function ReviewPane({
     line(model.review.summary),
     ...(run ? [line(`selected ${compactId(run.id)}  review ${run.reviewDecision.status}`)] : []),
     ...evidenceItems(model.review.evidence).map((item) => line(item)),
+    ...(model.review.evidence.inlineDiff
+      ? [
+          line(
+            state.reviewDiffExpanded
+              ? "diff expanded (Esc collapses)"
+              : "diff available (Enter/Space expands)",
+            { dimColor: true }
+          )
+        ]
+      : []),
+    ...(state.reviewDiffExpanded
+      ? inlineDiffLines(model.review.evidence.inlineDiff, "  ", "review")
+      : []),
+    ...(state.reviewCompareMode && compareRuns.length >= 2
+      ? [
+          line("split compare (read-only)", { bold: true }),
+          ...compareRuns.map((candidate) => line(runLine(candidate, candidate.id === run?.id)))
+        ]
+      : []),
     ...(detail ? model.review.commands.slice(0, 5).map((command) => line(command, { dimColor: true })) : [])
   );
 }
@@ -776,37 +1725,6 @@ function RoleCallsPane({
         { color: selected ? "green" : undefined }
       );
     })
-  );
-}
-
-function TranscriptPane({
-  model,
-  state,
-  terminal
-}: {
-  model: TuiCurrentContextModel;
-  state: TuiInkState;
-  terminal: TuiInkTerminalSize;
-}): React.ReactElement {
-  if (model.transcript.length === 0) {
-    return block(line("Transcript", { bold: true }), line("No messages in the current context.", { dimColor: true }));
-  }
-  const windowSize = transcriptWindowSize(terminal);
-  const maxOffset = Math.max(0, model.transcript.length - windowSize);
-  const offsetFromBottom = Math.min(state.scrollOffsets.transcript, maxOffset);
-  const start = Math.max(0, model.transcript.length - windowSize - offsetFromBottom);
-  const visible = model.transcript.slice(start, start + windowSize);
-  const title = maxOffset > 0
-    ? `Transcript ${start + 1}-${start + visible.length}/${model.transcript.length}`
-    : "Transcript";
-  return block(
-    line(title, { bold: true }),
-    ...visible.flatMap((message) => [
-      line(`${message.author}${message.runId ? ` ${compactId(message.runId)}` : ""}`, {
-        color: "cyan"
-      }),
-      line(`  ${truncateText(message.content || "(empty)", 90)}`)
-    ])
   );
 }
 
@@ -923,52 +1841,342 @@ function CommandPalette({
   model: TuiCurrentContextModel;
   state: TuiInkState;
 }): React.ReactElement {
-  const run = selectedRun(model, state);
-  const primaryCommand = commandHintForFocus(model, state);
-  const roleCommand = roleListCommand(model);
+  const items = filteredPaletteItems(model, state);
+  const selectedIndex = Math.min(state.paletteSelectedIndex, Math.max(0, items.length - 1));
   return h(
     Pane,
     { title: "Command Palette" },
-    line(`focus ${state.focus}`),
-    line(primaryCommand, { color: "green" }),
-    line(""),
-    ...(roleCommand && roleCommand !== primaryCommand ? [line(roleCommand)] : []),
-    ...(run ? run.commands.map((command) => line(command)) : [line("no run selected")]),
-    ...model.review.commands.map((command) => line(command)),
-    ...model.memory.approvalCommands.map((command) => line(command))
+    line(`:${state.paletteQuery}`, { color: "green" }),
+    line(`${items.length} matches  enter execute  esc close`, { dimColor: true }),
+    ...items.slice(0, 12).map((item, index) =>
+      paletteItemLine(item, state.paletteQuery, index === selectedIndex)
+    )
   );
+}
+
+function SearchPane({
+  model,
+  state
+}: {
+  model: TuiCurrentContextModel;
+  state: TuiInkState;
+}): React.ReactElement {
+  const matches = conversationSearchMatches(model, state.searchQuery);
+  const selectedIndex = Math.min(state.searchMatchIndex, Math.max(0, matches.length - 1));
+  const selected = matches[selectedIndex];
+  return h(
+    Pane,
+    { title: "Search" },
+    line(`/${state.searchQuery}`, { color: "green" }),
+    line(
+      state.searchQuery
+        ? `${matches.length === 0 ? 0 : selectedIndex + 1}/${matches.length} matches  up/down jump  esc close`
+        : "type to search conversation text",
+      { dimColor: true }
+    ),
+    ...(selected
+      ? [
+          highlightedLine(selected.text, state.searchQuery),
+          line(`source ${selected.source}`, { dimColor: true })
+        ]
+      : [])
+  );
+}
+
+function TimelinePane({
+  model,
+  state
+}: {
+  model: TuiCurrentContextModel;
+  state: TuiInkState;
+}): React.ReactElement {
+  const items = timelineItems(model).slice(-12);
+  return h(
+    Pane,
+    { title: "Timeline" },
+    line(
+      `${state.notifyEnabled ? "notify on" : "notify off"}  l close  /notify toggle  /timeline open`,
+      { dimColor: true }
+    ),
+    ...(items.length > 0
+      ? items.map((item) =>
+          line(
+            `${item.marker} ${item.time} ${truncateText(item.text, 92)}`,
+            { color: item.color }
+          )
+        )
+      : [line("No timeline events in the current context.", { dimColor: true })])
+  );
+}
+
+interface TimelineItem {
+  marker: string;
+  time: string;
+  text: string;
+  color?: string;
+}
+
+function timelineItems(model: TuiCurrentContextModel): TimelineItem[] {
+  const conversationRunIds = new Set(
+    model.conversation
+      .map((entry) => entry.runId)
+      .filter((value): value is string => Boolean(value))
+  );
+  return [
+    ...model.conversation.map(timelineItemForConversationEntry),
+    ...model.activeRuns.map(timelineItemForActiveRun),
+    ...model.runs
+      .filter((run) => !conversationRunIds.has(run.id))
+      .map(timelineItemForRun)
+  ].sort((left, right) => left.time.localeCompare(right.time));
+}
+
+function timelineItemForConversationEntry(entry: TuiConversationEntry): TimelineItem {
+  const label = firstContentLine(entry.outputLines ?? entry.content ?? entry.delegationTask);
+  if (entry.type === "agent_failed") {
+    return {
+      marker: "✗",
+      time: formatConversationTimestamp(entry.timestamp),
+      text: `${conversationEntryHandle(entry)} ${entry.runId ? compactId(entry.runId) : ""} failed ${label}`.trim(),
+      color: "red"
+    };
+  }
+  if (entry.type === "agent_completed") {
+    return {
+      marker: "✓",
+      time: formatConversationTimestamp(entry.timestamp),
+      text: `${conversationEntryHandle(entry)} ${entry.runId ? compactId(entry.runId) : ""} completed ${label}`.trim(),
+      color: "green"
+    };
+  }
+  if (entry.type === "review_pending") {
+    return {
+      marker: "△",
+      time: formatConversationTimestamp(entry.timestamp),
+      text: `${conversationEntryHandle(entry)} ${entry.runId ? compactId(entry.runId) : ""} awaiting review ${label}`.trim(),
+      color: "yellow"
+    };
+  }
+  if (entry.type === "delegation") {
+    return {
+      marker: "→",
+      time: formatConversationTimestamp(entry.timestamp),
+      text: `${conversationEntryHandle(entry)} delegated to @${entry.delegatedTo ?? "role"} ${label}`.trim(),
+      color: "cyan"
+    };
+  }
+  return {
+    marker: "·",
+    time: formatConversationTimestamp(entry.timestamp),
+    text: `${entry.author} ${label}`.trim()
+  };
+}
+
+function timelineItemForActiveRun(run: TuiActiveRunBox): TimelineItem {
+  const label = firstContentLine(run.outputLines);
+  return {
+    marker: "●",
+    time: run.startedAt ? formatConversationTimestamp(run.startedAt) : "--:--:--",
+    text: `@${run.displayHandle ?? run.agent} ${compactId(run.runId)} running ${label}`.trim(),
+    color: "green"
+  };
+}
+
+function timelineItemForRun(run: TuiRunSummary): TimelineItem {
+  const status = run.status === "failed" ? "failed" : run.status;
+  return {
+    marker: run.status === "failed" ? "✗" : run.status === "succeeded" ? "✓" : "·",
+    time: formatConversationTimestamp(run.updatedAt ?? run.completedAt ?? run.startedAt),
+    text: `${compactId(run.id)} @${run.agentKind} ${status} ${run.taskTitle ?? run.taskId}`,
+    color: run.status === "failed" ? "red" : run.status === "succeeded" ? "green" : undefined
+  };
+}
+
+function firstContentLine(content: string[] | string | undefined): string {
+  if (Array.isArray(content)) {
+    return content.find((value) => value.trim().length > 0)?.trim() ?? "";
+  }
+  return (content ?? "")
+    .split(/\r?\n/)
+    .find((value) => value.trim().length > 0)
+    ?.trim() ?? "";
 }
 
 function HelpPane(): React.ReactElement {
   return h(
     Pane,
     { title: "Help" },
-    line("tab/shift-tab focus   up/down or k/j move   enter submit"),
-    line(": commands   /team roles   c continue   a accept review   R reject in Review"),
-    line("enter submits non-empty composer   h hide done   m memory   ? help   x exit")
+    line("tab/shift-tab focus   W/R/V/G/T/M/E switch tabs   up/down or k/j move"),
+    line(": commands   /team roles   /timeline or l timeline   /notify completion bell"),
+    line("a accept review   R reject in Review"),
+    line("enter submit   esc clear   arrows/home/end edit composer   ctrl+u clear   ? help")
   );
+}
+
+type PaletteItem =
+  | { kind: "focus"; label: string; focus: TuiInkKey }
+  | { kind: "command"; label: string; command: string };
+
+function paletteItems(model: TuiCurrentContextModel, state: TuiInkState): PaletteItem[] {
+  const run = selectedRun(model, state);
+  const roleCommand = roleListCommand(model);
+  const commands = [
+    commandHintForFocus(model, state),
+    roleCommand,
+    ...(run?.commands ?? []),
+    ...model.review.commands,
+    ...model.memory.approvalCommands
+  ].filter((value, index, values): value is string =>
+    Boolean(value) && values.indexOf(value) === index
+  );
+  return [
+    { kind: "focus", label: "Open Work", focus: "work" },
+    { kind: "focus", label: "Open Runs", focus: "runs" },
+    { kind: "focus", label: "Open Review", focus: "review" },
+    { kind: "focus", label: "Open Team", focus: "team" },
+    { kind: "focus", label: "Open Memory", focus: "memory" },
+    { kind: "command", label: "/timeline", command: "/timeline" },
+    { kind: "command", label: "/notify", command: "/notify" },
+    ...commands.map((command) => ({ kind: "command" as const, label: command, command }))
+  ];
+}
+
+function filteredPaletteItems(model: TuiCurrentContextModel, state: TuiInkState): PaletteItem[] {
+  const query = state.paletteQuery.trim();
+  const items = paletteItems(model, state);
+  if (!query) {
+    return items;
+  }
+  return items
+    .map((item) => ({
+      item,
+      score: fuzzyScore(item.label, query)
+    }))
+    .filter((value) => value.score >= 0)
+    .sort((left, right) => left.score - right.score)
+    .map((value) => value.item);
+}
+
+function paletteItemLine(
+  item: PaletteItem,
+  query: string,
+  selected: boolean
+): React.ReactElement {
+  return h(
+    Text,
+    { wrap: "truncate", inverse: selected },
+    selected ? "> " : "  ",
+    ...highlightSegments(item.label, query, selected ? "black" : "cyan")
+  );
+}
+
+interface SearchMatch {
+  source: string;
+  text: string;
+}
+
+function conversationSearchMatches(
+  model: TuiCurrentContextModel,
+  query: string
+): SearchMatch[] {
+  const normalizedQuery = query.trim().toLowerCase();
+  if (!normalizedQuery) {
+    return [];
+  }
+  return conversationSearchDocuments(model.conversation)
+    .filter((item) => item.text.toLowerCase().includes(normalizedQuery));
+}
+
+function conversationSearchDocuments(entries: TuiConversationEntry[]): SearchMatch[] {
+  return entries.flatMap((entry) => {
+    const source = entry.runId ?? entry.id;
+    const values = [
+      conversationEntryHandle(entry),
+      entry.content,
+      ...(entry.outputLines ?? []),
+      entry.verificationLine,
+      entry.riskLine,
+      ...(entry.inlineDiff?.lines.map((lineItem) => lineItem.text) ?? []),
+      ...(entry.suggestions?.map((suggestion) => suggestion.label) ?? [])
+    ].filter((value): value is string => Boolean(value));
+    return values.map((text) => ({ source, text }));
+  });
+}
+
+function highlightedLine(value: string, query: string): React.ReactElement {
+  return h(Text, { wrap: "truncate" }, ...highlightSegments(value, query, "black"));
+}
+
+function highlightSegments(value: string, query: string, highlightColor: string): React.ReactNode[] {
+  const normalizedQuery = query.trim().toLowerCase();
+  if (!normalizedQuery) {
+    return [value];
+  }
+  const segments: React.ReactNode[] = [];
+  const lowerValue = value.toLowerCase();
+  let index = 0;
+  let matchIndex = lowerValue.indexOf(normalizedQuery);
+  while (matchIndex >= 0) {
+    if (matchIndex > index) {
+      segments.push(value.slice(index, matchIndex));
+    }
+    segments.push(
+      h(Text, { key: `match-${matchIndex}`, backgroundColor: "yellow", color: highlightColor }, value.slice(matchIndex, matchIndex + normalizedQuery.length))
+    );
+    index = matchIndex + normalizedQuery.length;
+    matchIndex = lowerValue.indexOf(normalizedQuery, index);
+  }
+  if (index < value.length) {
+    segments.push(value.slice(index));
+  }
+  return segments;
+}
+
+function fuzzyScore(value: string, query: string): number {
+  const haystack = value.toLowerCase();
+  const needle = query.toLowerCase();
+  let score = 0;
+  let position = -1;
+  for (const character of needle) {
+    const nextPosition = haystack.indexOf(character, position + 1);
+    if (nextPosition < 0) {
+      return -1;
+    }
+    score += nextPosition - position;
+    position = nextPosition;
+  }
+  return score;
 }
 
 function Composer({ model, state }: { model: TuiCurrentContextModel; state: TuiInkState }): React.ReactElement {
   const agent = model.context.selectedAgent ? `@${model.context.selectedAgent}` : "@agent";
+  const cursor = boundedComposerCursor(state);
+  const before = state.composer.slice(0, cursor);
+  const cursorCharacter = state.composer[cursor] ?? " ";
+  const after = state.composer.slice(cursor + (cursor < state.composer.length ? 1 : 0));
   return h(
     Box,
     { flexDirection: "row" },
     h(Text, null, "> "),
     state.composer
-      ? h(Text, { color: "green" }, state.composer)
+      ? h(React.Fragment, null,
+          h(Text, { color: "green" }, before),
+          h(Text, { color: "green", inverse: true }, cursorCharacter),
+          h(Text, { color: "green" }, after)
+        )
       : h(Text, { dimColor: true }, `${agent} prompt`)
   );
 }
 
 function StatusBar({ model, state }: { model: TuiCurrentContextModel; state: TuiInkState }): React.ReactElement {
   const hints = state.composer
-    ? "enter submit | /team roles | tab focus | esc clear | ctrl+c exit"
+    ? "enter submit | arrows edit | ctrl+a/e home/end | ctrl+u clear | tab focus | esc clear | ctrl+c exit"
     : state.focus === "review"
-      ? "tab focus | enter review | : palette | p command | a accept | R reject | ? help | x exit"
-      : "tab focus | enter review | : palette | p command | ? help | x exit";
+      ? "tab focus | : palette | a accept | R reject | ? help | x exit"
+      : "tab focus | W/R/V/G/T/M/E tabs | l timeline | : palette | ? help | x exit";
+  const localState = `${state.notifyEnabled ? "notify on" : "notify off"}${state.timelineOpen ? " | timeline" : ""}`;
   return line(
-    `${hints} | ${commandHintForFocus(model, state)}`,
+    `${hints} | ${localState} | ${commandHintForFocus(model, state)}`,
     { dimColor: true }
   );
 }
@@ -998,7 +2206,14 @@ function block(...children: React.ReactElement[]): React.ReactElement {
 
 function line(
   value: string,
-  options: { color?: string; bold?: boolean; dimColor?: boolean } = {}
+  options: {
+    color?: string;
+    bold?: boolean;
+    dimColor?: boolean;
+    inverse?: boolean;
+    backgroundColor?: string;
+    underline?: boolean;
+  } = {}
 ): React.ReactElement {
   return h(Text, { wrap: "truncate", ...options }, value);
 }
@@ -1017,10 +2232,6 @@ function taskWindowSize(terminal: TuiInkTerminalSize): number {
 
 function teamWindowSize(terminal: TuiInkTerminalSize): number {
   return boundedWindowSize(terminal.rows - 12, 8, 32);
-}
-
-function transcriptWindowSize(terminal: TuiInkTerminalSize): number {
-  return boundedWindowSize(Math.floor((terminal.rows - 14) / 2), 5, 18);
 }
 
 function activeRunLayout(
@@ -1096,15 +2307,62 @@ function formatDuration(milliseconds: number): string {
   if (seconds < 60) {
     return `${seconds}s`;
   }
-  return `${Math.round(seconds / 60)}m`;
+  const minutes = Math.floor(seconds / 60);
+  const remainingSeconds = seconds % 60;
+  if (minutes < 60) {
+    return remainingSeconds === 0 ? `${minutes}m` : `${minutes}m${remainingSeconds}s`;
+  }
+  const hours = Math.floor(minutes / 60);
+  const remainingMinutes = minutes % 60;
+  return remainingMinutes === 0 ? `${hours}h` : `${hours}h${remainingMinutes}m`;
+}
+
+function formatHeaderClock(date: Date): string {
+  return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
+}
+
+function formatConversationTimestamp(value: string): string {
+  const match = /T(\d{2}:\d{2}:\d{2})/.exec(value);
+  if (match) {
+    return match[1];
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return "";
+  }
+  return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}:${String(date.getSeconds()).padStart(2, "0")}`;
 }
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+function suggestionForInput(
+  input: string,
+  model: TuiCurrentContextModel,
+  state: TuiInkState
+): TuiConversationSuggestion | undefined {
+  if (input !== "1" && input !== "2" && input !== "3") {
+    return undefined;
+  }
+  return visibleConversationSuggestions(model, state)
+    .find((suggestion) => suggestion.key === input);
+}
+
+function openSearchState(state: TuiInkState): TuiInkState {
+  return {
+    ...state,
+    searchOpen: true,
+    searchQuery: "",
+    searchMatchIndex: 0,
+    commandPaletteOpen: false,
+    paletteQuery: "",
+    paletteSelectedIndex: 0,
+    statusMessage: "Search opened."
+  };
+}
+
 function keyToAction(input: string, key: Key, focus: string): TuiInkKey | undefined {
-  const normalizedInput = input.toLowerCase();
   if (key.tab || input === "\t") {
     return key.shift ? "shift_tab" : "tab";
   }
@@ -1141,34 +2399,37 @@ function keyToAction(input: string, key: Key, focus: string): TuiInkKey | undefi
   if (input === "?") {
     return "help";
   }
-  if (normalizedInput === "w") {
+  if (input === "W") {
     return "work";
   }
-  if (normalizedInput === "r") {
+  if (input === "R") {
     return "runs";
   }
-  if (normalizedInput === "v") {
+  if (input === "V") {
     return "review";
   }
-  if (normalizedInput === "g") {
+  if (input === "G") {
     return "graph";
   }
-  if (normalizedInput === "t") {
+  if (input === "T") {
     return "tasks";
   }
-  if (normalizedInput === "m") {
+  if (input === "M") {
     return "memory";
   }
-  if (normalizedInput === "s") {
+  if (input === "E") {
+    return "team";
+  }
+  if (input === "s") {
     return "skills";
   }
-  if (normalizedInput === "h") {
+  if (input === "h") {
     return "hide_done";
   }
-  if (normalizedInput === "c") {
+  if (input === "c") {
     return "continue_loop";
   }
-  if (normalizedInput === "p") {
+  if (input === "p") {
     return "print_commands";
   }
   if (input === ":") {
@@ -1190,6 +2451,19 @@ function isDirectFocusAction(action: TuiInkKey): boolean {
   );
 }
 
+function isNavigationAction(action: TuiInkKey): boolean {
+  return (
+    action === "up" ||
+    action === "down" ||
+    action === "page_up" ||
+    action === "page_down" ||
+    action === "home" ||
+    action === "end" ||
+    action === "left" ||
+    action === "right"
+  );
+}
+
 function isPrintableInput(input: string, key: Key): boolean {
   return (
     input.length > 0 &&
@@ -1206,6 +2480,43 @@ function isPrintableInput(input: string, key: Key): boolean {
     !key.delete &&
     input >= " "
   );
+}
+
+function insertComposerText(state: TuiInkState, value: string): TuiInkState {
+  const cursor = boundedComposerCursor(state);
+  return {
+    ...state,
+    composer: `${state.composer.slice(0, cursor)}${value}${state.composer.slice(cursor)}`,
+    composerCursorPosition: cursor + value.length
+  };
+}
+
+function deleteComposerCharacterBeforeCursor(state: TuiInkState): TuiInkState {
+  const cursor = boundedComposerCursor(state);
+  if (cursor <= 0) {
+    return state;
+  }
+  return {
+    ...state,
+    composer: `${state.composer.slice(0, cursor - 1)}${state.composer.slice(cursor)}`,
+    composerCursorPosition: cursor - 1
+  };
+}
+
+function deleteComposerCharacterAfterCursor(state: TuiInkState): TuiInkState {
+  const cursor = boundedComposerCursor(state);
+  if (cursor >= state.composer.length) {
+    return state;
+  }
+  return {
+    ...state,
+    composer: `${state.composer.slice(0, cursor)}${state.composer.slice(cursor + 1)}`,
+    composerCursorPosition: cursor
+  };
+}
+
+function boundedComposerCursor(state: TuiInkState): number {
+  return Math.min(Math.max(state.composerCursorPosition, 0), state.composer.length);
 }
 
 function compactHeaderParts(parts: HeaderPart[], columns: number): HeaderPart[] {
@@ -1240,4 +2551,20 @@ function workContentSignature(model: TuiCurrentContextModel): string {
     .map((run) => `${run.runId}:${run.outputLines.at(-1) ?? ""}`)
     .join("|");
   return `${lastEntry?.id ?? ""}:${lastEntry?.timestamp ?? ""}:${activeDigest}`;
+}
+
+function modelRenderSignature(model: TuiCurrentContextModel): string {
+  return JSON.stringify({
+    context: model.context,
+    conversation: model.conversation,
+    activeRuns: model.activeRuns,
+    runs: model.runs,
+    roleCalls: model.roleCalls,
+    review: model.review,
+    tasks: model.tasks,
+    team: model.team,
+    memory: model.memory,
+    skills: model.skills,
+    warnings: model.warnings
+  });
 }
