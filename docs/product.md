@@ -241,6 +241,9 @@ initiate bounded RoleCalls to other local roles only when their team-role
 `delegationPolicy` explicitly allows those targets or capabilities.
 The preset `@engineer` role can use the same line-start `@role task`
 delegation syntax for bounded calls to `@operator` and `@reviewer`.
+The injected `available_role_calls` directory advertises only targets that the
+caller can reach through that line-start `delegate` protocol, so custom roles
+with other intent types are not shown as shorthand-callable.
 
 ## CLI Surface
 

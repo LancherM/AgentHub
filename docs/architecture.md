@@ -265,7 +265,10 @@ The flow is:
    initiate bounded RoleCalls only when their team-role `delegationPolicy`
    explicitly enables targets or capabilities. The preset `@engineer`
    delegation default accepts line-start `delegate` intents only for
-   `@operator` and `@reviewer`.
+   `@operator` and `@reviewer`. CLI and desktop prompt construction use the
+   core intent-aware delegation helper, so `available_role_calls` lists only
+   targets permitted for the line-start `delegate` protocol rather than every
+   target allowed by another intent type.
 4. Accepted, deferred, rejected, waiting-context, or waiting-approval decisions
    are persisted as RoleCall and RoleCallEvent records. Callee todos are
    created or updated where applicable.

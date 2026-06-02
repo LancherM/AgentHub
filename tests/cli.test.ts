@@ -1662,6 +1662,124 @@ describe("CLI", () => {
     expect(output.join("")).toContain("3");
   });
 
+  it("does not advertise line-start RoleCalls for custom roles without delegate intent", async () => {
+    const projectRoot = await createTestDirectory("cli-rolecall-intent-directory-project");
+    const runRoot = path.join(
+      await createTestDirectory("cli-rolecall-intent-directory-runs"),
+      "runs"
+    );
+    const processRunner = new MockProcessRunner([
+      [
+        {
+          type: "stdout",
+          data:
+            "{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"No delegation needed.\"}}\n"
+        },
+        { type: "exit", exitCode: 0, signal: null }
+      ]
+    ]);
+    const runtime = createCliRuntime({
+      storageMode: "memory",
+      defaultRunRoot: runRoot,
+      workspaceManager: new TestWorkspaceManager(runRoot),
+      diffCollector: new StaticDiffCollector(),
+      verificationRunner: new VerificationRunner(new MockShellExecutor()),
+      processRunner,
+      idGenerator: new SequenceIdGenerator(),
+      clock: new FixedClock("2026-01-01T00:00:00.000Z")
+    });
+    await runtime.projectRepository.create({
+      id: "project_cli_rolecall_intent_directory",
+      name: "CLI RoleCall Intent Directory",
+      rootPath: projectRoot,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z"
+    });
+    const analyst = presetWorkgroupRoles.find((role) => role.handle === "analyst");
+    const qaRole: WorkgroupRole = {
+      ...(analyst ?? presetWorkgroupRoles[0]),
+      id: "custom:qa",
+      handle: "qa",
+      displayName: "QA",
+      purpose: "Review test planning with explicit review intents.",
+      capabilitySummary: "Quality review and regression planning.",
+      persona: "QA reviewer who asks for explicit review support.",
+      defaultInstructions: "Use only configured RoleCall intents.",
+      executor: { kind: "agent_adapter", adapterKind: "codex" },
+      delegationPolicy: {
+        canInitiateRoleCalls: true,
+        allowedIntentTypes: ["request_review"],
+        allowedTargetRoles: ["reviewer"]
+      },
+      tags: ["qa"],
+      metadata: { source: "custom" }
+    };
+    await runtime.settingsRepository.set({
+      key: "desktop.project.project_cli_rolecall_intent_directory.workgroupRoles",
+      value: {
+        roles: [
+          ...presetWorkgroupRoles.map((role) =>
+            role.handle === "reviewer"
+              ? {
+                  ...role,
+                  executor: { kind: "agent_adapter", adapterKind: "codex" }
+                }
+              : role
+          ),
+          qaRole
+        ]
+      },
+      updatedAt: "2026-01-01T00:00:00.000Z"
+    });
+    const output: string[] = [];
+    const errors: string[] = [];
+    const io = {
+      stdout: { write: (chunk: string) => { output.push(chunk); return true; } },
+      stderr: { write: (chunk: string) => { errors.push(chunk); return true; } }
+    };
+
+    await expect(
+      main([
+        "rooms",
+        "send",
+        "--project-id",
+        "project_cli_rolecall_intent_directory",
+        "--room",
+        "general",
+        "--message",
+        "@qa inspect available role calls"
+      ], io, projectRoot, runtime)
+    ).resolves.toBe(0);
+
+    const threads = await runtime.conversationThreadRepository.list(
+      "project_cli_rolecall_intent_directory"
+    );
+    const thread = threads.find((entry) => entry.title.includes("#general")) ?? threads[0];
+    const messages = await runtime.conversationMessageRepository.listByThreadId(
+      thread?.id ?? ""
+    );
+    const qaRunId = messages.find(
+      (message) =>
+        message.role === "assistant" &&
+        message.metadata?.role &&
+        (message.metadata.role as { roleHandle?: string }).roleHandle === "qa"
+    )?.runId;
+    const qaBrief = await runtime.runArtifactRepository.getLatestByRunIdAndKind(
+      qaRunId ?? "",
+      "conversation_brief"
+    );
+    const availableRoleCallsLine = qaBrief?.content
+      .split("\n")
+      .find((line) => line.includes("available_role_calls:"));
+
+    expect(errors.join("")).toBe("");
+    expect(processRunner.runCalls).toHaveLength(1);
+    expect(availableRoleCallsLine).toContain("available_role_calls: none");
+    expect(availableRoleCallsLine).not.toContain("@reviewer");
+    expect(await runtime.roleCallRepository.list({ threadId: thread?.id ?? "" }))
+      .toHaveLength(0);
+  });
+
   it("starts RoleCalls emitted by preset engineer line-start output", async () => {
     const projectRoot = await createTestDirectory("cli-engineer-rolecall-project");
     const runRoot = path.join(await createTestDirectory("cli-engineer-rolecall-runs"), "runs");
