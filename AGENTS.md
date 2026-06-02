@@ -147,8 +147,9 @@ Implemented:
 - CLI commands for project registration/listing, context store init/show,
   context pack build, optional repo export, task creation/listing/history, task
   runs, manual run-event recording, threaded chat, metadata-backed rooms, team
-  role management, RoleCall audit workflows, global skill create/list
-  workflows, memory workflows, and run comparison.
+  role management, terminal TUI review, RoleCall audit workflows, global skill
+  create/list workflows, review decisions, memory workflows, and run
+  comparison.
 - Interactive CLI with `@agent` prompts, `/agents`, `/use`, `/context`,
   `/context init`, `/clear`, `/exit`, and `/quit`.
 - Git worktree creation for task runs.
@@ -269,6 +270,7 @@ Implemented commands:
 - `agent-hub task create`
 - `agent-hub task list`
 - `agent-hub task history`
+- `agent-hub tui`
 - `agent-hub run`
 - `agent-hub run event add`
 - `agent-hub chat`
@@ -293,6 +295,9 @@ Implemented commands:
 - `agent-hub runs diff`
 - `agent-hub runs show`
 - `agent-hub risks show`
+- `agent-hub reviews show`
+- `agent-hub reviews accept`
+- `agent-hub reviews reject`
 - `agent-hub compare`
 - `agent-hub memory list`
 - `agent-hub memory propose`
