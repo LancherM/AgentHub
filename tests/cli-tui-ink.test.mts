@@ -283,6 +283,35 @@ describe("Ink TUI renderer", () => {
     expect(boxLines).toHaveLength(8);
   });
 
+  it("wraps active agent output without truncating content", () => {
+    const longLine = `agent output ${"x".repeat(90)} complete`;
+    const output = renderToString(
+      React.createElement(TuiInkFrame, {
+        model: {
+          ...baseModel,
+          conversation: [],
+          activeRuns: [
+            {
+              runId: "run_wrap",
+              agent: "codex",
+              displayHandle: "engineer",
+              title: "@engineer run_wrap ● running",
+              outputLines: [longLine]
+            }
+          ]
+        },
+        state: createInitialInkState(),
+        terminal: { columns: 60, rows: 40 }
+      }),
+      { columns: 60 }
+    );
+
+    expect(output).toContain("agent output");
+    expect(output).toContain("complete");
+    expect(output).toContain("xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx");
+    expect(output).not.toContain("...");
+  });
+
   it("collapses older active runs and keeps at most three full boxes", () => {
     const output = renderToString(
       React.createElement(TuiInkFrame, {

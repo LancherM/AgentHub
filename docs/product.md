@@ -75,12 +75,12 @@ delegations, completed or failed terminal run output, verification summaries,
 and risk summaries are folded into a chronological conversation flow. Role
 backed runs display the role handle from linked RoleCalls, run/message metadata,
 or task assignments before falling back to the adapter kind. Running runs appear
-as stable fixed-height active-run boxes with only the latest agent-facing output
-or observable runtime events plus the active cursor indicator. When an adapter
-has not emitted assistant text yet, the active box shows recent adapter, stdout,
-and stderr lines while filtering raw JSON protocol frames, setup lifecycle
-noise, internal agent protocol summaries, runtime warnings, Codex internal
-diagnostics, and skill activation noise. Runs awaiting local review with changed
+as active-run boxes with full agent-facing output lines preserved for renderer
+wrapping, falling back to observable runtime events plus the active cursor
+indicator. When an adapter has not emitted assistant text or useful runtime
+activity yet, the active box shows `agent thinking...` while filtering raw JSON
+protocol frames, setup lifecycle noise, internal agent protocol summaries,
+runtime warnings, Codex internal diagnostics, and skill activation noise. Runs awaiting local review with changed
 files leave the active box and render their completed output plus
 verification/risk summaries and a final `[V]iew` review hint. Runs with no
 changed files render as completed output without an awaiting-review prompt.
@@ -94,9 +94,10 @@ metadata, elapsed time, optional token/cost usage, and a timestamp. User
 messages stay plain with a timestamp. Conversation content
 keeps file paths underlined and blue with safe OSC 8 file links when the
 terminal supports them, shell-command lines bold, and fenced code blocks lightly
-highlighted for keywords, strings, and comments.
-Active run boxes use rounded fixed-height frames so the layout does not jump
-while output streams. Titles show the compact run identity, role/agent handle,
+highlighted for keywords, strings, and comments. Agent output content is not
+truncated; long lines wrap in the terminal surface.
+Active run boxes use rounded frames that grow to fit wrapped visible output.
+Titles show the compact run identity, role/agent handle,
 low-frequency braille spinner, running status, elapsed time, and live token
 usage when the run emits usage metadata. The footer keeps an active cursor when
 no reliable progress exists, or a best-effort progress bar when recent output
@@ -114,11 +115,13 @@ submitting it.
 Small run diffs are projected directly into Work when the collected git diff
 has five or fewer changed lines; file/hunk headers are dim, additions are
 green, deletions are red, and context stays plain. Larger diffs collapse to a
-compact `(+N/-M in F files)` summary. Dense runs of more than three pending
-reviews collapse into a single Work line with a `[V]iew` hint. In Review,
-`Enter` or `Space` expands the selected run diff and `Esc` collapses it; `s`
-shows a read-only split compare summary only when the selected task has at
-least two runs.
+compact `(+N/-M in F files)` summary. Inline TUI diff projections use the same
+sensitive-path guard as review patch previews and redact patch text when
+changed-file metadata or diff headers identify `.env`, key, token, credential,
+or secret paths. Dense runs of more than three pending reviews collapse into a
+single Work line with a `[V]iew` hint. In Review, `Enter` or `Space` expands the
+selected run diff and `Esc` collapses it; `s` shows a read-only split compare
+summary only when the selected task has at least two runs.
 Search is local to the TUI renderer. `Ctrl+F` or `/search` opens a search
 overlay over rendered conversation text, shows match count/current match, and
 uses Up/Down to move between matches; `Esc` closes it without corrupting the
@@ -237,6 +240,11 @@ submission, and desktop room turns all use this same closed loop after a
 role-backed assistant message is persisted. Custom roles such as `@pm` can
 initiate bounded RoleCalls to other local roles only when their team-role
 `delegationPolicy` explicitly allows those targets or capabilities.
+The preset `@engineer` role can use the same line-start `@role task`
+delegation syntax for bounded calls to `@operator` and `@reviewer`.
+The injected `available_role_calls` directory advertises only targets that the
+caller can reach through that line-start `delegate` protocol, so custom roles
+with other intent types are not shown as shorthand-callable.
 
 ## CLI Surface
 
@@ -378,7 +386,8 @@ dangerous generated instructions in run events.
 Blocking risks remain blocking. They prevent automatic acceptance and block
 desktop local apply. Patch previews are redacted when changed-file metadata or
 diff headers identify sensitive paths such as `.env`, private keys, tokens,
-secrets, or credentials.
+secrets, or credentials; TUI inline diff summaries apply the same redaction
+before rendering small patch projections.
 
 Verification commands are structured executable-plus-args entries. Dangerous
 commands are represented as failed verification results. Desktop verification

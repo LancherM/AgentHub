@@ -1,5 +1,6 @@
 import {
   presetWorkgroupRoles,
+  type RoleIntentType,
   type RoleDefinition,
   type WorkgroupRole
 } from "@agent-hub/shared";
@@ -117,7 +118,7 @@ export function roleDelegationPolicy(role: WorkgroupRole): RoleDefinition["deleg
   if (role.handle === "engineer") {
     return {
       canInitiateRoleCalls: true,
-      allowedIntentTypes: ["request_review", "request_evidence"],
+      allowedIntentTypes: ["delegate", "request_review", "request_evidence"],
       allowedTargetRoles: ["reviewer", "operator"]
     };
   }
@@ -151,6 +152,25 @@ export function roleDelegationPolicyAllowsTarget(
     return true;
   }
   return allowedTargetRoles.length === 0 && allowedTargetCapabilities.length === 0;
+}
+
+export function roleDelegationPolicyAllowsIntentTarget(
+  policy: RoleDefinition["delegationPolicy"],
+  target: WorkgroupRole,
+  intentType: RoleIntentType
+): boolean {
+  return (
+    policy.canInitiateRoleCalls &&
+    policy.allowedIntentTypes.includes(intentType) &&
+    roleDelegationPolicyAllowsTarget(policy, target)
+  );
+}
+
+export function roleDelegationPolicyAllowsLineStartTarget(
+  policy: RoleDefinition["delegationPolicy"],
+  target: WorkgroupRole
+): boolean {
+  return roleDelegationPolicyAllowsIntentTarget(policy, target, "delegate");
 }
 
 export function roleIntakePolicy(role: WorkgroupRole): RoleDefinition["intakePolicy"] {

@@ -899,28 +899,25 @@ function recentAgentRunOutputLines(events: RunEvent[], run: TuiRunSummary): stri
   );
   const outputLines = outputTextLines(agentOutput);
   if (outputLines.length > 0) {
-    return outputLines.slice(-6);
+    return outputLines;
   }
   const activityLines = events
     .sort((left, right) => left.sequence - right.sequence)
     .flatMap(activeRunEventLines)
-    .map((line) => truncate(line, 120))
     .slice(-6);
   return activityLines.length > 0
     ? activityLines
-    : [`${run.agentKind} ${run.status}`, "waiting for observable output..."];
+    : ["agent thinking..."];
 }
 
 function outputTextLines(value: string): string[] {
-  return visibleTuiOutputLines(value)
-    .map((line) => truncate(line, 120));
+  return visibleTuiOutputLines(value);
 }
 
 function visibleTuiOutputLines(value: string): string[] {
   return value
     .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0 && !isTuiOutputNoiseLine(line));
+    .filter((line) => line.trim().length > 0 && !isTuiOutputNoiseLine(line.trim()));
 }
 
 function toAgentOutputEvent(event: RunEvent): {
@@ -1999,6 +1996,17 @@ function inlineDiffSummary(
   const diffText = typeof artifact?.content === "string" && artifact.content.trim().length > 0
     ? artifact.content
     : stringValue(diff, "diff");
+  const sensitivePaths = sensitiveDiffPaths(
+    diffText ?? "",
+    changedPathValues(artifact, diff)
+  );
+  if (sensitivePaths.length > 0) {
+    return {
+      mode: "summary",
+      summary: `Patch redacted because sensitive file path changed: ${sensitivePaths.join(", ")}`,
+      lines: []
+    };
+  }
   if (!diffText) {
     return summary && summary.changedFiles > 0
       ? {
@@ -2068,6 +2076,62 @@ function projectDiffLine(value: string): TuiInlineDiffLine | undefined {
     return { kind: "context", text: truncate(value, 100) };
   }
   return undefined;
+}
+
+function changedPathValues(
+  artifact: RunArtifact | undefined,
+  diff: unknown
+): string[] {
+  return [
+    ...(arrayValue(artifact?.metadata, "changedFiles") ?? []),
+    ...(arrayValue(diff, "changedFiles") ?? [])
+  ].flatMap(pathFromChangedFileValue);
+}
+
+function pathFromChangedFileValue(value: unknown): string[] {
+  if (typeof value === "string") {
+    return [value];
+  }
+  if (isObject(value) && typeof value.path === "string") {
+    return [value.path];
+  }
+  return [];
+}
+
+function sensitiveDiffPaths(patch: string, changedPaths: string[]): string[] {
+  const paths = new Set<string>();
+  for (const filePath of changedPaths) {
+    if (isSensitiveFilePath(filePath)) {
+      paths.add(filePath);
+    }
+  }
+  for (const line of patch.split(/\r?\n/)) {
+    const filePath = diffPathFromHeader(line);
+    if (filePath && isSensitiveFilePath(filePath)) {
+      paths.add(filePath);
+    }
+  }
+  return [...paths].sort();
+}
+
+function diffPathFromHeader(line: string): string | undefined {
+  const gitMatch = line.match(/^diff --git a\/(.+?) b\/(.+)$/);
+  if (gitMatch) {
+    return gitMatch[2];
+  }
+  const markerMatch = line.match(/^(?:---|\+\+\+) [ab]\/(.+)$/);
+  return markerMatch?.[1];
+}
+
+function isSensitiveFilePath(filePath: string): boolean {
+  return /(^|\/)\.env(?:\.|$)/i.test(filePath) ||
+    /\.pem$/i.test(filePath) ||
+    /\.key$/i.test(filePath) ||
+    /(^|\/)id_rsa$/i.test(filePath) ||
+    /(^|\/)id_ed25519$/i.test(filePath) ||
+    /(^|\/)secrets?\./i.test(filePath) ||
+    /(^|\/)credentials?\./i.test(filePath) ||
+    /(^|\/)tokens?\./i.test(filePath);
 }
 
 function diffSummaryText(

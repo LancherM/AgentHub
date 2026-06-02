@@ -177,8 +177,8 @@ hooks to `/dev/null`.
 Diff collection reads git status, filters unchanged generated overlays, captures
 tracked/staged/unstaged changes, synthesizes bounded patches for untracked text
 files, records binary metadata, and records untracked symlinks without reading
-their targets. Sensitive patch text is redacted before CLI or desktop review
-rendering.
+their targets. Sensitive patch text is redacted before CLI, desktop review, or
+TUI inline-diff rendering.
 
 Verification uses structured executable-plus-args commands. Dangerous commands
 are refused by `ShellExecutor` and represented as failed verification results.
@@ -263,7 +263,12 @@ The flow is:
    executor capability, and dangerous command text through safety policy.
    Preset roles use core defaults, while custom roles such as `@pm` can
    initiate bounded RoleCalls only when their team-role `delegationPolicy`
-   explicitly enables targets or capabilities.
+   explicitly enables targets or capabilities. The preset `@engineer`
+   delegation default accepts line-start `delegate` intents only for
+   `@operator` and `@reviewer`. CLI and desktop prompt construction use the
+   core intent-aware delegation helper, so `available_role_calls` lists only
+   targets permitted for the line-start `delegate` protocol rather than every
+   target allowed by another intent type.
 4. Accepted, deferred, rejected, waiting-context, or waiting-approval decisions
    are persisted as RoleCall and RoleCallEvent records. Callee todos are
    created or updated where applicable.
@@ -449,16 +454,19 @@ wrapping. The core TUI read model exposes derived elapsed and usage labels from
 persisted run timestamps and run-event metadata, and derives compact run
 stage/latest text from presentation-filtered events; it does not change event
 persistence, adapter execution, run status, or review semantics.
-Active-run boxes cover running runs only. They use a rounded fixed eight-line
-shape: title border, five output/progress lines, a progress-or-cursor footer,
-and bottom border. The renderer owns low-frequency spinner frame selection,
+Active-run boxes cover running runs only. They use rounded frames whose content
+area grows to fit wrapped visible output instead of truncating agent-facing
+lines; if no useful assistant or runtime activity is visible yet, the read model
+emits `agent thinking...`. The renderer owns low-frequency spinner frame selection,
 live elapsed calculation from the run start timestamp, best-effort percentage
 or `N/M` progress parsing, and transient completion/failure feedback. None of
 that state is persisted or sent back into adapters.
 They prefer structured assistant output, then fall back to recent adapter,
 stdout, and stderr events while filtering raw JSON protocol frames, setup
 lifecycle lines, internal agent protocol summaries, runtime warnings, Codex
-internal diagnostics, and skill activation noise. Verification, risk, diff, and
+internal diagnostics, and skill activation noise. The core read model preserves
+complete visible agent-output lines; the Ink renderer wraps long lines in the
+terminal surface. Verification, risk, diff, and
 review evidence stay out of active boxes. Role-backed run display is
 resolved in the core read model from linked RoleCalls, run/message role
 metadata, and task assignment metadata before falling back to adapter kind. The
@@ -479,10 +487,12 @@ shortcut only prepares a continuation prompt in local Ink state.
 Inline diff display is also a read-model projection over existing `git_diff`
 run artifacts or run metadata. Small diffs with five or fewer changed lines are
 projected into bounded file/add/delete/context lines; larger diffs expose only
-a stat summary. The Ink renderer can group dense adjacent pending-review
-entries, expand/collapse Review-pane diff lines, and show a read-only compare
-summary for tasks with multiple runs, but it does not generate comparison
-reports, apply patches, or mutate review decisions.
+a stat summary. Before projecting patch lines, the core read model checks
+changed-file metadata and diff headers for sensitive paths and replaces matching
+patches with a redacted summary. The Ink renderer can group dense adjacent
+pending-review entries, expand/collapse Review-pane diff lines, and show a
+read-only compare summary for tasks with multiple runs, but it does not generate
+comparison reports, apply patches, or mutate review decisions.
 Search and command-palette input are local Ink state. Conversation search reads
 only the rendered read-model text already present in memory, highlights matches,
 and never mutates composer contents. Palette filtering is fuzzy over safe focus

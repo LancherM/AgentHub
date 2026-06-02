@@ -1112,7 +1112,7 @@ function WorkView({
   feedbackByRunId
 }: TuiInkRenderProps): React.ReactElement {
   const { collapsedBoxes, fullBoxes } = activeRunLayout(model.activeRuns, terminal);
-  const activeLineCost = collapsedBoxes.length + fullBoxes.length * activeRunBoxLineCount(terminal);
+  const activeLineCost = activeRunLineCost(collapsedBoxes, fullBoxes, terminal);
   const conversationLines = conversationWindowSize(terminal, activeLineCost);
   return h(
     Box,
@@ -1384,7 +1384,7 @@ function conversationRichLine(
   const spacerText = options.agent ? options.prefix.slice(1) : "";
   return h(
     Text,
-    { key: options.key, wrap: "truncate", color: options.color, dimColor: options.dimColor },
+    { key: options.key, wrap: "hard", color: options.color, dimColor: options.dimColor },
     prefixText,
     spacerText,
     ...richTextSegments(value, options)
@@ -1513,8 +1513,8 @@ function ActiveRunBoxView({
   const innerWidth = Math.max(12, width - 2);
   const title = activeRunTitle(box, animationTick);
   const top = roundedBorderedTitle(title, innerWidth);
-  const contentHeight = activeRunContentHeight(terminal);
-  const contentLines = box.outputLines.slice(-contentHeight);
+  const contentLines = activeRunWrappedOutputLines(box, terminal);
+  const contentHeight = Math.max(activeRunMinimumContentHeight(terminal), contentLines.length);
   const paddedLines = [
     ...contentLines,
     ...Array.from({ length: Math.max(0, contentHeight - contentLines.length) }, () => "")
@@ -1522,7 +1522,7 @@ function ActiveRunBoxView({
   const progress = activeRunProgress(box.outputLines);
   return block(
     line(top, { color: "green" }),
-    ...paddedLines.map((value) => line(`│ ${truncateText(value, innerWidth - 2).padEnd(innerWidth - 2)} │`, { color: "green" })),
+    ...paddedLines.map((value) => line(`│ ${value.padEnd(innerWidth - 2)} │`, { color: "green" })),
     line(`│ ${activeRunFooter(progress, innerWidth - 2)} │`, { color: "green" }),
     line(`╰${"─".repeat(innerWidth)}╯`, { color: "green" })
   );
@@ -2244,8 +2244,8 @@ function activeRunLayout(
   const collapsedBoxes = activeRuns.slice(0, Math.max(0, activeRuns.length - 3));
   const fullBoxes = activeRuns.slice(collapsedBoxes.length);
   while (
-    fullBoxes.length > 0 &&
-    terminal.rows - 4 - (collapsedBoxes.length + fullBoxes.length * activeRunBoxLineCount(terminal)) < 6
+    fullBoxes.length > 1 &&
+    terminal.rows - 4 - activeRunLineCost(collapsedBoxes, fullBoxes, terminal) < 6
   ) {
     const nextCollapsed = fullBoxes.shift();
     if (nextCollapsed) {
@@ -2262,16 +2262,56 @@ function conversationWindowSize(
   return boundedWindowSize(terminal.rows - 4 - activeLineCost, 6, terminal.rows);
 }
 
-function activeRunBoxLineCount(terminal: TuiInkTerminalSize): number {
-  return activeRunContentHeight(terminal) + 3;
+function activeRunLineCost(
+  collapsedBoxes: TuiActiveRunBox[],
+  fullBoxes: TuiActiveRunBox[],
+  terminal: TuiInkTerminalSize
+): number {
+  return collapsedBoxes.length + fullBoxes.reduce(
+    (total, box) => total + activeRunBoxLineCountForBox(box, terminal),
+    0
+  );
 }
 
-function activeRunContentHeight(_terminal: TuiInkTerminalSize): number {
+function activeRunBoxLineCountForBox(
+  box: TuiActiveRunBox,
+  terminal: TuiInkTerminalSize
+): number {
+  return Math.max(
+    activeRunMinimumContentHeight(terminal),
+    activeRunWrappedOutputLines(box, terminal).length
+  ) + 3;
+}
+
+function activeRunMinimumContentHeight(_terminal: TuiInkTerminalSize): number {
   return 5;
 }
 
 function activeRunBoxWidth(terminal: TuiInkTerminalSize): number {
   return Math.max(12, terminal.columns - 4);
+}
+
+function activeRunWrappedOutputLines(
+  box: TuiActiveRunBox,
+  terminal: TuiInkTerminalSize
+): string[] {
+  const innerWidth = Math.max(12, activeRunBoxWidth(terminal) - 2);
+  const contentWidth = Math.max(1, innerWidth - 2);
+  return box.outputLines.flatMap((value) => hardWrapLine(value, contentWidth));
+}
+
+function hardWrapLine(value: string, width: number): string[] {
+  if (width <= 0) {
+    return [value];
+  }
+  if (value.length === 0) {
+    return [""];
+  }
+  const lines: string[] = [];
+  for (let index = 0; index < value.length; index += width) {
+    lines.push(value.slice(index, index + width));
+  }
+  return lines;
 }
 
 function boundedWindowSize(value: number, minimum: number, maximum: number): number {

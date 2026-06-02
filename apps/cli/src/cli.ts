@@ -35,7 +35,7 @@ import {
   processAssistantRoleCallOutput,
   roleDefinitionsForWorkgroupRoles,
   roleDelegationPolicy,
-  roleDelegationPolicyAllowsTarget,
+  roleDelegationPolicyAllowsLineStartTarget,
   findWorkgroupRoleByHandle,
   normalizeWorkgroupRoleHandle,
   parseAgentKindAlias,
@@ -3020,7 +3020,7 @@ function roleProtocolReferences(
         entry.enabled &&
         entry.handle !== role.roleHandle &&
         callerPolicy !== undefined &&
-        roleDelegationPolicyAllowsTarget(callerPolicy, entry)
+        roleDelegationPolicyAllowsLineStartTarget(callerPolicy, entry)
     )
     .slice(0, 12)
     .map((entry) =>
