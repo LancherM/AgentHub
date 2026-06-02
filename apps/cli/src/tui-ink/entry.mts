@@ -52,6 +52,9 @@ export async function runInkTui(input: RunInkTuiInput): Promise<void> {
     return;
   }
 
+  if (input.showSplash === true) {
+    input.io.stdout.write(interactiveSplashPrelude());
+  }
   const instance = render(
     h(TuiInkApp, {
       model: input.model,
@@ -61,7 +64,7 @@ export async function runInkTui(input: RunInkTuiInput): Promise<void> {
       loadModel: input.loadModel,
       submitPrompt: input.submitPrompt,
       recordReviewDecision: input.recordReviewDecision,
-      showSplash: input.showSplash === true,
+      showSplash: false,
       notify: (message) => {
         input.io.stdout.write(terminalNotificationSequence(message));
       }
@@ -112,4 +115,8 @@ function toWriteStream(
 function terminalNotificationSequence(message: string): string {
   const sanitized = message.replace(/[\u0000-\u001F\u007F]/g, " ").trim();
   return `\u0007\u001B]9;${sanitized}\u0007`;
+}
+
+function interactiveSplashPrelude(): string {
+  return "Agent Hub TUI\nlocal-first terminal workbench\n";
 }

@@ -97,14 +97,14 @@ terminal supports them, shell-command lines bold, and fenced code blocks lightly
 highlighted for keywords, strings, and comments. Agent output content is not
 truncated; long lines wrap in the terminal surface.
 Active run boxes use rounded frames that grow to fit wrapped visible output.
-Titles show the compact run identity, role/agent handle,
-low-frequency braille spinner, running status, elapsed time, and live token
-usage when the run emits usage metadata. The footer keeps an active cursor when
-no reliable progress exists, or a best-effort progress bar when recent output
-includes an obvious percentage or `N/M` pattern. At most three active runs
-render as full boxes; older active runs collapse to one-line titles. Completion
-and failure feedback is transient renderer state only and never writes
-persistence records.
+Titles show the compact run identity, role/agent handle, a static running
+marker, running status, elapsed time, and live token usage when the run emits
+usage metadata. The footer keeps an active cursor when no reliable progress
+exists, or a best-effort progress bar when recent output includes an obvious
+percentage or `N/M` pattern. At most three active runs render as full boxes;
+older active runs collapse to one-line titles. Completion and failure state is
+shown through refreshed read-model rows rather than timed renderer flashes, so
+the terminal does not repaint only to clear decorative feedback.
 When the latest agent result is visible and the composer is empty, Work may show
 two or three dim quick replies such as running more tests, fixing verification,
 reviewing risk, continuing, or fixing similar issues. Pressing `1`, `2`, or `3`
@@ -134,11 +134,11 @@ conversation, active runs, and recent runs; `Esc` or `l` closes it. `/notify`
 toggles in-memory completion notifications for the current terminal session
 only. When enabled, the TUI emits a terminal bell plus OSC 9 notification only
 after a previously active run leaves the active list and had been running for
-more than 30 seconds. Notifications, timeline state, and transient badge flashes
-do not persist settings, alter run behavior, or invoke external services.
-Startup splash is explicit: `--splash` shows a short non-blocking banner on
-launch and then removes it from the interactive frame to avoid continuous
-terminal repaint; `--no-splash` suppresses it.
+more than 30 seconds. Notifications and timeline state do not persist settings,
+alter run behavior, or invoke external services. Startup splash is explicit:
+`--splash` prints a short prelude before the interactive Ink frame, so the live
+frame does not need a delayed splash-removal repaint; `--no-splash` suppresses
+it.
 The default tab bar matches the conversation-terminal scheme: Work, Runs, View,
 Graph, Tasks, Memory, Team, and Help stay one key away instead of being
 embedded into the first screen.
@@ -170,11 +170,13 @@ chat/run records and then shown through TUI panes, not dumped directly into the
 Ink alternate screen during an interactive submit.
 Interactive TUI sessions periodically refresh the same current-context read
 model so externally changing run, task, conversation, RoleCall, and review
-state can appear without a manual keypress. Refreshes with no renderable
-read-model change are ignored to avoid unnecessary full-screen redraws. New
-conversation or active-run output anchors Work back to the bottom. TaskRunner persists run events as they
-are produced, so running boxes can show live progress from the local evidence
-store instead of waiting for final run completion. The conversation can scroll back by
+state can appear without a manual keypress. Active-run refreshes stay
+responsive, idle refreshes use a slower cadence, and refreshes with no
+renderable read-model change are ignored to avoid unnecessary full-screen
+redraws. New conversation or active-run output anchors Work back to the bottom.
+TaskRunner persists run events as they are produced, so running boxes can show
+live progress from the local evidence store instead of waiting for final run
+completion. The conversation can scroll back by
 rendered line from Work focus, Runs and Tasks panes expand on taller terminals,
 uppercase focus keys switch Work/Runs/View/Graph/Tasks/Memory/Team when the
 composer is empty, and the Review reject shortcut is uppercase `R` so

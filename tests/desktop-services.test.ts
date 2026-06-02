@@ -2846,9 +2846,12 @@ describe("desktop services", () => {
         expect.stringContaining(`agent-hub/${runMessages[0]?.taskId}/fake/`)
       ])
     );
-    await expect(
-      fixture.repositories.taskRepository.get(runMessages[0]?.taskId ?? "")
-    ).resolves.toMatchObject({
+    const completedTask = await waitForTaskStatus(
+      fixture.repositories.taskRepository,
+      runMessages[0]?.taskId ?? "",
+      "completed"
+    );
+    expect(completedTask).toMatchObject({
       status: "completed",
       metadata: expect.objectContaining({
         assignments: expect.arrayContaining([
@@ -4167,6 +4170,22 @@ async function waitForRun(
     await sleep(10);
   }
   throw new Error(`timed out waiting for run ${runId} to become ${status}`);
+}
+
+async function waitForTaskStatus(
+  taskRepository: ReturnType<typeof createSqliteRepositories>["taskRepository"],
+  taskId: string,
+  status: "open" | "running" | "completed" | "failed"
+) {
+  const deadline = Date.now() + 10_000;
+  while (Date.now() < deadline) {
+    const task = await taskRepository.get(taskId);
+    if (task?.status === status) {
+      return task;
+    }
+    await sleep(10);
+  }
+  throw new Error(`timed out waiting for task ${taskId} to become ${status}`);
 }
 
 async function waitForEvent(
