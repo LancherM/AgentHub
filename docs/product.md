@@ -1,6 +1,6 @@
 # Product
 
-Last audited against `origin/main` at `1bf5455` on 2026-06-01.
+Last audited against `origin/main` at `2ca1dbc` on 2026-06-02.
 
 Agent Hub is a local-first, CLI-first tool for orchestrating coding agents on a
 developer machine. It manages local projects, task briefs, context packs,
