@@ -1,8 +1,6 @@
 import {
   presetWorkgroupRoles,
-  roleIntentTypes,
   type RoleDefinition,
-  type RoleIntentType,
   type WorkgroupRole
 } from "@agent-hub/shared";
 import { validateRoleDefinition } from "./domain";
@@ -86,9 +84,20 @@ export function rolePermissions(role: WorkgroupRole): RoleDefinition["permission
 }
 
 export function roleDelegationPolicy(role: WorkgroupRole): RoleDefinition["delegationPolicy"] {
-  const configuredPolicy = roleDelegationPolicyFromMetadata(role.metadata?.delegationPolicy);
-  if (configuredPolicy) {
-    return configuredPolicy;
+  if (role.delegationPolicy) {
+    return {
+      canInitiateRoleCalls: role.delegationPolicy.canInitiateRoleCalls,
+      allowedIntentTypes: [...role.delegationPolicy.allowedIntentTypes],
+      allowedTargetRoles: role.delegationPolicy.allowedTargetRoles
+        ? [...role.delegationPolicy.allowedTargetRoles]
+        : undefined,
+      allowedTargetCapabilities: role.delegationPolicy.allowedTargetCapabilities
+        ? [...role.delegationPolicy.allowedTargetCapabilities]
+        : undefined,
+      requiresApprovalForTargets: role.delegationPolicy.requiresApprovalForTargets
+        ? [...role.delegationPolicy.requiresApprovalForTargets]
+        : undefined
+    };
   }
   if (role.handle === "analyst") {
     return {
@@ -112,13 +121,6 @@ export function roleDelegationPolicy(role: WorkgroupRole): RoleDefinition["deleg
       allowedTargetRoles: ["reviewer", "operator"]
     };
   }
-  if (isCoordinatorRole(role)) {
-    return {
-      canInitiateRoleCalls: true,
-      allowedIntentTypes: ["delegate", "request_analysis", "request_review", "request_evidence"],
-      allowedTargetRoles: ["*"]
-    };
-  }
   return {
     canInitiateRoleCalls: false,
     allowedIntentTypes: [],
@@ -126,98 +128,6 @@ export function roleDelegationPolicy(role: WorkgroupRole): RoleDefinition["deleg
     allowedTargetCapabilities: [],
     requiresApprovalForTargets: ["operator", "engineer"]
   };
-}
-
-function roleDelegationPolicyFromMetadata(
-  value: unknown
-): RoleDefinition["delegationPolicy"] | undefined {
-  if (!isPlainObject(value)) {
-    return undefined;
-  }
-  return {
-    canInitiateRoleCalls: value.canInitiateRoleCalls === true,
-    allowedIntentTypes: parseRoleIntentTypes(value.allowedIntentTypes),
-    allowedTargetRoles: parseStringArray(value.allowedTargetRoles),
-    allowedTargetCapabilities: parseStringArray(value.allowedTargetCapabilities),
-    requiresApprovalForTargets: parseStringArray(value.requiresApprovalForTargets)
-  };
-}
-
-function isCoordinatorRole(role: WorkgroupRole): boolean {
-  if (presetWorkgroupRoles.some((preset) => preset.handle === role.handle)) {
-    return false;
-  }
-  const handle = normalizeRoleText(role.handle);
-  if (
-    [
-      "pm",
-      "project_manager",
-      "project-manager",
-      "manager",
-      "coordinator",
-      "lead"
-    ].includes(handle)
-  ) {
-    return true;
-  }
-  const tags = role.tags?.map(normalizeRoleText) ?? [];
-  if (
-    tags.some((tag) =>
-      [
-        "pm",
-        "project_manager",
-        "project-management",
-        "coordination",
-        "coordinator",
-        "lead"
-      ].includes(tag)
-    )
-  ) {
-    return true;
-  }
-  const text = [
-    role.displayName,
-    role.purpose,
-    role.capabilitySummary,
-    role.persona,
-    role.defaultInstructions
-  ]
-    .map(normalizeRoleText)
-    .join(" ");
-  return [
-    "project_manager",
-    "coordinate",
-    "coordination",
-    "delegate",
-    "delegation"
-  ].some((marker) => text.includes(marker));
-}
-
-function parseRoleIntentTypes(value: unknown): RoleIntentType[] {
-  if (!Array.isArray(value)) {
-    return [];
-  }
-  return value.filter((entry): entry is RoleIntentType =>
-    roleIntentTypes.includes(entry as RoleIntentType)
-  );
-}
-
-function parseStringArray(value: unknown): string[] | undefined {
-  if (!Array.isArray(value)) {
-    return undefined;
-  }
-  return value
-    .filter((entry): entry is string => typeof entry === "string")
-    .map((entry) => entry.trim())
-    .filter(Boolean);
-}
-
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
-}
-
-function normalizeRoleText(value: string): string {
-  return value.trim().toLowerCase().replace(/\s+/g, "_");
 }
 
 export function roleDelegationPolicyAllowsTarget(

@@ -10,7 +10,9 @@ import {
   isAgentKindEnabled,
   normalizeWorkgroupRoleHandle,
   presetWorkgroupRoles,
+  roleIntentTypes,
   type AgentAvailabilityOptions,
+  type RoleIntentType,
   type WorkgroupAgentAdapterKind,
   type WorkgroupExecutor,
   type WorkgroupExecutorKind,
@@ -282,6 +284,7 @@ function normalizeRoleInput(input: WorkgroupRole): WorkgroupRole {
         maxTextLength
       )
     },
+    delegationPolicy: normalizeDelegationPolicy(value.delegationPolicy),
     executor: normalizeExecutor(value.executor),
     enabled: parseBoolean(value.enabled, "role enabled"),
     defaultSkillReferences:
@@ -383,6 +386,54 @@ function normalizeExecutor(input: WorkgroupRole["executor"] | undefined): Workgr
     };
   }
   throw new Error("role executor kind must be agent_adapter, llm_api, workflow, or human");
+}
+
+function normalizeDelegationPolicy(
+  input: WorkgroupRole["delegationPolicy"] | undefined
+): WorkgroupRole["delegationPolicy"] {
+  if (input === undefined) {
+    return undefined;
+  }
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    throw new Error("role delegationPolicy must be an object");
+  }
+  const value = input as Partial<NonNullable<WorkgroupRole["delegationPolicy"]>>;
+  const allowedIntentTypes = parseRoleIntentList(
+    value.allowedIntentTypes,
+    "role delegationPolicy.allowedIntentTypes"
+  );
+  const allowedTargetRoles = optionalStringList(
+    value.allowedTargetRoles,
+    "role delegationPolicy.allowedTargetRoles"
+  );
+  const allowedTargetCapabilities = optionalStringList(
+    value.allowedTargetCapabilities,
+    "role delegationPolicy.allowedTargetCapabilities"
+  );
+  const requiresApprovalForTargets = optionalStringList(
+    value.requiresApprovalForTargets,
+    "role delegationPolicy.requiresApprovalForTargets"
+  );
+  if (
+    value.canInitiateRoleCalls === true &&
+    (allowedTargetRoles?.length ?? 0) === 0 &&
+    (allowedTargetCapabilities?.length ?? 0) === 0 &&
+    (requiresApprovalForTargets?.length ?? 0) === 0
+  ) {
+    throw new Error(
+      "role delegationPolicy must name targets when role calls are enabled"
+    );
+  }
+  return {
+    canInitiateRoleCalls: parseBoolean(
+      value.canInitiateRoleCalls,
+      "role delegationPolicy.canInitiateRoleCalls"
+    ),
+    allowedIntentTypes,
+    allowedTargetRoles,
+    allowedTargetCapabilities,
+    requiresApprovalForTargets
+  };
 }
 
 function upsertRole(
@@ -561,6 +612,22 @@ function parseStringList(input: unknown, label: string): string[] {
   return input.map((entry, index) =>
     parseNonEmptyString(entry, `${label} ${index + 1}`, maxShortTextLength)
   );
+}
+
+function optionalStringList(input: unknown, label: string): string[] | undefined {
+  if (input === undefined) {
+    return undefined;
+  }
+  return parseStringList(input, label);
+}
+
+function parseRoleIntentList(input: unknown, label: string): RoleIntentType[] {
+  return parseStringList(input, label).map((entry) => {
+    if (!roleIntentTypes.includes(entry as RoleIntentType)) {
+      throw new Error(`${label} must contain ${roleIntentTypes.join(", ")}`);
+    }
+    return entry as RoleIntentType;
+  });
 }
 
 function parseSkillReferenceList(

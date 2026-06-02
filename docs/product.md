@@ -234,9 +234,9 @@ risk evidence`. Agent Hub parses the intent, validates policy, persists
 RoleCall, RoleTodo, and RoleCallEvent records, and executes accepted
 `agent_adapter` calls through the same TaskRunner path. CLI chat, TUI prompt
 submission, and desktop room turns all use this same closed loop after a
-role-backed assistant message is persisted. Coordinator-style custom roles such
-as `@pm` can initiate bounded RoleCalls to other local roles when their role
-policy or coordinator defaults allow it.
+role-backed assistant message is persisted. Custom roles such as `@pm` can
+initiate bounded RoleCalls to other local roles only when their team-role
+`delegationPolicy` explicitly allows those targets or capabilities.
 
 ## CLI Surface
 
@@ -258,7 +258,9 @@ The current CLI exposes these command groups:
   review, tasks, memory, and help.
 - Team roles: `team roles list`, `team roles show`, `team roles save`, and
   `team roles executor`. Saved roles can reference default skills with
-  `--skill [scope:]id`.
+  `--skill [scope:]id`, and custom RoleCall fan-out is configured with
+  `--can-call-role`, `--role-call-target`, `--role-call-capability`, and
+  `--role-call-intent`.
 - Run review: `runs list`, `runs show`, `runs events`, `runs diff`, and
   `risks show`.
 - Review decisions: `reviews show`, `reviews accept`, and `reviews reject`

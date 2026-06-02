@@ -1351,7 +1351,12 @@ describe("CLI", () => {
         "--default-room",
         "release",
         "--skill",
-        "global:review"
+        "global:review",
+        "--can-call-role",
+        "--role-call-target",
+        "researcher",
+        "--role-call-intent",
+        "delegate"
       ], io, projectRoot, runtime)
     ).resolves.toBe(0);
     await expect(
@@ -1387,6 +1392,7 @@ describe("CLI", () => {
     expect(rendered).toContain("Saved role");
     expect(rendered).toContain("Role @qa");
     expect(rendered).toContain("executor: agent_adapter / fake");
+    expect(rendered).toContain("role_calls: enabled intents=delegate targets=@researcher");
     expect(
       (await runtime.settingsRepository.get(
         "desktop.project.project_workgroup.workgroupRoles"
@@ -1395,7 +1401,12 @@ describe("CLI", () => {
       roles: [
         expect.objectContaining({
           handle: "qa",
-          defaultSkillReferences: [{ scope: "global", id: "review" }]
+          defaultSkillReferences: [{ scope: "global", id: "review" }],
+          delegationPolicy: expect.objectContaining({
+            canInitiateRoleCalls: true,
+            allowedIntentTypes: ["delegate"],
+            allowedTargetRoles: ["researcher"]
+          })
         })
       ]
     });
@@ -1540,6 +1551,11 @@ describe("CLI", () => {
       persona: "Project manager who routes bounded work to other roles.",
       defaultInstructions: "Delegate bounded work to the right role.",
       executor: { kind: "agent_adapter", adapterKind: "codex" },
+      delegationPolicy: {
+        canInitiateRoleCalls: true,
+        allowedIntentTypes: ["delegate"],
+        allowedTargetRoles: ["researcher", "engineer"]
+      },
       tags: ["coordination"],
       metadata: { source: "custom" }
     };

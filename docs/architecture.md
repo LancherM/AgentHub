@@ -236,7 +236,9 @@ exports it. YAML is schema-validated, then merged after SQLite settings, so the
 documented precedence is presets -> SQLite overrides/custom roles -> YAML
 overrides/custom roles. `team roles save` still writes SQLite only. `team roles
 export` prints a preview unless `--write` is passed, and `team roles import`
-persists YAML roles into SQLite only with `--write`.
+persists YAML roles into SQLite only with `--write`. Team-role
+`delegationPolicy` is the explicit local configuration surface for whether a
+role can initiate RoleCalls and which targets or capabilities it can call.
 
 CLI chat, room sends, and desktop room turns resolve role handles in the local
 service layer. Runnable participants create TaskRunner-backed runs under one
@@ -259,9 +261,9 @@ The flow is:
 3. The RoleCall orchestrator validates caller/callee roles, policy, graph
    limits, duplicate suppression, todo capacity, permissions, approval gates,
    executor capability, and dangerous command text through safety policy.
-   Preset roles use core defaults, while coordinator-style custom roles such as
-   `@pm` can initiate bounded RoleCalls through explicit metadata policy or the
-   conservative coordinator default.
+   Preset roles use core defaults, while custom roles such as `@pm` can
+   initiate bounded RoleCalls only when their team-role `delegationPolicy`
+   explicitly enables targets or capabilities.
 4. Accepted, deferred, rejected, waiting-context, or waiting-approval decisions
    are persisted as RoleCall and RoleCallEvent records. Callee todos are
    created or updated where applicable.

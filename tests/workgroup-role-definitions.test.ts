@@ -7,7 +7,7 @@ import {
 } from "@agent-hub/core";
 
 describe("workgroup role definition mapping", () => {
-  it("lets custom PM-style coordinator roles initiate RoleCalls to known targets", () => {
+  it("requires custom PM roles to configure RoleCall delegation explicitly", () => {
     const analyst = presetWorkgroupRoles.find((role) => role.handle === "analyst");
     const researcher = presetWorkgroupRoles.find((role) => role.handle === "researcher");
     expect(analyst).toBeDefined();
@@ -25,8 +25,24 @@ describe("workgroup role definition mapping", () => {
       metadata: { source: "custom" }
     };
 
-    const definitions = roleDefinitionsForWorkgroupRoles([
+    const defaultDefinitions = roleDefinitionsForWorkgroupRoles([
       pmRole,
+      researcher as WorkgroupRole
+    ]);
+    const defaultPmDefinition = defaultDefinitions.find((role) => role.handle === "pm");
+    expect(defaultPmDefinition?.delegationPolicy).toEqual(expect.objectContaining({
+      canInitiateRoleCalls: false
+    }));
+
+    const definitions = roleDefinitionsForWorkgroupRoles([
+      {
+        ...pmRole,
+        delegationPolicy: {
+          canInitiateRoleCalls: true,
+          allowedIntentTypes: ["delegate"],
+          allowedTargetRoles: ["researcher"]
+        }
+      },
       researcher as WorkgroupRole
     ]);
     const pmDefinition = definitions.find((role) => role.handle === "pm");
@@ -34,7 +50,7 @@ describe("workgroup role definition mapping", () => {
     expect(pmDefinition?.trustLevel).toBe("user_defined");
     expect(pmDefinition?.delegationPolicy).toEqual(expect.objectContaining({
       canInitiateRoleCalls: true,
-      allowedTargetRoles: ["*"]
+      allowedTargetRoles: ["researcher"]
     }));
     expect(
       roleDelegationPolicyAllowsTarget(

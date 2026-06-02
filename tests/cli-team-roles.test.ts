@@ -174,7 +174,11 @@ describe("CLI team role YAML", () => {
         roles: [
           expect.objectContaining({
             handle: "operatorx",
-            displayName: "Operator X"
+            displayName: "Operator X",
+            delegationPolicy: expect.objectContaining({
+              canInitiateRoleCalls: true,
+              allowedTargetRoles: ["researcher"]
+            })
           })
         ]
       }
@@ -225,6 +229,12 @@ function yamlRole(handle: string, displayName: string): string {
     "      requiredFor:",
     "        - external_side_effects",
     "      summary: YAML approval.",
+    "    delegationPolicy:",
+    "      canInitiateRoleCalls: true",
+    "      allowedIntentTypes:",
+    "        - delegate",
+    "      allowedTargetRoles:",
+    "        - researcher",
     "    executor:",
     "      kind: human",
     "      unavailableReason: YAML role is not executable.",

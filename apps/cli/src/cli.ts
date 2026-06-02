@@ -30,6 +30,7 @@ import {
   memoryCategories,
   runEventTypes,
   roleCallStatuses,
+  roleIntentTypes,
   roleTodoStatuses,
   processAssistantRoleCallOutput,
   roleDefinitionsForWorkgroupRoles,
@@ -66,6 +67,7 @@ import {
   type RoleCallEvent,
   type RoleCallStatus,
   type RoleDefinition,
+  type RoleIntentType,
   type RoleTodo,
   type RoleTodoStatus,
   type SkillReference,
@@ -646,7 +648,7 @@ export function helpText(debug = isEnvironmentDebugEnabled()): string {
     "  agent-hub [--db <path>] tui [--thread <thread-id>|--room <handle-or-thread-id>] [--agent codex|claude-code] [--max-iterations <n>]",
     "  agent-hub [--db <path>] team roles list --project-id <project-id>",
     "  agent-hub [--db <path>] team roles show --project-id <project-id> --role <handle>",
-    `  agent-hub [--db <path>] team roles save --project-id <project-id> --handle <handle> [--display-name <name>] [--executor ${agentChoices}|human|llm_api|workflow] [--skill [scope:]id]`,
+    `  agent-hub [--db <path>] team roles save --project-id <project-id> --handle <handle> [--display-name <name>] [--executor ${agentChoices}|human|llm_api|workflow] [--skill [scope:]id] [--can-call-role --role-call-target <role>]`,
     "  agent-hub [--db <path>] team roles import --project-id <project-id> [--path .agent-hub/team.yaml] [--preview|--write]",
     "  agent-hub [--db <path>] team roles export --project-id <project-id> [--path .agent-hub/team.yaml] [--preview|--write]",
     "  agent-hub [--db <path>] team roles executor --project-id <project-id> --role <handle>",
@@ -919,6 +921,14 @@ const teamYamlApprovalPolicySchema = z.object({
   summary: z.string().min(1)
 }).strict();
 
+const teamYamlDelegationPolicySchema = z.object({
+  canInitiateRoleCalls: z.boolean(),
+  allowedIntentTypes: z.array(z.enum(roleIntentTypes)),
+  allowedTargetRoles: z.array(z.string()).optional(),
+  allowedTargetCapabilities: z.array(z.string()).optional(),
+  requiresApprovalForTargets: z.array(z.string()).optional()
+}).strict();
+
 const teamYamlExecutorSchema = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("agent_adapter"),
@@ -943,6 +953,7 @@ const teamYamlRoleSchema = z.object({
   permissions: z.array(z.string()),
   contextPolicy: teamYamlContextPolicySchema,
   approvalPolicy: teamYamlApprovalPolicySchema,
+  delegationPolicy: teamYamlDelegationPolicySchema.optional(),
   executor: teamYamlExecutorSchema,
   enabled: z.boolean(),
   defaultSkillReferences: z.array(teamYamlSkillReferenceSchema).optional(),
@@ -2637,6 +2648,7 @@ async function renderTeamRole(
       `executor: ${executorLabel(role.executor)}`,
       `default_room: ${role.defaultRoom ? `#${role.defaultRoom}` : "none"}`,
       `permissions: ${role.permissions.length === 0 ? "none" : role.permissions.join(", ")}`,
+      `role_calls: ${roleCallPolicySummary(role)}`,
       `context: ${role.contextPolicy.scope}`,
       `approved_memory: ${role.contextPolicy.includeApprovedMemory}`,
       `thread_summary: ${role.contextPolicy.includeThreadSummary}`,
@@ -3447,6 +3459,7 @@ async function roleFromSaveArgs(
         base?.approvalPolicy.summary ??
         "User approval is required for memory approval and external effects."
     },
+    delegationPolicy: roleDelegationPolicyFromSaveArgs(args, base?.delegationPolicy),
     executor,
     enabled: args.includes("--disabled") ? false : base?.enabled ?? true,
     defaultRoom: optionalFlag(args, "--default-room") ?? base?.defaultRoom,
@@ -3474,6 +3487,133 @@ function parseRoleExecutor(value: string, debug = isEnvironmentDebugEnabled()): 
     };
   }
   throw new Error("--executor must be fake, codex, claude-code, human, llm_api, or workflow");
+}
+
+function roleCallPolicySummary(role: WorkgroupRole): string {
+  const policy = role.delegationPolicy;
+  if (!policy?.canInitiateRoleCalls) {
+    return "disabled";
+  }
+  const targets = [
+    ...(policy.allowedTargetRoles?.map((target) =>
+      target === "*" ? "*" : `@${target}`
+    ) ?? []),
+    ...(policy.allowedTargetCapabilities?.map((capability) => `capability:${capability}`) ?? [])
+  ];
+  const approvalTargets =
+    policy.requiresApprovalForTargets?.map((target) => `approval:${target}`) ?? [];
+  return [
+    `enabled intents=${policy.allowedIntentTypes.join(",") || "none"}`,
+    `targets=${[...targets, ...approvalTargets].join(",") || "none"}`
+  ].join(" ");
+}
+
+function roleDelegationPolicyFromSaveArgs(
+  args: string[],
+  base: WorkgroupRole["delegationPolicy"] | undefined
+): WorkgroupRole["delegationPolicy"] {
+  const explicit =
+    args.includes("--can-call-role") ||
+    args.includes("--no-role-calls") ||
+    repeatedFlag(args, "--role-call-target").length > 0 ||
+    repeatedFlag(args, "--role-call-capability").length > 0 ||
+    repeatedFlag(args, "--role-call-intent").length > 0 ||
+    repeatedFlag(args, "--role-call-approval-target").length > 0;
+  if (!explicit) {
+    return base;
+  }
+  if (args.includes("--can-call-role") && args.includes("--no-role-calls")) {
+    throw new Error("--can-call-role and --no-role-calls cannot be used together");
+  }
+  const canInitiateRoleCalls = args.includes("--no-role-calls")
+    ? false
+    : args.includes("--can-call-role") || base?.canInitiateRoleCalls === true;
+  const allowedIntentTypes = canInitiateRoleCalls
+    ? parseRoleCallIntentFlags(repeatedFlag(args, "--role-call-intent"), base)
+    : [];
+  const allowedTargetRoles = targetListFromFlags(
+    repeatedFlag(args, "--role-call-target"),
+    base?.allowedTargetRoles,
+    parseRoleCallTargetFlag,
+    "--role-call-target"
+  );
+  const allowedTargetCapabilities = targetListFromFlags(
+    repeatedFlag(args, "--role-call-capability"),
+    base?.allowedTargetCapabilities,
+    parseNonEmptyRoleCallFlag,
+    "--role-call-capability"
+  );
+  const requiresApprovalForTargets = targetListFromFlags(
+    repeatedFlag(args, "--role-call-approval-target"),
+    base?.requiresApprovalForTargets,
+    parseRoleCallTargetFlag,
+    "--role-call-approval-target"
+  );
+  if (
+    canInitiateRoleCalls &&
+    (allowedTargetRoles?.length ?? 0) === 0 &&
+    (allowedTargetCapabilities?.length ?? 0) === 0 &&
+    (requiresApprovalForTargets?.length ?? 0) === 0
+  ) {
+    throw new Error(
+      "--can-call-role requires --role-call-target, --role-call-capability, or --role-call-approval-target"
+    );
+  }
+  return {
+    canInitiateRoleCalls,
+    allowedIntentTypes,
+    allowedTargetRoles,
+    allowedTargetCapabilities,
+    requiresApprovalForTargets
+  };
+}
+
+function parseRoleCallIntentFlags(
+  values: string[],
+  base: WorkgroupRole["delegationPolicy"] | undefined
+): RoleIntentType[] {
+  if (values.length === 0) {
+    return base?.allowedIntentTypes.length ? [...base.allowedIntentTypes] : ["delegate"];
+  }
+  return values.map((value) => {
+    const normalized = value.trim();
+    if (!roleIntentTypes.includes(normalized as RoleIntentType)) {
+      throw new Error(`--role-call-intent must be one of ${roleIntentTypes.join(", ")}`);
+    }
+    return normalized as RoleIntentType;
+  });
+}
+
+function targetListFromFlags(
+  values: string[],
+  base: readonly string[] | undefined,
+  parse: (value: string, flag: string) => string,
+  flag: string
+): string[] | undefined {
+  if (values.length > 0) {
+    return values.map((value) => parse(value, flag));
+  }
+  return base ? [...base] : undefined;
+}
+
+function parseRoleCallTargetFlag(value: string, flag: string): string {
+  const trimmed = value.trim();
+  if (trimmed === "*") {
+    return trimmed;
+  }
+  const handle = normalizeWorkgroupRoleHandle(trimmed);
+  if (!handle) {
+    throw new Error(`${flag} must be a role handle or *`);
+  }
+  return handle;
+}
+
+function parseNonEmptyRoleCallFlag(value: string, flag: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    throw new Error(`${flag} requires a value`);
+  }
+  return trimmed;
 }
 
 function parseSkillReferenceFlag(value: string): {

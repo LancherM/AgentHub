@@ -367,6 +367,14 @@ export function validateWorkgroupRole(input: WorkgroupRole): WorkgroupRole {
     issues
   );
   optionalString(input.defaultRoom, "workgroupRole.defaultRoom", issues);
+  if (input.delegationPolicy !== undefined) {
+    validateDelegationPolicy(
+      input.delegationPolicy,
+      "workgroupRole.delegationPolicy",
+      issues
+    );
+    validateWorkgroupRoleDelegationPolicyTargets(input.delegationPolicy, issues);
+  }
   if (
     input.tags !== undefined &&
     (!Array.isArray(input.tags) ||
@@ -818,6 +826,30 @@ function validateDelegationPolicy(
     `${field}.requiresApprovalForTargets`,
     issues
   );
+}
+
+function validateWorkgroupRoleDelegationPolicyTargets(
+  value: unknown,
+  issues: string[]
+): void {
+  if (!plainObject(value) || value.canInitiateRoleCalls !== true) {
+    return;
+  }
+  const hasTargets =
+    (Array.isArray(value.allowedTargetRoles)
+      ? value.allowedTargetRoles.length
+      : 0) > 0 ||
+    (Array.isArray(value.allowedTargetCapabilities)
+      ? value.allowedTargetCapabilities.length
+      : 0) > 0 ||
+    (Array.isArray(value.requiresApprovalForTargets)
+      ? value.requiresApprovalForTargets.length
+      : 0) > 0;
+  if (!hasTargets) {
+    issues.push(
+      "workgroupRole.delegationPolicy must name target roles, target capabilities, or approval targets when role calls are enabled"
+    );
+  }
 }
 
 function validateIntakePolicy(
