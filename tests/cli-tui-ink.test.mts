@@ -571,6 +571,53 @@ describe("Ink TUI renderer", () => {
     instance.unmount();
   });
 
+  it("records the focused Review run instead of the stale model review id", async () => {
+    const decisions = [];
+    const model = reviewModelWithSelectedRuns("run_review_old", "run_review_new");
+    const selectedReviewState = {
+      ...createInitialInkState(),
+      focus: "review",
+      selectedRunIndex: 1,
+      selectedRunId: "run_review_new"
+    };
+    const paletteOutput = renderToString(
+      React.createElement(TuiInkFrame, {
+        model,
+        state: { ...selectedReviewState, commandPaletteOpen: true },
+        terminal: { columns: 120, rows: 40 }
+      }),
+      { columns: 120 }
+    );
+    const instance = render(
+      React.createElement(TuiInkApp, {
+        model,
+        state: selectedReviewState,
+        terminal: { columns: 120, rows: 40 },
+        interactive: true,
+        recordReviewDecision: async (input) => {
+          decisions.push(input);
+          return { ok: true, message: "Review accepted.", model };
+        }
+      })
+    );
+
+    expect(paletteOutput).toContain("agent-hub runs show run_review_new");
+    expect(paletteOutput).not.toContain("agent-hub runs show run_review_old");
+    await waitForFrame(instance, "selected run_review_new");
+    expect(instance.lastFrame()).toContain("linked run_review_new");
+    expect(instance.lastFrame()).not.toContain("linked run_review_old");
+    instance.stdin.write("a");
+    await new Promise((resolve) => setTimeout(resolve, 25));
+
+    expect(decisions).toEqual([
+      expect.objectContaining({
+        runId: "run_review_new",
+        status: "accepted"
+      })
+    ]);
+    instance.unmount();
+  });
+
   it("keeps pending-review Work entries prompt-first", async () => {
     const decisions = [];
     const instance = render(
@@ -706,6 +753,34 @@ function modelWithActiveRun() {
         outputLines: ["Reading logout.ts", "Running tests"]
       }
     ]
+  };
+}
+
+function reviewModelWithSelectedRuns(reviewRunId, focusedRunId) {
+  const model = modelWithRuns([reviewRunId, focusedRunId]);
+  return {
+    ...model,
+    runs: model.runs.map((run) => ({
+      ...run,
+      commands: [
+        `agent-hub runs show ${run.id}`,
+        `agent-hub runs diff ${run.id} --stat`
+      ],
+      evidence: {
+        ...run.evidence,
+        linkedRunId: run.id
+      },
+      reviewDecision: { status: "pending" }
+    })),
+    review: {
+      ...baseModel.review,
+      selectedId: reviewRunId,
+      commands: model.runs.find((run) => run.id === reviewRunId)?.commands ?? [],
+      evidence: {
+        ...baseModel.review.evidence,
+        linkedRunId: reviewRunId
+      }
+    }
   };
 }
 

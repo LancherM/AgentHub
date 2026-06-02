@@ -288,10 +288,27 @@ export function selectedReviewRunId(
   if (pendingReviewRun) {
     return pendingReviewRun.id;
   }
-  if (model.review.kind === "run") {
-    return model.review.selectedId;
+  const focusedRun = state.focus === "review" && state.selectedRunId
+    ? selectedRun(model, state)
+    : undefined;
+  if (focusedRun) {
+    return focusedRun.id;
   }
-  return model.review.evidence.linkedRunId ?? selectedRun(model, state)?.id;
+  return defaultReviewRunId(model) ?? selectedRun(model, state)?.id;
+}
+
+export function selectedReviewRun(
+  model: TuiCurrentContextModel,
+  state: TuiInkState
+): TuiRunSummary | undefined {
+  const runId = selectedReviewRunId(model, state);
+  return runId ? model.runs.find((run) => run.id === runId) : undefined;
+}
+
+function defaultReviewRunId(model: TuiCurrentContextModel): string | undefined {
+  return model.review.kind === "run"
+    ? model.review.selectedId
+    : model.review.evidence.linkedRunId;
 }
 
 export function selectedPendingReviewRun(
@@ -324,7 +341,9 @@ export function commandHintForFocus(
     return selectedRun(model, state)?.commands[0] ?? "No run command is available.";
   }
   if (state.focus === "review") {
-    return model.review.commands[0] ?? "No review command is available.";
+    return selectedReviewRun(model, state)?.commands[0] ??
+      model.review.commands[0] ??
+      "No review command is available.";
   }
   if (state.focus === "tasks") {
     const task = selectedTask(model, state);

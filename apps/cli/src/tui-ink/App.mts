@@ -24,6 +24,7 @@ import {
   reduceInkState,
   roleListCommand,
   selectedReviewRunId,
+  selectedReviewRun,
   selectedRun,
   selectedTask,
   selectedTaskIndex,
@@ -723,18 +724,24 @@ function ReviewPane({
   state: TuiInkState;
   detail?: boolean;
 }): React.ReactElement {
-  const run = selectedRun(model, state);
+  const run = selectedReviewRun(model, state);
+  const useRunReview = run !== undefined && run.id !== model.review.selectedId;
+  const title = useRunReview
+    ? `${run.taskTitle ?? run.taskId} (${compactId(run.id)})`
+    : model.review.selectedId
+      ? `${model.review.title} (${compactId(model.review.selectedId)})`
+      : model.review.title;
+  const summary = useRunReview
+    ? run.evidence.resultSummary ?? `${run.agentKind} ${run.status}`
+    : model.review.summary;
+  const evidence = useRunReview ? run.evidence : model.review.evidence;
+  const commands = useRunReview ? run.commands : model.review.commands;
   return block(
-    line(
-      model.review.selectedId
-        ? `${model.review.title} (${compactId(model.review.selectedId)})`
-        : model.review.title,
-      { bold: true }
-    ),
-    line(model.review.summary),
+    line(title, { bold: true }),
+    line(summary),
     ...(run ? [line(`selected ${compactId(run.id)}  review ${run.reviewDecision.status}`)] : []),
-    ...evidenceItems(model.review.evidence).map((item) => line(item)),
-    ...(detail ? model.review.commands.slice(0, 5).map((command) => line(command, { dimColor: true })) : [])
+    ...evidenceItems(evidence).map((item) => line(item)),
+    ...(detail ? commands.slice(0, 5).map((command) => line(command, { dimColor: true })) : [])
   );
 }
 
@@ -924,8 +931,12 @@ function CommandPalette({
   state: TuiInkState;
 }): React.ReactElement {
   const run = selectedRun(model, state);
+  const reviewRun = state.focus === "review" ? selectedReviewRun(model, state) : undefined;
   const primaryCommand = commandHintForFocus(model, state);
   const roleCommand = roleListCommand(model);
+  const reviewCommands = reviewRun && reviewRun.id !== model.review.selectedId
+    ? []
+    : model.review.commands;
   return h(
     Pane,
     { title: "Command Palette" },
@@ -934,7 +945,7 @@ function CommandPalette({
     line(""),
     ...(roleCommand && roleCommand !== primaryCommand ? [line(roleCommand)] : []),
     ...(run ? run.commands.map((command) => line(command)) : [line("no run selected")]),
-    ...model.review.commands.map((command) => line(command)),
+    ...reviewCommands.map((command) => line(command)),
     ...model.memory.approvalCommands.map((command) => line(command))
   );
 }
