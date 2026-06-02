@@ -454,16 +454,19 @@ wrapping. The core TUI read model exposes derived elapsed and usage labels from
 persisted run timestamps and run-event metadata, and derives compact run
 stage/latest text from presentation-filtered events; it does not change event
 persistence, adapter execution, run status, or review semantics.
-Active-run boxes cover running runs only. They use a rounded fixed eight-line
-shape: title border, five output/progress lines, a progress-or-cursor footer,
-and bottom border. The renderer owns low-frequency spinner frame selection,
+Active-run boxes cover running runs only. They use rounded frames whose content
+area grows to fit wrapped visible output instead of truncating agent-facing
+lines; if no useful assistant or runtime activity is visible yet, the read model
+emits `agent thinking...`. The renderer owns low-frequency spinner frame selection,
 live elapsed calculation from the run start timestamp, best-effort percentage
 or `N/M` progress parsing, and transient completion/failure feedback. None of
 that state is persisted or sent back into adapters.
 They prefer structured assistant output, then fall back to recent adapter,
 stdout, and stderr events while filtering raw JSON protocol frames, setup
 lifecycle lines, internal agent protocol summaries, runtime warnings, Codex
-internal diagnostics, and skill activation noise. Verification, risk, diff, and
+internal diagnostics, and skill activation noise. The core read model preserves
+complete visible agent-output lines; the Ink renderer wraps long lines in the
+terminal surface. Verification, risk, diff, and
 review evidence stay out of active boxes. Role-backed run display is
 resolved in the core read model from linked RoleCalls, run/message role
 metadata, and task assignment metadata before falling back to adapter kind. The

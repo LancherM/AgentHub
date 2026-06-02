@@ -330,6 +330,107 @@ describe("TUI current-context read model", () => {
     expect(model.activeRuns[0]?.outputLines.join("\n")).not.toContain("codex_models_manager");
   });
 
+  it("uses a thinking placeholder until observable agent output exists", async () => {
+    const runtime = createCliRuntime({ storageMode: "memory" });
+    await runtime.projectRepository.create({
+      id: "project_thinking",
+      name: "Thinking",
+      rootPath: "/tmp/thinking",
+      createdAt: now,
+      updatedAt: now
+    });
+    await runtime.conversationThreadRepository.create({
+      id: "thread_thinking",
+      projectId: "project_thinking",
+      title: "Thinking",
+      createdAt: now,
+      updatedAt: now
+    });
+    await runtime.taskRepository.create({
+      id: "task_thinking",
+      projectId: "project_thinking",
+      title: "Wait for output",
+      metadata: { threadId: "thread_thinking" },
+      status: "running",
+      createdAt: now,
+      updatedAt: now
+    });
+    await runtime.taskRunRepository.create({
+      id: "run_thinking",
+      taskId: "task_thinking",
+      agentKind: "codex",
+      status: "running",
+      startedAt: now,
+      createdAt: now,
+      updatedAt: now
+    });
+
+    const model = await buildTuiCurrentContextModel(runtime, {
+      projectId: "project_thinking",
+      threadId: "thread_thinking"
+    });
+
+    expect(model.activeRuns[0]?.outputLines).toEqual(["agent thinking..."]);
+  });
+
+  it("keeps full active agent output lines for renderer wrapping", async () => {
+    const runtime = createCliRuntime({ storageMode: "memory" });
+    const longLine = `agent output ${"x".repeat(180)} complete`;
+    await runtime.projectRepository.create({
+      id: "project_long_output",
+      name: "Long Output",
+      rootPath: "/tmp/long-output",
+      createdAt: now,
+      updatedAt: now
+    });
+    await runtime.conversationThreadRepository.create({
+      id: "thread_long_output",
+      projectId: "project_long_output",
+      title: "Long Output",
+      createdAt: now,
+      updatedAt: now
+    });
+    await runtime.taskRepository.create({
+      id: "task_long_output",
+      projectId: "project_long_output",
+      title: "Keep long output",
+      metadata: { threadId: "thread_long_output" },
+      status: "running",
+      createdAt: now,
+      updatedAt: now
+    });
+    await runtime.taskRunRepository.create({
+      id: "run_long_output",
+      taskId: "task_long_output",
+      agentKind: "codex",
+      status: "running",
+      startedAt: now,
+      createdAt: now,
+      updatedAt: now
+    });
+    await runtime.runEventRepository.createMany([
+      event(
+        "event_long_output",
+        "run_long_output",
+        0,
+        "message",
+        `first line\n  ${longLine}`,
+        { assistantOutput: true }
+      )
+    ]);
+
+    const model = await buildTuiCurrentContextModel(runtime, {
+      projectId: "project_long_output",
+      threadId: "thread_long_output"
+    });
+
+    expect(model.activeRuns[0]?.outputLines).toEqual([
+      "first line",
+      `  ${longLine}`
+    ]);
+    expect(model.activeRuns[0]?.outputLines.join("\n")).not.toContain("...");
+  });
+
   it("adds elapsed and usage labels for terminal run conversation entries", async () => {
     const runtime = createCliRuntime({ storageMode: "memory" });
     await runtime.projectRepository.create({

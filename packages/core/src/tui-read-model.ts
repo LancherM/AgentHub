@@ -899,28 +899,25 @@ function recentAgentRunOutputLines(events: RunEvent[], run: TuiRunSummary): stri
   );
   const outputLines = outputTextLines(agentOutput);
   if (outputLines.length > 0) {
-    return outputLines.slice(-6);
+    return outputLines;
   }
   const activityLines = events
     .sort((left, right) => left.sequence - right.sequence)
     .flatMap(activeRunEventLines)
-    .map((line) => truncate(line, 120))
     .slice(-6);
   return activityLines.length > 0
     ? activityLines
-    : [`${run.agentKind} ${run.status}`, "waiting for observable output..."];
+    : ["agent thinking..."];
 }
 
 function outputTextLines(value: string): string[] {
-  return visibleTuiOutputLines(value)
-    .map((line) => truncate(line, 120));
+  return visibleTuiOutputLines(value);
 }
 
 function visibleTuiOutputLines(value: string): string[] {
   return value
     .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0 && !isTuiOutputNoiseLine(line));
+    .filter((line) => line.trim().length > 0 && !isTuiOutputNoiseLine(line.trim()));
 }
 
 function toAgentOutputEvent(event: RunEvent): {

@@ -75,12 +75,12 @@ delegations, completed or failed terminal run output, verification summaries,
 and risk summaries are folded into a chronological conversation flow. Role
 backed runs display the role handle from linked RoleCalls, run/message metadata,
 or task assignments before falling back to the adapter kind. Running runs appear
-as stable fixed-height active-run boxes with only the latest agent-facing output
-or observable runtime events plus the active cursor indicator. When an adapter
-has not emitted assistant text yet, the active box shows recent adapter, stdout,
-and stderr lines while filtering raw JSON protocol frames, setup lifecycle
-noise, internal agent protocol summaries, runtime warnings, Codex internal
-diagnostics, and skill activation noise. Runs awaiting local review with changed
+as active-run boxes with full agent-facing output lines preserved for renderer
+wrapping, falling back to observable runtime events plus the active cursor
+indicator. When an adapter has not emitted assistant text or useful runtime
+activity yet, the active box shows `agent thinking...` while filtering raw JSON
+protocol frames, setup lifecycle noise, internal agent protocol summaries,
+runtime warnings, Codex internal diagnostics, and skill activation noise. Runs awaiting local review with changed
 files leave the active box and render their completed output plus
 verification/risk summaries and a final `[V]iew` review hint. Runs with no
 changed files render as completed output without an awaiting-review prompt.
@@ -94,9 +94,10 @@ metadata, elapsed time, optional token/cost usage, and a timestamp. User
 messages stay plain with a timestamp. Conversation content
 keeps file paths underlined and blue with safe OSC 8 file links when the
 terminal supports them, shell-command lines bold, and fenced code blocks lightly
-highlighted for keywords, strings, and comments.
-Active run boxes use rounded fixed-height frames so the layout does not jump
-while output streams. Titles show the compact run identity, role/agent handle,
+highlighted for keywords, strings, and comments. Agent output content is not
+truncated; long lines wrap in the terminal surface.
+Active run boxes use rounded frames that grow to fit wrapped visible output.
+Titles show the compact run identity, role/agent handle,
 low-frequency braille spinner, running status, elapsed time, and live token
 usage when the run emits usage metadata. The footer keeps an active cursor when
 no reliable progress exists, or a best-effort progress bar when recent output
