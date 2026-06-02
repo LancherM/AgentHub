@@ -457,10 +457,11 @@ persistence, adapter execution, run status, or review semantics.
 Active-run boxes cover running runs only. They use rounded frames whose content
 area grows to fit wrapped visible output instead of truncating agent-facing
 lines; if no useful assistant or runtime activity is visible yet, the read model
-emits `agent thinking...`. The renderer owns low-frequency spinner frame selection,
-live elapsed calculation from the run start timestamp, best-effort percentage
-or `N/M` progress parsing, and transient completion/failure feedback. None of
-that state is persisted or sent back into adapters.
+emits `agent thinking...`. The renderer uses a static running marker, live
+elapsed calculation from the run start timestamp, and best-effort percentage or
+`N/M` progress parsing. Completion/failure visibility comes from the refreshed
+read model instead of short-lived renderer feedback timers. None of that state
+is persisted or sent back into adapters.
 They prefer structured assistant output, then fall back to recent adapter,
 stdout, and stderr events while filtering raw JSON protocol frames, setup
 lifecycle lines, internal agent protocol summaries, runtime warnings, Codex
@@ -499,19 +500,20 @@ and never mutates composer contents. Palette filtering is fuzzy over safe focus
 items and existing CLI command hints; `Enter` either changes TUI focus or copies
 a command hint into the composer for explicit user submission. It never invokes
 shell commands directly.
-Notifications, timeline, badge flash, and splash remain CLI renderer concerns.
+Notifications, timeline, and splash remain CLI renderer concerns.
 `/notify` toggles an in-memory flag for the current Ink session; when enabled,
 the renderer may write only terminal escape output (bell plus OSC 9) after a
 previously active run disappears from the active-run projection and its recorded
 start time is more than 30 seconds old. `/timeline` and empty-composer `l`
-render a compact chronological overlay from the same read model. Badge flash is
-derived from newly observed active runs or pending-review entries, and
-`--splash`/`--no-splash` only affect whether the renderer includes a
-non-blocking startup banner. In interactive mode the splash is removed from
-the frame after the initial paint, and unchanged read-model refreshes are
-discarded before `setModel` so the terminal avoids avoidable full-screen
-repaints. None of these states adds tables, settings, filesystem writes, shell
-execution, adapter calls, or run lifecycle mutations.
+render a compact chronological overlay from the same read model.
+`--splash`/`--no-splash` only affect whether the CLI prints a short prelude
+before starting the interactive Ink frame; the live frame does not mount a
+splash component and therefore does not repaint later just to remove it.
+Unchanged read-model refreshes are discarded before `setModel`, idle polling
+uses a slower cadence than active-run polling, and active-run markers do not
+advance from an internal animation timer. None of these states adds tables,
+settings, filesystem writes, shell execution, adapter calls, or run lifecycle
+mutations.
 The direct CLI entrypoint exits after command completion, so one-shot TUI smoke
 renders do not leave local SQLite helper processes holding the terminal open.
 For interactive launches, the CLI default IO includes `process.stdin`, and the
@@ -540,7 +542,9 @@ The Ink app never reads SQLite, git, shell, or filesystem directly. It receives
 boundary, wraps interactive submit/review callbacks in bounded UI timeouts, and
 uses a lightweight polling interval to reload the same read model for live-ish
 terminal updates. Polling is a renderer refresh of persisted local evidence; it
-does not add an event daemon, remote worker, or incremental orchestration path.
+uses a faster interval while runs are active and a slower interval while the
+workbench is idle, and does not add an event daemon, remote worker, or
+incremental orchestration path.
 Busy submit/review state remains local Ink state too: the renderer keeps
 keyboard navigation and composer editing active, but gates additional submit or
 review-decision writes until the in-flight callback finishes. Scrollable

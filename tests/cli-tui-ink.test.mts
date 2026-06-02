@@ -1,7 +1,7 @@
 import React from "../apps/cli/node_modules/react/index.js";
 import { renderToString } from "../apps/cli/node_modules/ink/build/index.js";
 import { render } from "../apps/cli/node_modules/ink-testing-library/build/index.js";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { TuiInkApp, TuiInkFrame } from "../apps/cli/src/tui-ink/App.mts";
 import {
   createInitialInkState,
@@ -637,23 +637,79 @@ describe("Ink TUI renderer", () => {
     expect(output).toContain("! TUI Project · @codex");
   });
 
-  it("hides the interactive startup splash after the first paint", async () => {
+  it("keeps interactive startup splash out of the live Ink frame", async () => {
     const instance = render(
       React.createElement(TuiInkApp, {
         model: baseModel,
         state: createInitialInkState(),
         terminal: { columns: 120, rows: 40 },
         interactive: true,
-        showSplash: true,
-        splashDurationMs: 5
+        showSplash: true
       })
     );
 
-    await waitForFrame(instance, "Agent Hub TUI");
-    await waitForCondition(() => !(instance.lastFrame() ?? "").includes("Agent Hub TUI"));
-
     expect(instance.lastFrame()).toContain("TUI Project");
+    expect(instance.lastFrame()).not.toContain("Agent Hub TUI");
     instance.unmount();
+  });
+
+  it("does not repaint active runs from an internal spinner timer", async () => {
+    vi.useFakeTimers();
+    const instance = render(
+      React.createElement(TuiInkApp, {
+        model: modelWithActiveRun(),
+        state: createInitialInkState(),
+        terminal: { columns: 120, rows: 40 },
+        interactive: true
+      })
+    );
+
+    const firstFrame = instance.lastFrame();
+    await vi.advanceTimersByTimeAsync(1_500);
+
+    expect(instance.lastFrame()).toBe(firstFrame);
+    instance.unmount();
+    vi.useRealTimers();
+  });
+
+  it("uses a slower idle polling cadence and keeps active polling responsive", async () => {
+    vi.useFakeTimers();
+    const idleLoadModel = vi.fn(async () => baseModel);
+    const idleInstance = render(
+      React.createElement(TuiInkApp, {
+        model: baseModel,
+        state: createInitialInkState(),
+        terminal: { columns: 120, rows: 40 },
+        interactive: true,
+        loadModel: idleLoadModel,
+        pollIntervalMs: 5,
+        idlePollIntervalMs: 50
+      })
+    );
+
+    await vi.advanceTimersByTimeAsync(10);
+    expect(idleLoadModel).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(40);
+    expect(idleLoadModel).toHaveBeenCalledTimes(1);
+    idleInstance.unmount();
+
+    const activeLoadModel = vi.fn(async () => modelWithActiveRun());
+    const activeInstance = render(
+      React.createElement(TuiInkApp, {
+        model: modelWithActiveRun(),
+        state: createInitialInkState(),
+        terminal: { columns: 120, rows: 40 },
+        interactive: true,
+        loadModel: activeLoadModel,
+        pollIntervalMs: 5,
+        idlePollIntervalMs: 50
+      })
+    );
+
+    await vi.advanceTimersByTimeAsync(5);
+    expect(activeLoadModel).toHaveBeenCalledTimes(1);
+    activeInstance.unmount();
+    vi.useRealTimers();
   });
 
   it("toggles local notifications and timeline without submitting prompts", async () => {
@@ -938,6 +994,7 @@ describe("Ink TUI renderer", () => {
         interactive: true,
         loadModel: async () => polledModel,
         pollIntervalMs: 5,
+        idlePollIntervalMs: 5,
         modelRefreshTimeoutMs: 50
       })
     );

@@ -42,13 +42,10 @@ import {
 const h = React.createElement;
 const defaultTuiOperationTimeoutMs = 10 * 60 * 1000;
 const defaultTuiPollIntervalMs = 2_500;
+const defaultIdleTuiPollIntervalMs = 10_000;
 const defaultTuiModelRefreshTimeoutMs = 30_000;
 const activeRunSpinnerFrames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-const activeRunAnimationIntervalMs = 1_000;
-const runFeedbackDurationMs = 200;
-const badgeFlashDurationMs = 350;
 const completionNotificationMinimumMs = 30_000;
-const startupSplashDurationMs = 700;
 
 type RunFeedbackKind = "success" | "failure";
 
@@ -99,8 +96,8 @@ export interface TuiInkAppProps extends TuiInkFrameProps {
   notify?: (message: string) => void;
   operationTimeoutMs?: number;
   pollIntervalMs?: number;
+  idlePollIntervalMs?: number;
   modelRefreshTimeoutMs?: number;
-  splashDurationMs?: number;
 }
 
 export function TuiInkApp(props: TuiInkAppProps): React.ReactElement {
@@ -109,7 +106,6 @@ export function TuiInkApp(props: TuiInkAppProps): React.ReactElement {
   const [state, setState] = useState(props.state ?? createInitialInkState());
   const [busy, setBusy] = useState(false);
   const [busyMessage, setBusyMessage] = useState<string | undefined>();
-  const [showStartupSplash, setShowStartupSplash] = useState(props.showSplash === true);
   const stateRef = useRef(state);
   const modelRef = useRef(model);
   const busyRef = useRef(busy);
@@ -136,29 +132,29 @@ export function TuiInkApp(props: TuiInkAppProps): React.ReactElement {
   useCompletionNotifications(model, state.notifyEnabled, props.notify);
 
   useEffect(() => {
-    if (!props.showSplash) {
-      setShowStartupSplash(false);
-      return undefined;
-    }
-    setShowStartupSplash(true);
-    const timeout = setTimeout(() => {
-      setShowStartupSplash(false);
-    }, props.splashDurationMs ?? startupSplashDurationMs);
-    return () => clearTimeout(timeout);
-  }, [props.showSplash, props.splashDurationMs]);
-
-  useEffect(() => {
     if (!props.interactive || !props.loadModel) {
-      return undefined;
-    }
-    const intervalMs = props.pollIntervalMs ?? defaultTuiPollIntervalMs;
-    if (intervalMs <= 0) {
       return undefined;
     }
     let disposed = false;
     let inFlight = false;
-    const interval = setInterval(() => {
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    const schedule = () => {
+      if (disposed) {
+        return;
+      }
+      const activeIntervalMs = props.pollIntervalMs ?? defaultTuiPollIntervalMs;
+      const idleIntervalMs = props.idlePollIntervalMs ?? defaultIdleTuiPollIntervalMs;
+      const intervalMs = modelRef.current.activeRuns.length > 0
+        ? activeIntervalMs
+        : idleIntervalMs;
+      if (intervalMs <= 0) {
+        return;
+      }
+      timeout = setTimeout(refresh, intervalMs);
+    };
+    const refresh = () => {
       if (inFlight || !props.loadModel) {
+        schedule();
         return;
       }
       inFlight = true;
@@ -182,13 +178,23 @@ export function TuiInkApp(props: TuiInkAppProps): React.ReactElement {
         })
         .finally(() => {
           inFlight = false;
+          schedule();
         });
-    }, intervalMs);
+    };
+    schedule();
     return () => {
       disposed = true;
-      clearInterval(interval);
+      if (timeout) {
+        clearTimeout(timeout);
+      }
     };
-  }, [modelRefreshTimeoutMs, props.interactive, props.loadModel, props.pollIntervalMs]);
+  }, [
+    modelRefreshTimeoutMs,
+    props.idlePollIntervalMs,
+    props.interactive,
+    props.loadModel,
+    props.pollIntervalMs
+  ]);
 
   const refreshModel = async (nextState: TuiInkState) => {
     if (!props.loadModel) {
@@ -743,7 +749,7 @@ export function TuiInkApp(props: TuiInkAppProps): React.ReactElement {
     model,
     state: busy ? { ...state, statusMessage: busyMessage ?? "Working..." } : state,
     terminal: props.terminal,
-    showSplash: showStartupSplash
+    showSplash: false
   });
 }
 
@@ -757,34 +763,21 @@ export function TuiInkFrame({
   showSplash = false
 }: TuiInkFrameProps): React.ReactElement {
   const width = terminal.columns;
-  const [animationTick, setAnimationTick] = useState(0);
-  useEffect(() => {
-    if (model.activeRuns.length === 0) {
-      return undefined;
-    }
-    const interval = setInterval(() => {
-      setAnimationTick((current) => current + 1);
-    }, activeRunAnimationIntervalMs);
-    return () => clearInterval(interval);
-  }, [model.activeRuns.length]);
-  const transientFeedbackByRunId = useTerminalRunFeedback(model);
   const effectiveFeedbackByRunId = {
-    ...transientFeedbackByRunId,
     ...providedFeedbackByRunId
   };
-  const badgeFlash = useBadgeFlash(model) || providedBadgeFlash;
   return h(
     Box,
     { flexDirection: "column", width },
     ...(showSplash ? [h(SplashPane, { key: "splash" })] : []),
-    h(HeaderBar, { model, state, terminal, badgeFlash }),
+    h(HeaderBar, { model, state, terminal, badgeFlash: providedBadgeFlash }),
     ...model.warnings.map((warning) => line(`! ${warning}`, { color: "yellow" })),
     ...(state.statusMessage ? [line(`Status: ${state.statusMessage}`, { color: "green" })] : []),
     h(MainView, {
       model,
       state,
       terminal,
-      animationTick: providedAnimationTick ?? animationTick,
+      animationTick: providedAnimationTick ?? 0,
       feedbackByRunId: effectiveFeedbackByRunId
     }),
     h(StatusBar, { model, state }),
@@ -885,67 +878,6 @@ function notificationMessageForEntry(entry: TuiConversationEntry): string {
   return `Agent Hub run ${entry.runId ? compactId(entry.runId) : entry.id} ${status}`;
 }
 
-function activePendingSignature(model: TuiCurrentContextModel): {
-  activeRunIds: Set<string>;
-  pendingReviewIds: Set<string>;
-} {
-  return {
-    activeRunIds: new Set(model.activeRuns.map((run) => run.runId)),
-    pendingReviewIds: new Set(
-      model.conversation
-        .filter((entry) => entry.type === "review_pending" && entry.runId)
-        .map((entry) => entry.runId as string)
-    )
-  };
-}
-
-function useTerminalRunFeedback(
-  model: TuiCurrentContextModel
-): Partial<Record<string, RunFeedbackKind>> {
-  const [feedbackByRunId, setFeedbackByRunId] = useState<Partial<Record<string, RunFeedbackKind>>>({});
-  const previousActiveRunIdsRef = useRef<Set<string>>(new Set(model.activeRuns.map((run) => run.runId)));
-  const timeoutRef = useRef<ReturnType<typeof setTimeout>[]>([]);
-
-  useEffect(() => {
-    const previousActiveRunIds = previousActiveRunIdsRef.current;
-    const currentActiveRunIds = new Set(model.activeRuns.map((run) => run.runId));
-    const endedRunIds = [...previousActiveRunIds].filter((runId) => !currentActiveRunIds.has(runId));
-    if (endedRunIds.length > 0) {
-      const nextFeedback: Partial<Record<string, RunFeedbackKind>> = {};
-      for (const runId of endedRunIds) {
-        const entry = model.conversation.find((item) => item.runId === runId);
-        if (entry?.type === "agent_failed") {
-          nextFeedback[runId] = "failure";
-        } else if (entry?.type === "agent_completed" || entry?.type === "review_pending") {
-          nextFeedback[runId] = "success";
-        }
-      }
-      if (Object.keys(nextFeedback).length > 0) {
-        setFeedbackByRunId((current) => ({ ...current, ...nextFeedback }));
-        const timeout = setTimeout(() => {
-          setFeedbackByRunId((current) => {
-            const updated = { ...current };
-            for (const runId of Object.keys(nextFeedback)) {
-              delete updated[runId];
-            }
-            return updated;
-          });
-        }, runFeedbackDurationMs);
-        timeoutRef.current.push(timeout);
-      }
-    }
-    previousActiveRunIdsRef.current = currentActiveRunIds;
-  }, [model.activeRuns, model.conversation]);
-
-  useEffect(() => () => {
-    for (const timeout of timeoutRef.current) {
-      clearTimeout(timeout);
-    }
-  }, []);
-
-  return feedbackByRunId;
-}
-
 function useCompletionNotifications(
   model: TuiCurrentContextModel,
   notifyEnabled: boolean,
@@ -975,39 +907,6 @@ function useCompletionNotifications(
     }
     previousActiveRunsRef.current = currentActiveRuns;
   }, [model, notify, notifyEnabled]);
-}
-
-function useBadgeFlash(model: TuiCurrentContextModel): boolean {
-  const [flash, setFlash] = useState(false);
-  const previousSignatureRef = useRef(activePendingSignature(model));
-  const timeoutRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-
-  useEffect(() => {
-    const previousSignature = previousSignatureRef.current;
-    const nextSignature = activePendingSignature(model);
-    const hasNewActive = [...nextSignature.activeRunIds]
-      .some((runId) => !previousSignature.activeRunIds.has(runId));
-    const hasNewPending = [...nextSignature.pendingReviewIds]
-      .some((runId) => !previousSignature.pendingReviewIds.has(runId));
-    if (hasNewActive || hasNewPending) {
-      setFlash(true);
-      if (timeoutRef.current) {
-        clearTimeout(timeoutRef.current);
-      }
-      timeoutRef.current = setTimeout(() => {
-        setFlash(false);
-      }, badgeFlashDurationMs);
-    }
-    previousSignatureRef.current = nextSignature;
-  }, [model]);
-
-  useEffect(() => () => {
-    if (timeoutRef.current) {
-      clearTimeout(timeoutRef.current);
-    }
-  }, []);
-
-  return flash;
 }
 
 function FocusTabs({ state }: { state: TuiInkState }): React.ReactElement {
