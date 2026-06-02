@@ -1,6 +1,6 @@
 # Architecture
 
-Last audited against `origin/main` at `1bf5455` on 2026-06-01.
+Last audited against `origin/main` at `8052f3d` on 2026-06-01.
 
 Agent Hub is a CLI-first local application built from shared TypeScript
 packages. The desktop app is an Electron shell over the same local services and
@@ -459,6 +459,9 @@ conversation or active-run output appears. Active-run selection and
 terminal-height list windows remain local Ink state, while selected runs,
 tasks, and RoleCalls continue to resolve through the existing read-model
 summaries.
+Review decision callbacks resolve the selected run through the Ink focus state
+before using the read-model review default, keeping audit writes tied to the run
+the Review pane displays as selected.
 The command hint helper falls back from an absent selected RoleCall to
 `agent-hub team roles list --project-id <project-id>`, the command palette
 includes the same role-list command beside run, review, and memory commands, and
@@ -467,7 +470,9 @@ Because the Ink renderer is a NodeNext composite TypeScript project that imports
 workspace package types, root validation runs its TUI check through
 `tsc -b apps/cli/tsconfig.tui-ink.json` so project references emit the required
 local declarations in clean CI checkouts without requiring prebuilt package
-`dist` directories.
+`dist` directories. Under Vitest, the CLI TUI loader may import the source
+`apps/cli/src/tui-ink/entry.mts` entrypoint when ignored CLI build output is
+absent; production CLI loading continues to use built `.mjs` entrypoints.
 The hand-rendered string layout has been removed from the TUI runtime path.
 The current renderer direction is documented in
 `docs/tui-ink-rewrite-roadmap.md`: keep the core read model and CLI action

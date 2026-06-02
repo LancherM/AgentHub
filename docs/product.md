@@ -1,6 +1,6 @@
 # Product
 
-Last audited against `origin/main` at `1bf5455` on 2026-06-01.
+Last audited against `origin/main` at `8052f3d` on 2026-06-01.
 
 Agent Hub is a local-first, CLI-first tool for orchestrating coding agents on a
 developer machine. It manages local projects, task briefs, context packs,
@@ -50,6 +50,9 @@ Review decisions can be recorded with `agent-hub reviews accept|reject` or the
 TUI review shortcuts. These decisions create local `review_decision` artifacts
 only; they do not apply files, alter run status, merge, push, approve memory,
 clean worktrees, or delete branches.
+The Ink TUI Review pane records decisions for the run currently focused in the
+Review surface, so keyboard shortcuts stay aligned with the run shown as
+selected instead of falling back to an older read-model default.
 The Memory focus mode is a governance indicator, not a browser: it shows
 proposed/approved/rejected counts, the approved-memory source, explicit
 approval/rejection command hints, selected skills, available skill identifiers,
@@ -122,7 +125,8 @@ directly.
 TUI validation is expected to work from a clean checkout: root typecheck and
 lint scripts check the Ink renderer through TypeScript build-mode references,
 allowing required local `dist` declarations to be generated during validation
-instead of assuming they already exist.
+instead of assuming they already exist. Focused Vitest TUI smoke tests can also
+load the source Ink entrypoint directly when ignored build output is absent.
 
 ## Core Concepts
 

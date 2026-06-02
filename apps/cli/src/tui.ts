@@ -431,6 +431,7 @@ async function loadInkTuiEntry(): Promise<InkTuiEntry> {
     specifier: string
   ) => Promise<unknown>;
   const entryPath = [
+    ...(process.env.VITEST ? [path.join(__dirname, "tui-ink", "entry.mts")] : []),
     path.join(__dirname, "tui-ink", "entry.mjs"),
     path.resolve(__dirname, "..", "dist", "tui-ink", "entry.mjs"),
     path.resolve(process.cwd(), "apps", "cli", "dist", "tui-ink", "entry.mjs")
