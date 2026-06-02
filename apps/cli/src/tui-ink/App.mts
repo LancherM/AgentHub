@@ -225,6 +225,10 @@ export function TuiInkApp(props: TuiInkAppProps): React.ReactElement {
     setState(nextState);
   };
 
+  const updateStateNow = (updater: (current: TuiInkState) => TuiInkState) => {
+    setStateNow(updater(stateRef.current));
+  };
+
   const showBusyInputMessage = () => {
     setState((current) => ({
       ...current,
@@ -256,6 +260,9 @@ export function TuiInkApp(props: TuiInkAppProps): React.ReactElement {
         focus: "team",
         composer: "",
         composerCursorPosition: 0,
+        composerHistoryIndex: undefined,
+        composerHistoryDraft: "",
+        agentCompletionIndex: 0,
         commandPaletteOpen: false,
         statusMessage: "Team roles shown."
       });
@@ -265,7 +272,10 @@ export function TuiInkApp(props: TuiInkAppProps): React.ReactElement {
       setStateNow(openSearchState({
         ...currentState,
         composer: "",
-        composerCursorPosition: 0
+        composerCursorPosition: 0,
+        composerHistoryIndex: undefined,
+        composerHistoryDraft: "",
+        agentCompletionIndex: 0
       }));
       return true;
     }
@@ -277,6 +287,9 @@ export function TuiInkApp(props: TuiInkAppProps): React.ReactElement {
         commandPaletteOpen: false,
         composer: "",
         composerCursorPosition: 0,
+        composerHistoryIndex: undefined,
+        composerHistoryDraft: "",
+        agentCompletionIndex: 0,
         statusMessage: "Timeline shown."
       });
       return true;
@@ -287,6 +300,9 @@ export function TuiInkApp(props: TuiInkAppProps): React.ReactElement {
         notifyEnabled: !currentState.notifyEnabled,
         composer: "",
         composerCursorPosition: 0,
+        composerHistoryIndex: undefined,
+        composerHistoryDraft: "",
+        agentCompletionIndex: 0,
         statusMessage: currentState.notifyEnabled
           ? "Completion notifications disabled."
           : "Completion notifications enabled."
@@ -332,6 +348,10 @@ export function TuiInkApp(props: TuiInkAppProps): React.ReactElement {
       ...currentState,
       composer: "",
       composerCursorPosition: 0,
+      composerHistory: appendComposerHistory(currentState.composerHistory, prompt),
+      composerHistoryIndex: undefined,
+      composerHistoryDraft: "",
+      agentCompletionIndex: 0,
       statusMessage: busyLabel
     };
     setStateNow(submittingState);
@@ -572,6 +592,17 @@ export function TuiInkApp(props: TuiInkAppProps): React.ReactElement {
         setStateNow(openSearchState(currentState));
         return;
       }
+      const activeCompletion = agentCompletionForState(modelRef.current, currentState);
+      if (activeCompletion && (key.tab || input === "\t")) {
+        updateStateNow((current) => acceptAgentCompletion(modelRef.current, current));
+        return;
+      }
+      if (activeCompletion && (isUpInput(input, key) || isDownInput(input, key))) {
+        updateStateNow((current) =>
+          moveAgentCompletionSelection(modelRef.current, current, isDownInput(input, key) ? 1 : -1)
+        );
+        return;
+      }
       const suggestion = suggestionForInput(input, modelRef.current, currentState);
       if (suggestion) {
         if (isBusy) {
@@ -581,11 +612,11 @@ export function TuiInkApp(props: TuiInkAppProps): React.ReactElement {
         void submitSuggestion(suggestion);
         return;
       }
-      if (input === "c" && currentState.focus === "work" && currentState.composer.length === 0) {
+      if (input === "C" && currentState.focus === "work" && currentState.composer.length === 0) {
         applyKey("continue_loop");
         return;
       }
-      if (input === "l" && currentState.composer.length === 0) {
+      if (input === "L" && currentState.composer.length === 0) {
         applyKey("toggle_timeline");
         return;
       }
@@ -595,6 +626,13 @@ export function TuiInkApp(props: TuiInkAppProps): React.ReactElement {
       }
       if (input === "s" && currentState.focus === "review" && currentState.composer.length === 0) {
         applyKey("toggle_compare");
+        return;
+      }
+      const wantsNewline =
+        (key.ctrl && (input === "o" || input === "O")) ||
+        (key.return && (key.shift || key.meta));
+      if (wantsNewline) {
+        updateStateNow((current) => insertComposerText(current, "\n"));
         return;
       }
       const wantsSubmit =
@@ -613,39 +651,43 @@ export function TuiInkApp(props: TuiInkAppProps): React.ReactElement {
         void submitComposer();
         return;
       }
-      if (key.ctrl && (input === "j" || input === "J")) {
-        if (isBusy) {
-          showBusyInputMessage();
-          return;
-        }
-        void submitComposer();
-        return;
-      }
       if (key.ctrl && (input === "a" || input === "A")) {
-        setState((current) => ({
+        updateStateNow((current) => ({
           ...current,
           composerCursorPosition: 0
         }));
         return;
       }
       if (key.ctrl && (input === "e" || input === "E")) {
-        setState((current) => ({
+        updateStateNow((current) => ({
           ...current,
           composerCursorPosition: current.composer.length
         }));
         return;
       }
       if (key.ctrl && (input === "u" || input === "U")) {
-        setState((current) => ({
+        updateStateNow((current) => ({
           ...current,
           composer: "",
           composerCursorPosition: 0,
+          composerHistoryIndex: undefined,
+          composerHistoryDraft: "",
+          agentCompletionIndex: 0,
           statusMessage: "Composer cleared."
         }));
         return;
       }
+      if (
+        (isUpInput(input, key) || isDownInput(input, key)) &&
+        (currentState.composer.length > 0 ||
+          currentState.composerHistoryIndex !== undefined ||
+          (currentState.focus === "work" && currentState.composerHistory.length > 0))
+      ) {
+        updateStateNow((current) => moveComposerHistory(current, isDownInput(input, key) ? 1 : -1));
+        return;
+      }
       if (key.ctrl && (input === "d" || input === "D")) {
-        setState(deleteComposerCharacterAfterCursor);
+        updateStateNow(deleteComposerCharacterAfterCursor);
         return;
       }
       if ((input === "x" || input === "q") && currentState.composer.length === 0) {
@@ -681,48 +723,51 @@ export function TuiInkApp(props: TuiInkAppProps): React.ReactElement {
         return;
       }
       if (key.escape && currentState.composer.length > 0) {
-        setState((current) => ({
+        updateStateNow((current) => ({
           ...current,
           composer: "",
           composerCursorPosition: 0,
+          composerHistoryIndex: undefined,
+          composerHistoryDraft: "",
+          agentCompletionIndex: 0,
           statusMessage: "Composer cleared."
         }));
         return;
       }
       if (key.leftArrow && currentState.composer.length > 0) {
-        setState((current) => ({
+        updateStateNow((current) => ({
           ...current,
           composerCursorPosition: Math.max(0, current.composerCursorPosition - 1)
         }));
         return;
       }
       if (key.rightArrow && currentState.composer.length > 0) {
-        setState((current) => ({
+        updateStateNow((current) => ({
           ...current,
           composerCursorPosition: Math.min(current.composer.length, current.composerCursorPosition + 1)
         }));
         return;
       }
       if (key.home && currentState.composer.length > 0) {
-        setState((current) => ({
+        updateStateNow((current) => ({
           ...current,
           composerCursorPosition: 0
         }));
         return;
       }
       if (key.end && currentState.composer.length > 0) {
-        setState((current) => ({
+        updateStateNow((current) => ({
           ...current,
           composerCursorPosition: current.composer.length
         }));
         return;
       }
       if (key.backspace) {
-        setState(deleteComposerCharacterBeforeCursor);
+        updateStateNow(deleteComposerCharacterBeforeCursor);
         return;
       }
       if (key.delete) {
-        setState(deleteComposerCharacterAfterCursor);
+        updateStateNow(deleteComposerCharacterAfterCursor);
         return;
       }
       const navigationMapped = currentState.composer.length === 0
@@ -733,7 +778,7 @@ export function TuiInkApp(props: TuiInkAppProps): React.ReactElement {
         return;
       }
       if (isPrintableInput(input, key)) {
-        setState((current) => insertComposerText(current, input));
+        updateStateNow((current) => insertComposerText(current, input));
         return;
       }
       const mapped = keyToAction(input, key, currentState.focus);
@@ -780,9 +825,9 @@ export function TuiInkFrame({
       animationTick: providedAnimationTick ?? 0,
       feedbackByRunId: effectiveFeedbackByRunId
     }),
-    h(StatusBar, { model, state }),
     h(Composer, { model, state }),
-    h(FocusTabs, { state })
+    h(FocusTabs, { state }),
+    h(StatusBar, { state })
   );
 }
 
@@ -1044,7 +1089,11 @@ function ConversationFlow({
   const renderedLines = conversationRenderItems(model.conversation).flatMap((item) =>
     item.kind === "review_group"
       ? [reviewPendingGroupLine(item.count)]
-      : conversationEntryLines(item.entry, feedbackByRunId, showSuggestions)
+      : item.kind === "time_anchor"
+        ? [timeAnchorLine(item.label)]
+        : item.kind === "separator"
+          ? [conversationSeparatorLine()]
+          : conversationEntryLines(item.entry, feedbackByRunId, showSuggestions)
   );
   const maxOffset = Math.max(0, renderedLines.length - visibleLines);
   const offsetFromBottom = Math.min(state.conversationScrollOffset, maxOffset);
@@ -1057,14 +1106,19 @@ function ConversationFlow({
 
 type ConversationRenderItem =
   | { kind: "entry"; entry: TuiConversationEntry }
-  | { kind: "review_group"; count: number };
+  | { kind: "review_group"; count: number }
+  | { kind: "separator" }
+  | { kind: "time_anchor"; label: string };
 
 function conversationRenderItems(entries: TuiConversationEntry[]): ConversationRenderItem[] {
   const items: ConversationRenderItem[] = [];
+  let previousEntry: TuiConversationEntry | undefined;
   for (let index = 0; index < entries.length; index += 1) {
     const entry = entries[index];
+    appendConversationBoundary(items, previousEntry, entry);
     if (entry.type !== "review_pending") {
       items.push({ kind: "entry", entry });
+      previousEntry = entry;
       continue;
     }
     const group: TuiConversationEntry[] = [];
@@ -1078,8 +1132,45 @@ function conversationRenderItems(entries: TuiConversationEntry[]): ConversationR
     } else {
       items.push(...group.map((value) => ({ kind: "entry" as const, entry: value })));
     }
+    previousEntry = group.at(-1) ?? entry;
   }
   return items;
+}
+
+function appendConversationBoundary(
+  items: ConversationRenderItem[],
+  previousEntry: TuiConversationEntry | undefined,
+  entry: TuiConversationEntry
+): void {
+  if (!previousEntry) {
+    return;
+  }
+  items.push({ kind: "separator" });
+  const label = conversationGapLabel(previousEntry.timestamp, entry.timestamp);
+  if (label) {
+    items.push({ kind: "time_anchor", label });
+  }
+}
+
+function conversationSeparatorLine(): React.ReactElement {
+  return line("  " + "─".repeat(28), { dimColor: true });
+}
+
+function timeAnchorLine(label: string): React.ReactElement {
+  return line(`  ── ${label} ──`, { dimColor: true });
+}
+
+function conversationGapLabel(previousTimestamp: string, timestamp: string): string | undefined {
+  const previous = Date.parse(previousTimestamp);
+  const current = Date.parse(timestamp);
+  if (!Number.isFinite(previous) || !Number.isFinite(current)) {
+    return undefined;
+  }
+  const deltaMs = current - previous;
+  if (deltaMs < 5 * 60 * 1000) {
+    return undefined;
+  }
+  return `${formatDuration(deltaMs)} later`;
 }
 
 function reviewPendingGroupLine(count: number): React.ReactElement {
@@ -1234,24 +1325,48 @@ function inlineDiffLines(
   }
   if (diff.mode === "summary") {
     return [
-      conversationRichLine(diff.summary, {
+      conversationRichLine(`╭ diff ${diff.summary}`, {
         prefix,
         agent: true,
         tone: "cyan",
-        dimColor: true
+        dimColor: true,
+        key: `${keyPrefix}-diff-card-top`
+      }),
+      conversationRichLine("╰ review details available in View", {
+        prefix,
+        agent: true,
+        tone: "cyan",
+        dimColor: true,
+        key: `${keyPrefix}-diff-card-bottom`
       })
     ];
   }
-  return diff.lines.map((lineItem, index) =>
-    conversationRichLine(lineItem.text, {
+  return [
+    conversationRichLine(`╭ diff ${diff.summary}`, {
       prefix,
       agent: true,
       tone: "cyan",
-      color: diffLineColor(lineItem.kind),
-      dimColor: lineItem.kind === "file",
-      key: `${keyPrefix}-diff-${index}`
+      dimColor: true,
+      key: `${keyPrefix}-diff-card-top`
+    }),
+    ...diff.lines.map((lineItem, index) =>
+      conversationRichLine(`│ ${lineItem.text}`, {
+        prefix,
+        agent: true,
+        tone: "cyan",
+        color: diffLineColor(lineItem.kind),
+        dimColor: lineItem.kind === "file",
+        key: `${keyPrefix}-diff-${index}`
+      })
+    ),
+    conversationRichLine("╰ end diff", {
+      prefix,
+      agent: true,
+      tone: "cyan",
+      dimColor: true,
+      key: `${keyPrefix}-diff-card-bottom`
     })
-  );
+  ];
 }
 
 function diffLineColor(kind: TuiInlineDiffSummary["lines"][number]["kind"]): string | undefined {
@@ -1525,7 +1640,8 @@ function RunsPane({
   return block(
     ...visibleRuns.map((run) =>
       line(runLine(run, run.id === activeRun?.id), {
-        color: run.id === activeRun?.id ? "green" : undefined
+        color: run.id === activeRun?.id ? "green" : undefined,
+        inverse: run.id === activeRun?.id
       })
     ),
     ...(detail && activeRun
@@ -1579,7 +1695,11 @@ function ReviewPane({
     ...(state.reviewCompareMode && compareRuns.length >= 2
       ? [
           line("split compare (read-only)", { bold: true }),
-          ...compareRuns.map((candidate) => line(runLine(candidate, candidate.id === run?.id)))
+          ...compareRuns.map((candidate) =>
+            line(runLine(candidate, candidate.id === run?.id), {
+              inverse: candidate.id === run?.id
+            })
+          )
         ]
       : []),
     ...(detail ? model.review.commands.slice(0, 5).map((command) => line(command, { dimColor: true })) : [])
@@ -1620,8 +1740,8 @@ function RoleCallsPane({
       const indent = "  ".repeat(node.depth);
       const run = node.linkedRunId ? ` ${compactId(node.linkedRunId)}` : "";
       return line(
-        `${selected ? ">" : " "} ${indent}@${node.callerRole} -> @${node.calleeRole} [${node.statusLabel}]${run} ${truncateText(node.task, 58)}`,
-        { color: selected ? "green" : undefined }
+        `${selected ? "▌" : " "} ${indent}@${node.callerRole} -> @${node.calleeRole} [${node.statusLabel}]${run} ${truncateText(node.task, 58)}`,
+        { color: selected ? "green" : undefined, inverse: selected }
       );
     })
   );
@@ -1646,9 +1766,12 @@ function TasksPane({
   return h(
     Pane,
     { title: `Tasks ${model.tasks.length}` },
-    ...model.tasks.slice(offset, offset + windowSize).map((item, index) =>
-      line(`${offset + index === selectedIndex ? ">" : " "} ${item.id} ${item.status} ${truncateText(item.title, 72)}${item.nextAction ? ` next ${item.nextAction}` : ""}`)
-    ),
+    ...model.tasks.slice(offset, offset + windowSize).map((item, index) => {
+      const selected = offset + index === selectedIndex;
+      return line(`${selected ? "▌" : " "} ${item.id} ${item.status} ${truncateText(item.title, 72)}${item.nextAction ? ` next ${item.nextAction}` : ""}`, {
+        inverse: selected
+      });
+    }),
     ...(task
       ? [
           line(""),
@@ -1794,7 +1917,7 @@ function TimelinePane({
     Pane,
     { title: "Timeline" },
     line(
-      `${state.notifyEnabled ? "notify on" : "notify off"}  l close  /notify toggle  /timeline open`,
+      `${state.notifyEnabled ? "notify on" : "notify off"}  L close  /notify toggle  /timeline open`,
       { dimColor: true }
     ),
     ...(items.length > 0
@@ -1906,7 +2029,7 @@ function HelpPane(): React.ReactElement {
     Pane,
     { title: "Help" },
     line("tab/shift-tab focus   W/R/V/G/T/M/E switch tabs   up/down or k/j move"),
-    line(": commands   /team roles   /timeline or l timeline   /notify completion bell"),
+    line(": commands   /team roles   /timeline or L timeline   /notify completion bell"),
     line("a accept review   R reject in Review"),
     line("enter submit   esc clear   arrows/home/end edit composer   ctrl+u clear   ? help")
   );
@@ -2049,35 +2172,148 @@ function fuzzyScore(value: string, query: string): number {
 
 function Composer({ model, state }: { model: TuiCurrentContextModel; state: TuiInkState }): React.ReactElement {
   const agent = model.context.selectedAgent ? `@${model.context.selectedAgent}` : "@agent";
-  const cursor = boundedComposerCursor(state);
-  const before = state.composer.slice(0, cursor);
-  const cursorCharacter = state.composer[cursor] ?? " ";
-  const after = state.composer.slice(cursor + (cursor < state.composer.length ? 1 : 0));
+  const completion = agentCompletionForState(model, state);
   return h(
     Box,
-    { flexDirection: "row" },
-    h(Text, null, "> "),
-    state.composer
-      ? h(React.Fragment, null,
-          h(Text, { color: "green" }, before),
-          h(Text, { color: "green", inverse: true }, cursorCharacter),
-          h(Text, { color: "green" }, after)
-        )
-      : h(Text, { dimColor: true }, `${agent} prompt`)
+    { flexDirection: "column" },
+    line(composerPreviewLine(model, state), { dimColor: true }),
+    ...(completion ? [agentCompletionLine(completion)] : []),
+    ...(state.composer
+      ? composerInputLines(state)
+      : [
+          h(
+            Box,
+            { flexDirection: "row" },
+            h(Text, null, "> "),
+            h(Text, { dimColor: true }, `${agent} prompt`)
+          )
+        ])
   );
 }
 
-function StatusBar({ model, state }: { model: TuiCurrentContextModel; state: TuiInkState }): React.ReactElement {
-  const hints = state.composer
-    ? "enter submit | arrows edit | ctrl+a/e home/end | ctrl+u clear | tab focus | esc clear | ctrl+c exit"
-    : state.focus === "review"
-      ? "tab focus | : palette | a accept | R reject | ? help | x exit"
-      : "tab focus | W/R/V/G/T/M/E tabs | l timeline | : palette | ? help | x exit";
-  const localState = `${state.notifyEnabled ? "notify on" : "notify off"}${state.timelineOpen ? " | timeline" : ""}`;
-  return line(
-    `${hints} | ${localState} | ${commandHintForFocus(model, state)}`,
-    { dimColor: true }
+function StatusBar({ state }: { state: TuiInkState }): React.ReactElement {
+  const hints = contextualShortcutHint(state);
+  const localState = [
+    state.notifyEnabled ? "notify on" : "notify off",
+    state.timelineOpen ? "timeline" : undefined
+  ].filter(Boolean).join("  ");
+  return line(`${hints}${localState ? `  ${localState}` : ""}`, { dimColor: true });
+}
+
+interface AgentCompletion {
+  tokenStart: number;
+  tokenEnd: number;
+  query: string;
+  options: string[];
+  selectedIndex: number;
+  selectedOption: string;
+}
+
+function composerPreviewLine(model: TuiCurrentContextModel, state: TuiInkState): string {
+  const target = composerTarget(model, state);
+  const thread = model.context.threadTitle
+    ? `${model.context.threadTitle}${model.context.roomHandle ? ` (#${model.context.roomHandle})` : ""}`
+    : model.context.threadId ?? (model.context.roomHandle ? `#${model.context.roomHandle}` : "current");
+  return `send ${target}  thread ${thread}  mode ${model.context.contextMode}`;
+}
+
+function composerTarget(model: TuiCurrentContextModel, state: TuiInkState): string {
+  const options = new Set(agentCompletionOptions(model));
+  const match = /@([A-Za-z0-9_-]+)/.exec(state.composer);
+  if (match && options.has(match[1])) {
+    return `@${match[1]}`;
+  }
+  return model.context.selectedAgent ? `@${model.context.selectedAgent}` : "@agent";
+}
+
+function agentCompletionLine(completion: AgentCompletion): React.ReactElement {
+  return h(
+    Text,
+    { wrap: "truncate" },
+    h(Text, { dimColor: true }, "agents "),
+    ...completion.options.flatMap((option, index) => [
+      h(
+        Text,
+        {
+          key: `agent-${option}`,
+          inverse: index === completion.selectedIndex,
+          color: index === completion.selectedIndex ? "black" : "cyan"
+        },
+        `@${option}`
+      ),
+      " "
+    ])
   );
+}
+
+function composerInputLines(state: TuiInkState): React.ReactElement[] {
+  const cursor = composerCursorLine(state);
+  const lines = state.composer.split("\n");
+  return lines.map((value, index) => {
+    const isCursorLine = index === cursor.line;
+    const prefix = index === 0 ? "> " : "  ";
+    if (!isCursorLine) {
+      return h(
+        Box,
+        { key: `composer-${index}`, flexDirection: "row" },
+        h(Text, null, prefix),
+        h(Text, { color: "green" }, value.length > 0 ? value : " ")
+      );
+    }
+    const before = value.slice(0, cursor.column);
+    const cursorCharacter = value[cursor.column] ?? " ";
+    const after = value.slice(cursor.column + (cursor.column < value.length ? 1 : 0));
+    return h(
+      Box,
+      { key: `composer-${index}`, flexDirection: "row" },
+      h(Text, null, prefix),
+      h(Text, { color: "green" }, before),
+      h(Text, { color: "green", inverse: true }, cursorCharacter),
+      h(Text, { color: "green" }, after)
+    );
+  });
+}
+
+function composerCursorLine(state: TuiInkState): { line: number; column: number } {
+  let remaining = boundedComposerCursor(state);
+  const lines = state.composer.split("\n");
+  for (let index = 0; index < lines.length; index += 1) {
+    const value = lines[index] ?? "";
+    if (remaining <= value.length) {
+      return { line: index, column: remaining };
+    }
+    remaining -= value.length + 1;
+  }
+  const lastIndex = Math.max(0, lines.length - 1);
+  return { line: lastIndex, column: lines[lastIndex]?.length ?? 0 };
+}
+
+function contextualShortcutHint(state: TuiInkState): string {
+  if (state.composer.length > 0) {
+    return "enter submit  ctrl+o newline  ↑↓ history  tab @complete/focus  ctrl+u clear  esc clear  ctrl+c exit";
+  }
+  if (state.focus === "runs") {
+    return "↑↓ select  enter detail  V review  p command  esc back  x exit";
+  }
+  if (state.focus === "review") {
+    return "↑↓ select  enter/space diff  a accept  R reject  s compare  esc back";
+  }
+  if (state.focus === "graph") {
+    return "↑↓ select  ← collapse  → expand  h hide done  p command  esc back";
+  }
+  if (state.focus === "tasks") {
+    return "↑↓ select  enter detail  p command  esc back";
+  }
+  if (state.focus === "memory") {
+    return "s skills  p command  : palette  esc back";
+  }
+  if (state.focus === "team") {
+    return "E team  p command  : palette  esc back";
+  }
+  if (state.focus === "help") {
+    return "W work  tab focus  esc back  x exit";
+  }
+  return "↑↓ scroll/history  type prompt  @ agents  C continue  L timeline  : palette  ? help  x exit";
 }
 
 function Pane({
@@ -2365,7 +2601,7 @@ function keyToAction(input: string, key: Key, focus: string): TuiInkKey | undefi
   if (input === "h") {
     return "hide_done";
   }
-  if (input === "c") {
+  if (input === "C") {
     return "continue_loop";
   }
   if (input === "p") {
@@ -2421,12 +2657,23 @@ function isPrintableInput(input: string, key: Key): boolean {
   );
 }
 
+function isUpInput(input: string, key: Key): boolean {
+  return key.upArrow || input === "\u001B[A";
+}
+
+function isDownInput(input: string, key: Key): boolean {
+  return key.downArrow || input === "\u001B[B";
+}
+
 function insertComposerText(state: TuiInkState, value: string): TuiInkState {
   const cursor = boundedComposerCursor(state);
   return {
     ...state,
     composer: `${state.composer.slice(0, cursor)}${value}${state.composer.slice(cursor)}`,
-    composerCursorPosition: cursor + value.length
+    composerCursorPosition: cursor + value.length,
+    composerHistoryIndex: undefined,
+    composerHistoryDraft: "",
+    agentCompletionIndex: 0
   };
 }
 
@@ -2438,7 +2685,10 @@ function deleteComposerCharacterBeforeCursor(state: TuiInkState): TuiInkState {
   return {
     ...state,
     composer: `${state.composer.slice(0, cursor - 1)}${state.composer.slice(cursor)}`,
-    composerCursorPosition: cursor - 1
+    composerCursorPosition: cursor - 1,
+    composerHistoryIndex: undefined,
+    composerHistoryDraft: "",
+    agentCompletionIndex: 0
   };
 }
 
@@ -2450,12 +2700,199 @@ function deleteComposerCharacterAfterCursor(state: TuiInkState): TuiInkState {
   return {
     ...state,
     composer: `${state.composer.slice(0, cursor)}${state.composer.slice(cursor + 1)}`,
-    composerCursorPosition: cursor
+    composerCursorPosition: cursor,
+    composerHistoryIndex: undefined,
+    composerHistoryDraft: "",
+    agentCompletionIndex: 0
   };
 }
 
 function boundedComposerCursor(state: TuiInkState): number {
   return Math.min(Math.max(state.composerCursorPosition, 0), state.composer.length);
+}
+
+function appendComposerHistory(history: string[], prompt: string): string[] {
+  const trimmed = prompt.trim();
+  if (!trimmed) {
+    return history;
+  }
+  const next = history.at(-1) === trimmed ? history : [...history, trimmed];
+  return next.slice(Math.max(0, next.length - 50));
+}
+
+function moveComposerHistory(state: TuiInkState, delta: 1 | -1): TuiInkState {
+  if (state.composerHistory.length === 0) {
+    return {
+      ...state,
+      statusMessage: "No composer history yet."
+    };
+  }
+  if (delta < 0) {
+    const nextIndex = state.composerHistoryIndex === undefined
+      ? state.composerHistory.length - 1
+      : Math.max(0, state.composerHistoryIndex - 1);
+    const draft = state.composerHistoryIndex === undefined
+      ? state.composer
+      : state.composerHistoryDraft;
+    const prompt = state.composerHistory[nextIndex] ?? "";
+    return {
+      ...state,
+      composer: prompt,
+      composerCursorPosition: prompt.length,
+      composerHistoryIndex: nextIndex,
+      composerHistoryDraft: draft,
+      agentCompletionIndex: 0,
+      statusMessage: `History ${nextIndex + 1}/${state.composerHistory.length}.`
+    };
+  }
+  if (state.composerHistoryIndex === undefined) {
+    return state;
+  }
+  if (state.composerHistoryIndex >= state.composerHistory.length - 1) {
+    const prompt = state.composerHistoryDraft;
+    return {
+      ...state,
+      composer: prompt,
+      composerCursorPosition: prompt.length,
+      composerHistoryIndex: undefined,
+      composerHistoryDraft: "",
+      agentCompletionIndex: 0,
+      statusMessage: "Draft restored."
+    };
+  }
+  const nextIndex = state.composerHistoryIndex + 1;
+  const prompt = state.composerHistory[nextIndex] ?? "";
+  return {
+    ...state,
+    composer: prompt,
+    composerCursorPosition: prompt.length,
+    composerHistoryIndex: nextIndex,
+    agentCompletionIndex: 0,
+    statusMessage: `History ${nextIndex + 1}/${state.composerHistory.length}.`
+  };
+}
+
+function agentCompletionForState(
+  model: TuiCurrentContextModel,
+  state: TuiInkState
+): AgentCompletion | undefined {
+  const token = activeAgentToken(state);
+  if (!token) {
+    return undefined;
+  }
+  const query = token.value.slice(1).toLowerCase();
+  const options = agentCompletionOptions(model)
+    .filter((option) => {
+      const normalized = option.toLowerCase();
+      return query.length === 0 || normalized.startsWith(query) || normalized.includes(query);
+    })
+    .sort((left, right) => {
+      if (query.length === 0) {
+        return 0;
+      }
+      const leftStarts = left.toLowerCase().startsWith(query);
+      const rightStarts = right.toLowerCase().startsWith(query);
+      return Number(rightStarts) - Number(leftStarts);
+    });
+  if (options.length === 0) {
+    return undefined;
+  }
+  const selectedIndex = Math.min(Math.max(state.agentCompletionIndex, 0), options.length - 1);
+  return {
+    tokenStart: token.start,
+    tokenEnd: token.end,
+    query,
+    options,
+    selectedIndex,
+    selectedOption: options[selectedIndex] ?? options[0]
+  };
+}
+
+function activeAgentToken(state: TuiInkState): { start: number; end: number; value: string } | undefined {
+  const cursor = boundedComposerCursor(state);
+  const beforeCursor = state.composer.slice(0, cursor);
+  const start = Math.max(
+    beforeCursor.lastIndexOf(" "),
+    beforeCursor.lastIndexOf("\n"),
+    beforeCursor.lastIndexOf("\t")
+  ) + 1;
+  const value = beforeCursor.slice(start);
+  if (!value.startsWith("@")) {
+    return undefined;
+  }
+  const afterCursor = state.composer.slice(cursor);
+  const nextBoundary = afterCursor.search(/\s/);
+  const end = nextBoundary < 0 ? state.composer.length : cursor + nextBoundary;
+  return {
+    start,
+    end,
+    value
+  };
+}
+
+function agentCompletionOptions(model: TuiCurrentContextModel): string[] {
+  const options = [
+    model.context.selectedAgent,
+    "codex",
+    "claude-code",
+    ...model.team.roles
+      .filter((role) => role.enabled)
+      .map((role) => role.handle)
+  ].filter((value): value is string => Boolean(value));
+  return dedupe(options)
+    .filter((option) => /^[A-Za-z0-9_-]+$/.test(option));
+}
+
+function moveAgentCompletionSelection(
+  model: TuiCurrentContextModel,
+  state: TuiInkState,
+  delta: 1 | -1
+): TuiInkState {
+  const completion = agentCompletionForState(model, state);
+  if (!completion) {
+    return state;
+  }
+  return {
+    ...state,
+    agentCompletionIndex: (completion.selectedIndex + delta + completion.options.length) % completion.options.length
+  };
+}
+
+function acceptAgentCompletion(
+  model: TuiCurrentContextModel,
+  state: TuiInkState
+): TuiInkState {
+  const completion = agentCompletionForState(model, state);
+  if (!completion) {
+    return state;
+  }
+  const nextCharacter = state.composer[completion.tokenEnd];
+  const suffix = nextCharacter === undefined || !/\s/.test(nextCharacter) ? " " : "";
+  const replacement = `@${completion.selectedOption}${suffix}`;
+  const composer = `${state.composer.slice(0, completion.tokenStart)}${replacement}${state.composer.slice(completion.tokenEnd)}`;
+  const cursor = completion.tokenStart + replacement.length;
+  return {
+    ...state,
+    composer,
+    composerCursorPosition: cursor,
+    composerHistoryIndex: undefined,
+    composerHistoryDraft: "",
+    agentCompletionIndex: 0,
+    statusMessage: `Selected @${completion.selectedOption}.`
+  };
+}
+
+function dedupe(values: string[]): string[] {
+  const seen = new Set<string>();
+  const unique: string[] = [];
+  for (const value of values) {
+    if (seen.has(value)) {
+      continue;
+    }
+    seen.add(value);
+    unique.push(value);
+  }
+  return unique;
 }
 
 function compactHeaderParts(parts: HeaderPart[], columns: number): HeaderPart[] {

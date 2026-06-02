@@ -186,7 +186,8 @@ describe("Ink TUI renderer", () => {
     expect(output).toContain("@codex run_27984312 △ awaiting review");
     expect(output).toContain("切换到 [V]iew 查看详情");
     expect(output).not.toContain("checks 0/0/1");
-    expect(output).toContain("W/R/V/G/T/M/E tabs");
+    expect(output).toContain("C continue");
+    expect(output).toContain("send @codex  thread Review (#review)  mode runtime_injection");
     expect(output).toContain("> @codex prompt");
     expect(output.indexOf("> @codex prompt")).toBeLessThan(output.indexOf("[W]ork"));
     expect(output).toContain("[E]am");
@@ -410,6 +411,8 @@ describe("Ink TUI renderer", () => {
     expect(output).toContain("┃   src/auth.ts:42 needs the guard.");
     expect(output).toContain("┃   pnpm test tests/auth.test.ts");
     expect(output).toContain("┃   const message = \"ok\"; // comment");
+    expect(output).toContain("── 6m later ──");
+    expect(output).not.toContain("more lines");
   });
 
   it("renders quick reply suggestions and hides them while typing", () => {
@@ -473,6 +476,7 @@ describe("Ink TUI renderer", () => {
     );
 
     expect(output).toContain("4 pending reviews collapsed");
+    expect(output).toContain("╭ diff (+1/-1 in 1 files)");
     expect(output).toContain("diff --git a/src/auth.ts b/src/auth.ts");
     expect(output).toContain("-const mode = \"old\";");
     expect(output).toContain("+const mode = \"new\";");
@@ -735,7 +739,7 @@ describe("Ink TUI renderer", () => {
     await waitForFrame(instance, "Completion notifications enabled.");
     expect(instance.lastFrame()).toContain("notify on");
 
-    instance.stdin.write("l");
+    instance.stdin.write("L");
     await waitForFrame(instance, "Timeline shown.");
     expect(instance.lastFrame()).toContain("Timeline");
     expect(instance.lastFrame()).toContain("notify on");
@@ -938,7 +942,7 @@ describe("Ink TUI renderer", () => {
 
     expect(state.scrollOffsets.runs).toBeGreaterThan(0);
     expect(selectedRun(model, state)?.id).toBe("run_0000000a");
-    expect(output).toContain("> run_0000000a @codex ok");
+    expect(output).toContain("▌ run_0000000a @codex ok");
     expect(output).not.toContain("run_00000000 @codex ok");
   });
 
@@ -980,7 +984,7 @@ describe("Ink TUI renderer", () => {
 
     expect(bottomOutput).toContain("Transcript message 9");
     expect(bottomOutput).not.toContain("Transcript message 0");
-    expect(scrolledOutput).toContain("Transcript message 2");
+    expect(scrolledOutput).toContain("Transcript message 4");
     expect(scrolledOutput).not.toContain("Transcript message 9");
   });
 
@@ -1156,7 +1160,118 @@ describe("Ink TUI renderer", () => {
     instance.unmount();
   });
 
-  it("prepares a continue prompt with c without submitting", async () => {
+  it("renders composer submit preview and agent completion choices", () => {
+    const output = renderToString(
+      React.createElement(TuiInkFrame, {
+        model: baseModel,
+        state: createInitialInkState("@"),
+        terminal: { columns: 120, rows: 40 }
+      }),
+      { columns: 120 }
+    );
+
+    expect(output).toContain("send @codex  thread Review (#review)  mode runtime_injection");
+    expect(output).toContain("agents @codex @claude-code @engineer @reviewer");
+  });
+
+  it("accepts role mention completion without trapping normal tab focus", async () => {
+    const instance = render(
+      React.createElement(TuiInkApp, {
+        model: baseModel,
+        state: createInitialInkState(),
+        terminal: { columns: 120, rows: 40 },
+        interactive: true
+      })
+    );
+
+    for (const character of "@e") {
+      instance.stdin.write(character);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+    await waitForFrame(instance, "agents @engineer");
+    instance.stdin.write("\t");
+    await waitForFrame(instance, "Selected @engineer.");
+
+    expect(instance.lastFrame()).toContain("> @engineer");
+    expect(instance.lastFrame()).toContain("send @engineer  thread Review (#review)");
+    instance.unmount();
+  });
+
+  it("keeps submitted prompt history in the current TUI session", async () => {
+    const submissions = [];
+    const instance = render(
+      React.createElement(TuiInkApp, {
+        model: baseModel,
+        state: createInitialInkState(),
+        terminal: { columns: 120, rows: 40 },
+        interactive: true,
+        submitPrompt: async (input) => {
+          submissions.push(input);
+          return { ok: true, message: "Submitted prompt.", model: baseModel };
+        }
+      })
+    );
+
+    for (const character of "first prompt") {
+      instance.stdin.write(character);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+    await waitForFrame(instance, "> first prompt");
+    instance.stdin.write("\r");
+    await waitForCondition(() => submissions.length === 1);
+    await waitForFrame(instance, "> @codex prompt");
+
+    for (const character of "second prompt") {
+      instance.stdin.write(character);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+    await waitForFrame(instance, "> second prompt");
+    instance.stdin.write("\r");
+    await waitForCondition(() => submissions.length === 2);
+    await waitForFrame(instance, "> @codex prompt");
+
+    instance.stdin.write("\u001b[A");
+    await waitForFrame(instance, "History 2/2.");
+    expect(instance.lastFrame()).toContain("> second prompt");
+
+    instance.stdin.write("\u001b[A");
+    await waitForFrame(instance, "History 1/2.");
+    expect(instance.lastFrame()).toContain("> first prompt");
+    expect(submissions.map((submission) => submission.prompt)).toEqual([
+      "first prompt",
+      "second prompt"
+    ]);
+    instance.unmount();
+  });
+
+  it("supports explicit multiline composer editing", async () => {
+    const instance = render(
+      React.createElement(TuiInkApp, {
+        model: baseModel,
+        state: createInitialInkState(),
+        terminal: { columns: 120, rows: 40 },
+        interactive: true
+      })
+    );
+
+    for (const character of "line one") {
+      instance.stdin.write(character);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+    instance.stdin.write("\u000f");
+    for (const character of "line two") {
+      instance.stdin.write(character);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+    await waitForFrame(instance, "line two");
+
+    expect(instance.lastFrame()).toContain("> line one");
+    expect(instance.lastFrame()).toContain("  line two");
+    expect(instance.lastFrame()).toContain("ctrl+o newline");
+    instance.unmount();
+  });
+
+  it("prepares a continue prompt with uppercase C without submitting", async () => {
     const submissions = [];
     const model = {
       ...baseModel,
@@ -1181,7 +1296,7 @@ describe("Ink TUI renderer", () => {
       })
     );
 
-    instance.stdin.write("c");
+    instance.stdin.write("C");
     await waitForFrame(instance, "Continuation prompt prepared");
 
     expect(submissions).toEqual([]);
@@ -1206,7 +1321,7 @@ describe("Ink TUI renderer", () => {
     await new Promise((resolve) => setTimeout(resolve, 25));
 
     expect(instance.lastFrame()).toContain("> exit");
-    expect(instance.lastFrame()).toContain("arrows edit");
+    expect(instance.lastFrame()).toContain("ctrl+o newline");
 
     instance.stdin.write("\u001b");
     await new Promise((resolve) => setTimeout(resolve, 25));

@@ -46,6 +46,10 @@ export interface TuiInkState {
   timelineOpen: boolean;
   composer: string;
   composerCursorPosition: number;
+  composerHistory: string[];
+  composerHistoryIndex?: number;
+  composerHistoryDraft: string;
+  agentCompletionIndex: number;
   commandPaletteOpen: boolean;
   paletteQuery: string;
   paletteSelectedIndex: number;
@@ -121,6 +125,9 @@ export function createInitialInkState(composer = ""): TuiInkState {
     timelineOpen: false,
     composer,
     composerCursorPosition: composer.length,
+    composerHistory: [],
+    composerHistoryDraft: "",
+    agentCompletionIndex: 0,
     commandPaletteOpen: false,
     paletteQuery: "",
     paletteSelectedIndex: 0
@@ -135,6 +142,7 @@ export function reduceInkState(
   const next: TuiInkState = {
     ...state,
     collapsedRoleCallIds: [...state.collapsedRoleCallIds],
+    composerHistory: [...state.composerHistory],
     statusMessage: undefined
   };
 
@@ -532,7 +540,19 @@ function moveConversationScroll(
 }
 
 function conversationLineCount(entries: TuiConversationEntry[]): number {
-  return entries.reduce((count, entry) => count + conversationEntryLineCount(entry), 0);
+  let count = 0;
+  let previousEntry: TuiConversationEntry | undefined;
+  for (const entry of entries) {
+    if (previousEntry) {
+      count += 1;
+      if (conversationGapLabel(previousEntry.timestamp, entry.timestamp)) {
+        count += 1;
+      }
+    }
+    count += conversationEntryLineCount(entry);
+    previousEntry = entry;
+  }
+  return count;
 }
 
 function conversationEntryLineCount(entry: TuiConversationEntry): number {
@@ -551,10 +571,23 @@ function conversationEntryLineCount(entry: TuiConversationEntry): number {
       Math.max(1, contentLines) +
       (entry.verificationLine ? 1 : 0) +
       (entry.riskLine ? 1 : 0) +
+      (entry.inlineDiff ? inlineDiffLineCount(entry.inlineDiff.mode, entry.inlineDiff.lines.length) : 0) +
       (entry.type === "review_pending" ? 1 : 0) +
       (entry.suggestions?.length ?? 0);
   }
   return 1 + Math.max(1, contentLines);
+}
+
+function conversationGapLabel(previousTimestamp: string, timestamp: string): boolean {
+  const previous = Date.parse(previousTimestamp);
+  const current = Date.parse(timestamp);
+  return Number.isFinite(previous) &&
+    Number.isFinite(current) &&
+    current - previous >= 5 * 60 * 1000;
+}
+
+function inlineDiffLineCount(mode: "inline" | "summary", lineCount: number): number {
+  return mode === "summary" ? 2 : lineCount + 2;
 }
 
 function textLineCount(content: string | undefined): number {

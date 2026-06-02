@@ -87,7 +87,7 @@ export function runLine(run: TuiRunSummary, selected: boolean): string {
   const risk = run.evidence.risk ? ` risk ${run.evidence.risk.level}` : "";
   const diff = run.evidence.diff ? ` files ${run.evidence.diff.changedFiles}` : "";
   const stage = run.stage !== run.status ? ` ${run.stage}` : "";
-  return `${selected ? ">" : " "} ${compactId(run.id)} @${run.agentKind} ${runStatusLabel(run.status)}${stage}${checks}${risk}${diff}`;
+  return `${selected ? "▌" : " "} ${compactId(run.id)} @${run.agentKind} ${runStatusLabel(run.status)}${stage}${checks}${risk}${diff}`;
 }
 
 export function truncateText(value: string, maxLength: number): string {
