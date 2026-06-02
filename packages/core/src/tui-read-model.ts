@@ -846,13 +846,13 @@ async function summarizeRunEvidence(
     repositories.runMetadataRepository.get(run.id),
     repositories.runArtifactRepository.getLatestByRunIdAndKind(run.id, "git_diff")
   ]);
-  const latestEvent = [...events].sort((left, right) => left.sequence - right.sequence).at(-1);
+  const latestEventLine = latestTuiEventLine(events);
   const risk = riskReport ?? metadata?.riskReport;
   const diff = diffSummary(diffArtifact, metadata?.diff);
   const inlineDiff = inlineDiffSummary(diffArtifact, metadata?.diff, diff);
   return {
     linkedRunId: run.id,
-    latestEvent: latestEvent ? truncate(latestEvent.message, defaultLimits.contentChars) : undefined,
+    latestEvent: latestEventLine ? truncate(latestEventLine, defaultLimits.contentChars) : undefined,
     resultSummary: resultSummary(events, run),
     checks: verification.length > 0 ? summarizeChecks(verification) : undefined,
     risk: risk
@@ -979,16 +979,25 @@ function humanReadableStreamLines(value: string): string[] {
   return visibleTuiOutputLines(value);
 }
 
+function latestTuiEventLine(events: RunEvent[]): string | undefined {
+  return [...events]
+    .sort((left, right) => right.sequence - left.sequence)
+    .flatMap(activeRunEventLines)
+    .find((line) => line.length > 0);
+}
+
 function isTuiOutputNoiseLine(value: string): boolean {
   return (
     isJsonObjectLine(value) ||
     /^Context compiled/i.test(value) ||
     /^TaskRunner execution started\.?$/i.test(value) ||
     /^Isolated worktree is ready\.?$/i.test(value) ||
+    /^Agent adapter started\.?$/i.test(value) ||
     /^starting (Codex|Claude Code|Claude|Fake Agent)/i.test(value) ||
     /^(Codex|Claude Code|Claude) preflight passed/i.test(value) ||
     /^(Codex|Claude Code|Claude) (thread|turn|session|item)\.[A-Za-z_]+/i.test(value) ||
     /^Using [`'"].+[`'"] to satisfy/i.test(value) ||
+    /\bcodex_[A-Za-z0-9_]+::/.test(value) ||
     /\bExperimentalWarning\b/.test(value) ||
     /Unsupported engine: wanted:/i.test(value) ||
     /Vite's Node API is deprecated/i.test(value)

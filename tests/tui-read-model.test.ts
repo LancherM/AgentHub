@@ -278,14 +278,29 @@ describe("TUI current-context read model", () => {
         phase: "agent",
         desktopEventType: "agent_step"
       }),
-      event("event_preflight", "run_live", 3, "status", "Codex preflight passed"),
-      event("event_starting", "run_live", 4, "status", "starting Codex"),
-      event("event_json_stdout", "run_live", 5, "stdout", "{\"type\":\"session.created\"}\n"),
-      event("event_session", "run_live", 6, "status", "Codex session.created", {
+      event("event_adapter_started", "run_live", 3, "status", "Agent adapter started."),
+      event("event_preflight", "run_live", 4, "status", "Codex preflight passed"),
+      event("event_starting", "run_live", 5, "status", "starting Codex"),
+      event("event_json_stdout", "run_live", 6, "stdout", "{\"type\":\"session.created\"}\n"),
+      event("event_session", "run_live", 7, "status", "Codex session.created", {
         adapterEvent: { type: "session.created" }
       }),
-      event("event_skill", "run_live", 7, "message", "Using `noisy-skill` to satisfy setup."),
-      event("event_stderr", "run_live", 8, "stderr", "waiting for network\n")
+      event("event_skill", "run_live", 8, "message", "Using `noisy-skill` to satisfy setup."),
+      event(
+        "event_memory_stderr",
+        "run_live",
+        9,
+        "stderr",
+        "2026-06-02T02:40:36.818458Z ERROR codex_memories_write::phase2::job: failed to claim job\n"
+      ),
+      event(
+        "event_models_stderr",
+        "run_live",
+        10,
+        "stderr",
+        "2026-06-01T15:04:04.298814Z ERROR codex_models_manager::manager: failed to refresh models\n"
+      ),
+      event("event_stderr", "run_live", 11, "stderr", "waiting for network\n")
     ]);
 
     const model = await buildTuiCurrentContextModel(runtime, {
@@ -299,9 +314,20 @@ describe("TUI current-context read model", () => {
         outputLines: ["stderr: waiting for network"]
       })
     ]);
+    expect(model.runs.find((run) => run.id === "run_live")).toEqual(
+      expect.objectContaining({
+        stage: "stderr: waiting for network",
+        evidence: expect.objectContaining({
+          latestEvent: "stderr: waiting for network"
+        })
+      })
+    );
     expect(model.activeRuns[0]?.outputLines.join("\n")).not.toContain("{\"type\"");
+    expect(model.activeRuns[0]?.outputLines.join("\n")).not.toContain("Agent adapter started");
     expect(model.activeRuns[0]?.outputLines.join("\n")).not.toContain("Codex session.created");
     expect(model.activeRuns[0]?.outputLines.join("\n")).not.toContain("Using `");
+    expect(model.activeRuns[0]?.outputLines.join("\n")).not.toContain("codex_memories_write");
+    expect(model.activeRuns[0]?.outputLines.join("\n")).not.toContain("codex_models_manager");
   });
 
   it("adds elapsed and usage labels for terminal run conversation entries", async () => {

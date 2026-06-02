@@ -438,7 +438,8 @@ The Ink renderer owns only presentation grammar: reverse-color risk-aware
 headers, a low-flicker idle `◈` indicator, agent-message left bars,
 timestamp/elapsed/usage metadata display, path/command/code highlighting, and safe OSC 8 file-link
 wrapping. The core TUI read model exposes derived elapsed and usage labels from
-persisted run timestamps and run-event metadata; it does not change event
+persisted run timestamps and run-event metadata, and derives compact run
+stage/latest text from presentation-filtered events; it does not change event
 persistence, adapter execution, run status, or review semantics.
 Active-run boxes cover running runs only. They use a rounded fixed eight-line
 shape: title border, five output/progress lines, a progress-or-cursor footer,
@@ -448,12 +449,13 @@ or `N/M` progress parsing, and transient completion/failure feedback. None of
 that state is persisted or sent back into adapters.
 They prefer structured assistant output, then fall back to recent adapter,
 stdout, and stderr events while filtering raw JSON protocol frames, setup
-lifecycle lines, internal agent protocol summaries, runtime warnings, and skill
-activation noise. Verification, risk, diff, and review evidence stay out of
-active boxes. Role-backed run display is resolved in the core read model from
-linked RoleCalls, run/message role metadata, and task assignment metadata before
-falling back to adapter kind. The read model also forwards run start timestamps
-and usage labels to active boxes, derived from existing run rows and run-event
+lifecycle lines, internal agent protocol summaries, runtime warnings, Codex
+internal diagnostics, and skill activation noise. Verification, risk, diff, and
+review evidence stay out of active boxes. Role-backed run display is
+resolved in the core read model from linked RoleCalls, run/message role
+metadata, and task assignment metadata before falling back to adapter kind. The
+read model also forwards run start timestamps and usage labels to active boxes,
+derived from existing run rows and run-event
 metadata. Terminal pending-review runs with changed files fold into the
 conversation projection with their agent-facing output,
 verification/risk summaries, and a final View-pane review hint. Terminal runs

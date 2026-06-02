@@ -40,7 +40,10 @@ records.
 Its Runs and Tasks focus modes are current-context operating views: they show
 active/recent run status, stage, checks, risk, diff counts, retained-worktree
 state, linked CLI commands, assignments, RoleTodos, deferred/rejected follow-up
-signals, and the next action without exposing raw logs or full patches.
+signals, and the next action without exposing raw logs or full patches. Compact
+run stage/latest summaries use the same TUI presentation filter as active-run
+boxes, so internal setup or Codex diagnostic lines remain in raw evidence rather
+than the operator-facing summary.
 The RoleCall graph shows bounded loop state, including iteration count,
 pending/waiting/active counts, convergence reason, max-iteration stops,
 blocking-risk stops, and waiting-for-approval or waiting-for-context stops.
@@ -76,11 +79,11 @@ as stable fixed-height active-run boxes with only the latest agent-facing output
 or observable runtime events plus the active cursor indicator. When an adapter
 has not emitted assistant text yet, the active box shows recent adapter, stdout,
 and stderr lines while filtering raw JSON protocol frames, setup lifecycle
-noise, internal agent protocol summaries, runtime warnings, and skill activation
-noise. Runs awaiting local review with changed files leave the active box and
-render their completed output plus verification/risk summaries and a final
-`[V]iew` review hint. Runs with no changed files render as completed output
-without an awaiting-review prompt.
+noise, internal agent protocol summaries, runtime warnings, Codex internal
+diagnostics, and skill activation noise. Runs awaiting local review with changed
+files leave the active box and render their completed output plus
+verification/risk summaries and a final `[V]iew` review hint. Runs with no
+changed files render as completed output without an awaiting-review prompt.
 The Work conversation uses a terminal-native visual grammar: the header is a
 reverse-color status bar with project, selected agent, iteration, risk, and the
 current clock; high/blocking risk turns the header red and medium risk turns it
