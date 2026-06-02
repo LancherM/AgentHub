@@ -1662,6 +1662,155 @@ describe("CLI", () => {
     expect(output.join("")).toContain("3");
   });
 
+  it("starts RoleCalls emitted by preset engineer line-start output", async () => {
+    const projectRoot = await createTestDirectory("cli-engineer-rolecall-project");
+    const runRoot = path.join(await createTestDirectory("cli-engineer-rolecall-runs"), "runs");
+    const roleResultJson = JSON.stringify({
+      summary: "3",
+      evidence: ["RoleCall.task asked for output exactly 3."],
+      commandsRun: [],
+      filesTouched: [],
+      patchSummary: "No changes.",
+      risks: [],
+      nextSteps: ["none"]
+    });
+    const processRunner = new MockProcessRunner([
+      [
+        {
+          type: "stdout",
+          data:
+            "{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"@operator Reply exactly: 3\\n@reviewer Reply exactly: 3\"}}\n"
+        },
+        { type: "exit", exitCode: 0, signal: null }
+      ],
+      [
+        {
+          type: "stdout",
+          data: JSON.stringify({
+            type: "item.completed",
+            item: { type: "agent_message", text: roleResultJson }
+          }) + "\n"
+        },
+        { type: "exit", exitCode: 0, signal: null }
+      ],
+      [
+        {
+          type: "stdout",
+          data: JSON.stringify({
+            type: "item.completed",
+            item: { type: "agent_message", text: roleResultJson }
+          }) + "\n"
+        },
+        { type: "exit", exitCode: 0, signal: null }
+      ]
+    ]);
+    const runtime = createCliRuntime({
+      storageMode: "memory",
+      defaultRunRoot: runRoot,
+      workspaceManager: new TestWorkspaceManager(runRoot),
+      diffCollector: new StaticDiffCollector(),
+      verificationRunner: new VerificationRunner(new MockShellExecutor()),
+      processRunner,
+      idGenerator: new SequenceIdGenerator(),
+      clock: new FixedClock("2026-01-01T00:00:00.000Z")
+    });
+    await runtime.projectRepository.create({
+      id: "project_cli_engineer_rolecall",
+      name: "CLI Engineer RoleCall",
+      rootPath: projectRoot,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z"
+    });
+    await runtime.settingsRepository.set({
+      key: "desktop.project.project_cli_engineer_rolecall.workgroupRoles",
+      value: {
+        roles: presetWorkgroupRoles.map((role) =>
+          role.handle === "engineer" ||
+            role.handle === "operator" ||
+            role.handle === "reviewer"
+            ? {
+                ...role,
+                executor: { kind: "agent_adapter", adapterKind: "codex" }
+              }
+            : role
+        )
+      },
+      updatedAt: "2026-01-01T00:00:00.000Z"
+    });
+    const output: string[] = [];
+    const errors: string[] = [];
+    const io = {
+      stdout: { write: (chunk: string) => { output.push(chunk); return true; } },
+      stderr: { write: (chunk: string) => { errors.push(chunk); return true; } }
+    };
+
+    await expect(
+      main([
+        "rooms",
+        "send",
+        "--project-id",
+        "project_cli_engineer_rolecall",
+        "--room",
+        "general",
+        "--message",
+        "@engineer tell other roles to output 3"
+      ], io, projectRoot, runtime)
+    ).resolves.toBe(0);
+
+    const threads = await runtime.conversationThreadRepository.list(
+      "project_cli_engineer_rolecall"
+    );
+    const thread = threads.find((entry) => entry.title.includes("#general")) ?? threads[0];
+    const messages = await runtime.conversationMessageRepository.listByThreadId(
+      thread?.id ?? ""
+    );
+    const roleCalls = await runtime.roleCallRepository.list({
+      threadId: thread?.id ?? ""
+    });
+    const engineerRunId = messages.find(
+      (message) =>
+        message.role === "assistant" &&
+        message.metadata?.role &&
+        (message.metadata.role as { roleHandle?: string }).roleHandle === "engineer"
+    )?.runId;
+    const engineerBrief = await runtime.runArtifactRepository.getLatestByRunIdAndKind(
+      engineerRunId ?? "",
+      "conversation_brief"
+    );
+
+    expect(errors.join("")).toBe("");
+    expect(processRunner.runCalls).toHaveLength(3);
+    expect(engineerBrief?.content).toContain("role_call_protocol:");
+    expect(engineerBrief?.content).toContain("@operator:");
+    expect(engineerBrief?.content).toContain("@reviewer:");
+    expect(roleCalls).toHaveLength(2);
+    expect(roleCalls).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        callerRole: "engineer",
+        calleeRole: "operator",
+        task: "Reply exactly: 3",
+        status: "succeeded",
+        taskRunId: expect.any(String),
+        result: expect.objectContaining({ summary: "3" })
+      }),
+      expect.objectContaining({
+        callerRole: "engineer",
+        calleeRole: "reviewer",
+        task: "Reply exactly: 3",
+        status: "succeeded",
+        taskRunId: expect.any(String),
+        result: expect.objectContaining({ summary: "3" })
+      })
+    ]));
+    expect(messages.filter((message) => message.kind === "run_card")).toHaveLength(3);
+    expect(
+      messages.filter((message) => message.metadata?.roleCallId)
+        .map((message) => (message.metadata?.assignment as { roleHandle?: string })?.roleHandle)
+        .sort()
+    ).toEqual(["operator", "operator", "reviewer", "reviewer"]);
+    expect(output.join("")).toContain("3");
+  });
+
   it("persists CLI chat turns and injects prior thread context", async () => {
     const projectRoot = await createTestDirectory("cli-chat-project");
     const runRoot = path.join(await createTestDirectory("cli-chat-runs"), "runs");

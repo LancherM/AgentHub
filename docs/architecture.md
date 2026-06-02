@@ -263,7 +263,9 @@ The flow is:
    executor capability, and dangerous command text through safety policy.
    Preset roles use core defaults, while custom roles such as `@pm` can
    initiate bounded RoleCalls only when their team-role `delegationPolicy`
-   explicitly enables targets or capabilities.
+   explicitly enables targets or capabilities. The preset `@engineer`
+   delegation default accepts line-start `delegate` intents only for
+   `@operator` and `@reviewer`.
 4. Accepted, deferred, rejected, waiting-context, or waiting-approval decisions
    are persisted as RoleCall and RoleCallEvent records. Callee todos are
    created or updated where applicable.

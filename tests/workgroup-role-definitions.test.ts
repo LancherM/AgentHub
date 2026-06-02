@@ -7,6 +7,46 @@ import {
 } from "@agent-hub/core";
 
 describe("workgroup role definition mapping", () => {
+  it("allows preset engineers to delegate line-start RoleCalls to reviewer and operator", () => {
+    const engineer = presetWorkgroupRoles.find((role) => role.handle === "engineer");
+    const reviewer = presetWorkgroupRoles.find((role) => role.handle === "reviewer");
+    const operator = presetWorkgroupRoles.find((role) => role.handle === "operator");
+    expect(engineer).toBeDefined();
+    expect(reviewer).toBeDefined();
+    expect(operator).toBeDefined();
+
+    const definitions = roleDefinitionsForWorkgroupRoles([
+      engineer as WorkgroupRole,
+      reviewer as WorkgroupRole,
+      operator as WorkgroupRole
+    ]);
+    const engineerDefinition = definitions.find((role) => role.handle === "engineer");
+
+    expect(engineerDefinition?.delegationPolicy).toEqual(expect.objectContaining({
+      canInitiateRoleCalls: true,
+      allowedIntentTypes: expect.arrayContaining(["delegate"]),
+      allowedTargetRoles: ["reviewer", "operator"]
+    }));
+    expect(
+      roleDelegationPolicyAllowsTarget(
+        engineerDefinition?.delegationPolicy ?? {
+          canInitiateRoleCalls: false,
+          allowedIntentTypes: []
+        },
+        reviewer as WorkgroupRole
+      )
+    ).toBe(true);
+    expect(
+      roleDelegationPolicyAllowsTarget(
+        engineerDefinition?.delegationPolicy ?? {
+          canInitiateRoleCalls: false,
+          allowedIntentTypes: []
+        },
+        operator as WorkgroupRole
+      )
+    ).toBe(true);
+  });
+
   it("requires custom PM roles to configure RoleCall delegation explicitly", () => {
     const analyst = presetWorkgroupRoles.find((role) => role.handle === "analyst");
     const researcher = presetWorkgroupRoles.find((role) => role.handle === "researcher");

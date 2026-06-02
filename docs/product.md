@@ -239,6 +239,8 @@ submission, and desktop room turns all use this same closed loop after a
 role-backed assistant message is persisted. Custom roles such as `@pm` can
 initiate bounded RoleCalls to other local roles only when their team-role
 `delegationPolicy` explicitly allows those targets or capabilities.
+The preset `@engineer` role can use the same line-start `@role task`
+delegation syntax for bounded calls to `@operator` and `@reviewer`.
 
 ## CLI Surface
 

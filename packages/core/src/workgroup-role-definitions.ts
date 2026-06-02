@@ -117,7 +117,7 @@ export function roleDelegationPolicy(role: WorkgroupRole): RoleDefinition["deleg
   if (role.handle === "engineer") {
     return {
       canInitiateRoleCalls: true,
-      allowedIntentTypes: ["request_review", "request_evidence"],
+      allowedIntentTypes: ["delegate", "request_review", "request_evidence"],
       allowedTargetRoles: ["reviewer", "operator"]
     };
   }
