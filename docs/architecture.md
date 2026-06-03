@@ -449,15 +449,18 @@ added for the TUI.
 Terminal polish is also contained in the CLI renderer. It compacts identifiers,
 renders the Work view as a conversation flow plus bounded active-run boxes,
 moves the shortcut-labelled Work/Runs/View/Graph/Tasks/Memory/Team/Help tabs
-below the composer, and uses Ink components for terminal layout instead of
-hand-wrapped string panels.
+below the composer, renders a focus-specific shortcut hint as the bottom line,
+and uses Ink components for terminal layout instead of hand-wrapped string
+panels.
 The Ink renderer owns only presentation grammar: reverse-color risk-aware
 headers, a low-flicker idle `◈` indicator, agent-message left bars,
-timestamp/elapsed/usage metadata display, path/command/code highlighting, and safe OSC 8 file-link
-wrapping. The core TUI read model exposes derived elapsed and usage labels from
-persisted run timestamps and run-event metadata, and derives compact run
-stage/latest text from presentation-filtered events; it does not change event
-persistence, adapter execution, run status, or review semantics.
+timestamp/elapsed/usage metadata display, conversation separators, five-minute
+timeline anchors, diff mini-card framing, selected-row inverse styling,
+path/command/code highlighting, and safe OSC 8 file-link wrapping. The core TUI
+read model exposes derived elapsed and usage labels from persisted run
+timestamps and run-event metadata, and derives compact run stage/latest text
+from presentation-filtered events; it does not change event persistence,
+adapter execution, run status, or review semantics.
 Active-run boxes cover running runs only. They use rounded frames whose content
 area grows to fit wrapped visible output instead of truncating agent-facing
 lines; if no useful assistant or runtime activity is visible yet, the read model
@@ -487,17 +490,18 @@ Quick replies are derived in the core TUI read model for only the latest visible
 agent-result conversation entry. They are prompt templates, not actions:
 `1`/`2`/`3` route through the same CLI `submitPrompt` callback used by manual
 composer submissions, and they are disabled as soon as the composer contains
-text or the Work conversation is scrolled away from the bottom. The `c`
+text or the Work conversation is scrolled away from the bottom. The `C`
 shortcut only prepares a continuation prompt in local Ink state.
 Inline diff display is also a read-model projection over existing `git_diff`
 run artifacts or run metadata. Small diffs with five or fewer changed lines are
 projected into bounded file/add/delete/context lines; larger diffs expose only
 a stat summary. Before projecting patch lines, the core read model checks
 changed-file metadata and diff headers for sensitive paths and replaces matching
-patches with a redacted summary. The Ink renderer can group dense adjacent
-pending-review entries, expand/collapse Review-pane diff lines, and show a
-read-only compare summary for tasks with multiple runs, but it does not generate
-comparison reports, apply patches, or mutate review decisions.
+patches with a redacted summary. The Ink renderer frames inline and summary
+diff projections as mini cards, can group dense adjacent pending-review entries,
+expand/collapse Review-pane diff lines, and show a read-only compare summary
+for tasks with multiple runs, but it does not generate comparison reports,
+apply patches, or mutate review decisions.
 Search and command-palette input are local Ink state. Conversation search reads
 only the rendered read-model text already present in memory, highlights matches,
 and never mutates composer contents. Palette filtering is fuzzy over safe focus
@@ -508,7 +512,7 @@ Notifications, timeline, and splash remain CLI renderer concerns.
 `/notify` toggles an in-memory flag for the current Ink session; when enabled,
 the renderer may write only terminal escape output (bell plus OSC 9) after a
 previously active run disappears from the active-run projection and its recorded
-start time is more than 30 seconds old. `/timeline` and empty-composer `l`
+start time is more than 30 seconds old. `/timeline` and empty-composer `L`
 render a compact chronological overlay from the same read model.
 `--splash`/`--no-splash` only affect whether the CLI prints a short prelude
 before starting the interactive Ink frame; the live frame does not mount a
@@ -530,10 +534,15 @@ uppercase tab shortcuts switch Work/Runs/View/Graph/Tasks/Memory/Team,
 `/team` clears the composer and switches to the Team view, `Enter` submits
 other non-empty composer text, empty-composer `Enter` is a no-op, `Esc` clears
 composer text or returns auxiliary panes to Work, and `Tab` remains a
-focus-navigation key even while text is present. The composer tracks a cursor
-offset for left/right, Home/End, Backspace/Delete, and Ctrl+A/E/U/D editing.
-This keeps normal prompt text from being stolen by global focus shortcuts
-without trapping focus inside the composer.
+focus-navigation key unless an active `@` completion token is open. The composer
+tracks a cursor offset for left/right, Home/End, Backspace/Delete, and
+Ctrl+A/E/U/D editing; `Ctrl+O` inserts a newline; Up/Down read an in-memory
+submitted-prompt history; and mention completion is derived from the selected
+agent, built-in agent kinds, and enabled team-role handles already present in
+the current read model. The renderer also shows a submit preview derived from
+the selected target, thread metadata, and context mode. This keeps normal prompt
+text from being stolen by global focus shortcuts without trapping focus inside
+the composer.
 Interactive TUI prompt submission reuses the CLI chat/task-runner path with a
 buffered CLI IO adapter. The run still persists messages, run cards, run
 events, diffs, risks, and review evidence through the shared repositories, but

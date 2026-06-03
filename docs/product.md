@@ -95,7 +95,10 @@ messages stay plain with a timestamp. Conversation content
 keeps file paths underlined and blue with safe OSC 8 file links when the
 terminal supports them, shell-command lines bold, and fenced code blocks lightly
 highlighted for keywords, strings, and comments. Agent output content is not
-truncated; long lines wrap in the terminal surface.
+truncated; long lines wrap in the terminal surface. Conversation entries are
+separated by terminal divider lines, and gaps of five minutes or more add a
+compact timeline anchor so long Work histories remain scannable without
+collapsing agent output.
 Active run boxes use rounded frames that grow to fit wrapped visible output.
 Titles show the compact run identity, role/agent handle, a static running
 marker, running status, elapsed time, and live token usage when the run emits
@@ -110,12 +113,13 @@ two or three dim quick replies such as running more tests, fixing verification,
 reviewing risk, continuing, or fixing similar issues. Pressing `1`, `2`, or `3`
 submits the selected suggestion through the same prompt callback as manual
 composer text; numeric keys remain normal text while the composer is non-empty.
-Typing hides suggestions, and `c` prepares a continuation prompt without
+Typing hides suggestions, and `C` prepares a continuation prompt without
 submitting it.
 Small run diffs are projected directly into Work when the collected git diff
 has five or fewer changed lines; file/hunk headers are dim, additions are
-green, deletions are red, and context stays plain. Larger diffs collapse to a
-compact `(+N/-M in F files)` summary. Inline TUI diff projections use the same
+green, deletions are red, and context stays plain. The Ink renderer wraps these
+inline diffs in a compact diff mini card; larger diffs use the same card shape
+around a `(+N/-M in F files)` summary. Inline TUI diff projections use the same
 sensitive-path guard as review patch previews and redact patch text when
 changed-file metadata or diff headers identify `.env`, key, token, credential,
 or secret paths. Dense runs of more than three pending reviews collapse into a
@@ -129,8 +133,8 @@ composer. The command palette accepts input, fuzzy filters safe focus actions
 and existing local CLI command hints, highlights matches, and uses `Enter` to
 either switch focus or prepare the selected command in the composer.
 The optional mini timeline is also local renderer state. `/timeline` or
-empty-composer `l` opens a compact chronological view over the current rendered
-conversation, active runs, and recent runs; `Esc` or `l` closes it. `/notify`
+empty-composer `L` opens a compact chronological view over the current rendered
+conversation, active runs, and recent runs; `Esc` or `L` closes it. `/notify`
 toggles in-memory completion notifications for the current terminal session
 only. When enabled, the TUI emits a terminal bell plus OSC 9 notification only
 after a previously active run leaves the active list and had been running for
@@ -157,8 +161,17 @@ Work/Runs/View/Graph/Tasks/Memory/Team, `/team` opens the Team roles view
 without submitting a prompt, `Enter` submits non-command prompts when a
 submission callback is available, `Esc` clears the in-progress prompt, and
 empty-composer `Enter` does not switch panes. `Tab` remains available for focus
-navigation, and the composer supports cursor movement plus Home/End,
-Backspace/Delete, and Ctrl+A/E/U/D editing controls. Interactive
+navigation except while an active `@` mention completion is open. The composer
+shows a submit preview with the target agent or role, current thread, and
+context mode; keeps an in-session submitted prompt history on Up/Down; supports
+explicit multiline editing with `Ctrl+O`; and lists selected agent, built-in
+agent, and enabled team-role completions while editing an `@` token. It also
+supports cursor movement plus Home/End, Backspace/Delete, and Ctrl+A/E/U/D
+editing controls. Empty-composer Work shortcuts that would steal normal prompt
+text use uppercase keys, including `C` for continue and `L` for the mini
+timeline. Runs, RoleCalls, and Tasks show selected rows with a visible `▌`
+marker plus inverse row styling, and the bottom shortcut hint changes by focus
+instead of showing one global command string. Interactive
 submit and review-decision actions show bounded busy states without locking the
 keyboard: users can still switch focus, open command hints, and draft the next
 prompt while the current local action is running. The TUI only blocks duplicate

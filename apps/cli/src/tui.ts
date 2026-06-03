@@ -113,6 +113,10 @@ export interface TuiShellState {
   timelineOpen: boolean;
   composer: string;
   composerCursorPosition: number;
+  composerHistory: string[];
+  composerHistoryIndex?: number;
+  composerHistoryDraft: string;
+  agentCompletionIndex: number;
   commandPaletteOpen: boolean;
   paletteQuery: string;
   paletteSelectedIndex: number;
@@ -399,6 +403,9 @@ export function createInitialTuiShellState(composer = ""): TuiShellState {
     timelineOpen: false,
     composer,
     composerCursorPosition: composer.length,
+    composerHistory: [],
+    composerHistoryDraft: "",
+    agentCompletionIndex: 0,
     commandPaletteOpen: false,
     paletteQuery: "",
     paletteSelectedIndex: 0
