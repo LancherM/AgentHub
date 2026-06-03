@@ -76,9 +76,10 @@ delegations, completed or failed terminal run output, verification summaries,
 and risk summaries are folded into a chronological conversation flow. Role
 backed runs display the role handle from linked RoleCalls, run/message metadata,
 or task assignments before falling back to the adapter kind. Running runs appear
-as active-run boxes with full agent-facing output lines preserved for renderer
-wrapping, falling back to observable runtime events plus the active cursor
-indicator. When an adapter has not emitted assistant text or useful runtime
+as active-run boxes with full agent-facing output preserved in the read model
+and rendered as a terminal-bounded latest-output tail, falling back to
+observable runtime events plus the active cursor indicator. When an adapter has
+not emitted assistant text or useful runtime
 activity yet, the active box shows `agent thinking...` while filtering raw JSON
 protocol frames, setup lifecycle noise, internal agent protocol summaries,
 runtime warnings, Codex internal diagnostics, and skill activation noise. Runs awaiting local review with changed
@@ -106,9 +107,11 @@ marker, running status, elapsed time, and live token usage when the run emits
 usage metadata. The footer keeps an active cursor when no reliable progress
 exists, or a best-effort progress bar when recent output includes an obvious
 percentage or `N/M` pattern. At most three active runs render as full boxes;
-older active runs collapse to one-line titles. Completion and failure state is
-shown through refreshed read-model rows rather than timed renderer flashes, so
-the terminal does not repaint only to clear decorative feedback.
+older active runs collapse to one-line titles. A chatty active run keeps the
+newest wrapped lines visible and adds an omitted-line marker when the full box
+would crowd out the Work conversation. Completion and failure state is shown
+through refreshed read-model rows rather than timed renderer flashes, so the
+terminal does not repaint only to clear decorative feedback.
 When the latest agent result is visible and the composer is empty, Work may show
 two or three dim quick replies such as running more tests, fixing verification,
 reviewing risk, continuing, or fixing similar issues. Pressing `1`, `2`, or `3`

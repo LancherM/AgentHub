@@ -478,10 +478,12 @@ timestamps and run-event metadata, and derives compact run stage/latest text
 from presentation-filtered events; it does not change event persistence,
 adapter execution, run status, or review semantics.
 Active-run boxes cover running runs only. They use rounded frames whose content
-area grows to fit wrapped visible output instead of truncating agent-facing
-lines at normal width, and compact to the latest visible tail plus progress
-when width or height is tight; if no useful assistant or runtime activity is
-visible yet, the read model emits `agent thinking...`. The renderer uses a
+area grows to fit wrapped visible output until it reaches the terminal-derived
+row budget; when output is longer, the renderer keeps the newest wrapped lines
+and inserts an omitted-line marker while the read model and run evidence retain
+the full agent-facing output. Tight width or height still uses the compact
+latest-tail variant plus progress. If no useful assistant or runtime activity
+is visible yet, the read model emits `agent thinking...`. The renderer uses a
 static running marker, live elapsed calculation from the run start timestamp,
 presentation-only stale labeling after the threshold when the box still has no
 useful output, and best-effort percentage or `N/M` progress parsing.
