@@ -1,6 +1,6 @@
 # Architecture
 
-Last audited against `origin/main` at `2ca1dbc` on 2026-06-02.
+Last audited against `origin/main` at `3f0f16c` on 2026-06-03.
 
 Agent Hub is a CLI-first local application built from shared TypeScript
 packages. The desktop app is an Electron shell over the same local services and
