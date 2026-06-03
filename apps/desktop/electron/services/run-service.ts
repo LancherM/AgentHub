@@ -84,6 +84,7 @@ export interface ExecuteDesktopRoleCallInput {
   roleCallId: string;
   projectId: string;
   roles: readonly RoleDefinition[];
+  roleMetadata?: readonly WorkgroupRoleRunMetadata[];
 }
 
 export interface StartedDesktopRoleCallRun {
@@ -341,6 +342,7 @@ class RepositoryRunService implements RunService {
         roleTodoRepository: this.context.repositories.roleTodoRepository
       },
       roles: input.roles,
+      roleMetadata: input.roleMetadata,
       idFactory: (prefix) => this.context.nextId(prefix),
       now: () => this.context.now()
     });
@@ -426,6 +428,7 @@ class RepositoryRunService implements RunService {
         roleTodoRepository: this.context.repositories.roleTodoRepository
       },
       roles: input.roles,
+      roleMetadata: input.roleMetadata,
       idFactory: (prefix) => this.context.nextId(prefix),
       now: () => this.context.now()
     });

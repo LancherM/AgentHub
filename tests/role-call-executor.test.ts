@@ -6,16 +6,19 @@ import {
   DefaultAgentRegistry,
   FakeAgentAdapter
 } from "@agent-hub/agent-adapters";
+import { createGlobalSkill } from "@agent-hub/context-compiler";
 import {
   conservativePermissionSet,
   InMemoryRoleCallEventRepository,
   InMemoryRoleCallRepository,
   InMemoryRoleTodoRepository,
+  InMemoryRunArtifactRepository,
   InMemoryRunMetadataRepository,
   InMemoryTaskRunRepository,
   type RoleCall,
   type RoleDefinition,
-  type RoleTodo
+  type RoleTodo,
+  type WorkgroupRoleRunMetadata
 } from "@agent-hub/core";
 import {
   FixedClock,
@@ -68,6 +71,32 @@ function role(overrides: Partial<RoleDefinition>): RoleDefinition {
     executor: { kind: "agent_adapter", adapter: "fake" },
     trustLevel: "preset",
     enabled: true,
+    ...overrides
+  };
+}
+
+function roleMetadata(
+  overrides: Partial<WorkgroupRoleRunMetadata> = {}
+): WorkgroupRoleRunMetadata {
+  return {
+    roleId: "role_operator",
+    roleHandle: "operator",
+    displayName: "Operator",
+    executorKind: "agent_adapter",
+    adapterKind: "fake",
+    persona: "Operator persona",
+    defaultInstructions: "Use local evidence and avoid unapproved side effects.",
+    permissions: ["run_commands"],
+    contextPolicy: {
+      scope: "current_thread_and_project_context",
+      includeApprovedMemory: true,
+      includeThreadSummary: true,
+      instructions: ["Use runtime context."]
+    },
+    approvalPolicy: {
+      requiredFor: ["external_side_effects"],
+      summary: "No external side effects."
+    },
     ...overrides
   };
 }
@@ -196,6 +225,85 @@ describe("role call TaskRunner executor", () => {
     );
     const outputPath = path.join(result.run?.worktreePath ?? "", "fake-agent-output.md");
     await expect(fs.readFile(outputPath, "utf8")).resolves.toContain("RoleCallContext");
+  });
+
+  it("injects callee role default skills into delegated TaskRunner runs", async () => {
+    const projectRoot = await createTestDirectory("role-call-skill-project");
+    const runRoot = await createTestDirectory("role-call-skill-runs");
+    const agentHubHome = await createTestDirectory("role-call-skill-home");
+    await fs.writeFile(path.join(projectRoot, "README.md"), "original\n", "utf8");
+    const globalSkill = await createGlobalSkill({
+      id: "triage",
+      name: "global-triage",
+      description: "Triage delegated role-call evidence.",
+      body: "Use structured evidence before reporting.",
+      agentHubHome
+    });
+    const roleCallRepository = new InMemoryRoleCallRepository();
+    const roleCallEventRepository = new InMemoryRoleCallEventRepository();
+    const runArtifactRepository = new InMemoryRunArtifactRepository();
+    const runMetadataRepository = new InMemoryRunMetadataRepository();
+    await roleCallRepository.create(acceptedCall());
+    const runner = new TaskRunner({
+      defaultRunRoot: runRoot,
+      workspaceManager: new TestWorkspaceManager(runRoot),
+      diffCollector: new StaticDiffCollector(),
+      verificationRunner: new VerificationRunner(new MockShellExecutor()),
+      runArtifactRepository,
+      runMetadataRepository,
+      idGenerator: new SequenceIdGenerator(),
+      clock: new FixedClock(createdAt)
+    });
+    const executor = new RoleCallTaskRunnerExecutor({
+      taskRunner: runner,
+      repositories: { roleCallRepository, roleCallEventRepository },
+      roles: [role({})],
+      roleMetadata: [
+        roleMetadata({
+          defaultSkillReferences: [{ id: "triage", scope: "global" }]
+        })
+      ],
+      idFactory: createIdFactory(),
+      now: () => createdAt
+    });
+
+    const result = await executor.execute({
+      roleCallId: "role_call_1",
+      projectId: "project_1",
+      projectRoot,
+      taskRunnerOptions: {
+        agentHubHome,
+        workspaceBasePath: runRoot
+      }
+    });
+
+    expect(result.ok).toBe(true);
+    expect(
+      result.run?.contextBundle.sections
+        .filter((section) => section.source.kind === "skill")
+        .map((section) => section.source.id)
+    ).toEqual(["global:triage"]);
+    const artifact = (
+      await runArtifactRepository.listByRunId(result.run?.run.id ?? "")
+    ).find((entry) => entry.kind === "skill_inventory");
+    expect(artifact?.metadata).toMatchObject({
+      skillReferences: ["global:triage"],
+      skills: [
+        expect.objectContaining({
+          id: "triage",
+          scope: "global",
+          contentHash: globalSkill.contentHash
+        })
+      ]
+    });
+    await expect(runMetadataRepository.get(result.run?.run.id ?? "")).resolves.toEqual(
+      expect.objectContaining({
+        role: expect.objectContaining({
+          roleHandle: "operator",
+          defaultSkillReferences: [{ id: "triage", scope: "global" }]
+        })
+      })
+    );
   });
 
   it("fails process-backed role calls inspectably when adapter preflight is unavailable", async () => {

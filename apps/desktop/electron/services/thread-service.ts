@@ -1483,19 +1483,22 @@ class RepositoryThreadService implements ThreadService {
           call.status === "accepted" &&
           !call.taskRunId &&
           executableRoles.has(call.calleeRole)
-      );
+    );
+    const roleMetadata = workgroupRoles.map((role) => toWorkgroupRoleRunMetadata(role));
     for (const call of calls) {
       try {
+        const calleeRoleMetadata = roleMetadata.find(
+          (entry) => entry.roleHandle === call.calleeRole
+        );
         const started = await this.dependencies.runs.startRoleCall({
           roleCallId: call.id,
           projectId: thread.projectId,
-          roles
+          roles,
+          roleMetadata
         });
-        const role = workgroupRoles.find((entry) => entry.handle === call.calleeRole);
-        const roleMetadata = role ? toWorkgroupRoleRunMetadata(role) : undefined;
         const assignment = roleCallAssignment({
           roleCall: call,
-          role: roleMetadata,
+          role: calleeRoleMetadata,
           agentId: started.agentId,
           runId: started.runId,
           nextId: (prefix) => this.dependencies.context.nextId(prefix)
@@ -1504,7 +1507,7 @@ class RepositoryThreadService implements ThreadService {
           thread.id,
           started.runId,
           started.agentId,
-          roleMetadata,
+          calleeRoleMetadata,
           {
             taskId: call.id,
             taskTitle: `Role call: @${call.calleeRole} ${call.task}`,
@@ -1516,7 +1519,7 @@ class RepositoryThreadService implements ThreadService {
           thread.id,
           started.runId,
           started.agentId,
-          roleMetadata,
+          calleeRoleMetadata,
           assignment,
           call.id
         );

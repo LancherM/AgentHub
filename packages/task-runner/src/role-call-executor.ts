@@ -25,6 +25,7 @@ export interface RoleCallTaskRunnerExecutorOptions {
   taskRunner: TaskRunner;
   repositories: RoleCallExecutionRepositories;
   roles: readonly RoleDefinition[];
+  roleMetadata?: readonly WorkgroupRoleRunMetadata[];
   idFactory?: (prefix: string) => string;
   now?: () => string;
 }
@@ -44,6 +45,7 @@ export interface ExecuteRoleCallInput {
       | "agentAvailability"
       | "agentHubHome"
       | "deliveryMode"
+      | "roleSkillReferences"
       | "workspaceCleanupPolicy"
       | "dryRun"
       | "onEvent"
@@ -64,6 +66,7 @@ export class RoleCallTaskRunnerExecutor {
   private readonly taskRunner: TaskRunner;
   private readonly repositories: RoleCallExecutionRepositories;
   private readonly roles: readonly RoleDefinition[];
+  private readonly roleMetadata: readonly WorkgroupRoleRunMetadata[];
   private readonly idFactory: (prefix: string) => string;
   private readonly now: () => string;
 
@@ -71,6 +74,7 @@ export class RoleCallTaskRunnerExecutor {
     this.taskRunner = options.taskRunner;
     this.repositories = options.repositories;
     this.roles = options.roles;
+    this.roleMetadata = options.roleMetadata ?? [];
     this.idFactory = options.idFactory ?? ((prefix) => `${prefix}_${cryptoRandom()}`);
     this.now = options.now ?? (() => new Date().toISOString());
   }
@@ -93,6 +97,8 @@ export class RoleCallTaskRunnerExecutor {
         `Role call ${roleCall.id} must be accepted before execution; current status is ${roleCall.status}.`
       );
     }
+    const calleeRoleMetadata =
+      this.findRoleMetadata(calleeRole.handle) ?? roleDefinitionToRunMetadata(calleeRole);
 
     if (roleCall.status === "accepted") {
       roleCall = await this.repositories.roleCallRepository.updateStatus(
@@ -136,8 +142,10 @@ export class RoleCallTaskRunnerExecutor {
         context: input.context ?? roleCall.context
       }),
       agentKind: calleeRole.executor.adapter,
-      role: roleDefinitionToRunMetadata(calleeRole),
-      teamRoles: this.roles.map((role) => roleDefinitionToRunMetadata(role)),
+      role: calleeRoleMetadata,
+      teamRoles: this.roles.map(
+        (role) => this.findRoleMetadata(role.handle) ?? roleDefinitionToRunMetadata(role)
+      ),
       deliveryMode: input.taskRunnerOptions?.deliveryMode ?? "runtime_injection",
       workspaceBasePath: input.taskRunnerOptions?.workspaceBasePath,
       runRoot: input.taskRunnerOptions?.runRoot,
@@ -146,6 +154,9 @@ export class RoleCallTaskRunnerExecutor {
       environmentOverrides: input.taskRunnerOptions?.environmentOverrides,
       agentAvailability: input.taskRunnerOptions?.agentAvailability,
       agentHubHome: input.taskRunnerOptions?.agentHubHome,
+      roleSkillReferences:
+        input.taskRunnerOptions?.roleSkillReferences ??
+        calleeRoleMetadata.defaultSkillReferences,
       dryRun: input.taskRunnerOptions?.dryRun,
       onEvent: input.taskRunnerOptions?.onEvent,
       signal: input.taskRunnerOptions?.signal,
@@ -261,6 +272,10 @@ export class RoleCallTaskRunnerExecutor {
 
   private findRole(handle: string): RoleDefinition | undefined {
     return this.roles.find((role) => role.handle === handle);
+  }
+
+  private findRoleMetadata(handle: string): WorkgroupRoleRunMetadata | undefined {
+    return this.roleMetadata.find((role) => role.roleHandle === handle);
   }
 
   private async requireRoleCall(roleCallId: string): Promise<RoleCall> {
