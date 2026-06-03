@@ -208,6 +208,8 @@ Role-backed runs add an injected role envelope to that same runtime payload:
 the running adapter receives its role handle, persona/instructions, safe
 permission summary, compact team list, and collaboration rules that require
 RoleCall-based delegation instead of simulating other roles.
+Accepted executable RoleCalls use the same injection path and include the
+callee role's default skill references when Agent Hub builds runtime context.
 
 Skills are explicit `SKILL.md` files. Project skills live in the project
 context store. Global skills live in Agent Hub app data and are selected by task
