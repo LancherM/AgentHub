@@ -1643,6 +1643,7 @@ async function executeAcceptedCliRoleCalls(input: {
       roleTodoRepository: input.runtime.roleTodoRepository
     },
     roles: input.roleDefinitions,
+    roleMetadata: input.workgroupRoles.map((role) => toWorkgroupRoleRunMetadata(role)),
     idFactory: createId,
     now: nowIso
   });

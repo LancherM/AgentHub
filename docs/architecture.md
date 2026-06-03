@@ -1,6 +1,6 @@
 # Architecture
 
-Last audited against `origin/main` at `3f0f16c` on 2026-06-02.
+Last audited against `origin/main` at `3f0f16c` on 2026-06-03.
 
 Agent Hub is a CLI-first local application built from shared TypeScript
 packages. The desktop app is an Electron shell over the same local services and
@@ -105,6 +105,9 @@ passes safe `WorkgroupRoleRunMetadata` into the adapter input. Process-backed
 adapters render a `## Your Role` section, collaboration rules, and a compact
 team list into stdin before the task brief. Direct adapter runs without role
 metadata omit that section.
+Role-backed runs and accepted executable RoleCalls also pass the callee role's
+default skill references into context compilation so role-selected project or
+global skills are injected through the same runtime payload.
 
 `worktree_overlay` is a run mode that writes generated `AGENTS.md`, `CLAUDE.md`,
 briefs, context packs, and skill copies only inside the isolated worktree.
@@ -275,7 +278,8 @@ The flow is:
 5. Accepted executable `agent_adapter` calls are started through
    `RoleCallTaskRunnerExecutor`, which reuses the normal TaskRunner path and
    links the resulting `task_run` to the RoleCall. The callee role is converted
-   into the same safe runtime role metadata used by CLI role mentions.
+   into the same safe runtime role metadata used by CLI role mentions, and its
+   default skill references are forwarded into TaskRunner context compilation.
 6. RoleResult JSON is parsed when available; the summary is promoted to the
    transcript while raw structured payload stays in local evidence.
 7. Caller reinjection and convergence helpers summarize decisions, results,

@@ -1,6 +1,6 @@
 # Product
 
-Last audited against `origin/main` at `3f0f16c` on 2026-06-02.
+Last audited against `origin/main` at `3f0f16c` on 2026-06-03.
 
 Agent Hub is a local-first, CLI-first tool for orchestrating coding agents on a
 developer machine. It manages local projects, task briefs, context packs,
@@ -221,6 +221,8 @@ Role-backed runs add an injected role envelope to that same runtime payload:
 the running adapter receives its role handle, persona/instructions, safe
 permission summary, compact team list, and collaboration rules that require
 RoleCall-based delegation instead of simulating other roles.
+Accepted executable RoleCalls use the same injection path and include the
+callee role's default skill references when Agent Hub builds runtime context.
 
 Skills are explicit `SKILL.md` files. Project skills live in the project
 context store. Global skills live in Agent Hub app data and are selected by task
