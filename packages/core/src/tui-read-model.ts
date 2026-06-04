@@ -710,7 +710,7 @@ async function summarizeConversation(
         timestamp: run.completedAt ?? run.updatedAt,
         author: `@${renderedHandle}`,
         displayHandle,
-        content: "awaiting review — 切换到 [V]iew 查看详情",
+        content: "awaiting review - open [V]iew for details",
         outputLines,
         agent: run.agentKind,
         runId: run.id,

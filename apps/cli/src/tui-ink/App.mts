@@ -1392,7 +1392,7 @@ function conversationEntryLines(
         ? conversationRichLines(`⚠ ${entry.riskLine}`, { prefix: "┃   ", agent: true, tone, color: "yellow" }, terminal)
         : []),
       ...inlineDiffLines(entry.inlineDiff, "┃   ", entry.id, terminal),
-      ...conversationRichLines(`△ ${entry.content ?? "切换到 [V]iew 查看详情"}`, { prefix: "┃   ", agent: true, tone, color: "yellow" }, terminal),
+      ...conversationRichLines(`△ ${entry.content ?? "open [V]iew for details"}`, { prefix: "┃   ", agent: true, tone, color: "yellow" }, terminal),
       ...conversationSuggestionLines(entry, showSuggestions, tone, terminal)
     ];
   }
@@ -2008,7 +2008,7 @@ function TasksPane({
           line(""),
           line(`Selected ${task.id}`, { bold: true }),
           ...task.assignments.map((assignment) =>
-            line(`${assignment.label} ${assignment.status}${assignment.executable ? "" : " executor_unavailable"}`)
+            line(`${assignment.label} ${assignment.status}${assignment.executable ? "" : " needs executor"}`)
           ),
           ...unavailableRoleExecutorCommands(model.context.projectId, task).map((command) =>
             line(command, { dimColor: true })
@@ -2038,7 +2038,7 @@ function TeamPane({
       Pane,
       { title: "Team Roles" },
       line("No team roles are available in the current context.", { dimColor: true }),
-      line(`next ${team.command ?? "agent-hub project list"}`, { dimColor: true })
+      line(`command ${team.command ?? "agent-hub project list"}`, { dimColor: true })
     );
   }
   const windowSize = teamWindowSize(terminal);
@@ -2053,13 +2053,24 @@ function TeamPane({
     ),
     ...visibleRoles.map((role) =>
       line(
-        `${role.enabled ? " " : "!"} @${role.handle} ${role.source} ${role.executorLabel}${role.defaultRoom ? ` #${role.defaultRoom}` : ""} - ${truncateText(role.capabilitySummary, 62)}`
+        `${role.enabled ? " " : "!"} @${role.handle} ${role.source} ${teamExecutorLabel(role)}${role.defaultRoom ? ` #${role.defaultRoom}` : ""} - ${truncateText(role.capabilitySummary, 62)}`
       )
     ),
     ...(remaining > 0 ? [line(`${remaining} more roles hidden by window size`, { dimColor: true })] : []),
     line(""),
-    line(`next ${team.command ?? "agent-hub project list"}`, { dimColor: true })
+    line(`command ${team.command ?? "agent-hub project list"}`, { dimColor: true })
   );
+}
+
+function teamExecutorLabel(role: TuiCurrentContextModel["team"]["roles"][number]): string {
+  if (role.executorKind !== "agent_adapter") {
+    return "manual";
+  }
+  if (!role.executorRunnable) {
+    return "agent unavailable";
+  }
+  const adapter = role.executorLabel.split("/").at(-1)?.trim();
+  return adapter ? `runs with ${adapter}` : "agent ready";
 }
 
 function MemoryPane({ model }: { model: TuiCurrentContextModel }): React.ReactElement {
@@ -2075,15 +2086,15 @@ function MemoryPane({ model }: { model: TuiCurrentContextModel }): React.ReactEl
     Pane,
     { title: "Memory + Skills" },
     line(`proposed ${model.memory.counts.proposed} approved ${model.memory.counts.approved} rejected ${model.memory.counts.rejected}`),
-    line(`approved_source ${model.memory.approvedSource}`),
+    line(`approved memory ${model.memory.approvedSource}`),
     line(`reminder ${model.memory.approvalReminder}`),
-    line(`next ${model.memory.command ?? "register a project before listing memory"}`),
+    line(`command ${model.memory.command ?? "register a project before listing memory"}`),
     ...model.memory.approvalCommands.map((command) => line(command, { dimColor: true })),
     line(""),
-    line(`selected ${selectedSkills}`),
-    line(`available ${availableSkills}`),
-    line(`source ${model.skills.runtimeSource}`),
-    line(`mode ${model.skills.contextMode}`)
+    line(`selected skills ${selectedSkills}`),
+    line(`available skills ${availableSkills}`),
+    line(`skill source ${model.skills.runtimeSource}`),
+    line(`context ${contextModeLabel(model.skills.contextMode)}`)
   );
 }
 
@@ -2259,10 +2270,10 @@ function HelpPane(): React.ReactElement {
   return h(
     Pane,
     { title: "Help" },
-    line("tab/shift-tab focus   W/R/V/G/T/M/E switch tabs   up/down or k/j move"),
-    line(": commands   /team roles   /timeline or L timeline   /notify completion bell"),
-    line("a accept review   R reject in Review"),
-    line("enter submit   esc clear   arrows/home/end edit composer   ctrl+u clear   ? help")
+    line("tabs: W work  R runs  V review  G graph  T tasks  M memory  E team"),
+    line(": palette   /search   /timeline or L   /notify   /team"),
+    line("review: a accept  R reject  audit only; no apply, merge, or push"),
+    line("prompt: enter submit  ctrl+o newline  esc clear  ctrl+u clear")
   );
 }
 
@@ -2452,7 +2463,20 @@ function composerPreviewLine(model: TuiCurrentContextModel, state: TuiInkState):
   const thread = model.context.threadTitle
     ? `${model.context.threadTitle}${model.context.roomHandle ? ` (#${model.context.roomHandle})` : ""}`
     : model.context.threadId ?? (model.context.roomHandle ? `#${model.context.roomHandle}` : "current");
-  return `send ${target}  thread ${thread}  mode ${model.context.contextMode}`;
+  return `send ${target}  thread ${thread}  context ${contextModeLabel(model.context.contextMode)}`;
+}
+
+function contextModeLabel(mode: string): string {
+  if (mode === "runtime_injection") {
+    return "runtime";
+  }
+  if (mode === "worktree_overlay") {
+    return "worktree overlay";
+  }
+  if (mode === "repo_export") {
+    return "repo export";
+  }
+  return mode;
 }
 
 function composerTarget(model: TuiCurrentContextModel, state: TuiInkState): string {

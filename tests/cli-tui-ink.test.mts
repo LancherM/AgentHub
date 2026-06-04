@@ -44,7 +44,7 @@ const baseModel = {
       type: "review_pending",
       timestamp: "2026-05-29T12:05:00.000Z",
       author: "@codex",
-      content: "awaiting review — 切换到 [V]iew 查看详情",
+      content: "awaiting review - open [V]iew for details",
       agent: "codex",
       runId: "run_27984312-fc9a-46bf-9ccf-c06997187091",
       statusLabel: "awaiting review"
@@ -184,10 +184,10 @@ describe("Ink TUI renderer", () => {
     expect(output).toContain("user");
     expect(output).toContain("Check the TUI shell.");
     expect(output).toContain("@codex run_27984312 △ awaiting review");
-    expect(output).toContain("切换到 [V]iew 查看详情");
+    expect(output).toContain("open [V]iew for details");
     expect(output).not.toContain("checks 0/0/1");
     expect(output).toContain("C continue");
-    expect(output).toContain("send @codex  thread Review (#review)  mode runtime_injection");
+    expect(output).toContain("send @codex  thread Review (#review)  context runtime");
     expect(output).toContain("> @codex prompt");
     expect(output.indexOf("> @codex prompt")).toBeLessThan(output.indexOf("W Work"));
     expect(output).toContain("Team");
@@ -1231,8 +1231,8 @@ describe("Ink TUI renderer", () => {
 
     expect(submissions).toEqual([]);
     expect(instance.lastFrame()).toContain("Team Roles 2");
-    expect(instance.lastFrame()).toContain("@engineer preset agent_adapter / codex #planning");
-    expect(instance.lastFrame()).toContain("@reviewer preset human reserved #review");
+    expect(instance.lastFrame()).toContain("@engineer preset runs with codex #planning");
+    expect(instance.lastFrame()).toContain("@reviewer preset manual #review");
     expect(instance.lastFrame()).toContain("> @codex prompt");
     instance.unmount();
   });
@@ -1252,7 +1252,7 @@ describe("Ink TUI renderer", () => {
 
     expect(instance.lastFrame()).toContain("Team");
     expect(instance.lastFrame()).not.toContain("[E]am");
-    expect(instance.lastFrame()).toContain("@engineer preset agent_adapter / codex #planning");
+    expect(instance.lastFrame()).toContain("@engineer preset runs with codex #planning");
     instance.unmount();
   });
 
@@ -1516,7 +1516,7 @@ describe("Ink TUI renderer", () => {
       { columns: 120 }
     );
 
-    expect(output).toContain("send @codex  thread Review (#review)  mode runtime_injection");
+    expect(output).toContain("send @codex  thread Review (#review)  context runtime");
     expect(output).toContain("agents @codex @claude-code @engineer @reviewer");
   });
 

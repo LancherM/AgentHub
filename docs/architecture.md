@@ -464,7 +464,10 @@ counts, then truncates to the highest-priority item at narrow width. It does
 not add persistence, shell execution, or navigation side effects. The TUI Ink
 entrypoint loads React/Ink/App modules after installing a scoped warning filter
 that suppresses only Node's JSON-module ExperimentalWarning from Ink's
-`cli-boxes` dependency, then restores normal warning behavior.
+`cli-boxes` dependency, then restores normal warning behavior. Operator copy is
+mapped in the renderer where it is purely presentational: context delivery enum
+values become compact labels, team executor labels are translated away from
+`agent_adapter`, and generated review hints stay in English.
 The Ink renderer owns only presentation grammar: reverse-color risk-aware
 headers, a low-flicker idle `◈` indicator, agent-message left bars,
 timestamp/elapsed/usage metadata display, conversation separators, five-minute

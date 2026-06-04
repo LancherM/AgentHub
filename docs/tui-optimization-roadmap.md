@@ -1,6 +1,6 @@
 # TUI Optimization Roadmap
 
-Status: active implementation; OPT-0 through OPT-4 implemented
+Status: active implementation; OPT-0 through OPT-5 implemented
 Last updated: 2026-06-04
 Baseline: `origin/main` at `0a69476`
 
@@ -326,6 +326,8 @@ node apps/cli/dist/cli.js tui --once
 ```
 
 ### Phase OPT-5: Copy, Help, And Localization Consistency
+
+Status: implemented.
 
 Goal: make the terminal language operator-shaped and consistent.
 

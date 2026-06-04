@@ -195,7 +195,11 @@ as `stale` in Work and summarized as `stale run <n> R` in the attention strip;
 this is inspect-only and does not cancel, fail, or mutate the run. One-shot and
 interactive TUI entry suppress implementation-level JSON-module runtime
 warnings from Ink dependencies so the first visible line is the TUI frame or an
-Agent Hub state message, not a Node warning.
+Agent Hub state message, not a Node warning. Generated TUI copy stays in a
+single English operator voice: Review hints use `open [V]iew for details`,
+context delivery is shown as `context runtime` instead of implementation enum
+names, Team roles show labels such as `runs with codex` or `manual`, and Memory
+uses readable labels for approved memory, skill source, and context.
 Interactive
 submit and review-decision actions show bounded busy states without locking the
 keyboard: users can still switch focus, open command hints, and draft the next
