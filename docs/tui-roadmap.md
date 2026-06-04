@@ -25,6 +25,10 @@ read-model and command boundaries, but it has been replaced as a runtime path.
 The current implementation direction is the component-based Ink rewrite
 described in `docs/tui-ink-rewrite-roadmap.md`. The Work view now follows the
 conversation-terminal plan in `docs/tui-conversation-terminal-roadmap.md`.
+The current post-implementation polish plan lives in
+`docs/tui-optimization-roadmap.md`; it focuses on footer command hierarchy,
+narrow-terminal layout, attention/next-action state, warning hygiene, stale
+active-run presentation, and copy/help consistency.
 
 Project registration, broad project browsing, room management, deep audit,
 comparison reports, raw logs, full diffs, knowledge browsing, and lifecycle

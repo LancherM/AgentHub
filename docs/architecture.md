@@ -1,6 +1,6 @@
 # Architecture
 
-Last audited against `origin/main` at `3f0f16c` on 2026-06-03.
+Last audited against `origin/main` at `0a69476` on 2026-06-04.
 
 Agent Hub is a CLI-first local application built from shared TypeScript
 packages. The desktop app is an Electron shell over the same local services and
@@ -450,8 +450,24 @@ Terminal polish is also contained in the CLI renderer. It compacts identifiers,
 renders the Work view as a conversation flow plus bounded active-run boxes,
 moves the shortcut-labelled Work/Runs/View/Graph/Tasks/Memory/Team/Help tabs
 below the composer, renders a focus-specific shortcut hint as the bottom line,
-and uses Ink components for terminal layout instead of hand-wrapped string
-panels.
+uses width-aware tab/footer labels so narrow terminals keep primary keys
+readable, and uses Ink components for terminal layout instead of hand-wrapped
+string panels. Full current-context CLI commands stay in Palette, focused
+detail panes, or explicit command-print status messages rather than permanent
+footer chrome. Work layout budgets are calculated from terminal width/height:
+conversation rows are sliced after renderer-side wrapping has repeated
+structural prefixes, and active-run boxes switch to a compact four-line variant
+only on narrow or short terminals. The attention strip is also renderer-owned:
+it derives ordered read-only items from existing run evidence, review
+decisions, RoleCall loop state, task assignments, team executors, and memory
+counts, then truncates to the highest-priority item at narrow width. It does
+not add persistence, shell execution, or navigation side effects. The TUI Ink
+entrypoint loads React/Ink/App modules after installing a scoped warning filter
+that suppresses only Node's JSON-module ExperimentalWarning from Ink's
+`cli-boxes` dependency, then restores normal warning behavior. Operator copy is
+mapped in the renderer where it is purely presentational: context delivery enum
+values become compact labels, team executor labels are translated away from
+`agent_adapter`, and generated review hints stay in English.
 The Ink renderer owns only presentation grammar: reverse-color risk-aware
 headers, a low-flicker idle `◈` indicator, agent-message left bars,
 timestamp/elapsed/usage metadata display, conversation separators, five-minute
@@ -463,12 +479,15 @@ from presentation-filtered events; it does not change event persistence,
 adapter execution, run status, or review semantics.
 Active-run boxes cover running runs only. They use rounded frames whose content
 area grows to fit wrapped visible output instead of truncating agent-facing
-lines; if no useful assistant or runtime activity is visible yet, the read model
-emits `agent thinking...`. The renderer uses a static running marker, live
-elapsed calculation from the run start timestamp, and best-effort percentage or
-`N/M` progress parsing. Completion/failure visibility comes from the refreshed
-read model instead of short-lived renderer feedback timers. None of that state
-is persisted or sent back into adapters.
+lines at normal width, and compact to the latest visible tail plus progress
+when width or height is tight; if no useful assistant or runtime activity is
+visible yet, the read model emits `agent thinking...`. The renderer uses a
+static running marker, live elapsed calculation from the run start timestamp,
+presentation-only stale labeling after the threshold when the box still has no
+useful output, and best-effort percentage or `N/M` progress parsing.
+Completion/failure visibility comes from the refreshed read model instead of
+short-lived renderer feedback timers. None of that state is persisted or sent
+back into adapters.
 They prefer structured assistant output, then fall back to recent adapter,
 stdout, and stderr events while filtering raw JSON protocol frames, setup
 lifecycle lines, internal agent protocol summaries, runtime warnings, Codex
@@ -569,13 +588,21 @@ summaries.
 The command hint helper falls back from an absent selected RoleCall to
 `agent-hub team roles list --project-id <project-id>`, the command palette
 includes the same role-list command beside run, review, and memory commands,
-the `[E]am` tab participates in the default focus cycle, and the `/team` slash
-command changes local Ink focus to the Team read-model pane.
+the readable `Team` tab participates in the default focus cycle with the
+uppercase `E` shortcut, and the `/team` slash command changes local Ink focus
+to the Team read-model pane.
 Because the Ink renderer is a NodeNext composite TypeScript project that imports
 workspace package types, root validation runs its TUI check through
 `tsc -b apps/cli/tsconfig.tui-ink.json` so project references emit the required
 local declarations in clean CI checkouts without requiring prebuilt package
 `dist` directories.
+Visible TUI workflow changes must be judged against the rebuilt CLI artifact,
+not source assumptions alone: local verification rebuilds the workspace, smokes
+`node apps/cli/dist/cli.js tui --once`, launches the rebuilt interactive TUI in
+normal and narrow PTY sizes, and records the result in an ignored
+`docs/ui-verification/` note. This is a validation contract for the existing
+CLI renderer boundary; it does not add a background runtime, renderer shell
+access, or any automatic review/apply behavior.
 The hand-rendered string layout has been removed from the TUI runtime path.
 The current renderer direction is documented in
 `docs/tui-ink-rewrite-roadmap.md`: keep the core read model and CLI action
@@ -590,3 +617,10 @@ model with conversation and active-run projections, then keeps the Ink Work
 surface scoped to `ConversationFlow` and `ActiveRunBox` components. Auxiliary
 Runs, Review, Graph, Tasks, Memory, Help, Palette, and the slash-command Team
 pane continue to use the existing local evidence and callback boundaries.
+The follow-on TUI optimization plan is documented in
+`docs/tui-optimization-roadmap.md`. It remains renderer/read-model work inside
+the same CLI boundary: footer command hierarchy, narrow-terminal row budgets,
+attention summaries, warning hygiene, stale active-run presentation, and copy
+consistency. It does not introduce new persistence, a server, background
+execution, renderer-side shell access, automatic review acceptance, memory
+approval, apply, merge, push, or pull request creation.

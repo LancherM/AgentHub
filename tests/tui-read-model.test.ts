@@ -84,7 +84,7 @@ describe("TUI current-context read model", () => {
     expect(model.conversation.find((entry) => entry.id === "review-pending:run_done")).toMatchObject({
       type: "review_pending",
       displayHandle: "engineer",
-      content: "awaiting review — 切换到 [V]iew 查看详情",
+      content: "awaiting review - open [V]iew for details",
       outputLines: ["Cleanup summary updated."]
     });
     expect(model.runs.map((run) => run.id)).toEqual(["run_active", "run_done"]);

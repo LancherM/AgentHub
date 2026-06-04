@@ -10,6 +10,7 @@ import {
   type RoleCall
 } from "@agent-hub/core";
 import { runTuiCommand } from "../apps/cli/src/tui";
+import { isJsonModuleExperimentalWarning } from "../apps/cli/src/tui-ink/json-warning";
 
 const now = "2026-05-29T12:00:00.000Z";
 const projectRoot = "/tmp/tui-project";
@@ -29,6 +30,34 @@ describe("CLI TUI command", () => {
     expect(output.join("")).toContain("--thread <thread-id>");
     expect(output.join("")).toContain("--splash");
     expect(output.join("")).toContain("--no-splash");
+  });
+
+  it("does not emit the Ink JSON module warning through the TUI entrypoint", async () => {
+    const runtime = createCliRuntime({ storageMode: "memory" });
+    await seedTuiContext(runtime);
+    const output: string[] = [];
+    const errors: string[] = [];
+
+    expect(
+      isJsonModuleExperimentalWarning(
+        "Importing JSON modules is an experimental feature and might change at any time",
+        "ExperimentalWarning"
+      )
+    ).toBe(true);
+    expect(isJsonModuleExperimentalWarning("Agent Hub warning", "ExperimentalWarning"))
+      .toBe(false);
+    await expect(
+      runTuiCommand({
+        args: ["--room", "review", "--once"],
+        io: testIo(output, errors),
+        cwd: process.cwd(),
+        projectRoot,
+        runtime
+      })
+    ).resolves.toBe(0);
+
+    expect(errors.join("")).toBe("");
+    expect(output.join("")).not.toContain("ExperimentalWarning");
   });
 
   it("renders a read-only current-context workbench by room selector", async () => {

@@ -44,7 +44,7 @@ const baseModel = {
       type: "review_pending",
       timestamp: "2026-05-29T12:05:00.000Z",
       author: "@codex",
-      content: "awaiting review — 切换到 [V]iew 查看详情",
+      content: "awaiting review - open [V]iew for details",
       agent: "codex",
       runId: "run_27984312-fc9a-46bf-9ccf-c06997187091",
       statusLabel: "awaiting review"
@@ -184,15 +184,176 @@ describe("Ink TUI renderer", () => {
     expect(output).toContain("user");
     expect(output).toContain("Check the TUI shell.");
     expect(output).toContain("@codex run_27984312 △ awaiting review");
-    expect(output).toContain("切换到 [V]iew 查看详情");
+    expect(output).toContain("open [V]iew for details");
     expect(output).not.toContain("checks 0/0/1");
     expect(output).toContain("C continue");
-    expect(output).toContain("send @codex  thread Review (#review)  mode runtime_injection");
+    expect(output).toContain("send @codex  thread Review (#review)  context runtime");
     expect(output).toContain("> @codex prompt");
-    expect(output.indexOf("> @codex prompt")).toBeLessThan(output.indexOf("[W]ork"));
-    expect(output).toContain("[E]am");
+    expect(output.indexOf("> @codex prompt")).toBeLessThan(output.indexOf("W Work"));
+    expect(output).toContain("Team");
+    expect(output).not.toContain("[E]am");
     expect(output).not.toContain("Runs + Review");
     expect(output).not.toContain("-- more hidden --");
+  });
+
+  it("keeps the narrow footer and tab row compact", () => {
+    const output = renderToString(
+      React.createElement(TuiInkFrame, {
+        model: baseModel,
+        state: createInitialInkState(),
+        terminal: { columns: 48, rows: 20 }
+      }),
+      { columns: 48 }
+    );
+    const footerLine = output
+      .split("\n")
+      .find((value) => value.startsWith("keys:"));
+
+    expect(output).toContain("W R V G T M Team ?");
+    expect(output).toContain("keys: type | : cmd | ? | x");
+    expect(output).not.toContain("[E]am");
+    expect(output).not.toContain("agent-hub team roles list --project-id project_1");
+    expect(footerLine?.length ?? 0).toBeLessThanOrEqual(48);
+  });
+
+  it("renders attention items in priority order and narrows to the highest item", () => {
+    const wideOutput = renderToString(
+      React.createElement(TuiInkFrame, {
+        model: baseModel,
+        state: createInitialInkState(),
+        terminal: { columns: 120, rows: 32 }
+      }),
+      { columns: 120 }
+    );
+    const narrowOutput = renderToString(
+      React.createElement(TuiInkFrame, {
+        model: baseModel,
+        state: createInitialInkState(),
+        terminal: { columns: 48, rows: 20 }
+      }),
+      { columns: 48 }
+    );
+
+    expect(wideOutput).toContain("attention: risk blocking 1 G");
+    expect(wideOutput.indexOf("risk blocking 1 G")).toBeLessThan(wideOutput.indexOf("review pending 1 V"));
+    expect(wideOutput.indexOf("review pending 1 V")).toBeLessThan(wideOutput.indexOf("memory proposed 1 M"));
+    expect(narrowOutput).toContain("attn: risk blocking 1 | : more");
+    expect(narrowOutput).not.toContain("review pending 1 V");
+  });
+
+  it("surfaces failed checks, waiting RoleCalls, and unavailable executors", () => {
+    const output = renderToString(
+      React.createElement(TuiInkFrame, {
+        model: {
+          ...baseModel,
+          runs: [
+            {
+              ...baseModel.runs[0],
+              reviewDecision: { status: "accepted" },
+              evidence: {
+                latestEvent: "tests failed",
+                checks: { passed: 0, failed: 2, skipped: 0, failedNames: ["pnpm test", "pnpm lint"] },
+                risk: { level: "low", primaryReason: "tests failed" },
+                diff: { changedFiles: 1, insertions: 1, deletions: 0 }
+              }
+            }
+          ],
+          roleCalls: {
+            ...baseModel.roleCalls,
+            loop: {
+              ...baseModel.roleCalls.loop,
+              stopReason: "waiting_approval",
+              waitingRoleCallIds: ["call_waiting_approval"]
+            }
+          },
+          tasks: [
+            {
+              id: "task_executor",
+              title: "Configure reviewer",
+              status: "open",
+              updatedAt: "2026-05-29T12:10:00.000Z",
+              assignmentCount: 1,
+              executableAssignmentCount: 0,
+              assignments: [
+                {
+                  id: "assignment_reviewer",
+                  label: "Reviewer",
+                  executable: false,
+                  status: "queued"
+                }
+              ],
+              roleTodos: [],
+              followUps: []
+            }
+          ],
+          review: {
+            ...baseModel.review,
+            evidence: {}
+          },
+          memory: {
+            ...baseModel.memory,
+            counts: { proposed: 0, approved: 1, rejected: 0 }
+          }
+        },
+        state: createInitialInkState(),
+        terminal: { columns: 120, rows: 32 }
+      }),
+      { columns: 120 }
+    );
+
+    expect(output).toContain("attention: checks failed 2 R | waiting approval 1 G | executor unavailable 1 T");
+  });
+
+  it("hides the attention strip for healthy contexts", () => {
+    const output = renderToString(
+      React.createElement(TuiInkFrame, {
+        model: {
+          ...baseModel,
+          conversation: [],
+          activeRuns: [],
+          runs: [
+            {
+              ...baseModel.runs[0],
+              reviewDecision: { status: "accepted" },
+              evidence: {
+                latestEvent: "Run completed.",
+                checks: { passed: 1, failed: 0, skipped: 0, failedNames: [] },
+                risk: { level: "low" },
+                diff: { changedFiles: 1, insertions: 1, deletions: 0 }
+              }
+            }
+          ],
+          roleCalls: {
+            ...baseModel.roleCalls,
+            loop: {
+              ...baseModel.roleCalls.loop,
+              stopReason: "none",
+              waitingRoleCallIds: []
+            }
+          },
+          tasks: [],
+          team: {
+            ...baseModel.team,
+            roles: [baseModel.team.roles[0]],
+            counts: { total: 1, enabled: 1, runnable: 1, reserved: 0, custom: 0, presetOverrides: 0 }
+          },
+          review: {
+            ...baseModel.review,
+            evidence: {}
+          },
+          memory: {
+            ...baseModel.memory,
+            counts: { proposed: 0, approved: 1, rejected: 0 }
+          }
+        },
+        state: createInitialInkState(),
+        terminal: { columns: 100, rows: 32 }
+      }),
+      { columns: 100 }
+    );
+
+    expect(output).not.toContain("attention:");
+    expect(output).not.toContain("attn:");
   });
 
   it("renders active run boxes inside Work", () => {
@@ -284,6 +445,73 @@ describe("Ink TUI renderer", () => {
     expect(boxLines).toHaveLength(8);
   });
 
+  it("marks old active runs as stale only when no useful output is visible", () => {
+    const model = {
+      ...baseModel,
+      conversation: [],
+      runs: [],
+      roleCalls: {
+        ...baseModel.roleCalls,
+        loop: {
+          ...baseModel.roleCalls.loop,
+          stopReason: "none"
+        }
+      },
+      team: {
+        ...baseModel.team,
+        roles: [baseModel.team.roles[0]],
+        counts: { total: 1, enabled: 1, runnable: 1, reserved: 0, custom: 0, presetOverrides: 0 }
+      },
+      memory: {
+        ...baseModel.memory,
+        counts: { proposed: 0, approved: 1, rejected: 0 }
+      },
+      activeRuns: [
+        {
+          runId: "run_stale_active",
+          agent: "codex",
+          displayHandle: "engineer",
+          title: "@engineer run_stale_active ● running",
+          startedAt: "2000-01-01T00:00:00.000Z",
+          outputLines: ["agent thinking..."]
+        }
+      ],
+      review: {
+        ...baseModel.review,
+        evidence: {}
+      }
+    };
+    const staleOutput = renderToString(
+      React.createElement(TuiInkFrame, {
+        model,
+        state: createInitialInkState(),
+        terminal: { columns: 100, rows: 32 }
+      }),
+      { columns: 100 }
+    );
+    const usefulOutput = renderToString(
+      React.createElement(TuiInkFrame, {
+        model: {
+          ...model,
+          activeRuns: [
+            {
+              ...model.activeRuns[0],
+              outputLines: ["Running pnpm test"]
+            }
+          ]
+        },
+        state: createInitialInkState(),
+        terminal: { columns: 100, rows: 32 }
+      }),
+      { columns: 100 }
+    );
+
+    expect(staleOutput).toContain("attention: stale run 1 R");
+    expect(staleOutput).toContain("running stale");
+    expect(usefulOutput).not.toContain("stale run");
+    expect(usefulOutput).not.toContain("running stale");
+  });
+
   it("wraps active agent output without truncating content", () => {
     const longLine = `agent output ${"x".repeat(90)} complete`;
     const output = renderToString(
@@ -310,7 +538,89 @@ describe("Ink TUI renderer", () => {
     expect(output).toContain("agent output");
     expect(output).toContain("complete");
     expect(output).toContain("xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx");
-    expect(output).not.toContain("...");
+    const boxLines = output
+      .split("\n")
+      .filter((value) => value.startsWith("│"));
+    expect(boxLines.join("\n")).not.toContain("...");
+  });
+
+  it("keeps Work structure coherent across explicit width budgets", () => {
+    const model = {
+      ...baseModel,
+      conversation: [
+        {
+          id: "message:narrow-user",
+          sequence: 0,
+          role: "user",
+          kind: "text",
+          author: "user",
+          content: "Please inspect the renderer budget with a deliberately long prompt at small widths before shipping.",
+          createdAt: "2026-05-29T12:00:00.000Z",
+          type: "user_message",
+          timestamp: "2026-05-29T12:00:00.000Z"
+        },
+        {
+          id: "run:narrow-agent",
+          type: "agent_completed",
+          timestamp: "2026-05-29T12:05:00.000Z",
+          author: "@codex",
+          agent: "codex",
+          runId: "run_narrow_agent",
+          statusLabel: "completed",
+          outputLines: [
+            "agent output keeps a structural prefix when this deliberately long sentence wraps across narrow terminal rows.",
+            "```",
+            "const structuralPrefix = true;",
+            "```"
+          ]
+        }
+      ],
+      activeRuns: [
+        {
+          runId: "run_active_budget",
+          agent: "codex",
+          displayHandle: "engineer",
+          title: "@engineer run_active_budget ● running",
+          outputLines: [
+            "Reading src/very-long-renderer-budget-file-name.ts",
+            "Step 2/5"
+          ]
+        }
+      ]
+    };
+
+    for (const columns of [48, 64, 80, 120]) {
+      const output = renderToString(
+        React.createElement(TuiInkFrame, {
+          model,
+          state: createInitialInkState(),
+          terminal: { columns, rows: columns === 48 ? 20 : 24 }
+        }),
+        { columns }
+      );
+      const lines = output.split("\n");
+
+      expect(output).toContain("> @codex prompt");
+      expect(output).toContain("keys:");
+      expect(output).toContain(columns < 56 ? "W R V G T M Team ?" : columns < 84 ? "W Work" : "[W]ork");
+      expect(lines.some((value) => value.startsWith(" this deliberately"))).toBe(false);
+      expect(lines.every((value) => value.length <= columns)).toBe(true);
+    }
+
+    const narrowOutput = renderToString(
+      React.createElement(TuiInkFrame, {
+        model,
+        state: createInitialInkState(),
+        terminal: { columns: 48, rows: 20 }
+      }),
+      { columns: 48 }
+    );
+    const narrowBoxLines = narrowOutput
+      .split("\n")
+      .filter((value) => value.startsWith("╭") || value.startsWith("│") || value.startsWith("╰"));
+
+    expect(narrowBoxLines).toHaveLength(4);
+    expect(narrowOutput).toContain("│ Step 2/5");
   });
 
   it("collapses older active runs and keeps at most three full boxes", () => {
@@ -625,6 +935,64 @@ describe("Ink TUI renderer", () => {
     expect(output).toContain("agent-hub memory list --project-id project_1");
   });
 
+  it("keeps Help workflow entry points visible without terminal overflow", () => {
+    for (const columns of [48, 80]) {
+      const output = renderToString(
+        React.createElement(TuiInkFrame, {
+          model: baseModel,
+          state: { ...createInitialInkState(), focus: "help" },
+          terminal: { columns, rows: 20 }
+        }),
+        { columns }
+      );
+      const lines = output.split("\n");
+
+      expect(output).toContain("Help");
+      expect(output).toContain(": palette");
+      expect(output).toContain("/search");
+      expect(output).toContain("/timeline");
+      expect(output).toContain("/notify");
+      expect(output).toContain("review:");
+      expect(output).toContain("prompt:");
+      expect(lines.every((value) => value.length <= columns)).toBe(true);
+    }
+  });
+
+  it("prints focused commands from non-Work panes without editing the composer", async () => {
+    const instance = render(
+      React.createElement(TuiInkApp, {
+        model: baseModel,
+        state: { ...createInitialInkState(), focus: "runs" },
+        terminal: { columns: 120, rows: 40 },
+        interactive: true
+      })
+    );
+
+    instance.stdin.write("p");
+    await waitForFrame(instance, "Status: agent-hub runs show run_27984312");
+
+    expect(instance.lastFrame()).toContain("> @codex prompt");
+    expect(instance.lastFrame()).not.toContain("> p");
+    instance.unmount();
+  });
+
+  it("keeps single-letter command keys available as prompt text in Work", async () => {
+    const instance = render(
+      React.createElement(TuiInkApp, {
+        model: baseModel,
+        state: createInitialInkState(),
+        terminal: { columns: 120, rows: 40 },
+        interactive: true
+      })
+    );
+
+    instance.stdin.write("p");
+    await waitForFrame(instance, "> p");
+
+    expect(instance.lastFrame()).not.toContain("Status: agent-hub");
+    instance.unmount();
+  });
+
   it("renders the optional startup splash and badge flash state", () => {
     const output = renderToString(
       React.createElement(TuiInkFrame, {
@@ -886,8 +1254,8 @@ describe("Ink TUI renderer", () => {
 
     expect(submissions).toEqual([]);
     expect(instance.lastFrame()).toContain("Team Roles 2");
-    expect(instance.lastFrame()).toContain("@engineer preset agent_adapter / codex #planning");
-    expect(instance.lastFrame()).toContain("@reviewer preset human reserved #review");
+    expect(instance.lastFrame()).toContain("@engineer preset runs with codex #planning");
+    expect(instance.lastFrame()).toContain("@reviewer preset manual #review");
     expect(instance.lastFrame()).toContain("> @codex prompt");
     instance.unmount();
   });
@@ -905,8 +1273,9 @@ describe("Ink TUI renderer", () => {
     instance.stdin.write("E");
     await waitForFrame(instance, "Team Roles 2");
 
-    expect(instance.lastFrame()).toContain("[E]am");
-    expect(instance.lastFrame()).toContain("@engineer preset agent_adapter / codex #planning");
+    expect(instance.lastFrame()).toContain("Team");
+    expect(instance.lastFrame()).not.toContain("[E]am");
+    expect(instance.lastFrame()).toContain("@engineer preset runs with codex #planning");
     instance.unmount();
   });
 
@@ -1170,7 +1539,7 @@ describe("Ink TUI renderer", () => {
       { columns: 120 }
     );
 
-    expect(output).toContain("send @codex  thread Review (#review)  mode runtime_injection");
+    expect(output).toContain("send @codex  thread Review (#review)  context runtime");
     expect(output).toContain("agents @codex @claude-code @engineer @reviewer");
   });
 
