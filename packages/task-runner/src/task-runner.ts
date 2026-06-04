@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -46,19 +47,24 @@ import {
   nowIso,
   validateRunArtifact,
   validateRunEvent,
+  validateRuntimeContextPack,
   validateVerificationResult,
   validateTask,
   validateTaskRun,
   type AgentKind,
+  type CompressionMode,
   type ContextPack,
+  type ContextLayer,
   type InjectedSkillEvidence,
   type JsonObject,
   type RiskReport,
   type RunContextDeliveryMode,
+  type RuntimeContextPack,
   type RunEvent,
   type Task,
   type TaskBrief,
   type TaskRun,
+  type TrustLevel,
   type VerificationResult,
   type WorkgroupRoleRunMetadata,
   type SkillReference
@@ -410,6 +416,13 @@ export class TaskRunner {
       parentMessageId: continuation?.parentMessageId,
       createdAt,
       updatedAt: createdAt
+    });
+    const runtimeContextPack = createTypedRuntimeContextPack({
+      bundle: contextBundle,
+      taskId: task.id,
+      runId: run.id,
+      planId: `legacy_context_plan:${contextPack.id}`,
+      createdAt
     });
     await this.taskRunRepository.create(run);
     const events: AgentRunEvent[] = [];
@@ -842,6 +855,25 @@ export class TaskRunner {
       } catch (error) {
         recordDiagnostic("task brief artifact persistence", error);
       }
+    }
+    try {
+      await this.runArtifactRepository.create(
+        createTextArtifact({
+          runId: run.id,
+          kind: "runtime_context_pack",
+          content: `${JSON.stringify(runtimeContextPack, null, 2)}\n`,
+          metadata: {
+            contextPackId: contextPack.id,
+            planId: runtimeContextPack.planId,
+            sectionCount: runtimeContextPack.sections.length,
+            diagnosticCount: runtimeContextPack.diagnostics.length
+          },
+          clock: this.clock,
+          idGenerator: this.idGenerator
+        })
+      );
+    } catch (error) {
+      recordDiagnostic("runtime context pack artifact persistence", error);
     }
     const conversationBrief = conversationBriefArtifact(input.conversationBrief);
     if (conversationBrief) {
@@ -1523,6 +1555,108 @@ function createRuntimeContextPack(
     injectedSkills: injectedSkillEvidence(bundle),
     createdAt: nowIso()
   };
+}
+
+function createTypedRuntimeContextPack(input: {
+  bundle: ContextBundle;
+  taskId: string;
+  runId: string;
+  planId: string;
+  createdAt: string;
+}): RuntimeContextPack {
+  const pack = validateRuntimeContextPack({
+    id: `runtime_context_pack:${input.bundle.id}`,
+    planId: input.planId,
+    taskId: input.taskId,
+    runId: input.runId,
+    sections: input.bundle.sections.map((section) => {
+      const layer = contextLayerForSource(section.source.kind);
+      const trustLevel = trustLevelForLayer(layer);
+      return {
+        id: section.id,
+        layer,
+        trustLevel,
+        title: section.title,
+        content: section.body,
+        sourceItemIds: [section.id],
+        sourceHashes: [sha256(section.body)],
+        compressionMode: compressionModeForLayer(layer),
+        originalCharacterCount: section.body.length,
+        renderedCharacterCount: section.body.length,
+        omittedItemCount: 0,
+        inclusionReason: `included from existing ${section.source.kind} context section`
+      };
+    }),
+    omitted: [],
+    diagnostics: input.bundle.warnings.map((warning) => ({
+      severity: "warning",
+      message: warning
+    })),
+    createdAt: input.createdAt
+  });
+  return pack;
+}
+
+function contextLayerForSource(kind: ContextBundle["sections"][number]["source"]["kind"]): ContextLayer {
+  switch (kind) {
+    case "task":
+    case "user_constraint":
+    case "execution_hint":
+      return "task";
+    case "repository":
+    case "project":
+    case "agent":
+      return "project";
+    case "memory":
+      return "approved_memory";
+    case "skill":
+      return "skill";
+    case "conversation":
+      return "conversation";
+  }
+}
+
+function trustLevelForLayer(layer: ContextLayer): TrustLevel {
+  switch (layer) {
+    case "runtime_policy":
+    case "task":
+      return "system";
+    case "project":
+    case "code":
+    case "test":
+    case "approved_memory":
+      return "high";
+    case "run_evidence":
+    case "skill":
+    case "role":
+    case "global":
+      return "medium";
+    case "conversation":
+      return "low";
+  }
+}
+
+function compressionModeForLayer(layer: ContextLayer): CompressionMode {
+  switch (layer) {
+    case "runtime_policy":
+    case "task":
+    case "approved_memory":
+      return "none";
+    case "project":
+    case "code":
+    case "test":
+    case "skill":
+    case "role":
+      return "extractive";
+    case "run_evidence":
+    case "conversation":
+    case "global":
+      return "summary";
+  }
+}
+
+function sha256(content: string): string {
+  return createHash("sha256").update(content).digest("hex");
 }
 
 function createDiffArtifact(

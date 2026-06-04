@@ -100,6 +100,11 @@ diagnostic events according to the existing failure boundary.
 typed context pack and task brief, and adapters receive that payload at runtime.
 Repository-level `AGENTS.md`, `CLAUDE.md`, `.claude/skills`, and
 `.agents/skills` are not written by default.
+TaskRunner additionally derives a typed `runtime_context_pack` run artifact
+from the compiled context bundle. The artifact records each section's context
+layer, trust level, source item ids, source hashes, compression mode, rendered
+character counts, omissions, and diagnostics while preserving the existing
+markdown task brief passed to adapters.
 When a run is created from a CLI role mention or accepted RoleCall, `TaskRunner`
 passes safe `WorkgroupRoleRunMetadata` into the adapter input. Process-backed
 adapters render a `## Your Role` section, collaboration rules, and a compact

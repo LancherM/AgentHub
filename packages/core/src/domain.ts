@@ -5,9 +5,15 @@ import {
   conversationMessageKinds,
   conversationMessageRoles,
   contextDeliveryModes,
+  contextLayers,
+  contextLifetimes,
+  contextPolicyDecisions,
+  contextScopes,
+  compressionModes,
   memoryCategories,
   memoryStatuses,
   normalizeWorkgroupRoleHandle,
+  retrievalRoutes,
   riskLevels,
   roleCallDispositions,
   roleCallEventTypes,
@@ -19,8 +25,10 @@ import {
   roleTrustLevels,
   runEventTypes,
   skillScopes,
+  taskTypes,
   taskRunStatuses,
   taskStatuses,
+  trustLevels,
   verificationStatuses,
   workgroupExecutorKinds,
   type AgentProfile,
@@ -28,7 +36,11 @@ import {
   type ConversationMessage,
   type ConversationThread,
   type ConversationThreadSummary,
+  type ContextItem,
+  type ContextLayer,
   type ContextPack,
+  type ContextPlan,
+  type RuntimeContextPack,
   type MemoryItem,
   type MemoryStatus,
   type Project,
@@ -664,6 +676,197 @@ export function validateTaskBrief(input: TaskBrief): TaskBrief {
   return finish(input, issues);
 }
 
+export function validateContextItem(input: ContextItem): ContextItem {
+  const issues: string[] = [];
+  required(input.id, "contextItem.id", issues);
+  enumValue(input.layer, contextLayers, "contextItem.layer", issues);
+  required(input.sourceKind, "contextItem.sourceKind", issues);
+  required(input.sourceId, "contextItem.sourceId", issues);
+  enumValue(input.scope, contextScopes, "contextItem.scope", issues);
+  enumValue(input.trustLevel, trustLevels, "contextItem.trustLevel", issues);
+  enumValue(input.lifetime, contextLifetimes, "contextItem.lifetime", issues);
+  required(input.title, "contextItem.title", issues);
+  required(input.content, "contextItem.content", issues);
+  required(input.contentHash, "contextItem.contentHash", issues);
+  optionalString(input.sourcePath, "contextItem.sourcePath", issues);
+  timestamp(input.createdAt, "contextItem.createdAt", issues);
+  optionalTimestamp(input.updatedAt, "contextItem.updatedAt", issues);
+  objectValue(input.metadata, "contextItem.metadata", issues);
+  return finish(input, issues);
+}
+
+export function validateContextPlan(input: ContextPlan): ContextPlan {
+  const issues: string[] = [];
+  required(input.id, "contextPlan.id", issues);
+  enumValue(input.taskType, taskTypes, "contextPlan.taskType", issues);
+  required(input.taskPromptHash, "contextPlan.taskPromptHash", issues);
+  enumArray(input.requiredLayers, contextLayers, "contextPlan.requiredLayers", issues);
+  enumArray(input.retrievalRoutes, retrievalRoutes, "contextPlan.retrievalRoutes", issues);
+  contextLayerPolicyRecord(
+    input.trustPolicy,
+    contextPolicyDecisions,
+    "contextPlan.trustPolicy",
+    issues
+  );
+  numericContextLayerRecord(input.budgetPolicy, "contextPlan.budgetPolicy", issues);
+  contextLayerPolicyRecord(
+    input.compressionPolicy,
+    compressionModes,
+    "contextPlan.compressionPolicy",
+    issues
+  );
+  timestamp(input.createdAt, "contextPlan.createdAt", issues);
+  objectValue(input.diagnostics, "contextPlan.diagnostics", issues);
+  return finish(input, issues);
+}
+
+export function validateRuntimeContextPack(
+  input: RuntimeContextPack
+): RuntimeContextPack {
+  const issues: string[] = [];
+  required(input.id, "runtimeContextPack.id", issues);
+  required(input.planId, "runtimeContextPack.planId", issues);
+  required(input.taskId, "runtimeContextPack.taskId", issues);
+  optionalString(input.runId, "runtimeContextPack.runId", issues);
+  if (!Array.isArray(input.sections)) {
+    issues.push("runtimeContextPack.sections must be an array");
+  } else {
+    input.sections.forEach((section, index) =>
+      validateRuntimeContextSection(section, `runtimeContextPack.sections.${index}`, issues)
+    );
+  }
+  if (!Array.isArray(input.omitted)) {
+    issues.push("runtimeContextPack.omitted must be an array");
+  } else {
+    input.omitted.forEach((omission, index) => {
+      required(omission?.itemId, `runtimeContextPack.omitted.${index}.itemId`, issues);
+      enumValue(
+        omission?.layer,
+        contextLayers,
+        `runtimeContextPack.omitted.${index}.layer`,
+        issues
+      );
+      required(omission?.reason, `runtimeContextPack.omitted.${index}.reason`, issues);
+    });
+  }
+  validateRuntimeContextDiagnostics(
+    input.diagnostics,
+    "runtimeContextPack.diagnostics",
+    issues
+  );
+  timestamp(input.createdAt, "runtimeContextPack.createdAt", issues);
+  return finish(input, issues);
+}
+
+function validateRuntimeContextSection(
+  section: RuntimeContextPack["sections"][number],
+  field: string,
+  issues: string[]
+): void {
+  required(section?.id, `${field}.id`, issues);
+  enumValue(section?.layer, contextLayers, `${field}.layer`, issues);
+  enumValue(section?.trustLevel, trustLevels, `${field}.trustLevel`, issues);
+  required(section?.title, `${field}.title`, issues);
+  required(section?.content, `${field}.content`, issues);
+  stringArray(section?.sourceItemIds, `${field}.sourceItemIds`, issues);
+  stringArray(section?.sourceHashes, `${field}.sourceHashes`, issues);
+  enumValue(section?.compressionMode, compressionModes, `${field}.compressionMode`, issues);
+  nonNegativeInteger(
+    section?.originalCharacterCount,
+    `${field}.originalCharacterCount`,
+    issues
+  );
+  nonNegativeInteger(
+    section?.renderedCharacterCount,
+    `${field}.renderedCharacterCount`,
+    issues
+  );
+  nonNegativeInteger(section?.omittedItemCount, `${field}.omittedItemCount`, issues);
+  required(section?.inclusionReason, `${field}.inclusionReason`, issues);
+}
+
+function validateRuntimeContextDiagnostics(
+  value: RuntimeContextPack["diagnostics"],
+  field: string,
+  issues: string[]
+): void {
+  if (!Array.isArray(value)) {
+    issues.push(`${field} must be an array`);
+    return;
+  }
+  value.forEach((diagnostic, index) => {
+    enumValue(diagnostic?.severity, ["info", "warning", "error"] as const, `${field}.${index}.severity`, issues);
+    required(diagnostic?.message, `${field}.${index}.message`, issues);
+    optionalObject(diagnostic?.metadata, `${field}.${index}.metadata`, issues);
+  });
+}
+
+function enumArray<T extends readonly string[]>(
+  value: unknown,
+  values: T,
+  field: string,
+  issues: string[]
+): void {
+  if (!Array.isArray(value)) {
+    issues.push(`${field} must be an array`);
+    return;
+  }
+  value.forEach((entry, index) =>
+    enumValue(entry, values, `${field}.${index}`, issues)
+  );
+}
+
+function contextLayerPolicyRecord<T extends readonly string[]>(
+  value: unknown,
+  allowedValues: T,
+  field: string,
+  issues: string[]
+): void {
+  if (!plainObject(value)) {
+    issues.push(`${field} must be an object`);
+    return;
+  }
+  for (const layer of contextLayers) {
+    enumValue(value[layer], allowedValues, `${field}.${layer}`, issues);
+  }
+  rejectUnknownContextLayerKeys(value, field, issues);
+}
+
+function numericContextLayerRecord(
+  value: unknown,
+  field: string,
+  issues: string[]
+): void {
+  if (!plainObject(value)) {
+    issues.push(`${field} must be an object`);
+    return;
+  }
+  for (const layer of contextLayers) {
+    const numberValue = value[layer];
+    if (
+      typeof numberValue !== "number" ||
+      !Number.isFinite(numberValue) ||
+      numberValue < 0
+    ) {
+      issues.push(`${field}.${layer} must be a non-negative number`);
+    }
+  }
+  rejectUnknownContextLayerKeys(value, field, issues);
+}
+
+function rejectUnknownContextLayerKeys(
+  value: Record<string, unknown>,
+  field: string,
+  issues: string[]
+): void {
+  const knownLayers = new Set<string>(contextLayers);
+  for (const key of Object.keys(value)) {
+    if (!knownLayers.has(key)) {
+      issues.push(`${field}.${key} is not a supported context layer`);
+    }
+  }
+}
+
 function required(value: unknown, field: string, issues: string[]): void {
   if (typeof value !== "string" || value.trim().length === 0) {
     issues.push(`${field} is required`);
@@ -691,6 +894,12 @@ function optionalTimestamp(value: unknown, field: string, issues: string[]): voi
 function optionalInteger(value: unknown, field: string, issues: string[]): void {
   if (value !== undefined && !Number.isInteger(value)) {
     issues.push(`${field} must be an integer when provided`);
+  }
+}
+
+function nonNegativeInteger(value: unknown, field: string, issues: string[]): void {
+  if (!Number.isInteger(value) || (value as number) < 0) {
+    issues.push(`${field} must be a non-negative integer`);
   }
 }
 

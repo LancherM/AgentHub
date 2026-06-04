@@ -640,6 +640,142 @@ export type ContextSourceKind =
   | "user_constraint"
   | "execution_hint";
 
+export const contextLayers = [
+  "runtime_policy",
+  "task",
+  "project",
+  "code",
+  "test",
+  "run_evidence",
+  "approved_memory",
+  "skill",
+  "role",
+  "conversation",
+  "global"
+] as const;
+export type ContextLayer = (typeof contextLayers)[number];
+
+export const contextScopes = [
+  "global",
+  "project",
+  "thread",
+  "task",
+  "run",
+  "role"
+] as const;
+export type ContextScope = (typeof contextScopes)[number];
+
+export const trustLevels = ["system", "high", "medium", "low"] as const;
+export type TrustLevel = (typeof trustLevels)[number];
+
+export const contextLifetimes = [
+  "static",
+  "approved",
+  "session",
+  "thread",
+  "run",
+  "indexed_snapshot"
+] as const;
+export type ContextLifetime = (typeof contextLifetimes)[number];
+
+export const retrievalRoutes = [
+  "explicit",
+  "bm25",
+  "embedding",
+  "graph",
+  "recency",
+  "task_rule"
+] as const;
+export type RetrievalRoute = (typeof retrievalRoutes)[number];
+
+export const taskTypes = [
+  "bug_fix",
+  "feature",
+  "ui_change",
+  "test_failure",
+  "code_review",
+  "architecture",
+  "follow_up",
+  "documentation",
+  "unknown"
+] as const;
+export type TaskType = (typeof taskTypes)[number];
+
+export const contextPolicyDecisions = ["allow", "limited", "deny"] as const;
+export type ContextPolicyDecision = (typeof contextPolicyDecisions)[number];
+
+export const compressionModes = [
+  "none",
+  "extractive",
+  "structured",
+  "summary"
+] as const;
+export type CompressionMode = (typeof compressionModes)[number];
+
+export interface ContextItem {
+  id: string;
+  layer: ContextLayer;
+  sourceKind: string;
+  sourceId: string;
+  scope: ContextScope;
+  trustLevel: TrustLevel;
+  lifetime: ContextLifetime;
+  title: string;
+  content: string;
+  contentHash: string;
+  sourcePath?: string;
+  createdAt: string;
+  updatedAt?: string;
+  metadata: Record<string, unknown>;
+}
+
+export interface ContextPlan {
+  id: string;
+  taskType: TaskType;
+  taskPromptHash: string;
+  requiredLayers: ContextLayer[];
+  retrievalRoutes: RetrievalRoute[];
+  trustPolicy: Record<ContextLayer, ContextPolicyDecision>;
+  budgetPolicy: Record<ContextLayer, number>;
+  compressionPolicy: Record<ContextLayer, CompressionMode>;
+  createdAt: string;
+  diagnostics: Record<string, unknown>;
+}
+
+export interface RuntimeContextSection {
+  id: string;
+  layer: ContextLayer;
+  trustLevel: TrustLevel;
+  title: string;
+  content: string;
+  sourceItemIds: string[];
+  sourceHashes: string[];
+  compressionMode: CompressionMode;
+  originalCharacterCount: number;
+  renderedCharacterCount: number;
+  omittedItemCount: number;
+  inclusionReason: string;
+}
+
+export interface RuntimeContextPack {
+  id: string;
+  planId: string;
+  taskId: string;
+  runId?: string;
+  sections: RuntimeContextSection[];
+  omitted: Array<{
+    itemId: string;
+    layer: ContextLayer;
+    reason: string;
+  }>;
+  diagnostics: Array<{
+    severity: "info" | "warning" | "error";
+    message: string;
+    metadata?: Record<string, unknown>;
+  }>;
+  createdAt: string;
+}
+
 export interface TargetRepositoryMetadata {
   id: string;
   name: string;

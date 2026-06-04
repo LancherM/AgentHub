@@ -168,6 +168,71 @@ describe("task runner", () => {
     });
   });
 
+  it("persists typed runtime context pack artifacts without changing markdown injection", async () => {
+    const projectRoot = await createTestDirectory("agent-hub-runtime-context-project");
+    const runRoot = await createTestDirectory("agent-hub-runtime-context-runs");
+    const runArtifactRepository = new InMemoryRunArtifactRepository();
+    const runner = new TaskRunner({
+      defaultRunRoot: runRoot,
+      workspaceManager: new TestWorkspaceManager(runRoot),
+      diffCollector: new StaticDiffCollector(),
+      verificationRunner: new VerificationRunner(new MockShellExecutor()),
+      runArtifactRepository,
+      idGenerator: new SequenceIdGenerator(),
+      clock: new FixedClock("2026-01-01T00:00:00.000Z")
+    });
+
+    const result = await runner.run({
+      projectRoot,
+      taskPrompt: "Keep runtime context typed",
+      agentKind: "fake",
+      taskId: "task_runtime_context",
+      conversationBrief: "Thread decision: preserve markdown injection."
+    });
+
+    expect(result.contextMarkdown).toContain("# Agent Hub Context Bundle");
+    const artifact = await runArtifactRepository.getLatestByRunIdAndKind(
+      result.run.id,
+      "runtime_context_pack"
+    );
+    expect(artifact).toMatchObject({
+      kind: "runtime_context_pack",
+      metadata: expect.objectContaining({
+        contextPackId: result.contextBundle.id,
+        sectionCount: expect.any(Number)
+      })
+    });
+    const runtimeContextPack = JSON.parse(artifact?.content ?? "{}") as {
+      taskId: string;
+      runId: string;
+      sections: Array<{
+        layer: string;
+        trustLevel: string;
+        sourceItemIds: string[];
+        sourceHashes: string[];
+      }>;
+    };
+    expect(runtimeContextPack).toMatchObject({
+      taskId: "task_runtime_context",
+      runId: result.run.id
+    });
+    expect(runtimeContextPack.sections).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          layer: "task",
+          trustLevel: "system",
+          sourceItemIds: ["task:task"],
+          sourceHashes: [expect.any(String)]
+        }),
+        expect.objectContaining({
+          layer: "conversation",
+          trustLevel: "low",
+          sourceItemIds: ["conversation:thread"]
+        })
+      ])
+    );
+  });
+
   it("rejects run roots inside the original project root", async () => {
     const projectRoot = await createTestDirectory("agent-hub-project");
 

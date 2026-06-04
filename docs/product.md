@@ -257,6 +257,10 @@ Context stores are Agent Hub-owned directories containing project context,
 approved memory, and project skills. Runtime context delivery is non-invasive by
 default: generated task briefs and context packs are injected into the adapter
 run rather than written into the source checkout.
+Task runs also persist a typed `runtime_context_pack` artifact alongside the
+existing task brief and conversation brief evidence so later review can inspect
+context layers, trust labels, source ids, source hashes, compression metadata,
+and diagnostics without changing the agent-facing markdown injection path.
 Role-backed runs add an injected role envelope to that same runtime payload:
 the running adapter receives its role handle, persona/instructions, safe
 permission summary, compact team list, and collaboration rules that require
