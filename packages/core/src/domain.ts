@@ -37,9 +37,11 @@ import {
   type ConversationThread,
   type ConversationThreadSummary,
   type ContextItem,
+  type ContextCandidate,
   type ContextLayer,
   type ContextPack,
   type ContextPlan,
+  type ContextRetrievalResult,
   type RuntimeContextPack,
   type MemoryItem,
   type MemoryStatus,
@@ -695,6 +697,89 @@ export function validateContextItem(input: ContextItem): ContextItem {
   return finish(input, issues);
 }
 
+export function validateContextCandidate(
+  input: ContextCandidate
+): ContextCandidate {
+  const issues: string[] = [];
+  if (!plainObject(input.item)) {
+    issues.push("contextCandidate.item must be an object");
+  } else {
+    validateNested(() => validateContextItem(input.item), issues);
+  }
+  enumArray(input.routes, retrievalRoutes, "contextCandidate.routes", issues);
+  nonNegativeNumber(
+    input.relevanceScore,
+    "contextCandidate.relevanceScore",
+    issues
+  );
+  boundedScore(
+    input.freshnessScore,
+    "contextCandidate.freshnessScore",
+    issues
+  );
+  boundedScore(input.trustScore, "contextCandidate.trustScore", issues);
+  if (input.graphProximityScore !== undefined) {
+    boundedScore(
+      input.graphProximityScore,
+      "contextCandidate.graphProximityScore",
+      issues
+    );
+  }
+  boundedScore(
+    input.scopeMatchScore,
+    "contextCandidate.scopeMatchScore",
+    issues
+  );
+  required(input.inclusionReason, "contextCandidate.inclusionReason", issues);
+  objectValue(input.diagnostics, "contextCandidate.diagnostics", issues);
+  if (input.item?.layer === "conversation" && input.item.trustLevel !== "low") {
+    issues.push("contextCandidate.item.trustLevel must be low for conversation context");
+  }
+  return finish(input, issues);
+}
+
+export function validateContextRetrievalResult(
+  input: ContextRetrievalResult
+): ContextRetrievalResult {
+  const issues: string[] = [];
+  required(input.id, "contextRetrievalResult.id", issues);
+  required(input.planId, "contextRetrievalResult.planId", issues);
+  required(input.taskId, "contextRetrievalResult.taskId", issues);
+  optionalString(input.runId, "contextRetrievalResult.runId", issues);
+  if (!Array.isArray(input.candidates)) {
+    issues.push("contextRetrievalResult.candidates must be an array");
+  } else {
+    input.candidates.forEach((candidate, index) =>
+      validateNested(
+        () => validateContextCandidate(candidate),
+        issues,
+        `contextRetrievalResult.candidates.${index}`
+      )
+    );
+  }
+  if (!Array.isArray(input.omitted)) {
+    issues.push("contextRetrievalResult.omitted must be an array");
+  } else {
+    input.omitted.forEach((omission, index) => {
+      required(omission?.itemId, `contextRetrievalResult.omitted.${index}.itemId`, issues);
+      enumValue(
+        omission?.layer,
+        contextLayers,
+        `contextRetrievalResult.omitted.${index}.layer`,
+        issues
+      );
+      required(omission?.reason, `contextRetrievalResult.omitted.${index}.reason`, issues);
+    });
+  }
+  validateRuntimeContextDiagnostics(
+    input.diagnostics,
+    "contextRetrievalResult.diagnostics",
+    issues
+  );
+  timestamp(input.createdAt, "contextRetrievalResult.createdAt", issues);
+  return finish(input, issues);
+}
+
 export function validateContextPlan(input: ContextPlan): ContextPlan {
   const issues: string[] = [];
   required(input.id, "contextPlan.id", issues);
@@ -804,6 +889,23 @@ function validateRuntimeContextDiagnostics(
   });
 }
 
+function validateNested(
+  validate: () => unknown,
+  issues: string[],
+  prefix?: string
+): void {
+  try {
+    validate();
+  } catch (error) {
+    if (!(error instanceof DomainValidationError)) {
+      throw error;
+    }
+    issues.push(
+      ...error.issues.map((issue) => (prefix ? `${prefix}.${issue}` : issue))
+    );
+  }
+}
+
 function enumArray<T extends readonly string[]>(
   value: unknown,
   values: T,
@@ -897,6 +999,23 @@ function optionalTimestamp(value: unknown, field: string, issues: string[]): voi
 function optionalInteger(value: unknown, field: string, issues: string[]): void {
   if (value !== undefined && !Number.isInteger(value)) {
     issues.push(`${field} must be an integer when provided`);
+  }
+}
+
+function nonNegativeNumber(value: unknown, field: string, issues: string[]): void {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+    issues.push(`${field} must be a non-negative number`);
+  }
+}
+
+function boundedScore(value: unknown, field: string, issues: string[]): void {
+  if (
+    typeof value !== "number" ||
+    !Number.isFinite(value) ||
+    value < 0 ||
+    value > 1
+  ) {
+    issues.push(`${field} must be a number between 0 and 1`);
   }
 }
 

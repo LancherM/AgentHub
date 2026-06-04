@@ -111,6 +111,13 @@ task type, required context layers, planned retrieval routes, trust policy,
 layer budgets, compression policy, and classifier diagnostics. In the current
 runtime this plan is audit evidence; markdown injection remains unchanged until
 later retrieval phases consume the plan for source selection.
+TaskRunner also runs an explicit-route `ContextRetriever` boundary before
+artifact persistence. The first implementation emits candidates for sources
+already selected by the run, including the current task, selected and
+role-default skills, selected files, selected runs, and low-trust thread
+continuity. These candidates are persisted as `context_retrieval_candidates`
+for inspection, while the existing markdown task brief remains the adapter
+payload.
 The context compiler applies hard policy before adding memory or skill sections.
 It filters proposed/rejected memory, secret-like source paths, repository-root
 agent instruction export targets, and unsupported task/role skill scopes, then

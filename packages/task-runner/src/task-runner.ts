@@ -39,6 +39,12 @@ import {
 } from "./diff-collector";
 import { createContextPlan } from "./context-plan";
 import {
+  ExplicitContextRetriever,
+  type ContextRetriever,
+  type ExplicitFileContextSource,
+  type ExplicitRunContextSource
+} from "./context-retriever";
+import {
   assertAgentKindEnabled,
   defaultAgentKind,
   type AgentAvailabilityOptions
@@ -56,6 +62,7 @@ import {
   type CompressionMode,
   type ContextPack,
   type ContextLayer,
+  type ContextRetrievalResult,
   type InjectedSkillEvidence,
   type JsonObject,
   type RiskReport,
@@ -132,6 +139,8 @@ export interface RunTaskInput {
   agentHubHome?: string;
   selectedSkillReferences?: SkillReference[];
   roleSkillReferences?: SkillReference[];
+  selectedFiles?: ExplicitFileContextSource[];
+  selectedRuns?: ExplicitRunContextSource[];
   role?: WorkgroupRoleRunMetadata;
   teamRoles?: WorkgroupRoleRunMetadata[];
   runRoot?: string;
@@ -190,6 +199,7 @@ export interface RunResult {
   diff?: DiffCollectionResult;
   verification?: VerificationSuiteResult;
   riskReport?: RiskReport;
+  contextRetrievalResult?: ContextRetrievalResult;
   workspaceCleanup?: WorkspaceCleanupResult;
   warnings: string[];
   error?: string;
@@ -219,6 +229,7 @@ export interface TaskRunnerDependencies {
   diffCollector?: DiffCollectorService;
   verificationRunner?: VerificationRunner;
   riskReportGenerator?: RiskReportGenerator;
+  contextRetriever?: ContextRetriever;
   idGenerator?: IdGenerator;
   clock?: Clock;
   defaultRunRoot?: string;
@@ -278,6 +289,7 @@ export class TaskRunner {
   private readonly diffCollector: DiffCollectorService;
   private readonly verificationRunner: VerificationRunner;
   private readonly riskReportGenerator: RiskReportGenerator;
+  private readonly contextRetriever: ContextRetriever;
   private readonly shellExecutor: ShellExecutor;
   private readonly idGenerator: IdGenerator;
   private readonly clock: Clock;
@@ -316,6 +328,8 @@ export class TaskRunner {
       dependencies.verificationRunner ?? new VerificationRunner(shellExecutor);
     this.riskReportGenerator =
       dependencies.riskReportGenerator ?? new RiskReportGenerator();
+    this.contextRetriever =
+      dependencies.contextRetriever ?? new ExplicitContextRetriever();
     this.shellExecutor = shellExecutor;
     this.idGenerator = dependencies.idGenerator ?? new DefaultIdGenerator();
     this.clock = dependencies.clock ?? new SystemClock();
@@ -423,6 +437,19 @@ export class TaskRunner {
       taskPrompt: parsed.taskPrompt,
       createdAt
     });
+    const contextRetrievalResult = await this.contextRetriever.retrieve({
+      id: this.idGenerator.nextId("context_retrieval"),
+      plan: contextPlan,
+      task,
+      runId: run.id,
+      taskPrompt: parsed.taskPrompt,
+      contextBundle,
+      selectedSkillReferences: input.selectedSkillReferences,
+      roleSkillReferences: input.roleSkillReferences,
+      selectedFiles: input.selectedFiles,
+      selectedRuns: input.selectedRuns,
+      createdAt
+    });
     const runtimeContextPack = createTypedRuntimeContextPack({
       bundle: contextBundle,
       taskId: task.id,
@@ -501,6 +528,7 @@ export class TaskRunner {
         status: "cancelled",
         contextBundle,
         contextMarkdown,
+        contextRetrievalResult,
         warnings,
         error: "Run cancelled before execution started."
       });
@@ -523,6 +551,7 @@ export class TaskRunner {
         warnings,
         contextBundle,
         contextMarkdown,
+        contextRetrievalResult,
         taskStatusMode: input.taskStatusMode ?? "single_run",
         error: message
       });
@@ -564,6 +593,7 @@ export class TaskRunner {
         warnings,
         contextBundle,
         contextMarkdown,
+        contextRetrievalResult,
         taskStatusMode: input.taskStatusMode ?? "single_run",
         error: message
       });
@@ -885,6 +915,26 @@ export class TaskRunner {
       await this.runArtifactRepository.create(
         createTextArtifact({
           runId: run.id,
+          kind: "context_retrieval_candidates",
+          content: `${JSON.stringify(contextRetrievalResult, null, 2)}\n`,
+          metadata: {
+            retrievalId: contextRetrievalResult.id,
+            planId: contextRetrievalResult.planId,
+            candidateCount: contextRetrievalResult.candidates.length,
+            routeCounts: contextRetrievalRouteCounts(contextRetrievalResult),
+            omittedCount: contextRetrievalResult.omitted.length
+          },
+          clock: this.clock,
+          idGenerator: this.idGenerator
+        })
+      );
+    } catch (error) {
+      recordDiagnostic("context retrieval artifact persistence", error);
+    }
+    try {
+      await this.runArtifactRepository.create(
+        createTextArtifact({
+          runId: run.id,
           kind: "runtime_context_pack",
           content: `${JSON.stringify(runtimeContextPack, null, 2)}\n`,
           metadata: {
@@ -1088,6 +1138,7 @@ export class TaskRunner {
       status,
       contextBundle,
       contextMarkdown,
+      contextRetrievalResult,
       worktreePath,
       taskBriefPath,
       diff,
@@ -1120,6 +1171,7 @@ export class TaskRunner {
     warnings: string[];
     contextBundle: ContextBundle;
     contextMarkdown: string;
+    contextRetrievalResult?: ContextRetrievalResult;
     taskStatusMode: NonNullable<RunTaskInput["taskStatusMode"]>;
     error: string;
   }): Promise<RunResult> {
@@ -1149,6 +1201,7 @@ export class TaskRunner {
       status: "failed",
       contextBundle: input.contextBundle,
       contextMarkdown: input.contextMarkdown,
+      contextRetrievalResult: input.contextRetrievalResult,
       warnings: input.warnings,
       error: input.error
     });
@@ -1682,6 +1735,18 @@ function compressionModeForLayer(layer: ContextLayer): CompressionMode {
 
 function sha256(content: string): string {
   return createHash("sha256").update(content).digest("hex");
+}
+
+function contextRetrievalRouteCounts(
+  result: ContextRetrievalResult
+): Record<string, number> {
+  const counts: Record<string, number> = {};
+  for (const candidate of result.candidates) {
+    for (const route of candidate.routes) {
+      counts[route] = (counts[route] ?? 0) + 1;
+    }
+  }
+  return counts;
 }
 
 function createDiffArtifact(

@@ -729,6 +729,37 @@ export interface ContextItem {
   metadata: Record<string, unknown>;
 }
 
+export interface ContextCandidate {
+  item: ContextItem;
+  routes: RetrievalRoute[];
+  relevanceScore: number;
+  freshnessScore: number;
+  trustScore: number;
+  graphProximityScore?: number;
+  scopeMatchScore: number;
+  inclusionReason: string;
+  diagnostics: Record<string, unknown>;
+}
+
+export interface ContextRetrievalResult {
+  id: string;
+  planId: string;
+  taskId: string;
+  runId?: string;
+  candidates: ContextCandidate[];
+  omitted: Array<{
+    itemId: string;
+    layer: ContextLayer;
+    reason: string;
+  }>;
+  diagnostics: Array<{
+    severity: "info" | "warning" | "error";
+    message: string;
+    metadata?: Record<string, unknown>;
+  }>;
+  createdAt: string;
+}
+
 export interface ContextPlan {
   id: string;
   taskType: TaskType;

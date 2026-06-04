@@ -203,6 +203,42 @@ describe("task runner", () => {
         retrievalRoutes: ["explicit", "task_rule"]
       })
     });
+    const retrievalArtifact = await runArtifactRepository.getLatestByRunIdAndKind(
+      result.run.id,
+      "context_retrieval_candidates"
+    );
+    expect(retrievalArtifact).toMatchObject({
+      kind: "context_retrieval_candidates",
+      metadata: expect.objectContaining({
+        planId: planArtifact?.metadata.planId,
+        candidateCount: 2,
+        routeCounts: { explicit: 2 }
+      })
+    });
+    const retrievalResult = JSON.parse(retrievalArtifact?.content ?? "{}") as {
+      planId: string;
+      candidates: Array<{
+        routes: string[];
+        item: { layer: string; trustLevel: string; sourceKind: string };
+      }>;
+    };
+    expect(retrievalResult).toMatchObject({
+      planId: planArtifact?.metadata.planId,
+      candidates: [
+        expect.objectContaining({
+          routes: ["explicit"],
+          item: expect.objectContaining({ layer: "task", trustLevel: "system" })
+        }),
+        expect.objectContaining({
+          routes: ["explicit"],
+          item: expect.objectContaining({
+            layer: "conversation",
+            trustLevel: "low",
+            sourceKind: "thread_summary"
+          })
+        })
+      ]
+    });
     const artifact = await runArtifactRepository.getLatestByRunIdAndKind(
       result.run.id,
       "runtime_context_pack"
