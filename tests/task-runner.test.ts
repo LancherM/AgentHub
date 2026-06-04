@@ -356,6 +356,28 @@ describe("task runner", () => {
         item: expect.objectContaining({ sourceKind: "project_context" })
       })
     ]);
+    const runtimeContextArtifact = await runArtifactRepository.getLatestByRunIdAndKind(
+      result.run.id,
+      "runtime_context_pack"
+    );
+    const runtimeContextPack = JSON.parse(runtimeContextArtifact?.content ?? "{}") as {
+      sections: Array<{ id: string; layer: string; sourceItemIds: string[] }>;
+    };
+    expect(runtimeContextPack.sections).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "runtime_policy:agent_hub",
+          layer: "runtime_policy"
+        }),
+        expect.objectContaining({
+          id: "retrieval:context_index:project_bm25:project_context:context/project.md",
+          layer: "project",
+          sourceItemIds: [
+            "context_index:project_bm25:project_context:context/project.md"
+          ]
+        })
+      ])
+    );
   });
 
   it("omits proposed and rejected memory from persisted runtime context packs", async () => {

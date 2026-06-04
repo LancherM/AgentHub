@@ -286,6 +286,13 @@ summaries, and thread summaries. Run evidence is medium trust; thread summaries
 remain low-trust continuity. Raw logs, raw diffs, full verification output
 bodies, full risk finding bodies, and full conversation transcripts are not
 included in recency candidates.
+The typed `runtime_context_pack` now selects policy-allowed retrieval candidates
+from explicit, BM25, and recency routes after hard filtering, ranking, and
+layer-budget checks. Selected candidates are appended to the typed pack with
+source ids, hashes, trust labels, and inclusion reasons; omitted candidates are
+recorded with reasons. The current task and runtime policy remain pinned, and
+adapter-facing markdown injection remains compatible with the existing task
+brief path.
 Runtime context assembly applies hard local policy before memory and skills are
 included: proposed or rejected memory, secret-like source paths,
 repository-root agent instruction exports, and unsupported task/role skill
