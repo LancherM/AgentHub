@@ -1,6 +1,6 @@
 # TUI Optimization Roadmap
 
-Status: active implementation; OPT-0 through OPT-2 implemented
+Status: active implementation; OPT-0 through OPT-3 implemented
 Last updated: 2026-06-04
 Baseline: `origin/main` at `0a69476`
 
@@ -271,6 +271,8 @@ node apps/cli/dist/cli.js tui --once
 ```
 
 ### Phase OPT-3: Attention Strip And Next-Action State
+
+Status: implemented.
 
 Goal: make urgent work visible without turning Work into a dashboard.
 

@@ -457,7 +457,11 @@ detail panes, or explicit command-print status messages rather than permanent
 footer chrome. Work layout budgets are calculated from terminal width/height:
 conversation rows are sliced after renderer-side wrapping has repeated
 structural prefixes, and active-run boxes switch to a compact four-line variant
-only on narrow or short terminals.
+only on narrow or short terminals. The attention strip is also renderer-owned:
+it derives ordered read-only items from existing run evidence, review
+decisions, RoleCall loop state, task assignments, team executors, and memory
+counts, then truncates to the highest-priority item at narrow width. It does
+not add persistence, shell execution, or navigation side effects.
 The Ink renderer owns only presentation grammar: reverse-color risk-aware
 headers, a low-flicker idle `◈` indicator, agent-message left bars,
 timestamp/elapsed/usage metadata display, conversation separators, five-minute

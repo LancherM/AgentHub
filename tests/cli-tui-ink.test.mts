@@ -216,6 +216,146 @@ describe("Ink TUI renderer", () => {
     expect(footerLine?.length ?? 0).toBeLessThanOrEqual(48);
   });
 
+  it("renders attention items in priority order and narrows to the highest item", () => {
+    const wideOutput = renderToString(
+      React.createElement(TuiInkFrame, {
+        model: baseModel,
+        state: createInitialInkState(),
+        terminal: { columns: 120, rows: 32 }
+      }),
+      { columns: 120 }
+    );
+    const narrowOutput = renderToString(
+      React.createElement(TuiInkFrame, {
+        model: baseModel,
+        state: createInitialInkState(),
+        terminal: { columns: 48, rows: 20 }
+      }),
+      { columns: 48 }
+    );
+
+    expect(wideOutput).toContain("attention: risk blocking 1 G");
+    expect(wideOutput.indexOf("risk blocking 1 G")).toBeLessThan(wideOutput.indexOf("review pending 1 V"));
+    expect(wideOutput.indexOf("review pending 1 V")).toBeLessThan(wideOutput.indexOf("memory proposed 1 M"));
+    expect(narrowOutput).toContain("attn: risk blocking 1 | : more");
+    expect(narrowOutput).not.toContain("review pending 1 V");
+  });
+
+  it("surfaces failed checks, waiting RoleCalls, and unavailable executors", () => {
+    const output = renderToString(
+      React.createElement(TuiInkFrame, {
+        model: {
+          ...baseModel,
+          runs: [
+            {
+              ...baseModel.runs[0],
+              reviewDecision: { status: "accepted" },
+              evidence: {
+                latestEvent: "tests failed",
+                checks: { passed: 0, failed: 2, skipped: 0, failedNames: ["pnpm test", "pnpm lint"] },
+                risk: { level: "low", primaryReason: "tests failed" },
+                diff: { changedFiles: 1, insertions: 1, deletions: 0 }
+              }
+            }
+          ],
+          roleCalls: {
+            ...baseModel.roleCalls,
+            loop: {
+              ...baseModel.roleCalls.loop,
+              stopReason: "waiting_approval",
+              waitingRoleCallIds: ["call_waiting_approval"]
+            }
+          },
+          tasks: [
+            {
+              id: "task_executor",
+              title: "Configure reviewer",
+              status: "open",
+              updatedAt: "2026-05-29T12:10:00.000Z",
+              assignmentCount: 1,
+              executableAssignmentCount: 0,
+              assignments: [
+                {
+                  id: "assignment_reviewer",
+                  label: "Reviewer",
+                  executable: false,
+                  status: "queued"
+                }
+              ],
+              roleTodos: [],
+              followUps: []
+            }
+          ],
+          review: {
+            ...baseModel.review,
+            evidence: {}
+          },
+          memory: {
+            ...baseModel.memory,
+            counts: { proposed: 0, approved: 1, rejected: 0 }
+          }
+        },
+        state: createInitialInkState(),
+        terminal: { columns: 120, rows: 32 }
+      }),
+      { columns: 120 }
+    );
+
+    expect(output).toContain("attention: checks failed 2 R | waiting approval 1 G | executor unavailable 1 T");
+  });
+
+  it("hides the attention strip for healthy contexts", () => {
+    const output = renderToString(
+      React.createElement(TuiInkFrame, {
+        model: {
+          ...baseModel,
+          conversation: [],
+          activeRuns: [],
+          runs: [
+            {
+              ...baseModel.runs[0],
+              reviewDecision: { status: "accepted" },
+              evidence: {
+                latestEvent: "Run completed.",
+                checks: { passed: 1, failed: 0, skipped: 0, failedNames: [] },
+                risk: { level: "low" },
+                diff: { changedFiles: 1, insertions: 1, deletions: 0 }
+              }
+            }
+          ],
+          roleCalls: {
+            ...baseModel.roleCalls,
+            loop: {
+              ...baseModel.roleCalls.loop,
+              stopReason: "none",
+              waitingRoleCallIds: []
+            }
+          },
+          tasks: [],
+          team: {
+            ...baseModel.team,
+            roles: [baseModel.team.roles[0]],
+            counts: { total: 1, enabled: 1, runnable: 1, reserved: 0, custom: 0, presetOverrides: 0 }
+          },
+          review: {
+            ...baseModel.review,
+            evidence: {}
+          },
+          memory: {
+            ...baseModel.memory,
+            counts: { proposed: 0, approved: 1, rejected: 0 }
+          }
+        },
+        state: createInitialInkState(),
+        terminal: { columns: 100, rows: 32 }
+      }),
+      { columns: 100 }
+    );
+
+    expect(output).not.toContain("attention:");
+    expect(output).not.toContain("attn:");
+  });
+
   it("renders active run boxes inside Work", () => {
     const output = renderToString(
       React.createElement(TuiInkFrame, {
@@ -331,7 +471,10 @@ describe("Ink TUI renderer", () => {
     expect(output).toContain("agent output");
     expect(output).toContain("complete");
     expect(output).toContain("xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx");
-    expect(output).not.toContain("...");
+    const boxLines = output
+      .split("\n")
+      .filter((value) => value.startsWith("│"));
+    expect(boxLines.join("\n")).not.toContain("...");
   });
 
   it("keeps Work structure coherent across explicit width budgets", () => {

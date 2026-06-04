@@ -185,7 +185,12 @@ explicit width/height row budgets: 48-column terminals keep header, Work
 content, composer, footer, and tabs readable; structural conversation prefixes
 are repeated on wrapped lines; and narrow or short terminals render active
 runs as compact four-line boxes while normal terminals keep the fuller active
-run frame. Interactive
+run frame. When actionable state exists, a single attention strip appears below
+warnings/status with deterministic, read-only summaries for blocking risk,
+failed checks, waiting RoleCalls, pending review, unavailable executors, and
+proposed memory. Narrow terminals show only the highest-priority item plus a
+`: more` hint; the strip does not execute actions or steal prompt text.
+Interactive
 submit and review-decision actions show bounded busy states without locking the
 keyboard: users can still switch focus, open command hints, and draft the next
 prompt while the current local action is running. The TUI only blocks duplicate

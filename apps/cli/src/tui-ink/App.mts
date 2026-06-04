@@ -811,6 +811,7 @@ export function TuiInkFrame({
   const effectiveFeedbackByRunId = {
     ...providedFeedbackByRunId
   };
+  const attentionItems = attentionItemsForModel(model);
   return h(
     Box,
     { flexDirection: "column", width },
@@ -818,6 +819,9 @@ export function TuiInkFrame({
     h(HeaderBar, { model, state, terminal, badgeFlash: providedBadgeFlash }),
     ...model.warnings.map((warning) => line(`! ${warning}`, { color: "yellow" })),
     ...(state.statusMessage ? [line(`Status: ${state.statusMessage}`, { color: "green" })] : []),
+    ...(attentionItems.length > 0
+      ? [h(AttentionStrip, { items: attentionItems, terminal })]
+      : []),
     h(MainView, {
       model,
       state,
@@ -882,6 +886,133 @@ interface HeaderPart {
   text: string;
   color?: string;
   bold?: boolean;
+}
+
+interface AttentionItem {
+  text: string;
+  narrowText: string;
+  color?: string;
+}
+
+function AttentionStrip({
+  items,
+  terminal
+}: {
+  items: AttentionItem[];
+  terminal: TuiInkTerminalSize;
+}): React.ReactElement {
+  return line(attentionStripText(items, terminal.columns), {
+    color: items[0]?.color ?? "yellow"
+  });
+}
+
+function attentionStripText(items: AttentionItem[], columns: number): string {
+  const prefix = columns < 56 ? "attn: " : "attention: ";
+  const body = columns < 56
+    ? `${items[0]?.narrowText ?? ""}${items.length > 1 ? " | : more" : ""}`
+    : items.map((item) => item.text).join(" | ");
+  return truncateText(`${prefix}${body}`, columns);
+}
+
+function attentionItemsForModel(model: TuiCurrentContextModel): AttentionItem[] {
+  const items: AttentionItem[] = [];
+  const blockingRiskCount = blockingRiskAttentionCount(model);
+  if (blockingRiskCount > 0) {
+    items.push({
+      text: `risk blocking ${blockingRiskCount} G`,
+      narrowText: `risk blocking ${blockingRiskCount}`,
+      color: "red"
+    });
+  }
+
+  const failedChecks = model.runs.reduce(
+    (total, run) => total + (run.evidence.checks?.failed ?? 0),
+    0
+  );
+  if (failedChecks > 0) {
+    items.push({
+      text: `checks failed ${failedChecks} R`,
+      narrowText: `checks failed ${failedChecks}`,
+      color: "red"
+    });
+  }
+
+  const waitingApproval = waitingRoleCallCount(model, "waiting_approval");
+  if (waitingApproval > 0) {
+    items.push({
+      text: `waiting approval ${waitingApproval} G`,
+      narrowText: `waiting approval ${waitingApproval}`
+    });
+  }
+
+  const waitingContext = waitingRoleCallCount(model, "waiting_context");
+  if (waitingContext > 0) {
+    items.push({
+      text: `waiting context ${waitingContext} G`,
+      narrowText: `waiting context ${waitingContext}`
+    });
+  }
+
+  const pendingReview = model.runs.filter((run) => run.reviewDecision.status === "pending").length;
+  if (pendingReview > 0) {
+    items.push({
+      text: `review pending ${pendingReview} V`,
+      narrowText: `review pending ${pendingReview}`
+    });
+  }
+
+  const unavailableExecutors = unavailableExecutorCount(model);
+  if (unavailableExecutors > 0) {
+    items.push({
+      text: `executor unavailable ${unavailableExecutors} T`,
+      narrowText: `executor unavailable ${unavailableExecutors}`
+    });
+  }
+
+  const proposedMemory = model.memory.counts.proposed ?? 0;
+  if (proposedMemory > 0) {
+    items.push({
+      text: `memory proposed ${proposedMemory} M`,
+      narrowText: `memory proposed ${proposedMemory}`
+    });
+  }
+  return items;
+}
+
+function blockingRiskAttentionCount(model: TuiCurrentContextModel): number {
+  const runCount = model.runs.filter((run) => run.evidence.risk?.level === "blocking").length;
+  if (runCount > 0) {
+    return runCount;
+  }
+  return model.review.evidence.risk?.level === "blocking" ? 1 : 0;
+}
+
+function waitingRoleCallCount(
+  model: TuiCurrentContextModel,
+  status: "waiting_approval" | "waiting_context"
+): number {
+  const visibleCount = model.roleCalls.nodes.filter((node) => node.status === status).length;
+  if (visibleCount > 0) {
+    return visibleCount;
+  }
+  if (model.roleCalls.loop.stopReason === status) {
+    return Math.max(1, model.roleCalls.loop.waitingRoleCallIds.length);
+  }
+  return 0;
+}
+
+function unavailableExecutorCount(model: TuiCurrentContextModel): number {
+  const taskAssignments = model.tasks.reduce(
+    (total, task) =>
+      total + task.assignments.filter((assignment) =>
+        !assignment.executable && assignment.status !== "completed"
+      ).length,
+    0
+  );
+  const disabledAgentAdapters = model.team.roles.filter((role) =>
+    role.enabled && role.executorKind === "agent_adapter" && !role.executorRunnable
+  ).length;
+  return taskAssignments + disabledAgentAdapters;
 }
 
 function SplashPane(): React.ReactElement {
