@@ -1,6 +1,6 @@
 # TUI Optimization Roadmap
 
-Status: planning
+Status: active implementation; OPT-0 through OPT-2 implemented
 Last updated: 2026-06-04
 Baseline: `origin/main` at `0a69476`
 
@@ -212,6 +212,8 @@ Acceptance:
 
 ### Phase OPT-1: Footer And Command Hint Hierarchy
 
+Status: implemented.
+
 Goal: reduce permanent chrome and make commands discoverable without crowding
 the first screen.
 
@@ -239,6 +241,8 @@ node apps/cli/dist/cli.js tui --once
 ```
 
 ### Phase OPT-2: Narrow-Terminal Layout Budget
+
+Status: implemented.
 
 Goal: make 48x20 and other narrow PTY sessions coherent.
 

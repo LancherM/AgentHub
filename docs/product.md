@@ -180,7 +180,12 @@ marker plus inverse row styling, and the bottom shortcut hint changes by focus
 instead of showing one global command string. The permanent footer is
 width-aware: narrow terminals keep only primary keys visible, while full
 current-context CLI commands remain in the command palette, focused detail
-panes, or explicit command-print status messages. Interactive
+panes, or explicit command-print status messages. The Work surface uses
+explicit width/height row budgets: 48-column terminals keep header, Work
+content, composer, footer, and tabs readable; structural conversation prefixes
+are repeated on wrapped lines; and narrow or short terminals render active
+runs as compact four-line boxes while normal terminals keep the fuller active
+run frame. Interactive
 submit and review-decision actions show bounded busy states without locking the
 keyboard: users can still switch focus, open command hints, and draft the next
 prompt while the current local action is running. The TUI only blocks duplicate

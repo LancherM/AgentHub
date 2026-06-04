@@ -334,6 +334,85 @@ describe("Ink TUI renderer", () => {
     expect(output).not.toContain("...");
   });
 
+  it("keeps Work structure coherent across explicit width budgets", () => {
+    const model = {
+      ...baseModel,
+      conversation: [
+        {
+          id: "message:narrow-user",
+          sequence: 0,
+          role: "user",
+          kind: "text",
+          author: "user",
+          content: "Please inspect the renderer budget with a deliberately long prompt at small widths before shipping.",
+          createdAt: "2026-05-29T12:00:00.000Z",
+          type: "user_message",
+          timestamp: "2026-05-29T12:00:00.000Z"
+        },
+        {
+          id: "run:narrow-agent",
+          type: "agent_completed",
+          timestamp: "2026-05-29T12:05:00.000Z",
+          author: "@codex",
+          agent: "codex",
+          runId: "run_narrow_agent",
+          statusLabel: "completed",
+          outputLines: [
+            "agent output keeps a structural prefix when this deliberately long sentence wraps across narrow terminal rows.",
+            "```",
+            "const structuralPrefix = true;",
+            "```"
+          ]
+        }
+      ],
+      activeRuns: [
+        {
+          runId: "run_active_budget",
+          agent: "codex",
+          displayHandle: "engineer",
+          title: "@engineer run_active_budget ● running",
+          outputLines: [
+            "Reading src/very-long-renderer-budget-file-name.ts",
+            "Step 2/5"
+          ]
+        }
+      ]
+    };
+
+    for (const columns of [48, 64, 80, 120]) {
+      const output = renderToString(
+        React.createElement(TuiInkFrame, {
+          model,
+          state: createInitialInkState(),
+          terminal: { columns, rows: columns === 48 ? 20 : 24 }
+        }),
+        { columns }
+      );
+      const lines = output.split("\n");
+
+      expect(output).toContain("> @codex prompt");
+      expect(output).toContain("keys:");
+      expect(output).toContain(columns < 56 ? "W R V G T M Team ?" : columns < 84 ? "W Work" : "[W]ork");
+      expect(lines.some((value) => value.startsWith(" this deliberately"))).toBe(false);
+      expect(lines.every((value) => value.length <= columns)).toBe(true);
+    }
+
+    const narrowOutput = renderToString(
+      React.createElement(TuiInkFrame, {
+        model,
+        state: createInitialInkState(),
+        terminal: { columns: 48, rows: 20 }
+      }),
+      { columns: 48 }
+    );
+    const narrowBoxLines = narrowOutput
+      .split("\n")
+      .filter((value) => value.startsWith("╭") || value.startsWith("│") || value.startsWith("╰"));
+
+    expect(narrowBoxLines).toHaveLength(4);
+    expect(narrowOutput).toContain("│ Step 2/5");
+  });
+
   it("collapses older active runs and keeps at most three full boxes", () => {
     const output = renderToString(
       React.createElement(TuiInkFrame, {

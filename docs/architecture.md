@@ -454,7 +454,10 @@ uses width-aware tab/footer labels so narrow terminals keep primary keys
 readable, and uses Ink components for terminal layout instead of hand-wrapped
 string panels. Full current-context CLI commands stay in Palette, focused
 detail panes, or explicit command-print status messages rather than permanent
-footer chrome.
+footer chrome. Work layout budgets are calculated from terminal width/height:
+conversation rows are sliced after renderer-side wrapping has repeated
+structural prefixes, and active-run boxes switch to a compact four-line variant
+only on narrow or short terminals.
 The Ink renderer owns only presentation grammar: reverse-color risk-aware
 headers, a low-flicker idle `◈` indicator, agent-message left bars,
 timestamp/elapsed/usage metadata display, conversation separators, five-minute
@@ -466,12 +469,13 @@ from presentation-filtered events; it does not change event persistence,
 adapter execution, run status, or review semantics.
 Active-run boxes cover running runs only. They use rounded frames whose content
 area grows to fit wrapped visible output instead of truncating agent-facing
-lines; if no useful assistant or runtime activity is visible yet, the read model
-emits `agent thinking...`. The renderer uses a static running marker, live
-elapsed calculation from the run start timestamp, and best-effort percentage or
-`N/M` progress parsing. Completion/failure visibility comes from the refreshed
-read model instead of short-lived renderer feedback timers. None of that state
-is persisted or sent back into adapters.
+lines at normal width, and compact to the latest visible tail plus progress
+when width or height is tight; if no useful assistant or runtime activity is
+visible yet, the read model emits `agent thinking...`. The renderer uses a
+static running marker, live elapsed calculation from the run start timestamp,
+and best-effort percentage or `N/M` progress parsing. Completion/failure
+visibility comes from the refreshed read model instead of short-lived renderer
+feedback timers. None of that state is persisted or sent back into adapters.
 They prefer structured assistant output, then fall back to recent adapter,
 stdout, and stderr events while filtering raw JSON protocol frames, setup
 lifecycle lines, internal agent protocol summaries, runtime warnings, Codex

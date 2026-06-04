@@ -1056,7 +1056,7 @@ function MainView(props: TuiInkRenderProps): React.ReactElement {
     return h(RunsPane, { model, state, terminal, detail: true });
   }
   if (state.focus === "review") {
-    return h(ReviewPane, { model, state, detail: true });
+    return h(ReviewPane, { model, state, terminal, detail: true });
   }
   if (state.focus === "tasks") {
     return h(TasksPane, { model, state, terminal });
@@ -1086,7 +1086,7 @@ function WorkView({
   return h(
     Box,
     { flexDirection: "column" },
-    h(ConversationFlow, { model, state, visibleLines: conversationLines, feedbackByRunId }),
+    h(ConversationFlow, { model, state, terminal, visibleLines: conversationLines, feedbackByRunId }),
     ...(collapsedBoxes.length > 0
       ? collapsedBoxes.map((box) =>
           line(`${activeRunTitle(box, animationTick)} ...`, { color: "green" })
@@ -1099,11 +1099,13 @@ function WorkView({
 function ConversationFlow({
   model,
   state,
+  terminal,
   visibleLines,
   feedbackByRunId
 }: {
   model: TuiCurrentContextModel;
   state: TuiInkState;
+  terminal: TuiInkTerminalSize;
   visibleLines: number;
   feedbackByRunId: Partial<Record<string, RunFeedbackKind>>;
 }): React.ReactElement {
@@ -1118,7 +1120,7 @@ function ConversationFlow({
         ? [timeAnchorLine(item.label)]
         : item.kind === "separator"
           ? [conversationSeparatorLine()]
-          : conversationEntryLines(item.entry, feedbackByRunId, showSuggestions)
+          : conversationEntryLines(item.entry, feedbackByRunId, showSuggestions, terminal)
   );
   const maxOffset = Math.max(0, renderedLines.length - visibleLines);
   const offsetFromBottom = Math.min(state.conversationScrollOffset, maxOffset);
@@ -1207,7 +1209,8 @@ function reviewPendingGroupLine(count: number): React.ReactElement {
 function conversationEntryLines(
   entry: TuiConversationEntry,
   feedbackByRunId: Partial<Record<string, RunFeedbackKind>>,
-  showSuggestions: boolean
+  showSuggestions: boolean,
+  terminal: TuiInkTerminalSize
 ): React.ReactElement[] {
   if (entry.type === "agent_completed" || entry.type === "agent_failed") {
     const statusIcon = entry.type === "agent_failed" ? "✗" : "✓";
@@ -1220,11 +1223,15 @@ function conversationEntryLines(
         tone,
         feedback
       ),
-      ...conversationContentLines(entry.outputLines ?? entry.content, { prefix: "┃   ", agent: true, tone, keyPrefix: entry.id }),
-      ...(entry.verificationLine ? [conversationRichLine(`~ ${entry.verificationLine}`, { prefix: "┃   ", agent: true, tone })] : []),
-      ...(entry.riskLine ? [conversationRichLine(`⚠ ${entry.riskLine}`, { prefix: "┃   ", agent: true, tone, color: "yellow" })] : []),
-      ...inlineDiffLines(entry.inlineDiff, "┃   ", entry.id),
-      ...conversationSuggestionLines(entry, showSuggestions, tone)
+      ...conversationContentLines(entry.outputLines ?? entry.content, { prefix: "┃   ", agent: true, tone, keyPrefix: entry.id }, terminal),
+      ...(entry.verificationLine
+        ? conversationRichLines(`~ ${entry.verificationLine}`, { prefix: "┃   ", agent: true, tone }, terminal)
+        : []),
+      ...(entry.riskLine
+        ? conversationRichLines(`⚠ ${entry.riskLine}`, { prefix: "┃   ", agent: true, tone, color: "yellow" }, terminal)
+        : []),
+      ...inlineDiffLines(entry.inlineDiff, "┃   ", entry.id, terminal),
+      ...conversationSuggestionLines(entry, showSuggestions, tone, terminal)
     ];
   }
   if (entry.type === "review_pending") {
@@ -1237,12 +1244,16 @@ function conversationEntryLines(
         tone,
         feedback
       ),
-      ...conversationContentLines(entry.outputLines ?? entry.content, { prefix: "┃   ", agent: true, tone, keyPrefix: entry.id }),
-      ...(entry.verificationLine ? [conversationRichLine(`~ ${entry.verificationLine}`, { prefix: "┃   ", agent: true, tone })] : []),
-      ...(entry.riskLine ? [conversationRichLine(`⚠ ${entry.riskLine}`, { prefix: "┃   ", agent: true, tone, color: "yellow" })] : []),
-      ...inlineDiffLines(entry.inlineDiff, "┃   ", entry.id),
-      conversationRichLine(`△ ${entry.content ?? "切换到 [V]iew 查看详情"}`, { prefix: "┃   ", agent: true, tone, color: "yellow" }),
-      ...conversationSuggestionLines(entry, showSuggestions, tone)
+      ...conversationContentLines(entry.outputLines ?? entry.content, { prefix: "┃   ", agent: true, tone, keyPrefix: entry.id }, terminal),
+      ...(entry.verificationLine
+        ? conversationRichLines(`~ ${entry.verificationLine}`, { prefix: "┃   ", agent: true, tone }, terminal)
+        : []),
+      ...(entry.riskLine
+        ? conversationRichLines(`⚠ ${entry.riskLine}`, { prefix: "┃   ", agent: true, tone, color: "yellow" }, terminal)
+        : []),
+      ...inlineDiffLines(entry.inlineDiff, "┃   ", entry.id, terminal),
+      ...conversationRichLines(`△ ${entry.content ?? "切换到 [V]iew 查看详情"}`, { prefix: "┃   ", agent: true, tone, color: "yellow" }, terminal),
+      ...conversationSuggestionLines(entry, showSuggestions, tone, terminal)
     ];
   }
   if (entry.type === "delegation") {
@@ -1252,7 +1263,7 @@ function conversationEntryLines(
   }
   return [
     line(`${entry.author} ${formatConversationTimestamp(entry.timestamp)}`.trim(), { dimColor: true }),
-    ...conversationContentLines(entry.content, { prefix: "  ", agent: false, keyPrefix: entry.id })
+    ...conversationContentLines(entry.content, { prefix: "  ", agent: false, keyPrefix: entry.id }, terminal)
   ];
 }
 
@@ -1294,7 +1305,8 @@ function conversationContentLines(
     agent: boolean;
     tone?: string;
     keyPrefix: string;
-  }
+  },
+  terminal: TuiInkTerminalSize
 ): React.ReactElement[] {
   const lines = Array.isArray(content)
     ? content
@@ -1304,16 +1316,16 @@ function conversationContentLines(
         .filter(Boolean);
   const visible = lines.length > 0 ? lines : ["(empty)"];
   let inCodeBlock = false;
-  return visible.map((value, index) => {
+  return visible.flatMap((value, index) => {
     const trimmed = value.trim();
     const isFence = trimmed.startsWith("```");
     const renderAsCode = inCodeBlock && !isFence;
-    const rendered = conversationRichLine(value, {
+    const rendered = conversationRichLines(value, {
       ...options,
       key: `${options.keyPrefix}-content-${index}`,
       code: renderAsCode || isFence,
       codeFence: isFence
-    });
+    }, terminal);
     if (isFence) {
       inCodeBlock = !inCodeBlock;
     }
@@ -1324,73 +1336,75 @@ function conversationContentLines(
 function conversationSuggestionLines(
   entry: TuiConversationEntry,
   showSuggestions: boolean,
-  tone: string
+  tone: string,
+  terminal: TuiInkTerminalSize
 ): React.ReactElement[] {
   if (!showSuggestions || !entry.suggestions || entry.suggestions.length === 0) {
     return [];
   }
-  return entry.suggestions.map((suggestion) =>
-    conversationRichLine(`[${suggestion.key}] ${suggestion.label}`, {
+  return entry.suggestions.flatMap((suggestion) =>
+    conversationRichLines(`[${suggestion.key}] ${suggestion.label}`, {
       prefix: "┃   ",
       agent: true,
       tone,
       dimColor: true,
       key: `${entry.id}-suggestion-${suggestion.key}`
-    })
+    }, terminal)
   );
 }
 
 function inlineDiffLines(
   diff: TuiInlineDiffSummary | undefined,
   prefix: string,
-  keyPrefix: string
+  keyPrefix: string,
+  terminal: TuiInkTerminalSize
 ): React.ReactElement[] {
   if (!diff) {
     return [];
   }
   if (diff.mode === "summary") {
     return [
-      conversationRichLine(`╭ diff ${diff.summary}`, {
+      ...conversationRichLines(`╭ diff ${diff.summary}`, {
         prefix,
         agent: true,
         tone: "cyan",
         dimColor: true,
         key: `${keyPrefix}-diff-card-top`
-      }),
-      conversationRichLine("╰ review details available in View", {
+      }, terminal),
+      ...conversationRichLines("╰ review details available in View", {
         prefix,
         agent: true,
         tone: "cyan",
         dimColor: true,
         key: `${keyPrefix}-diff-card-bottom`
-      })
+      }, terminal)
     ];
   }
   return [
-    conversationRichLine(`╭ diff ${diff.summary}`, {
+    ...conversationRichLines(`╭ diff ${diff.summary}`, {
       prefix,
       agent: true,
       tone: "cyan",
       dimColor: true,
       key: `${keyPrefix}-diff-card-top`
-    }),
-    ...diff.lines.map((lineItem, index) =>
-      conversationRichLine(`│ ${lineItem.text}`, {
+    }, terminal),
+    ...diff.lines.flatMap((lineItem, index) =>
+      conversationRichLines(`│ ${lineItem.text}`, {
         prefix,
         agent: true,
         tone: "cyan",
         color: diffLineColor(lineItem.kind),
         dimColor: lineItem.kind === "file",
         key: `${keyPrefix}-diff-${index}`
-      })
+      }, terminal)
     ),
-    conversationRichLine("╰ end diff", {
+    ...conversationRichLines("╰ end diff", {
       prefix,
       agent: true,
       tone: "cyan",
       dimColor: true,
       key: `${keyPrefix}-diff-card-bottom`
-    })
+    }, terminal)
   ];
 }
 
@@ -1402,6 +1416,29 @@ function diffLineColor(kind: TuiInlineDiffSummary["lines"][number]["kind"]): str
     return "red";
   }
   return undefined;
+}
+
+function conversationRichLines(
+  value: string,
+  options: {
+    prefix: string;
+    agent: boolean;
+    tone?: string;
+    color?: string;
+    dimColor?: boolean;
+    code?: boolean;
+    codeFence?: boolean;
+    key?: string;
+  },
+  terminal: TuiInkTerminalSize
+): React.ReactElement[] {
+  const contentWidth = Math.max(1, terminal.columns - options.prefix.length);
+  return hardWrapLine(value, contentWidth).map((chunk, index) =>
+    conversationRichLine(chunk, {
+      ...options,
+      key: options.key ? `${options.key}-${index}` : undefined
+    })
+  );
 }
 
 function conversationRichLine(
@@ -1423,7 +1460,7 @@ function conversationRichLine(
   const spacerText = options.agent ? options.prefix.slice(1) : "";
   return h(
     Text,
-    { key: options.key, wrap: "hard", color: options.color, dimColor: options.dimColor },
+    { key: options.key, wrap: "truncate", color: options.color, dimColor: options.dimColor },
     prefixText,
     spacerText,
     ...richTextSegments(value, options)
@@ -1552,8 +1589,13 @@ function ActiveRunBoxView({
   const innerWidth = Math.max(12, width - 2);
   const title = activeRunTitle(box, animationTick);
   const top = roundedBorderedTitle(title, innerWidth);
-  const contentLines = activeRunWrappedOutputLines(box, terminal);
-  const contentHeight = Math.max(activeRunMinimumContentHeight(terminal), contentLines.length);
+  const compact = usesCompactActiveRunBox(terminal);
+  const contentLines = compact
+    ? activeRunCompactOutputLines(box, terminal)
+    : activeRunWrappedOutputLines(box, terminal);
+  const contentHeight = compact
+    ? contentLines.length
+    : Math.max(activeRunMinimumContentHeight(terminal), contentLines.length);
   const paddedLines = [
     ...contentLines,
     ...Array.from({ length: Math.max(0, contentHeight - contentLines.length) }, () => "")
@@ -1684,10 +1726,12 @@ function RunsPane({
 function ReviewPane({
   model,
   state,
+  terminal,
   detail = false
 }: {
   model: TuiCurrentContextModel;
   state: TuiInkState;
+  terminal: TuiInkTerminalSize;
   detail?: boolean;
 }): React.ReactElement {
   const run = selectedRun(model, state);
@@ -1715,7 +1759,7 @@ function ReviewPane({
         ]
       : []),
     ...(state.reviewDiffExpanded
-      ? inlineDiffLines(model.review.evidence.inlineDiff, "  ", "review")
+      ? inlineDiffLines(model.review.evidence.inlineDiff, "  ", "review", terminal)
       : []),
     ...(state.reviewCompareMode && compareRuns.length >= 2
       ? [
@@ -2462,7 +2506,21 @@ function conversationWindowSize(
   terminal: TuiInkTerminalSize,
   activeLineCost: number
 ): number {
-  return boundedWindowSize(terminal.rows - 4 - activeLineCost, 6, terminal.rows);
+  const minimumRows = minimumWorkConversationRows(terminal);
+  const maximumRows = Math.max(minimumRows, terminal.rows - workChromeLineBudget(terminal));
+  return boundedWindowSize(
+    terminal.rows - workChromeLineBudget(terminal) - activeLineCost,
+    minimumRows,
+    maximumRows
+  );
+}
+
+function workChromeLineBudget(_terminal: TuiInkTerminalSize): number {
+  return 4;
+}
+
+function minimumWorkConversationRows(terminal: TuiInkTerminalSize): number {
+  return terminal.rows < 20 ? 4 : 6;
 }
 
 function activeRunLineCost(
@@ -2480,10 +2538,17 @@ function activeRunBoxLineCountForBox(
   box: TuiActiveRunBox,
   terminal: TuiInkTerminalSize
 ): number {
+  if (usesCompactActiveRunBox(terminal)) {
+    return activeRunCompactOutputLines(box, terminal).length + 3;
+  }
   return Math.max(
     activeRunMinimumContentHeight(terminal),
     activeRunWrappedOutputLines(box, terminal).length
   ) + 3;
+}
+
+function usesCompactActiveRunBox(terminal: TuiInkTerminalSize): boolean {
+  return terminal.columns < 56 || terminal.rows < 20;
 }
 
 function activeRunMinimumContentHeight(_terminal: TuiInkTerminalSize): number {
@@ -2501,6 +2566,18 @@ function activeRunWrappedOutputLines(
   const innerWidth = Math.max(12, activeRunBoxWidth(terminal) - 2);
   const contentWidth = Math.max(1, innerWidth - 2);
   return box.outputLines.flatMap((value) => hardWrapLine(value, contentWidth));
+}
+
+function activeRunCompactOutputLines(
+  box: TuiActiveRunBox,
+  terminal: TuiInkTerminalSize
+): string[] {
+  const width = Math.max(1, activeRunBoxWidth(terminal) - 4);
+  const latest = [...box.outputLines]
+    .reverse()
+    .map((value) => value.trim())
+    .find((value) => value.length > 0) ?? "agent thinking...";
+  return [truncateText(latest, width)];
 }
 
 function hardWrapLine(value: string, width: number): string[] {
