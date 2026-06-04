@@ -132,6 +132,14 @@ stable-source FTS index through BM25. BM25 candidates are appended to
 trust, source ids, and inclusion reasons. Candidates that duplicate explicit
 sources by source id and content hash are omitted with diagnostics; runtime
 markdown injection remains unchanged.
+The recency route is separate from stable-source indexing. TaskRunner can
+collect recent terminal run evidence from persisted task runs, diff artifact
+metadata, verification result statuses, and risk report summaries, then render
+bounded medium-trust `run_evidence` candidates. Thread summaries are rendered as
+low-trust continuity candidates only when thread context policy allows them.
+Raw run events, raw logs, raw diff bodies, stdout/stderr verification bodies,
+full risk finding details, and full conversation transcripts are deliberately
+excluded.
 The context compiler applies hard policy before adding memory or skill sections.
 It filters proposed/rejected memory, secret-like source paths, repository-root
 agent instruction export targets, and unsupported task/role skill scopes, then

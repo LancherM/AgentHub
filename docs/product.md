@@ -280,6 +280,12 @@ ranked candidates include lexical score diagnostics, matched query terms, layer
 and trust metadata, and duplicate omissions when BM25 finds a source already
 selected through the explicit route. Runtime context selection is still
 unchanged at this phase.
+Retrieval also produces bounded recency candidates for volatile local evidence:
+recent run summaries, verification outcomes, risk summaries, changed-file
+summaries, and thread summaries. Run evidence is medium trust; thread summaries
+remain low-trust continuity. Raw logs, raw diffs, full verification output
+bodies, full risk finding bodies, and full conversation transcripts are not
+included in recency candidates.
 Runtime context assembly applies hard local policy before memory and skills are
 included: proposed or rejected memory, secret-like source paths,
 repository-root agent instruction exports, and unsupported task/role skill

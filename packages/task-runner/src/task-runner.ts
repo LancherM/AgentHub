@@ -45,6 +45,11 @@ import {
   type ExplicitRunContextSource
 } from "./context-retriever";
 import {
+  collectRecentRunEvidence,
+  collectThreadSummaryContext,
+  type RecentRunEvidenceContextSource
+} from "./context-recency";
+import {
   assertAgentKindEnabled,
   defaultAgentKind,
   type AgentAvailabilityOptions
@@ -64,6 +69,7 @@ import {
   type ContextIndexRepository,
   type ContextLayer,
   type ContextRetrievalResult,
+  type ConversationThreadSummary,
   type InjectedSkillEvidence,
   type JsonObject,
   type RiskReport,
@@ -89,7 +95,9 @@ import {
   InMemoryTaskRepository,
   InMemoryTaskRunRepository,
   InMemoryVerificationResultRepository,
+  InMemoryConversationThreadSummaryRepository,
   InMemoryMemoryItemRepository,
+  type ConversationThreadSummaryRepository,
   type MemoryItemRepository,
   type RiskReportRepository,
   type RunArtifactRepository,
@@ -142,6 +150,10 @@ export interface RunTaskInput {
   roleSkillReferences?: SkillReference[];
   selectedFiles?: ExplicitFileContextSource[];
   selectedRuns?: ExplicitRunContextSource[];
+  recentRunEvidence?: RecentRunEvidenceContextSource[];
+  threadId?: string;
+  threadSummary?: ConversationThreadSummary;
+  includeThreadSummary?: boolean;
   role?: WorkgroupRoleRunMetadata;
   teamRoles?: WorkgroupRoleRunMetadata[];
   runRoot?: string;
@@ -223,6 +235,7 @@ export interface TaskRunnerDependencies {
   riskReportRepository?: RiskReportRepository;
   memoryItemRepository?: MemoryItemRepository;
   runMetadataRepository?: RunMetadataRepository;
+  conversationThreadSummaryRepository?: ConversationThreadSummaryRepository;
   agentRegistry?: AgentRegistry;
   shellExecutor?: ShellExecutor;
   processRunner?: ProcessRunner;
@@ -283,6 +296,7 @@ export class TaskRunner {
   readonly riskReportRepository: RiskReportRepository;
   readonly memoryItemRepository: MemoryItemRepository;
   readonly runMetadataRepository: RunMetadataRepository;
+  readonly conversationThreadSummaryRepository: ConversationThreadSummaryRepository;
   private readonly contextCompiler: ContextCompiler;
   private readonly hasCustomContextCompiler: boolean;
   private readonly contextFormatter: ContextFormatter;
@@ -320,6 +334,9 @@ export class TaskRunner {
       dependencies.memoryItemRepository ?? new InMemoryMemoryItemRepository();
     this.runMetadataRepository =
       dependencies.runMetadataRepository ?? new InMemoryRunMetadataRepository();
+    this.conversationThreadSummaryRepository =
+      dependencies.conversationThreadSummaryRepository ??
+      new InMemoryConversationThreadSummaryRepository();
     this.agentRegistry =
       dependencies.agentRegistry ??
       createDefaultAgentRegistry(processRunner);
@@ -442,6 +459,31 @@ export class TaskRunner {
       taskPrompt: parsed.taskPrompt,
       createdAt
     });
+    const includeThreadSummary =
+      input.includeThreadSummary ??
+      input.role?.contextPolicy.includeThreadSummary ??
+      true;
+    const threadContextDisabledReason = includeThreadSummary
+      ? undefined
+      : "thread summary context is disabled by run or role context policy";
+    const recentRunEvidence = input.recentRunEvidence ??
+      (contextPlan.retrievalRoutes.includes("recency")
+        ? await collectRecentRunEvidence({
+            projectId: task.projectId,
+            taskRepository: this.taskRepository,
+            taskRunRepository: this.taskRunRepository,
+            runArtifactRepository: this.runArtifactRepository,
+            verificationResultRepository: this.verificationResultRepository,
+            riskReportRepository: this.riskReportRepository,
+            limit: 4
+          })
+        : []);
+    const threadSummaryContext = await collectThreadSummaryContext({
+      threadId: input.threadId,
+      includeThreadSummary,
+      disabledReason: threadContextDisabledReason,
+      conversationThreadSummaryRepository: this.conversationThreadSummaryRepository
+    });
     const contextRetrievalResult = await this.contextRetriever.retrieve({
       id: this.idGenerator.nextId("context_retrieval"),
       plan: contextPlan,
@@ -453,6 +495,10 @@ export class TaskRunner {
       roleSkillReferences: input.roleSkillReferences,
       selectedFiles: input.selectedFiles,
       selectedRuns: input.selectedRuns,
+      recentRunEvidence,
+      threadSummary: input.threadSummary ?? threadSummaryContext.summary,
+      includeThreadSummary,
+      threadContextDisabledReason,
       createdAt
     });
     const runtimeContextPack = createTypedRuntimeContextPack({

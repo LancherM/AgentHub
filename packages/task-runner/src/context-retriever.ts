@@ -3,6 +3,7 @@ import path from "node:path";
 import {
   validateContextCandidate,
   validateContextRetrievalResult,
+  type ConversationThreadSummary,
   type ContextBundle,
   type ContextCandidate,
   type ContextItem,
@@ -19,6 +20,7 @@ import {
   type Task,
   type TrustLevel
 } from "@agent-hub/core";
+import type { RecentRunEvidenceContextSource } from "./context-recency";
 
 export interface ExplicitFileContextSource {
   path: string;
@@ -48,6 +50,10 @@ export interface ContextRetrieverInput {
   roleSkillReferences?: SkillReference[];
   selectedFiles?: ExplicitFileContextSource[];
   selectedRuns?: ExplicitRunContextSource[];
+  recentRunEvidence?: RecentRunEvidenceContextSource[];
+  threadSummary?: ConversationThreadSummary;
+  includeThreadSummary?: boolean;
+  threadContextDisabledReason?: string;
   createdAt: string;
 }
 
@@ -109,15 +115,19 @@ export class ExplicitContextRetriever implements ContextRetriever {
 
     const explicitCandidates = dedupeCandidates(candidates);
     const bm25 = await bm25Candidates(input, explicitCandidates, this.options);
+    const recency = recencyCandidates(input, [
+      ...explicitCandidates,
+      ...bm25.candidates
+    ]);
 
     const result = validateContextRetrievalResult({
       id: input.id,
       planId: input.plan.id,
       taskId: input.task.id,
       runId: input.runId,
-      candidates: [...explicitCandidates, ...bm25.candidates],
-      omitted: [...omitted, ...bm25.omitted],
-      diagnostics: [...diagnostics, ...bm25.diagnostics],
+      candidates: [...explicitCandidates, ...bm25.candidates, ...recency.candidates],
+      omitted: [...omitted, ...bm25.omitted, ...recency.omitted],
+      diagnostics: [...diagnostics, ...bm25.diagnostics, ...recency.diagnostics],
       createdAt: input.createdAt
     });
     return result;
@@ -218,6 +228,219 @@ function indexSearchCandidate(
       ...searchResult.diagnostics
     }
   });
+}
+
+function recencyCandidates(
+  input: ContextRetrieverInput,
+  existingCandidates: ContextCandidate[]
+): {
+  candidates: ContextCandidate[];
+  omitted: ContextRetrievalResult["omitted"];
+  diagnostics: ContextRetrievalResult["diagnostics"];
+} {
+  const diagnostics: ContextRetrievalResult["diagnostics"] = [];
+  if (input.includeThreadSummary === false) {
+    diagnostics.push({
+      severity: "info",
+      message: input.threadContextDisabledReason ??
+        "thread summary context is disabled by context policy"
+    });
+  }
+  if (!input.plan.retrievalRoutes.includes("recency")) {
+    return { candidates: [], omitted: [], diagnostics };
+  }
+
+  const existingKeys = new Set(
+    existingCandidates.map((candidateEntry) =>
+      sourceHashKey(candidateEntry.item.sourceId, candidateEntry.item.contentHash)
+    )
+  );
+  const candidates: ContextCandidate[] = [];
+  const omitted: ContextRetrievalResult["omitted"] = [];
+
+  for (const [index, source] of (input.recentRunEvidence ?? []).slice(0, 4).entries()) {
+    const candidateEntry = recentRunCandidate(source, input, index);
+    const key = sourceHashKey(
+      candidateEntry.item.sourceId,
+      candidateEntry.item.contentHash
+    );
+    if (existingKeys.has(key)) {
+      omitted.push({
+        itemId: candidateEntry.item.id,
+        layer: candidateEntry.item.layer,
+        reason: "recency candidate duplicated an earlier retrieval source"
+      });
+      continue;
+    }
+    existingKeys.add(key);
+    candidates.push(candidateEntry);
+  }
+
+  if (input.threadSummary && input.includeThreadSummary !== false) {
+    const candidateEntry = threadSummaryCandidate(input.threadSummary, input);
+    const key = sourceHashKey(
+      candidateEntry.item.sourceId,
+      candidateEntry.item.contentHash
+    );
+    if (existingKeys.has(key)) {
+      omitted.push({
+        itemId: candidateEntry.item.id,
+        layer: candidateEntry.item.layer,
+        reason: "recency thread summary duplicated an earlier retrieval source"
+      });
+    } else {
+      candidates.push(candidateEntry);
+    }
+  }
+
+  if (candidates.length > 0 || omitted.length > 0) {
+    diagnostics.push({
+      severity: "info",
+      message: "recency retrieval completed",
+      metadata: {
+        selectedCount: candidates.length,
+        omittedDuplicateCount: omitted.length,
+        recentRunEvidenceCount: input.recentRunEvidence?.length ?? 0,
+        includedThreadSummary: input.threadSummary !== undefined &&
+          input.includeThreadSummary !== false
+      }
+    });
+  }
+
+  return { candidates, omitted, diagnostics };
+}
+
+function recentRunCandidate(
+  source: RecentRunEvidenceContextSource,
+  input: ContextRetrieverInput,
+  index: number
+): ContextCandidate {
+  return candidate({
+    item: contextItem({
+      id: `run_evidence:${source.runId}`,
+      layer: "run_evidence",
+      sourceKind: "recent_run_summary",
+      sourceId: source.runId,
+      scope: "run",
+      trustLevel: "medium",
+      lifetime: "run",
+      title: `Recent Run: ${source.taskTitle}`,
+      content: renderRecentRunEvidence(source),
+      createdAt: source.completedAt ?? source.createdAt,
+      metadata: {
+        ...source.metadata,
+        taskId: source.taskId,
+        agentKind: source.agentKind,
+        status: source.status,
+        completedAt: source.completedAt,
+        route: "recency"
+      }
+    }),
+    routes: ["recency"],
+    relevanceScore: 0.72,
+    freshnessScore: freshnessScoreForRank(index),
+    scopeMatchScore: 0.8,
+    inclusionReason: "recent run evidence matched the current project recency route"
+  });
+}
+
+function threadSummaryCandidate(
+  summary: ConversationThreadSummary,
+  input: ContextRetrieverInput
+): ContextCandidate {
+  return candidate({
+    item: contextItem({
+      id: `conversation_summary:${summary.threadId}`,
+      layer: "conversation",
+      sourceKind: "thread_summary",
+      sourceId: summary.threadId,
+      scope: "thread",
+      trustLevel: "low",
+      lifetime: "thread",
+      title: "Thread Summary [trust=low]",
+      content: renderThreadSummary(summary),
+      createdAt: summary.updatedAt,
+      metadata: {
+        sourceSummaryId: summary.id,
+        sourceMessageCount: summary.sourceMessageCount,
+        sourceLatestMessageId: summary.sourceLatestMessageId,
+        continuityOnly: true,
+        mayOverrideCurrentTask: false,
+        mayOverrideProjectContext: false,
+        mayOverrideApprovedMemory: false,
+        route: "recency"
+      }
+    }),
+    routes: ["recency"],
+    relevanceScore: 0.52,
+    freshnessScore: 0.85,
+    scopeMatchScore: 0.7,
+    inclusionReason:
+      "thread summary was included as low-trust recency continuity"
+  });
+}
+
+function renderRecentRunEvidence(source: RecentRunEvidenceContextSource): string {
+  const lines = [
+    `run_id: ${source.runId}`,
+    `task_id: ${source.taskId}`,
+    `task_title: ${source.taskTitle}`,
+    `agent_kind: ${source.agentKind}`,
+    `status: ${source.status}`,
+    source.completedAt ? `completed_at: ${source.completedAt}` : undefined,
+    "",
+    source.summary,
+    ""
+  ].filter((line): line is string => line !== undefined);
+  if (source.changedFiles.length > 0) {
+    lines.push("changed_files:");
+    for (const changedFile of source.changedFiles.slice(0, 12)) {
+      lines.push(`- ${changedFile}`);
+    }
+    lines.push("");
+  }
+  if (source.verificationSummary) {
+    lines.push(`verification_summary: ${source.verificationSummary}`);
+  }
+  if (source.riskSummary) {
+    lines.push(`risk_summary: ${source.riskSummary}`);
+  }
+  return `${lines.join("\n").trimEnd()}\n`;
+}
+
+function renderThreadSummary(summary: ConversationThreadSummary): string {
+  const lines = [
+    "trust: low",
+    "purpose: continuity only",
+    "may_override_current_task: false",
+    "may_override_project_context: false",
+    "may_override_approved_memory: false",
+    "",
+    summary.summary,
+    ""
+  ];
+  if (summary.lastKnownUserGoal) {
+    lines.push(`last_known_user_goal: ${summary.lastKnownUserGoal}`);
+  }
+  appendSummaryList(lines, "decisions", summary.decisions);
+  appendSummaryList(lines, "open_items", summary.openItems);
+  appendSummaryList(lines, "constraints", summary.constraints);
+  return `${lines.join("\n").trimEnd()}\n`;
+}
+
+function appendSummaryList(lines: string[], label: string, items: string[]): void {
+  const values = items.map((item) => item.trim()).filter(Boolean);
+  if (values.length === 0) {
+    return;
+  }
+  lines.push(`${label}:`);
+  for (const item of values.slice(0, 8)) {
+    lines.push(`- ${item}`);
+  }
+}
+
+function freshnessScoreForRank(index: number): number {
+  return Math.max(0.35, 0.95 - index * 0.12);
 }
 
 function currentTaskCandidate(
