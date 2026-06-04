@@ -1,6 +1,6 @@
 # Product
 
-Last audited against `origin/main` at `3f0f16c` on 2026-06-03.
+Last audited against `origin/main` at `0a69476` on 2026-06-04.
 
 Agent Hub is a local-first, CLI-first tool for orchestrating coding agents on a
 developer machine. It manages local projects, task briefs, context packs,
@@ -155,6 +155,11 @@ same shared read models and action callbacks. The legacy hand-rendered string
 workbench has been removed as a runtime path; the remaining TUI roadmap work is
 interaction polish, scroll behavior, and broader state coverage without
 changing the governance boundaries above.
+The current optimization plan is tracked in
+`docs/tui-optimization-roadmap.md`. It keeps the same TUI boundaries and
+focuses on footer command hierarchy, narrow-terminal layout, attention/next
+action summaries, warning hygiene, stale active-run signals, and copy/help
+consistency.
 The TUI composer is prompt-first while editing: printable lowercase keys append
 to the prompt from any focus, uppercase tab shortcuts switch
 Work/Runs/View/Graph/Tasks/Memory/Team, `/team` opens the Team roles view
@@ -444,10 +449,11 @@ Not implemented as product behavior today:
 
 Roadmaps for future work live in `docs/local-ai-workgroup-roadmap.md`,
 `docs/interaction-optimization-roadmap.md`, `docs/tui-roadmap.md`,
-`docs/tui-conversation-terminal-roadmap.md`, and the Adaptive Role Calls
-specification documents. Those files describe direction; this document
-describes the current product state. The conversation-terminal TUI roadmap now
-records the implemented Work-view direction and remaining hardening guidance:
-the current TUI keeps the Ink/local read-model boundary while presenting a
+`docs/tui-conversation-terminal-roadmap.md`,
+`docs/tui-optimization-roadmap.md`, and the Adaptive Role Calls specification
+documents. Those files describe direction; this document describes the current
+product state. The conversation-terminal TUI roadmap now records the
+implemented Work-view direction and remaining hardening guidance: the current
+TUI keeps the Ink/local read-model boundary while presenting a
 conversation-first Work surface, moving Runs, Review, Graph, Tasks, and Memory
 into explicit auxiliary tabs, and keeping Team behind slash-command access.
