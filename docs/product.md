@@ -93,7 +93,10 @@ yellow. Idle sessions show a low-flicker `◈` indicator that does not drive a
 constant screen repaint, while active sessions use the running marker. Agent
 and role-backed run entries use a colored left `┃` bar, role/run/status
 metadata, elapsed time, optional token/cost usage, and a timestamp. User
-messages stay plain with a timestamp. Conversation content
+messages stay plain with a timestamp. The Work viewport budgets fixed chrome
+rows for the header, warnings/status/attention strip, composer, tabs, and
+status bar before slicing the visible conversation tail, so long agent output
+does not push earlier visible rows under the header. Conversation content
 keeps file paths underlined and blue with safe OSC 8 file links when the
 terminal supports them, shell-command lines bold, and fenced code blocks lightly
 highlighted for keywords, strings, and comments. Agent output content is not

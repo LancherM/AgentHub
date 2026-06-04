@@ -454,10 +454,13 @@ uses width-aware tab/footer labels so narrow terminals keep primary keys
 readable, and uses Ink components for terminal layout instead of hand-wrapped
 string panels. Full current-context CLI commands stay in Palette, focused
 detail panes, or explicit command-print status messages rather than permanent
-footer chrome. Work layout budgets are calculated from terminal width/height:
-conversation rows are sliced after renderer-side wrapping has repeated
-structural prefixes, and active-run boxes switch to a compact four-line variant
-only on narrow or short terminals. The attention strip is also renderer-owned:
+footer chrome. Work layout budgets are calculated from terminal width/height
+after reserving fixed chrome rows for the header, warnings/status, attention
+strip, composer, tabs, and status bar: conversation rows are sliced after
+renderer-side wrapping has repeated structural prefixes, and active-run boxes
+switch to a compact four-line variant only on narrow or short terminals. The
+full output remains in the read model; the renderer only bounds the visible
+window. The attention strip is also renderer-owned:
 it derives ordered read-only items from existing run evidence, review
 decisions, RoleCall loop state, task assignments, team executors, and memory
 counts, then truncates to the highest-priority item at narrow width. It does

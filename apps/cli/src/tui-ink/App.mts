@@ -1220,9 +1220,10 @@ function WorkView({
   animationTick,
   feedbackByRunId
 }: TuiInkRenderProps): React.ReactElement {
-  const { collapsedBoxes, fullBoxes } = activeRunLayout(model.activeRuns, terminal);
-  const activeLineCost = activeRunLineCost(collapsedBoxes, fullBoxes, terminal);
-  const conversationLines = conversationWindowSize(terminal, activeLineCost);
+  const chromeLineBudget = workChromeLineBudget(model, state);
+  const { collapsedBoxes, fullBoxes } = activeRunLayout(model.activeRuns, terminal, chromeLineBudget);
+  const activeLineCost = activeRunLineCost(collapsedBoxes, fullBoxes, terminal, chromeLineBudget);
+  const conversationLines = conversationWindowSize(terminal, activeLineCost, chromeLineBudget);
   return h(
     Box,
     { flexDirection: "column" },
@@ -1232,7 +1233,9 @@ function WorkView({
           line(`${activeRunTitle(box, animationTick)} ...`, { color: activeRunColor(box) })
         )
       : []),
-    ...fullBoxes.map((box) => h(ActiveRunBoxView, { key: box.runId, box, terminal, animationTick }))
+    ...fullBoxes.map((box) =>
+      h(ActiveRunBoxView, { key: box.runId, box, terminal, animationTick, chromeLineBudget })
+    )
   );
 }
 
@@ -1719,11 +1722,13 @@ function conversationEntryHandle(entry: TuiConversationEntry): string {
 function ActiveRunBoxView({
   box,
   terminal,
-  animationTick
+  animationTick,
+  chromeLineBudget
 }: {
   box: TuiActiveRunBox;
   terminal: TuiInkTerminalSize;
   animationTick: number;
+  chromeLineBudget: number;
 }): React.ReactElement {
   const width = activeRunBoxWidth(terminal);
   const innerWidth = Math.max(12, width - 2);
@@ -1733,10 +1738,10 @@ function ActiveRunBoxView({
   const compact = usesCompactActiveRunBox(terminal);
   const contentLines = compact
     ? activeRunCompactOutputLines(box, terminal)
-    : activeRunVisibleOutputLines(box, terminal);
+    : activeRunVisibleOutputLines(box, terminal, chromeLineBudget);
   const contentHeight = compact
     ? contentLines.length
-    : activeRunContentHeight(contentLines.length, terminal);
+    : activeRunContentHeight(contentLines.length, terminal, chromeLineBudget);
   const paddedLines = [
     ...contentLines,
     ...Array.from({ length: Math.max(0, contentHeight - contentLines.length) }, () => "")
@@ -2669,16 +2674,18 @@ function teamWindowSize(terminal: TuiInkTerminalSize): number {
 
 function activeRunLayout(
   activeRuns: TuiActiveRunBox[],
-  terminal: TuiInkTerminalSize
+  terminal: TuiInkTerminalSize,
+  chromeLineBudget: number
 ): {
   collapsedBoxes: TuiActiveRunBox[];
   fullBoxes: TuiActiveRunBox[];
 } {
   const collapsedBoxes = activeRuns.slice(0, Math.max(0, activeRuns.length - 3));
   const fullBoxes = activeRuns.slice(collapsedBoxes.length);
+  const minimumRows = minimumWorkConversationRows(terminal);
   while (
     fullBoxes.length > 1 &&
-    terminal.rows - 4 - activeRunLineCost(collapsedBoxes, fullBoxes, terminal) < 6
+    terminal.rows - chromeLineBudget - activeRunLineCost(collapsedBoxes, fullBoxes, terminal, chromeLineBudget) < minimumRows
   ) {
     const nextCollapsed = fullBoxes.shift();
     if (nextCollapsed) {
@@ -2690,19 +2697,35 @@ function activeRunLayout(
 
 function conversationWindowSize(
   terminal: TuiInkTerminalSize,
-  activeLineCost: number
+  activeLineCost: number,
+  chromeLineBudget: number
 ): number {
-  const minimumRows = minimumWorkConversationRows(terminal);
-  const maximumRows = Math.max(minimumRows, terminal.rows - workChromeLineBudget(terminal));
+  const availableRows = Math.max(1, terminal.rows - chromeLineBudget - activeLineCost);
+  const minimumRows = Math.min(minimumWorkConversationRows(terminal), availableRows);
+  const maximumRows = Math.max(minimumRows, terminal.rows - chromeLineBudget);
   return boundedWindowSize(
-    terminal.rows - workChromeLineBudget(terminal) - activeLineCost,
+    availableRows,
     minimumRows,
     maximumRows
   );
 }
 
-function workChromeLineBudget(_terminal: TuiInkTerminalSize): number {
-  return 4;
+function workChromeLineBudget(model: TuiCurrentContextModel, state: TuiInkState): number {
+  const headerLines = 1;
+  const warningLines = model.warnings.length;
+  const statusLines = state.statusMessage ? 1 : 0;
+  const attentionLines = attentionItemsForModel(model).length > 0 ? 1 : 0;
+  const composerLines = composerLineBudget(model, state);
+  const tabLines = 1;
+  const statusBarLines = 1;
+  return headerLines + warningLines + statusLines + attentionLines + composerLines + tabLines + statusBarLines;
+}
+
+function composerLineBudget(model: TuiCurrentContextModel, state: TuiInkState): number {
+  const previewLines = 1;
+  const completionLines = agentCompletionForState(model, state) ? 1 : 0;
+  const inputLines = state.composer ? state.composer.split("\n").length : 1;
+  return previewLines + completionLines + inputLines;
 }
 
 function minimumWorkConversationRows(terminal: TuiInkTerminalSize): number {
@@ -2712,22 +2735,28 @@ function minimumWorkConversationRows(terminal: TuiInkTerminalSize): number {
 function activeRunLineCost(
   collapsedBoxes: TuiActiveRunBox[],
   fullBoxes: TuiActiveRunBox[],
-  terminal: TuiInkTerminalSize
+  terminal: TuiInkTerminalSize,
+  chromeLineBudget: number
 ): number {
   return collapsedBoxes.length + fullBoxes.reduce(
-    (total, box) => total + activeRunBoxLineCountForBox(box, terminal),
+    (total, box) => total + activeRunBoxLineCountForBox(box, terminal, chromeLineBudget),
     0
   );
 }
 
 function activeRunBoxLineCountForBox(
   box: TuiActiveRunBox,
-  terminal: TuiInkTerminalSize
+  terminal: TuiInkTerminalSize,
+  chromeLineBudget: number
 ): number {
   if (usesCompactActiveRunBox(terminal)) {
     return activeRunCompactOutputLines(box, terminal).length + 3;
   }
-  return activeRunContentHeight(activeRunVisibleOutputLines(box, terminal).length, terminal) + 3;
+  return activeRunContentHeight(
+    activeRunVisibleOutputLines(box, terminal, chromeLineBudget).length,
+    terminal,
+    chromeLineBudget
+  ) + 3;
 }
 
 function usesCompactActiveRunBox(terminal: TuiInkTerminalSize): boolean {
@@ -2738,13 +2767,17 @@ function activeRunMinimumContentHeight(_terminal: TuiInkTerminalSize): number {
   return 5;
 }
 
-function activeRunMaximumContentHeight(terminal: TuiInkTerminalSize): number {
-  return Math.max(1, terminal.rows - 13);
+function activeRunMaximumContentHeight(terminal: TuiInkTerminalSize, chromeLineBudget: number): number {
+  return Math.max(1, terminal.rows - chromeLineBudget - minimumWorkConversationRows(terminal) - 3);
 }
 
-function activeRunContentHeight(lineCount: number, terminal: TuiInkTerminalSize): number {
+function activeRunContentHeight(
+  lineCount: number,
+  terminal: TuiInkTerminalSize,
+  chromeLineBudget: number
+): number {
   const desiredHeight = Math.max(activeRunMinimumContentHeight(terminal), lineCount);
-  return Math.min(desiredHeight, activeRunMaximumContentHeight(terminal));
+  return Math.min(desiredHeight, activeRunMaximumContentHeight(terminal, chromeLineBudget));
 }
 
 function activeRunBoxWidth(terminal: TuiInkTerminalSize): number {
@@ -2774,11 +2807,12 @@ function activeRunCompactOutputLines(
 
 function activeRunVisibleOutputLines(
   box: TuiActiveRunBox,
-  terminal: TuiInkTerminalSize
+  terminal: TuiInkTerminalSize,
+  chromeLineBudget: number
 ): string[] {
   const contentWidth = Math.max(1, activeRunBoxWidth(terminal) - 4);
   const wrappedLines = activeRunWrappedOutputLines(box, terminal);
-  const maxContentHeight = activeRunMaximumContentHeight(terminal);
+  const maxContentHeight = activeRunMaximumContentHeight(terminal, chromeLineBudget);
   if (wrappedLines.length <= maxContentHeight) {
     return wrappedLines;
   }

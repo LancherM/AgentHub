@@ -648,10 +648,53 @@ describe("Ink TUI renderer", () => {
     const boxLines = output
       .split("\n")
       .filter((value) => value.startsWith("╭") || value.startsWith("│") || value.startsWith("╰"));
-    expect(boxLines).toHaveLength(10);
+    expect(output.split("\n").length).toBeLessThanOrEqual(20);
+    expect(boxLines).toHaveLength(8);
     expect(output).toContain("older lines hidden");
     expect(output).toContain("active output line 29");
     expect(output).not.toContain("active output line 0");
+  });
+
+  it("keeps long completed agent output below fixed Work chrome", () => {
+    const rows = 20;
+    const output = renderToString(
+      React.createElement(TuiInkFrame, {
+        model: {
+          ...baseModel,
+          activeRuns: [],
+          conversation: [
+            {
+              id: "message:long-user",
+              type: "user_message",
+              timestamp: "2026-05-29T12:00:00.000Z",
+              author: "user",
+              content: "Summarize the long run output."
+            },
+            {
+              id: "run:long-agent",
+              type: "agent_completed",
+              timestamp: "2026-05-29T12:05:00.000Z",
+              author: "@codex",
+              agent: "codex",
+              runId: "run_long_agent",
+              statusLabel: "completed",
+              outputLines: Array.from({ length: 40 }, (_value, index) => `agent output line ${index}`)
+            }
+          ]
+        },
+        state: createInitialInkState(),
+        terminal: { columns: 78, rows }
+      }),
+      { columns: 78 }
+    );
+    const renderedLines = output.split("\n");
+
+    expect(renderedLines).toHaveLength(rows);
+    expect(output).toContain("attention:");
+    expect(output).toContain("agent output line 39");
+    expect(output).not.toContain("agent output line 0");
+    expect(output).toContain("> @codex prompt");
+    expect(output).toContain("keys:");
   });
 
   it("collapses older active runs and keeps at most three full boxes", () => {
@@ -1384,7 +1427,7 @@ describe("Ink TUI renderer", () => {
 
     expect(bottomOutput).toContain("Transcript message 9");
     expect(bottomOutput).not.toContain("Transcript message 0");
-    expect(scrolledOutput).toContain("Transcript message 4");
+    expect(scrolledOutput).toContain("Transcript message 5");
     expect(scrolledOutput).not.toContain("Transcript message 9");
   });
 
