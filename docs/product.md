@@ -261,6 +261,9 @@ Task runs also persist a typed `runtime_context_pack` artifact alongside the
 existing task brief and conversation brief evidence so later review can inspect
 context layers, trust labels, source ids, source hashes, compression metadata,
 and diagnostics without changing the agent-facing markdown injection path.
+Each run also records a deterministic `context_plan` artifact with the
+rule-based task type, required layers, retrieval routes, layer trust policy,
+budget policy, and compression policy used to assemble runtime context evidence.
 Role-backed runs add an injected role envelope to that same runtime payload:
 the running adapter receives its role handle, persona/instructions, safe
 permission summary, compact team list, and collaboration rules that require

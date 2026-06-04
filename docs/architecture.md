@@ -105,6 +105,12 @@ from the compiled context bundle. The artifact records each section's context
 layer, trust level, source item ids, source hashes, compression mode, rendered
 character counts, omissions, and diagnostics while preserving the existing
 markdown task brief passed to adapters.
+Before writing the runtime pack, TaskRunner creates a deterministic
+`context_plan` artifact from a rule-based task classifier. The plan records the
+task type, required context layers, planned retrieval routes, trust policy,
+layer budgets, compression policy, and classifier diagnostics. In the current
+runtime this plan is audit evidence; markdown injection remains unchanged until
+later retrieval phases consume the plan for source selection.
 When a run is created from a CLI role mention or accepted RoleCall, `TaskRunner`
 passes safe `WorkgroupRoleRunMetadata` into the adapter input. Process-backed
 adapters render a `## Your Role` section, collaboration rules, and a compact

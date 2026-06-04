@@ -1,5 +1,6 @@
 export * from "./diff-collector";
 export * from "./git-safety";
+export * from "./context-plan";
 export * from "./memory-proposals";
 export * from "./run-review";
 export * from "./review-decisions";

@@ -37,6 +37,7 @@ import {
   type DiffCollectionResult,
   type DiffCollectorService
 } from "./diff-collector";
+import { createContextPlan } from "./context-plan";
 import {
   assertAgentKindEnabled,
   defaultAgentKind,
@@ -417,11 +418,16 @@ export class TaskRunner {
       createdAt,
       updatedAt: createdAt
     });
+    const contextPlan = createContextPlan({
+      id: this.idGenerator.nextId("context_plan"),
+      taskPrompt: parsed.taskPrompt,
+      createdAt
+    });
     const runtimeContextPack = createTypedRuntimeContextPack({
       bundle: contextBundle,
       taskId: task.id,
       runId: run.id,
-      planId: `legacy_context_plan:${contextPack.id}`,
+      planId: contextPlan.id,
       createdAt
     });
     await this.taskRunRepository.create(run);
@@ -855,6 +861,25 @@ export class TaskRunner {
       } catch (error) {
         recordDiagnostic("task brief artifact persistence", error);
       }
+    }
+    try {
+      await this.runArtifactRepository.create(
+        createTextArtifact({
+          runId: run.id,
+          kind: "context_plan",
+          content: `${JSON.stringify(contextPlan, null, 2)}\n`,
+          metadata: {
+            planId: contextPlan.id,
+            taskType: contextPlan.taskType,
+            requiredLayers: contextPlan.requiredLayers,
+            retrievalRoutes: contextPlan.retrievalRoutes
+          },
+          clock: this.clock,
+          idGenerator: this.idGenerator
+        })
+      );
+    } catch (error) {
+      recordDiagnostic("context plan artifact persistence", error);
     }
     try {
       await this.runArtifactRepository.create(

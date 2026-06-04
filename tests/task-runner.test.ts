@@ -191,6 +191,18 @@ describe("task runner", () => {
     });
 
     expect(result.contextMarkdown).toContain("# Agent Hub Context Bundle");
+    const planArtifact = await runArtifactRepository.getLatestByRunIdAndKind(
+      result.run.id,
+      "context_plan"
+    );
+    expect(planArtifact).toMatchObject({
+      kind: "context_plan",
+      metadata: expect.objectContaining({
+        taskType: "unknown",
+        requiredLayers: expect.arrayContaining(["runtime_policy", "task"]),
+        retrievalRoutes: ["explicit", "task_rule"]
+      })
+    });
     const artifact = await runArtifactRepository.getLatestByRunIdAndKind(
       result.run.id,
       "runtime_context_pack"
@@ -213,6 +225,7 @@ describe("task runner", () => {
       }>;
     };
     expect(runtimeContextPack).toMatchObject({
+      planId: planArtifact?.metadata.planId,
       taskId: "task_runtime_context",
       runId: result.run.id
     });
