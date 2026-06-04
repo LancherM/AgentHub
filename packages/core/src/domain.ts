@@ -5,6 +5,7 @@ import {
   conversationMessageKinds,
   conversationMessageRoles,
   contextDeliveryModes,
+  contextIndexSourceKinds,
   contextLayers,
   contextLifetimes,
   contextPolicyDecisions,
@@ -38,6 +39,7 @@ import {
   type ConversationThreadSummary,
   type ContextItem,
   type ContextCandidate,
+  type ContextIndexEntry,
   type ContextLayer,
   type ContextPack,
   type ContextPlan,
@@ -777,6 +779,22 @@ export function validateContextRetrievalResult(
     issues
   );
   timestamp(input.createdAt, "contextRetrievalResult.createdAt", issues);
+  return finish(input, issues);
+}
+
+export function validateContextIndexEntry(
+  input: ContextIndexEntry
+): ContextIndexEntry {
+  const issues: string[] = [];
+  validateNested(() => validateContextItem(input), issues);
+  required(input.projectId, "contextIndexEntry.projectId", issues);
+  enumValue(
+    input.sourceKind,
+    contextIndexSourceKinds,
+    "contextIndexEntry.sourceKind",
+    issues
+  );
+  timestamp(input.indexedAt, "contextIndexEntry.indexedAt", issues);
   return finish(input, issues);
 }
 

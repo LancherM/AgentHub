@@ -20,6 +20,7 @@ import {
   validateAgentProfile,
   validateComparisonReport,
   validateContextCandidate,
+  validateContextIndexEntry,
   validateContextItem,
   validateContextPack,
   validateContextPlan,
@@ -205,6 +206,29 @@ describe("domain model validation", () => {
         metadata: {}
       })
     ).toMatchObject({ layer: "task", trustLevel: "system" });
+
+    expect(
+      validateContextIndexEntry({
+        id: "context_index_project",
+        projectId: "project_1",
+        layer: "project",
+        sourceKind: "project_context",
+        sourceId: "context/project.md",
+        scope: "project",
+        trustLevel: "high",
+        lifetime: "static",
+        title: "Project Context",
+        content: "Project facts.",
+        contentHash: "sha256:project",
+        sourcePath: "/tmp/context/project.md",
+        createdAt,
+        indexedAt: createdAt,
+        metadata: {}
+      })
+    ).toMatchObject({
+      sourceKind: "project_context",
+      indexedAt: createdAt
+    });
 
     expect(
       validateContextPlan({

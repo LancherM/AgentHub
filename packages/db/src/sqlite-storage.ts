@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
+import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -9,6 +10,7 @@ import {
   validateConversationMessage,
   validateConversationThread,
   validateConversationThreadSummary,
+  validateContextIndexEntry,
   validateMemoryItem,
   validateProject,
   validateRiskReport,
@@ -33,6 +35,7 @@ import {
   type ConversationMessage,
   type ConversationThread,
   type ConversationThreadSummary,
+  type ContextIndexEntry,
   type MemoryItem,
   type Project,
   type RiskReport,
@@ -61,6 +64,7 @@ import {
   type ConversationMessageRepository,
   type ConversationThreadSummaryRepository,
   type ConversationThreadRepository,
+  type ContextIndexRepository,
   type MemoryItemRepository,
   type ProjectRepository,
   type RiskReportRepository,
@@ -102,10 +106,117 @@ export interface SqliteRepositories {
   memoryItemRepository: MemoryItemRepository;
   comparisonReportRepository: ComparisonReportRepository;
   skillRepository: SkillRepository;
+  contextIndexRepository: ContextIndexRepository;
   settingsRepository: SettingsRepository;
   roleCallRepository: RoleCallRepository;
   roleCallEventRepository: RoleCallEventRepository;
   roleTodoRepository: RoleTodoRepository;
+}
+
+export interface StableContextIndexRebuildInput {
+  projectId: string;
+  projectContextStoreRoot: string;
+  contextIndexRepository: ContextIndexRepository;
+  globalSkillStoreRoot?: string;
+  indexedAt?: string;
+}
+
+export async function rebuildStableContextIndex(
+  input: StableContextIndexRebuildInput
+) {
+  const indexedAt = input.indexedAt ?? new Date().toISOString();
+  const skipped: Array<{ sourcePath?: string; reason: string }> = [];
+  const entries: ContextIndexEntry[] = [];
+
+  for (const relativePath of stableProjectContextFiles) {
+    const sourcePath = path.join(input.projectContextStoreRoot, relativePath);
+    const content = await readTextIfExists(sourcePath);
+    if (!content || content.trim().length === 0 || isPlaceholderContextFile(relativePath, content)) {
+      continue;
+    }
+    if (secretLikePathReason(sourcePath)) {
+      skipped.push({ sourcePath, reason: secretLikePathReason(sourcePath) ?? "secret-like path" });
+      continue;
+    }
+    entries.push(contextIndexEntry({
+      projectId: input.projectId,
+      sourceKind: "project_context",
+      sourceId: relativePath,
+      layer: "project",
+      scope: "project",
+      trustLevel: "high",
+      lifetime: "static",
+      title: contextTitle(relativePath),
+      content,
+      sourcePath,
+      indexedAt,
+      metadata: { relativePath }
+    }));
+  }
+
+  const approvedMemoryPath = path.join(
+    input.projectContextStoreRoot,
+    "memory",
+    "approved.md"
+  );
+  const approvedMemory = approvedMemoryContent(
+    await readTextIfExists(approvedMemoryPath) ?? ""
+  );
+  if (approvedMemory.length > 0) {
+    if (secretLikePathReason(approvedMemoryPath)) {
+      skipped.push({
+        sourcePath: approvedMemoryPath,
+        reason: secretLikePathReason(approvedMemoryPath) ?? "secret-like path"
+      });
+    } else {
+      entries.push(contextIndexEntry({
+        projectId: input.projectId,
+        sourceKind: "approved_memory",
+        sourceId: "memory/approved.md",
+        layer: "approved_memory",
+        scope: "project",
+        trustLevel: "high",
+        lifetime: "approved",
+        title: "Approved Memory",
+        content: approvedMemory,
+        sourcePath: approvedMemoryPath,
+        indexedAt,
+        metadata: { relativePath: "memory/approved.md" }
+      }));
+    }
+  }
+
+  entries.push(
+    ...(await readSkillIndexEntries({
+      projectId: input.projectId,
+      storeRoot: input.projectContextStoreRoot,
+      sourceKind: "project_skill",
+      indexedAt,
+      skipped
+    }))
+  );
+  if (input.globalSkillStoreRoot) {
+    entries.push(
+      ...(await readSkillIndexEntries({
+        projectId: input.projectId,
+        storeRoot: input.globalSkillStoreRoot,
+        sourceKind: "global_skill",
+        indexedAt,
+        skipped
+      }))
+    );
+  }
+
+  const result = await input.contextIndexRepository.rebuildProject(
+    input.projectId,
+    entries,
+    indexedAt
+  );
+  return {
+    ...result,
+    skippedCount: skipped.length,
+    skipped
+  };
 }
 
 export const SQLITE_MIGRATIONS: Array<{
@@ -814,6 +925,74 @@ CREATE INDEX IF NOT EXISTS idx_role_call_events_thread_created
 CREATE INDEX IF NOT EXISTS idx_role_call_events_type
   ON role_call_events(type);
 `
+  },
+  {
+    version: 13,
+    sql: `
+CREATE TABLE IF NOT EXISTS context_index_entries (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL,
+  layer TEXT NOT NULL CHECK (
+    layer IN (
+      'runtime_policy',
+      'task',
+      'project',
+      'code',
+      'test',
+      'run_evidence',
+      'approved_memory',
+      'skill',
+      'role',
+      'conversation',
+      'global'
+    )
+  ),
+  source_kind TEXT NOT NULL CHECK (
+    source_kind IN (
+      'project_context',
+      'approved_memory',
+      'project_skill',
+      'global_skill'
+    )
+  ),
+  source_id TEXT NOT NULL,
+  scope TEXT NOT NULL CHECK (
+    scope IN ('global', 'project', 'thread', 'task', 'run', 'role')
+  ),
+  trust_level TEXT NOT NULL CHECK (trust_level IN ('system', 'high', 'medium', 'low')),
+  lifetime TEXT NOT NULL CHECK (
+    lifetime IN ('static', 'approved', 'session', 'thread', 'run', 'indexed_snapshot')
+  ),
+  title TEXT NOT NULL,
+  content TEXT NOT NULL,
+  content_hash TEXT NOT NULL,
+  source_path TEXT,
+  metadata_json TEXT NOT NULL CHECK (json_valid(metadata_json) AND json_type(metadata_json) = 'object'),
+  created_at TEXT NOT NULL,
+  updated_at TEXT,
+  indexed_at TEXT NOT NULL,
+  FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+  UNIQUE (project_id, source_kind, source_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_context_index_entries_project
+  ON context_index_entries(project_id);
+CREATE INDEX IF NOT EXISTS idx_context_index_entries_project_source
+  ON context_index_entries(project_id, source_kind, source_id);
+CREATE INDEX IF NOT EXISTS idx_context_index_entries_project_layer
+  ON context_index_entries(project_id, layer);
+CREATE INDEX IF NOT EXISTS idx_context_index_entries_hash
+  ON context_index_entries(project_id, content_hash);
+
+CREATE VIRTUAL TABLE IF NOT EXISTS context_text_fts USING fts5(
+  id UNINDEXED,
+  project_id UNINDEXED,
+  source_kind UNINDEXED,
+  title,
+  content,
+  source_path
+);
+`
   }
 ];
 
@@ -841,6 +1020,7 @@ export function createSqliteRepositories(
     memoryItemRepository: new SQLiteMemoryItemRepository(database),
     comparisonReportRepository: new SQLiteComparisonReportRepository(database),
     skillRepository: new SQLiteSkillRepository(database),
+    contextIndexRepository: new SQLiteContextIndexRepository(database),
     settingsRepository: new SQLiteSettingsRepository(database),
     roleCallRepository: new SQLiteRoleCallRepository(database),
     roleCallEventRepository: new SQLiteRoleCallEventRepository(database),
@@ -2276,6 +2456,125 @@ ORDER BY created_at ASC, id ASC;
   }
 }
 
+export class SQLiteContextIndexRepository implements ContextIndexRepository {
+  constructor(private readonly database: SqliteDatabase) {}
+
+  async rebuildProject(
+    projectId: string,
+    entries: ContextIndexEntry[],
+    indexedAt: string
+  ) {
+    const validEntries = entries.map(validateContextIndexEntry);
+    for (const entry of validEntries) {
+      if (entry.projectId !== projectId) {
+        throw new Error(`context index entry ${entry.id} belongs to project ${entry.projectId}, not ${projectId}`);
+      }
+    }
+
+    const existingEntries = await this.listByProjectId(projectId);
+    const existingById = new Map(existingEntries.map((entry) => [entry.id, entry]));
+    const incomingIds = new Set(validEntries.map((entry) => entry.id));
+    let createdCount = 0;
+    let updatedCount = 0;
+    let unchangedCount = 0;
+    let deletedCount = 0;
+
+    for (const entry of validEntries) {
+      const existing = existingById.get(entry.id);
+      if (existing && contextIndexEntryUnchanged(existing, entry)) {
+        unchangedCount += 1;
+        continue;
+      }
+      const indexedEntry = validateContextIndexEntry({ ...entry, indexedAt });
+      await this.database.execute(`
+${upsertContextIndexEntrySql(indexedEntry)}
+DELETE FROM context_text_fts WHERE id = ${sqlString(indexedEntry.id)};
+${insertContextIndexFtsSql(indexedEntry)}
+`);
+      if (existing) {
+        updatedCount += 1;
+      } else {
+        createdCount += 1;
+      }
+    }
+
+    for (const entry of existingEntries) {
+      if (!incomingIds.has(entry.id)) {
+        await this.database.execute(`
+DELETE FROM context_text_fts WHERE id = ${sqlString(entry.id)};
+DELETE FROM context_index_entries WHERE id = ${sqlString(entry.id)};
+`);
+        deletedCount += 1;
+      }
+    }
+
+    return {
+      projectId,
+      indexedAt,
+      createdCount,
+      updatedCount,
+      unchangedCount,
+      deletedCount,
+      skippedCount: 0,
+      indexedIds: validEntries.map((entry) => entry.id).sort(),
+      skipped: []
+    };
+  }
+
+  async listByProjectId(projectId: string): Promise<ContextIndexEntry[]> {
+    const rows = await this.database.query<ContextIndexEntryRow>(`
+SELECT
+  id,
+  project_id AS projectId,
+  layer,
+  source_kind AS sourceKind,
+  source_id AS sourceId,
+  scope,
+  trust_level AS trustLevel,
+  lifetime,
+  title,
+  content,
+  content_hash AS contentHash,
+  source_path AS sourcePath,
+  metadata_json AS metadataJson,
+  created_at AS createdAt,
+  updated_at AS updatedAt,
+  indexed_at AS indexedAt
+FROM context_index_entries
+WHERE project_id = ${sqlString(projectId)}
+ORDER BY id ASC;
+`);
+    return rows.map(contextIndexEntryFromRow);
+  }
+
+  async get(entryId: string): Promise<ContextIndexEntry | undefined> {
+    const rows = await this.database.query<ContextIndexEntryRow>(`
+SELECT
+  id,
+  project_id AS projectId,
+  layer,
+  source_kind AS sourceKind,
+  source_id AS sourceId,
+  scope,
+  trust_level AS trustLevel,
+  lifetime,
+  title,
+  content,
+  content_hash AS contentHash,
+  source_path AS sourcePath,
+  metadata_json AS metadataJson,
+  created_at AS createdAt,
+  updated_at AS updatedAt,
+  indexed_at AS indexedAt
+FROM context_index_entries
+WHERE id = ${sqlString(entryId)}
+LIMIT 1;
+`);
+    const row = rows[0];
+    return row ? contextIndexEntryFromRow(row) : undefined;
+  }
+}
+
 export class SQLiteSettingsRepository implements SettingsRepository {
   constructor(private readonly database: SqliteDatabase) {}
 
@@ -2773,6 +3072,25 @@ interface SkillRow extends Record<string, unknown> {
   updatedAt: string;
 }
 
+interface ContextIndexEntryRow extends Record<string, unknown> {
+  id: string;
+  projectId: string;
+  layer: string;
+  sourceKind: string;
+  sourceId: string;
+  scope: string;
+  trustLevel: string;
+  lifetime: string;
+  title: string;
+  content: string;
+  contentHash: string;
+  sourcePath: string | null;
+  metadataJson: string;
+  createdAt: string;
+  updatedAt: string | null;
+  indexedAt: string;
+}
+
 interface SettingRow extends Record<string, unknown> {
   key: string;
   valueJson: string;
@@ -3038,6 +3356,27 @@ function skillFromRow(row: SkillRow): Skill {
     path: row.path,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt
+  });
+}
+
+function contextIndexEntryFromRow(row: ContextIndexEntryRow): ContextIndexEntry {
+  return validateContextIndexEntry({
+    id: row.id,
+    projectId: row.projectId,
+    layer: row.layer as ContextIndexEntry["layer"],
+    sourceKind: row.sourceKind as ContextIndexEntry["sourceKind"],
+    sourceId: row.sourceId,
+    scope: row.scope as ContextIndexEntry["scope"],
+    trustLevel: row.trustLevel as ContextIndexEntry["trustLevel"],
+    lifetime: row.lifetime as ContextIndexEntry["lifetime"],
+    title: row.title,
+    content: row.content,
+    contentHash: row.contentHash,
+    sourcePath: nullToUndefined(row.sourcePath),
+    createdAt: row.createdAt,
+    updatedAt: nullToUndefined(row.updatedAt),
+    indexedAt: row.indexedAt,
+    metadata: parseJson<Record<string, unknown>>(row.metadataJson) ?? {}
   });
 }
 
@@ -3455,6 +3794,303 @@ function cloneJsonObject<T extends Record<string, unknown>>(value: T): T {
 
 function cloneJsonValue(value: unknown): unknown {
   return JSON.parse(JSON.stringify(value)) as unknown;
+}
+
+const stableProjectContextFiles = [
+  "context/project.md",
+  "context/architecture.md",
+  "context/conventions.md",
+  "context/testing.md",
+  "context/security.md"
+] as const;
+
+async function readSkillIndexEntries(input: {
+  projectId: string;
+  storeRoot: string;
+  sourceKind: "project_skill" | "global_skill";
+  indexedAt: string;
+  skipped: Array<{ sourcePath?: string; reason: string }>;
+}): Promise<ContextIndexEntry[]> {
+  const skillsRoot = path.join(input.storeRoot, "skills");
+  let entries: Array<import("node:fs").Dirent>;
+  try {
+    entries = await fs.readdir(skillsRoot, { withFileTypes: true });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return [];
+    }
+    throw error;
+  }
+
+  const skillEntries: ContextIndexEntry[] = [];
+  for (const entry of entries
+    .filter((candidate) => candidate.isDirectory())
+    .sort((left, right) => left.name.localeCompare(right.name))) {
+    const sourcePath = path.join(skillsRoot, entry.name, "SKILL.md");
+    const secretReason = secretLikePathReason(sourcePath);
+    if (secretReason) {
+      input.skipped.push({ sourcePath, reason: secretReason });
+      continue;
+    }
+    const content = await readTextIfExists(sourcePath);
+    if (content === undefined || content.trim().length === 0) {
+      input.skipped.push({
+        sourcePath,
+        reason: "skill file is missing or empty"
+      });
+      continue;
+    }
+    const metadata = parseSkillMetadata(content);
+    const name = metadata.name?.trim();
+    const description = metadata.description?.trim();
+    if (!name || !description) {
+      input.skipped.push({
+        sourcePath,
+        reason: "skill metadata must include name and description"
+      });
+      continue;
+    }
+    const scope = input.sourceKind === "global_skill" ? "global" : "project";
+    const sourceId = `${scope}:${entry.name}`;
+    skillEntries.push(contextIndexEntry({
+      projectId: input.projectId,
+      sourceKind: input.sourceKind,
+      sourceId,
+      layer: input.sourceKind === "global_skill" ? "global" : "skill",
+      scope,
+      trustLevel: "medium",
+      lifetime: "static",
+      title: `${scope === "global" ? "Global Skill" : "Project Skill"}: ${name}`,
+      content,
+      sourcePath,
+      indexedAt: input.indexedAt,
+      metadata: {
+        skillId: entry.name,
+        skillName: name,
+        skillDescription: description,
+        scope
+      }
+    }));
+  }
+  return skillEntries;
+}
+
+function contextIndexEntry(input: {
+  projectId: string;
+  sourceKind: ContextIndexEntry["sourceKind"];
+  sourceId: string;
+  layer: ContextIndexEntry["layer"];
+  scope: ContextIndexEntry["scope"];
+  trustLevel: ContextIndexEntry["trustLevel"];
+  lifetime: ContextIndexEntry["lifetime"];
+  title: string;
+  content: string;
+  sourcePath: string;
+  indexedAt: string;
+  metadata: Record<string, unknown>;
+}): ContextIndexEntry {
+  return validateContextIndexEntry({
+    id: stableContextIndexId(input.projectId, input.sourceKind, input.sourceId),
+    projectId: input.projectId,
+    layer: input.layer,
+    sourceKind: input.sourceKind,
+    sourceId: input.sourceId,
+    scope: input.scope,
+    trustLevel: input.trustLevel,
+    lifetime: input.lifetime,
+    title: input.title,
+    content: input.content,
+    contentHash: sha256(input.content),
+    sourcePath: input.sourcePath,
+    createdAt: input.indexedAt,
+    updatedAt: input.indexedAt,
+    indexedAt: input.indexedAt,
+    metadata: input.metadata
+  });
+}
+
+function stableContextIndexId(
+  projectId: string,
+  sourceKind: ContextIndexEntry["sourceKind"],
+  sourceId: string
+): string {
+  return `context_index:${projectId}:${sourceKind}:${sourceId}`;
+}
+
+async function readTextIfExists(filePath: string): Promise<string | undefined> {
+  try {
+    return await fs.readFile(filePath, "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return undefined;
+    }
+    throw error;
+  }
+}
+
+function approvedMemoryContent(content: string): string {
+  const normalized = content.replace(/\r\n/g, "\n").trim();
+  if (normalized === "# Approved Memory") {
+    return "";
+  }
+  return normalized.replace(/^# Approved Memory[ \t]*\n+/, "").trim();
+}
+
+function isPlaceholderContextFile(relativePath: string, content: string): boolean {
+  return content.trim() === `# ${relativePath.replace(/\.md$/, "")}`;
+}
+
+function contextTitle(relativePath: string): string {
+  const label = relativePath
+    .replace(/^context\//, "")
+    .replace(/\.md$/, "")
+    .replace(/[-_]/g, " ");
+  return `Project Context: ${label}`;
+}
+
+function parseSkillMetadata(content: string): Partial<Record<"name" | "description", string>> {
+  const trimmed = content.trimStart();
+  if (!trimmed.startsWith("---")) {
+    return {};
+  }
+  const endIndex = trimmed.indexOf("\n---", 3);
+  if (endIndex === -1) {
+    return {};
+  }
+  const metadataBlock = trimmed.slice(3, endIndex).trim();
+  const metadata: Partial<Record<"name" | "description", string>> = {};
+  for (const line of metadataBlock.split(/\r?\n/)) {
+    const separator = line.indexOf(":");
+    if (separator === -1) {
+      continue;
+    }
+    const key = line.slice(0, separator).trim();
+    if (key !== "name" && key !== "description") {
+      continue;
+    }
+    metadata[key] = line.slice(separator + 1).trim().replace(/^['"]|['"]$/g, "");
+  }
+  return metadata;
+}
+
+function secretLikePathReason(value: string): string | undefined {
+  const normalized = value.split(path.sep).join("/").toLowerCase();
+  const segments = normalized.split("/");
+  for (const segment of segments) {
+    if (
+      segment === ".env" ||
+      segment.startsWith(".env.") ||
+      segment === "id_rsa" ||
+      segment === "id_ed25519" ||
+      segment.endsWith(".pem") ||
+      segment.endsWith(".key") ||
+      segment.startsWith("secrets.") ||
+      segment.startsWith("credentials.") ||
+      segment.startsWith("token.")
+    ) {
+      return "secret-like source paths are rejected before context indexing";
+    }
+  }
+  return undefined;
+}
+
+function sha256(content: string): string {
+  return `sha256:${createHash("sha256").update(content).digest("hex")}`;
+}
+
+function upsertContextIndexEntrySql(entry: ContextIndexEntry): string {
+  return `
+INSERT INTO context_index_entries (
+  id,
+  project_id,
+  layer,
+  source_kind,
+  source_id,
+  scope,
+  trust_level,
+  lifetime,
+  title,
+  content,
+  content_hash,
+  source_path,
+  metadata_json,
+  created_at,
+  updated_at,
+  indexed_at
+) VALUES (
+  ${sqlString(entry.id)},
+  ${sqlString(entry.projectId)},
+  ${sqlString(entry.layer)},
+  ${sqlString(entry.sourceKind)},
+  ${sqlString(entry.sourceId)},
+  ${sqlString(entry.scope)},
+  ${sqlString(entry.trustLevel)},
+  ${sqlString(entry.lifetime)},
+  ${sqlString(entry.title)},
+  ${sqlString(entry.content)},
+  ${sqlString(entry.contentHash)},
+  ${sqlNullableString(entry.sourcePath)},
+  ${sqlJson(entry.metadata)},
+  ${sqlString(entry.createdAt)},
+  ${sqlNullableString(entry.updatedAt)},
+  ${sqlString(entry.indexedAt)}
+)
+ON CONFLICT(id) DO UPDATE SET
+  project_id = excluded.project_id,
+  layer = excluded.layer,
+  source_kind = excluded.source_kind,
+  source_id = excluded.source_id,
+  scope = excluded.scope,
+  trust_level = excluded.trust_level,
+  lifetime = excluded.lifetime,
+  title = excluded.title,
+  content = excluded.content,
+  content_hash = excluded.content_hash,
+  source_path = excluded.source_path,
+  metadata_json = excluded.metadata_json,
+  created_at = excluded.created_at,
+  updated_at = excluded.updated_at,
+  indexed_at = excluded.indexed_at;
+`;
+}
+
+function insertContextIndexFtsSql(entry: ContextIndexEntry): string {
+  return `
+INSERT INTO context_text_fts (
+  id,
+  project_id,
+  source_kind,
+  title,
+  content,
+  source_path
+) VALUES (
+  ${sqlString(entry.id)},
+  ${sqlString(entry.projectId)},
+  ${sqlString(entry.sourceKind)},
+  ${sqlString(entry.title)},
+  ${sqlString(entry.content)},
+  ${sqlNullableString(entry.sourcePath)}
+);
+`;
+}
+
+function contextIndexEntryUnchanged(
+  existing: ContextIndexEntry,
+  incoming: ContextIndexEntry
+): boolean {
+  return (
+    existing.projectId === incoming.projectId &&
+    existing.layer === incoming.layer &&
+    existing.sourceKind === incoming.sourceKind &&
+    existing.sourceId === incoming.sourceId &&
+    existing.scope === incoming.scope &&
+    existing.trustLevel === incoming.trustLevel &&
+    existing.lifetime === incoming.lifetime &&
+    existing.title === incoming.title &&
+    existing.contentHash === incoming.contentHash &&
+    existing.sourcePath === incoming.sourcePath &&
+    JSON.stringify(existing.metadata) === JSON.stringify(incoming.metadata)
+  );
 }
 
 function parseJson<T>(value: string | null): T | undefined {

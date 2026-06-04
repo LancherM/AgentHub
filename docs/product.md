@@ -269,6 +269,11 @@ for already-selected sources such as the current task, selected or role-default
 skills, selected files, selected runs, and current thread continuity. This is
 inspectable audit evidence only; it does not change the adapter-facing markdown
 payload yet.
+Agent Hub also maintains local SQLite index storage for stable text sources:
+project context docs, approved memory, project skills, and global skills. The
+index rebuild path is deterministic per project and tracks source hashes so
+unchanged sources are not rewritten; run evidence and thread summaries are not
+indexed in this stable-source path.
 Runtime context assembly applies hard local policy before memory and skills are
 included: proposed or rejected memory, secret-like source paths,
 repository-root agent instruction exports, and unsupported task/role skill

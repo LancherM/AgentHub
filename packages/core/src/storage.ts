@@ -11,6 +11,7 @@ import {
   validateConversationMessage,
   validateConversationThread,
   validateConversationThreadSummary,
+  validateContextIndexEntry,
   validateMemoryItem,
   validateProject,
   validateRiskReport,
@@ -34,6 +35,8 @@ import {
   type ConversationMessage,
   type ConversationThread,
   type ConversationThreadSummary,
+  type ContextIndexEntry,
+  type ContextIndexRebuildResult,
   type MemoryItem,
   type Project,
   type RiskReport,
@@ -180,6 +183,16 @@ export interface ComparisonReportRepository {
 export interface SkillRepository {
   create(skill: Skill): Promise<Skill>;
   list(projectId?: string): Promise<Skill[]>;
+}
+
+export interface ContextIndexRepository {
+  rebuildProject(
+    projectId: string,
+    entries: ContextIndexEntry[],
+    indexedAt: string
+  ): Promise<ContextIndexRebuildResult>;
+  listByProjectId(projectId: string): Promise<ContextIndexEntry[]>;
+  get(entryId: string): Promise<ContextIndexEntry | undefined>;
 }
 
 export interface SettingsRepository {
@@ -788,6 +801,74 @@ export class InMemorySkillRepository implements SkillRepository {
   }
 }
 
+export class InMemoryContextIndexRepository implements ContextIndexRepository {
+  private readonly entries = new Map<string, ContextIndexEntry>();
+
+  async rebuildProject(
+    projectId: string,
+    entries: ContextIndexEntry[],
+    indexedAt: string
+  ): Promise<ContextIndexRebuildResult> {
+    const validEntries = entries.map(validateContextIndexEntry);
+    const existingEntries = [...this.entries.values()].filter(
+      (entry) => entry.projectId === projectId
+    );
+    const incomingIds = new Set(validEntries.map((entry) => entry.id));
+    let createdCount = 0;
+    let updatedCount = 0;
+    let unchangedCount = 0;
+    let deletedCount = 0;
+
+    for (const entry of validEntries) {
+      if (entry.projectId !== projectId) {
+        throw new Error(`context index entry ${entry.id} belongs to project ${entry.projectId}, not ${projectId}`);
+      }
+      const existing = this.entries.get(entry.id);
+      if (existing && contextIndexEntryUnchanged(existing, entry)) {
+        unchangedCount += 1;
+        continue;
+      }
+      if (existing) {
+        updatedCount += 1;
+      } else {
+        createdCount += 1;
+      }
+      this.entries.set(entry.id, cloneContextIndexEntry({ ...entry, indexedAt }));
+    }
+
+    for (const entry of existingEntries) {
+      if (!incomingIds.has(entry.id)) {
+        this.entries.delete(entry.id);
+        deletedCount += 1;
+      }
+    }
+
+    return {
+      projectId,
+      indexedAt,
+      createdCount,
+      updatedCount,
+      unchangedCount,
+      deletedCount,
+      skippedCount: 0,
+      indexedIds: validEntries.map((entry) => entry.id).sort(),
+      skipped: []
+    };
+  }
+
+  async listByProjectId(projectId: string): Promise<ContextIndexEntry[]> {
+    return [...this.entries.values()]
+      .filter((entry) => entry.projectId === projectId)
+      .sort((left, right) => left.id.localeCompare(right.id))
+      .map(cloneContextIndexEntry);
+  }
+
+  async get(entryId: string): Promise<ContextIndexEntry | undefined> {
+    const entry = this.entries.get(entryId);
+    return entry ? cloneContextIndexEntry(entry) : undefined;
+  }
+}
+
 export class InMemorySettingsRepository implements SettingsRepository {
   private readonly settings = new Map<string, Setting>();
 
@@ -1075,6 +1156,32 @@ function cloneRunEvent(event: RunEvent): RunEvent {
     ...event,
     metadata: cloneJsonObject(event.metadata)
   };
+}
+
+function cloneContextIndexEntry(entry: ContextIndexEntry): ContextIndexEntry {
+  return {
+    ...entry,
+    metadata: cloneJsonObject(entry.metadata)
+  };
+}
+
+function contextIndexEntryUnchanged(
+  existing: ContextIndexEntry,
+  incoming: ContextIndexEntry
+): boolean {
+  return (
+    existing.projectId === incoming.projectId &&
+    existing.layer === incoming.layer &&
+    existing.sourceKind === incoming.sourceKind &&
+    existing.sourceId === incoming.sourceId &&
+    existing.scope === incoming.scope &&
+    existing.trustLevel === incoming.trustLevel &&
+    existing.lifetime === incoming.lifetime &&
+    existing.title === incoming.title &&
+    existing.contentHash === incoming.contentHash &&
+    existing.sourcePath === incoming.sourcePath &&
+    JSON.stringify(existing.metadata) === JSON.stringify(incoming.metadata)
+  );
 }
 
 function cloneRunArtifact(artifact: RunArtifact): RunArtifact {

@@ -118,6 +118,13 @@ role-default skills, selected files, selected runs, and low-trust thread
 continuity. These candidates are persisted as `context_retrieval_candidates`
 for inspection, while the existing markdown task brief remains the adapter
 payload.
+SQLite includes a `context_index_entries` metadata table plus
+`context_text_fts` FTS5 storage for stable text sources. The CR4 stable-index
+rebuild reads only Agent Hub context-store project docs, approved memory,
+project skills, and global skills; it skips secret-like paths, proposed or
+rejected memory rows, run evidence, thread summaries, logs, diffs, embeddings,
+and code-graph data. Rebuilds compare source hashes and leave unchanged rows
+and FTS entries untouched.
 The context compiler applies hard policy before adding memory or skill sections.
 It filters proposed/rejected memory, secret-like source paths, repository-root
 agent instruction export targets, and unsupported task/role skill scopes, then

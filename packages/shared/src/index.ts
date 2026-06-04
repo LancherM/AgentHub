@@ -760,6 +760,35 @@ export interface ContextRetrievalResult {
   createdAt: string;
 }
 
+export const contextIndexSourceKinds = [
+  "project_context",
+  "approved_memory",
+  "project_skill",
+  "global_skill"
+] as const;
+export type ContextIndexSourceKind = (typeof contextIndexSourceKinds)[number];
+
+export interface ContextIndexEntry extends ContextItem {
+  projectId: string;
+  sourceKind: ContextIndexSourceKind;
+  indexedAt: string;
+}
+
+export interface ContextIndexRebuildResult {
+  projectId: string;
+  indexedAt: string;
+  createdCount: number;
+  updatedCount: number;
+  unchangedCount: number;
+  deletedCount: number;
+  skippedCount: number;
+  indexedIds: string[];
+  skipped: Array<{
+    sourcePath?: string;
+    reason: string;
+  }>;
+}
+
 export interface ContextPlan {
   id: string;
   taskType: TaskType;
