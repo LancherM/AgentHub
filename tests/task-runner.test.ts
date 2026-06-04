@@ -246,6 +246,90 @@ describe("task runner", () => {
     );
   });
 
+  it("omits proposed and rejected memory from persisted runtime context packs", async () => {
+    const projectRoot = await createTestDirectory("agent-hub-runtime-policy-project");
+    const runRoot = await createTestDirectory("agent-hub-runtime-policy-runs");
+    const runArtifactRepository = new InMemoryRunArtifactRepository();
+    const runner = new TaskRunner({
+      defaultRunRoot: runRoot,
+      workspaceManager: new TestWorkspaceManager(runRoot),
+      diffCollector: new StaticDiffCollector(),
+      verificationRunner: new VerificationRunner(new MockShellExecutor()),
+      runArtifactRepository,
+      contextCompiler: new DefaultContextCompiler({
+        memoryProvider: new InMemoryMemoryProvider([
+          {
+            id: "memory_proposed",
+            content: "Proposed memory must not be injected.",
+            status: "proposed"
+          },
+          {
+            id: "memory_rejected",
+            content: "Rejected memory must not be injected.",
+            status: "rejected"
+          },
+          {
+            id: "memory_approved",
+            content: "Approved memory remains available.",
+            status: "approved"
+          }
+        ])
+      }),
+      idGenerator: new SequenceIdGenerator(),
+      clock: new FixedClock("2026-01-01T00:00:00.000Z")
+    });
+
+    const result = await runner.run({
+      projectRoot,
+      taskPrompt: "Use only approved memory",
+      agentKind: "fake",
+      taskId: "task_runtime_memory_policy"
+    });
+
+    const artifact = await runArtifactRepository.getLatestByRunIdAndKind(
+      result.run.id,
+      "runtime_context_pack"
+    );
+    const runtimeContextPack = JSON.parse(artifact?.content ?? "{}") as {
+      sections: Array<{ layer: string; content: string }>;
+      omitted: Array<{ itemId: string; layer: string; reason: string }>;
+      diagnostics: Array<{ severity: string; message: string }>;
+    };
+
+    expect(
+      runtimeContextPack.sections
+        .filter((section) => section.layer === "approved_memory")
+        .map((section) => section.content)
+        .join("\n")
+    ).toContain("Approved memory remains available.");
+    expect(JSON.stringify(runtimeContextPack.sections)).not.toContain(
+      "Proposed memory must not be injected."
+    );
+    expect(JSON.stringify(runtimeContextPack.sections)).not.toContain(
+      "Rejected memory must not be injected."
+    );
+    expect(runtimeContextPack.omitted).toEqual([
+      {
+        itemId: "memory:memory_proposed",
+        layer: "approved_memory",
+        reason: "memory status proposed is not approved"
+      },
+      {
+        itemId: "memory:memory_rejected",
+        layer: "approved_memory",
+        reason: "memory status rejected is not approved"
+      }
+    ]);
+    expect(runtimeContextPack.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          severity: "warning",
+          message: expect.stringContaining("memory:memory_proposed")
+        })
+      ])
+    );
+  });
+
   it("rejects run roots inside the original project root", async () => {
     const projectRoot = await createTestDirectory("agent-hub-project");
 

@@ -265,6 +265,12 @@ describe("ContextCompiler", () => {
     expect(
       bundle.sections.find((section) => section.id === "conversation:thread")?.body
     ).toContain("keep the renderer sandboxed");
+    expect(
+      bundle.sections.find((section) => section.id === "conversation:thread")?.title
+    ).toBe("Conversation Continuity [trust=low]");
+    expect(
+      bundle.sections.find((section) => section.id === "conversation:thread")?.body
+    ).toContain("may_override_project_context: false");
   });
 
   it("compiles task-only context", async () => {
@@ -337,6 +343,116 @@ describe("ContextCompiler", () => {
 
     expect(bundle.warnings).toEqual([]);
     expect(bundle.sections).toHaveLength(3);
+  });
+
+  it("filters unapproved memory before building runtime context sections", async () => {
+    const bundle = await new DefaultContextCompiler({
+      memoryProvider: new InMemoryMemoryProvider([
+        {
+          id: "memory_proposed",
+          content: "Proposed memory should stay out.",
+          status: "proposed"
+        },
+        {
+          id: "memory_rejected",
+          content: "Rejected memory should stay out.",
+          status: "rejected"
+        },
+        {
+          id: "memory_approved",
+          content: "Approved memory can be used.",
+          status: "approved"
+        }
+      ])
+    }).compile(baseInput);
+
+    expect(bundle.sections.map((section) => section.id)).toContain(
+      "memory:memory_approved"
+    );
+    expect(bundle.sections.map((section) => section.id)).not.toContain(
+      "memory:memory_proposed"
+    );
+    expect(bundle.sections.map((section) => section.id)).not.toContain(
+      "memory:memory_rejected"
+    );
+    expect(bundle.filteredItems).toEqual([
+      {
+        itemId: "memory:memory_proposed",
+        layer: "approved_memory",
+        reason: "memory status proposed is not approved"
+      },
+      {
+        itemId: "memory:memory_rejected",
+        layer: "approved_memory",
+        reason: "memory status rejected is not approved"
+      }
+    ]);
+    expect(bundle.warnings.join("\n")).toContain(
+      "context policy filtered memory:memory_proposed"
+    );
+  });
+
+  it("filters secret-like paths, repo agent files, and unsupported skill scopes", async () => {
+    const bundle = await new DefaultContextCompiler({
+      memoryProvider: new InMemoryMemoryProvider([
+        {
+          id: "memory_secret",
+          content: "Secret-backed memory should stay out.",
+          status: "approved",
+          sourcePath: "/repo/.env.local"
+        }
+      ]),
+      skillProvider: new InMemorySkillProvider([
+        {
+          id: "task_skill",
+          name: "Task Skill",
+          description: "Unsupported task skill.",
+          scope: "task"
+        },
+        {
+          id: "agent_file",
+          name: "Agent File Skill",
+          description: "Repository agent file should stay out.",
+          scope: "project",
+          sourcePath: "/repo/AGENTS.md"
+        },
+        {
+          id: "valid_skill",
+          name: "Valid Skill",
+          description: "Project context-store skill.",
+          scope: "project",
+          sourcePath: "/agent-hub/context/skills/valid/SKILL.md"
+        }
+      ])
+    }).compile(baseInput);
+
+    expect(bundle.sections.map((section) => section.id)).toContain(
+      "skill:project:valid_skill"
+    );
+    expect(bundle.sections.map((section) => section.id)).not.toContain(
+      "skill:task:task_skill"
+    );
+    expect(bundle.sections.map((section) => section.id)).not.toContain(
+      "skill:project:agent_file"
+    );
+    expect(bundle.filteredItems).toHaveLength(3);
+    expect(bundle.filteredItems).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        itemId: "memory:memory_secret",
+        layer: "approved_memory",
+        reason: "memory source path is secret-like"
+      }),
+      expect.objectContaining({
+        itemId: "skill:task:task_skill",
+        layer: "skill",
+        reason: "skill scope task is not supported for runtime context"
+      }),
+      expect.objectContaining({
+        itemId: "skill:project:agent_file",
+        layer: "skill",
+        reason: "skill source path is a repository agent instruction export target"
+      })
+    ]));
   });
 
   it("preserves deterministic bundles for the same input", async () => {

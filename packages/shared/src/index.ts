@@ -776,6 +776,12 @@ export interface RuntimeContextPack {
   createdAt: string;
 }
 
+export interface ContextOmission {
+  itemId: string;
+  layer: ContextLayer;
+  reason: string;
+}
+
 export interface TargetRepositoryMetadata {
   id: string;
   name: string;
@@ -802,12 +808,15 @@ export interface ContextBundle {
   selectedAgentId: AgentKind;
   targetRepository: TargetRepositoryMetadata;
   sections: ContextSection[];
+  filteredItems?: ContextOmission[];
   warnings: string[];
 }
 
 export interface MemoryContextItem {
   id: string;
   content: string;
+  status?: MemoryStatus;
+  sourcePath?: string;
 }
 
 export interface SkillContextItem {

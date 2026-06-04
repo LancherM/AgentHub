@@ -111,6 +111,13 @@ task type, required context layers, planned retrieval routes, trust policy,
 layer budgets, compression policy, and classifier diagnostics. In the current
 runtime this plan is audit evidence; markdown injection remains unchanged until
 later retrieval phases consume the plan for source selection.
+The context compiler applies hard policy before adding memory or skill sections.
+It filters proposed/rejected memory, secret-like source paths, repository-root
+agent instruction export targets, and unsupported task/role skill scopes, then
+records warnings plus structured `RuntimeContextPack.omitted` entries. The
+conversation section is rendered as `Conversation Continuity [trust=low]` with
+explicit override limits so thread context remains continuity evidence rather
+than a source of project facts.
 When a run is created from a CLI role mention or accepted RoleCall, `TaskRunner`
 passes safe `WorkgroupRoleRunMetadata` into the adapter input. Process-backed
 adapters render a `## Your Role` section, collaboration rules, and a compact

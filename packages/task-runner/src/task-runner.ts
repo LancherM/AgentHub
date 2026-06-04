@@ -1612,7 +1612,7 @@ function createTypedRuntimeContextPack(input: {
         inclusionReason: `included from existing ${section.source.kind} context section`
       };
     }),
-    omitted: [],
+    omitted: input.bundle.filteredItems ?? [],
     diagnostics: input.bundle.warnings.map((warning) => ({
       severity: "warning",
       message: warning

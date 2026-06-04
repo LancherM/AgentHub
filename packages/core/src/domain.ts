@@ -766,6 +766,9 @@ function validateRuntimeContextSection(
   required(section?.id, `${field}.id`, issues);
   enumValue(section?.layer, contextLayers, `${field}.layer`, issues);
   enumValue(section?.trustLevel, trustLevels, `${field}.trustLevel`, issues);
+  if (section?.layer === "conversation" && section.trustLevel !== "low") {
+    issues.push(`${field}.trustLevel must be low for conversation context`);
+  }
   required(section?.title, `${field}.title`, issues);
   required(section?.content, `${field}.content`, issues);
   stringArray(section?.sourceItemIds, `${field}.sourceItemIds`, issues);

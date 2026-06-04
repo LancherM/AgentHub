@@ -264,6 +264,12 @@ and diagnostics without changing the agent-facing markdown injection path.
 Each run also records a deterministic `context_plan` artifact with the
 rule-based task type, required layers, retrieval routes, layer trust policy,
 budget policy, and compression policy used to assemble runtime context evidence.
+Runtime context assembly applies hard local policy before memory and skills are
+included: proposed or rejected memory, secret-like source paths,
+repository-root agent instruction exports, and unsupported task/role skill
+scopes are filtered with diagnostics. Conversation context is rendered as
+low-trust continuity and explicitly cannot override the current task, project
+facts, code, tests, approved memory, or runtime policy.
 Role-backed runs add an injected role envelope to that same runtime payload:
 the running adapter receives its role handle, persona/instructions, safe
 permission summary, compact team list, and collaboration rules that require
