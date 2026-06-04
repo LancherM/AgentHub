@@ -461,7 +461,10 @@ only on narrow or short terminals. The attention strip is also renderer-owned:
 it derives ordered read-only items from existing run evidence, review
 decisions, RoleCall loop state, task assignments, team executors, and memory
 counts, then truncates to the highest-priority item at narrow width. It does
-not add persistence, shell execution, or navigation side effects.
+not add persistence, shell execution, or navigation side effects. The TUI Ink
+entrypoint loads React/Ink/App modules after installing a scoped warning filter
+that suppresses only Node's JSON-module ExperimentalWarning from Ink's
+`cli-boxes` dependency, then restores normal warning behavior.
 The Ink renderer owns only presentation grammar: reverse-color risk-aware
 headers, a low-flicker idle `◈` indicator, agent-message left bars,
 timestamp/elapsed/usage metadata display, conversation separators, five-minute
@@ -477,9 +480,11 @@ lines at normal width, and compact to the latest visible tail plus progress
 when width or height is tight; if no useful assistant or runtime activity is
 visible yet, the read model emits `agent thinking...`. The renderer uses a
 static running marker, live elapsed calculation from the run start timestamp,
-and best-effort percentage or `N/M` progress parsing. Completion/failure
-visibility comes from the refreshed read model instead of short-lived renderer
-feedback timers. None of that state is persisted or sent back into adapters.
+presentation-only stale labeling after the threshold when the box still has no
+useful output, and best-effort percentage or `N/M` progress parsing.
+Completion/failure visibility comes from the refreshed read model instead of
+short-lived renderer feedback timers. None of that state is persisted or sent
+back into adapters.
 They prefer structured assistant output, then fall back to recent adapter,
 stdout, and stderr events while filtering raw JSON protocol frames, setup
 lifecycle lines, internal agent protocol summaries, runtime warnings, Codex

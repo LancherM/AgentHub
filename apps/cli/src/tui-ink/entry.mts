@@ -1,22 +1,13 @@
 import { Writable } from "node:stream";
-import React from "react";
-import {
-  render,
-  renderToString
-} from "ink";
 import type { TuiCurrentContextModel } from "@agent-hub/core";
-import {
-  TuiInkApp,
-  TuiInkFrame,
-  type TuiInkReviewInput,
-  type TuiInkReviewResult,
-  type TuiInkSubmitInput,
-  type TuiInkSubmitResult,
-  type TuiInkTerminalSize
+import type {
+  TuiInkReviewInput,
+  TuiInkReviewResult,
+  TuiInkSubmitInput,
+  TuiInkSubmitResult,
+  TuiInkTerminalSize
 } from "./App.mjs";
 import type { TuiInkState } from "./state.mjs";
-
-const h = React.createElement;
 
 export interface TuiInkIO {
   stdin?: NodeJS.ReadableStream;
@@ -38,6 +29,8 @@ export interface RunInkTuiInput {
 }
 
 export async function runInkTui(input: RunInkTuiInput): Promise<void> {
+  const { React, render, renderToString, TuiInkApp, TuiInkFrame } = await loadInkModules();
+  const h = React.createElement;
   if (!input.interactive) {
     const output = renderToString(
       h(TuiInkFrame, {
@@ -119,4 +112,63 @@ function terminalNotificationSequence(message: string): string {
 
 function interactiveSplashPrelude(): string {
   return "Agent Hub TUI\nlocal-first terminal workbench\n";
+}
+
+interface InkModules {
+  React: typeof import("react");
+  render: typeof import("ink")["render"];
+  renderToString: typeof import("ink")["renderToString"];
+  TuiInkApp: typeof import("./App.mjs")["TuiInkApp"];
+  TuiInkFrame: typeof import("./App.mjs")["TuiInkFrame"];
+}
+
+let inkModulesPromise: Promise<InkModules> | undefined;
+
+function loadInkModules(): Promise<InkModules> {
+  inkModulesPromise ??= withJsonModuleWarningSuppressed(async () => {
+    const [reactModule, inkModule, appModule] = await Promise.all([
+      import("react"),
+      import("ink"),
+      import("./App.mjs")
+    ]);
+    return {
+      React: reactModule,
+      render: inkModule.render,
+      renderToString: inkModule.renderToString,
+      TuiInkApp: appModule.TuiInkApp,
+      TuiInkFrame: appModule.TuiInkFrame
+    };
+  });
+  return inkModulesPromise;
+}
+
+async function withJsonModuleWarningSuppressed<T>(operation: () => Promise<T>): Promise<T> {
+  const originalEmitWarning = process.emitWarning;
+  process.emitWarning = ((warning: string | Error, typeOrOptions?: string | NodeJS.EmitWarningOptions, code?: string, ctor?: Function) => {
+    if (isJsonModuleExperimentalWarning(warning, typeOrOptions)) {
+      return;
+    }
+    return Reflect.apply(originalEmitWarning, process, [warning, typeOrOptions, code, ctor].filter((value) => value !== undefined));
+  }) as typeof process.emitWarning;
+  try {
+    return await operation();
+  } finally {
+    process.emitWarning = originalEmitWarning;
+  }
+}
+
+export function isJsonModuleExperimentalWarning(
+  warning: string | Error,
+  typeOrOptions?: string | NodeJS.EmitWarningOptions
+): boolean {
+  const warningName = warning instanceof Error
+    ? warning.name
+    : typeof typeOrOptions === "string"
+      ? typeOrOptions
+      : typeOrOptions?.type;
+  const message = warning instanceof Error ? warning.message : warning;
+  return (
+    warningName === "ExperimentalWarning" &&
+    message.includes("Importing JSON modules is an experimental feature")
+  );
 }

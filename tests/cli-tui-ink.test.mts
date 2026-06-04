@@ -445,6 +445,73 @@ describe("Ink TUI renderer", () => {
     expect(boxLines).toHaveLength(8);
   });
 
+  it("marks old active runs as stale only when no useful output is visible", () => {
+    const model = {
+      ...baseModel,
+      conversation: [],
+      runs: [],
+      roleCalls: {
+        ...baseModel.roleCalls,
+        loop: {
+          ...baseModel.roleCalls.loop,
+          stopReason: "none"
+        }
+      },
+      team: {
+        ...baseModel.team,
+        roles: [baseModel.team.roles[0]],
+        counts: { total: 1, enabled: 1, runnable: 1, reserved: 0, custom: 0, presetOverrides: 0 }
+      },
+      memory: {
+        ...baseModel.memory,
+        counts: { proposed: 0, approved: 1, rejected: 0 }
+      },
+      activeRuns: [
+        {
+          runId: "run_stale_active",
+          agent: "codex",
+          displayHandle: "engineer",
+          title: "@engineer run_stale_active ● running",
+          startedAt: "2000-01-01T00:00:00.000Z",
+          outputLines: ["agent thinking..."]
+        }
+      ],
+      review: {
+        ...baseModel.review,
+        evidence: {}
+      }
+    };
+    const staleOutput = renderToString(
+      React.createElement(TuiInkFrame, {
+        model,
+        state: createInitialInkState(),
+        terminal: { columns: 100, rows: 32 }
+      }),
+      { columns: 100 }
+    );
+    const usefulOutput = renderToString(
+      React.createElement(TuiInkFrame, {
+        model: {
+          ...model,
+          activeRuns: [
+            {
+              ...model.activeRuns[0],
+              outputLines: ["Running pnpm test"]
+            }
+          ]
+        },
+        state: createInitialInkState(),
+        terminal: { columns: 100, rows: 32 }
+      }),
+      { columns: 100 }
+    );
+
+    expect(staleOutput).toContain("attention: stale run 1 R");
+    expect(staleOutput).toContain("running stale");
+    expect(usefulOutput).not.toContain("stale run");
+    expect(usefulOutput).not.toContain("running stale");
+  });
+
   it("wraps active agent output without truncating content", () => {
     const longLine = `agent output ${"x".repeat(90)} complete`;
     const output = renderToString(

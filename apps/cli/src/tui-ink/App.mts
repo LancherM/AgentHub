@@ -46,6 +46,7 @@ const defaultIdleTuiPollIntervalMs = 10_000;
 const defaultTuiModelRefreshTimeoutMs = 30_000;
 const activeRunSpinnerFrames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 const completionNotificationMinimumMs = 30_000;
+const staleActiveRunThresholdMs = 60 * 60 * 1000;
 
 type RunFeedbackKind = "success" | "failure";
 
@@ -961,6 +962,14 @@ function attentionItemsForModel(model: TuiCurrentContextModel): AttentionItem[] 
     });
   }
 
+  const staleActiveRuns = model.activeRuns.filter(activeRunIsStale).length;
+  if (staleActiveRuns > 0) {
+    items.push({
+      text: `stale run ${staleActiveRuns} R`,
+      narrowText: `stale run ${staleActiveRuns}`
+    });
+  }
+
   const unavailableExecutors = unavailableExecutorCount(model);
   if (unavailableExecutors > 0) {
     items.push({
@@ -1220,7 +1229,7 @@ function WorkView({
     h(ConversationFlow, { model, state, terminal, visibleLines: conversationLines, feedbackByRunId }),
     ...(collapsedBoxes.length > 0
       ? collapsedBoxes.map((box) =>
-          line(`${activeRunTitle(box, animationTick)} ...`, { color: "green" })
+          line(`${activeRunTitle(box, animationTick)} ...`, { color: activeRunColor(box) })
         )
       : []),
     ...fullBoxes.map((box) => h(ActiveRunBoxView, { key: box.runId, box, terminal, animationTick }))
@@ -1720,6 +1729,7 @@ function ActiveRunBoxView({
   const innerWidth = Math.max(12, width - 2);
   const title = activeRunTitle(box, animationTick);
   const top = roundedBorderedTitle(title, innerWidth);
+  const color = activeRunColor(box);
   const compact = usesCompactActiveRunBox(terminal);
   const contentLines = compact
     ? activeRunCompactOutputLines(box, terminal)
@@ -1733,10 +1743,10 @@ function ActiveRunBoxView({
   ];
   const progress = activeRunProgress(box.outputLines);
   return block(
-    line(top, { color: "green" }),
-    ...paddedLines.map((value) => line(`│ ${value.padEnd(innerWidth - 2)} │`, { color: "green" })),
-    line(`│ ${activeRunFooter(progress, innerWidth - 2)} │`, { color: "green" }),
-    line(`╰${"─".repeat(innerWidth)}╯`, { color: "green" })
+    line(top, { color }),
+    ...paddedLines.map((value) => line(`│ ${value.padEnd(innerWidth - 2)} │`, { color })),
+    line(`│ ${activeRunFooter(progress, innerWidth - 2)} │`, { color }),
+    line(`╰${"─".repeat(innerWidth)}╯`, { color })
   );
 }
 
@@ -1744,10 +1754,31 @@ function activeRunTitle(box: TuiActiveRunBox, animationTick: number): string {
   const metadata = [
     activeRunSpinnerFrame(animationTick),
     "running",
+    activeRunIsStale(box) ? "stale" : undefined,
     activeRunElapsedLabel(box),
     box.usageLabel
   ].filter((value): value is string => Boolean(value));
   return `@${box.displayHandle ?? box.agent} ${compactId(box.runId)} ${metadata.join(" ")}`;
+}
+
+function activeRunColor(box: TuiActiveRunBox): string {
+  return activeRunIsStale(box) ? "yellow" : "green";
+}
+
+function activeRunIsStale(box: TuiActiveRunBox): boolean {
+  const duration = activeRunDurationMs(box);
+  return Boolean(
+    duration !== undefined &&
+    duration >= staleActiveRunThresholdMs &&
+    !hasUsefulActiveRunOutput(box)
+  );
+}
+
+function hasUsefulActiveRunOutput(box: TuiActiveRunBox): boolean {
+  return box.outputLines.some((value) => {
+    const normalized = value.trim().toLowerCase();
+    return normalized.length > 0 && normalized !== "agent thinking...";
+  });
 }
 
 function activeRunSpinnerFrame(animationTick: number): string {

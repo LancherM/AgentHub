@@ -189,7 +189,13 @@ run frame. When actionable state exists, a single attention strip appears below
 warnings/status with deterministic, read-only summaries for blocking risk,
 failed checks, waiting RoleCalls, pending review, unavailable executors, and
 proposed memory. Narrow terminals show only the highest-priority item plus a
-`: more` hint; the strip does not execute actions or steal prompt text.
+`: more` hint; the strip does not execute actions or steal prompt text. Active
+runs older than the stale threshold and still lacking useful output are marked
+as `stale` in Work and summarized as `stale run <n> R` in the attention strip;
+this is inspect-only and does not cancel, fail, or mutate the run. One-shot and
+interactive TUI entry suppress implementation-level JSON-module runtime
+warnings from Ink dependencies so the first visible line is the TUI frame or an
+Agent Hub state message, not a Node warning.
 Interactive
 submit and review-decision actions show bounded busy states without locking the
 keyboard: users can still switch focus, open command hints, and draft the next

@@ -1,6 +1,6 @@
 # TUI Optimization Roadmap
 
-Status: active implementation; OPT-0 through OPT-3 implemented
+Status: active implementation; OPT-0 through OPT-4 implemented
 Last updated: 2026-06-04
 Baseline: `origin/main` at `0a69476`
 
@@ -297,6 +297,8 @@ Verification:
 ```
 
 ### Phase OPT-4: Warning Hygiene And Stale Run Signals
+
+Status: implemented.
 
 Goal: keep TUI output clean and make suspicious active runs inspectable.
 
