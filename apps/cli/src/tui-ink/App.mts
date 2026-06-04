@@ -718,7 +718,7 @@ export function TuiInkApp(props: TuiInkAppProps): React.ReactElement {
       const directMapped = currentState.composer.length === 0
         ? keyToAction(input, key, currentState.focus)
         : undefined;
-      if (directMapped && isDirectFocusAction(directMapped)) {
+      if (directMapped && isImmediateEmptyComposerAction(directMapped, currentState.focus)) {
         applyKey(directMapped);
         return;
       }
@@ -826,8 +826,8 @@ export function TuiInkFrame({
       feedbackByRunId: effectiveFeedbackByRunId
     }),
     h(Composer, { model, state }),
-    h(FocusTabs, { state }),
-    h(StatusBar, { state })
+    h(FocusTabs, { state, terminal }),
+    h(StatusBar, { state, terminal })
   );
 }
 
@@ -954,49 +954,74 @@ function useCompletionNotifications(
   }, [model, notify, notifyEnabled]);
 }
 
-function FocusTabs({ state }: { state: TuiInkState }): React.ReactElement {
-  const tabs: Array<{ focus: TuiInkFocus; shortcut: string; suffix: string; prefix?: string }> = [
-    { focus: "work", shortcut: "W", suffix: "ork", prefix: "[" },
-    { focus: "runs", shortcut: "R", suffix: "uns", prefix: "[" },
-    { focus: "review", shortcut: "V", suffix: "iew", prefix: "[" },
-    { focus: "graph", shortcut: "G", suffix: "raph", prefix: "[" },
-    { focus: "tasks", shortcut: "T", suffix: "asks", prefix: "[" },
-    { focus: "memory", shortcut: "M", suffix: "em", prefix: "[" },
-    { focus: "team", shortcut: "E", suffix: "am", prefix: "[" },
-    { focus: "help", shortcut: "?", suffix: "" }
-  ];
+function FocusTabs({
+  state,
+  terminal
+}: {
+  state: TuiInkState;
+  terminal: TuiInkTerminalSize;
+}): React.ReactElement {
+  const tabs = focusTabLabels(terminal.columns);
   return h(
     Box,
     { flexDirection: "row" },
     ...tabs.map((tab) => h(FocusTab, {
-      key: tab.focus,
-      active: tab.focus === state.focus,
-      prefix: tab.prefix,
-      shortcut: tab.shortcut,
-      suffix: tab.suffix
-    }))
+        key: tab.focus,
+        active: tab.focus === state.focus,
+        label: tab.label
+      }))
   );
 }
 
 function FocusTab({
   active,
-  prefix,
-  shortcut,
-  suffix
+  label
 }: {
   active: boolean;
-  prefix?: string;
-  shortcut: string;
-  suffix: string;
+  label: string;
 }): React.ReactElement {
   return h(
     Box,
     { marginRight: 1 },
-    ...(prefix ? [h(Text, { inverse: active }, prefix)] : []),
-    h(Text, { color: "green", bold: true, inverse: active }, shortcut),
-    ...(prefix ? [h(Text, { inverse: active }, "]")] : []),
-    ...(suffix ? [h(Text, { inverse: active }, suffix)] : [])
+    h(Text, { color: "green", bold: true, inverse: active, wrap: "truncate" }, label)
   );
+}
+
+function focusTabLabels(columns: number): Array<{ focus: TuiInkFocus; label: string }> {
+  if (columns < 56) {
+    return [
+      { focus: "work", label: "W" },
+      { focus: "runs", label: "R" },
+      { focus: "review", label: "V" },
+      { focus: "graph", label: "G" },
+      { focus: "tasks", label: "T" },
+      { focus: "memory", label: "M" },
+      { focus: "team", label: "Team" },
+      { focus: "help", label: "?" }
+    ];
+  }
+  if (columns < 84) {
+    return [
+      { focus: "work", label: "W Work" },
+      { focus: "runs", label: "R Runs" },
+      { focus: "review", label: "V View" },
+      { focus: "graph", label: "G Graph" },
+      { focus: "tasks", label: "T Tasks" },
+      { focus: "memory", label: "M Mem" },
+      { focus: "team", label: "Team" },
+      { focus: "help", label: "?" }
+    ];
+  }
+  return [
+    { focus: "work", label: "[W]ork" },
+    { focus: "runs", label: "[R]uns" },
+    { focus: "review", label: "[V]iew" },
+    { focus: "graph", label: "[G]raph" },
+    { focus: "tasks", label: "[T]asks" },
+    { focus: "memory", label: "[M]em" },
+    { focus: "team", label: "Team" },
+    { focus: "help", label: "?" }
+  ];
 }
 
 interface TuiInkRenderProps {
@@ -2191,13 +2216,20 @@ function Composer({ model, state }: { model: TuiCurrentContextModel; state: TuiI
   );
 }
 
-function StatusBar({ state }: { state: TuiInkState }): React.ReactElement {
-  const hints = contextualShortcutHint(state);
+function StatusBar({
+  state,
+  terminal
+}: {
+  state: TuiInkState;
+  terminal: TuiInkTerminalSize;
+}): React.ReactElement {
+  const hints = contextualShortcutHint(state, terminal.columns);
   const localState = [
     state.notifyEnabled ? "notify on" : "notify off",
     state.timelineOpen ? "timeline" : undefined
   ].filter(Boolean).join("  ");
-  return line(`${hints}${localState ? `  ${localState}` : ""}`, { dimColor: true });
+  const showLocalState = terminal.columns >= 72 && localState.length > 0;
+  return line(`${hints}${showLocalState ? `  ${localState}` : ""}`, { dimColor: true });
 }
 
 interface AgentCompletion {
@@ -2288,32 +2320,68 @@ function composerCursorLine(state: TuiInkState): { line: number; column: number 
   return { line: lastIndex, column: lines[lastIndex]?.length ?? 0 };
 }
 
-function contextualShortcutHint(state: TuiInkState): string {
+function contextualShortcutHint(state: TuiInkState, columns: number): string {
   if (state.composer.length > 0) {
-    return "enter submit  ctrl+o newline  ↑↓ history  tab @complete/focus  ctrl+u clear  esc clear  ctrl+c exit";
+    if (columns < 56) {
+      return "keys: enter submit | esc clear | ctrl+c exit";
+    }
+    if (columns < 84) {
+      return "keys: enter submit | tab complete | esc clear | ctrl+c exit";
+    }
+    return "keys: enter submit | ctrl+o newline | tab complete/focus | esc clear | ctrl+c exit";
   }
   if (state.focus === "runs") {
-    return "↑↓ select  enter detail  V review  p command  esc back  x exit";
+    if (columns < 56) {
+      return "keys: Up/Down | V review | p cmd | Esc";
+    }
+    return "keys: Up/Down select | V review | p command | Esc back | x exit";
   }
   if (state.focus === "review") {
-    return "↑↓ select  enter/space diff  a accept  R reject  s compare  esc back";
+    if (columns < 56) {
+      return "keys: a accept | R reject | Esc";
+    }
+    if (columns < 84) {
+      return "keys: Enter diff | a accept | R reject | Esc back";
+    }
+    return "keys: Up/Down select | Enter/Space diff | a accept | R reject | s compare | Esc back";
   }
   if (state.focus === "graph") {
-    return "↑↓ select  ← collapse  → expand  h hide done  p command  esc back";
+    if (columns < 56) {
+      return "keys: Up/Down | arrows | p cmd | Esc";
+    }
+    return "keys: Up/Down select | Left collapse | Right expand | h hide done | p command | Esc back";
   }
   if (state.focus === "tasks") {
-    return "↑↓ select  enter detail  p command  esc back";
+    if (columns < 56) {
+      return "keys: Up/Down | p cmd | Esc";
+    }
+    return "keys: Up/Down select | p command | Esc back";
   }
   if (state.focus === "memory") {
-    return "s skills  p command  : palette  esc back";
+    if (columns < 56) {
+      return "keys: s skills | : cmd | Esc";
+    }
+    return "keys: s skills | p command | : palette | Esc back";
   }
   if (state.focus === "team") {
-    return "E team  p command  : palette  esc back";
+    if (columns < 56) {
+      return "keys: Team | p cmd | Esc";
+    }
+    return "keys: Team | p command | : palette | Esc back";
   }
   if (state.focus === "help") {
-    return "W work  tab focus  esc back  x exit";
+    if (columns < 56) {
+      return "keys: W work | Esc | x";
+    }
+    return "keys: W work | Tab focus | Esc back | x exit";
   }
-  return "↑↓ scroll/history  type prompt  @ agents  C continue  L timeline  : palette  ? help  x exit";
+  if (columns < 56) {
+    return "keys: type | : cmd | ? | x";
+  }
+  if (columns < 84) {
+    return "keys: type prompt | C continue | : commands | ? help | x exit";
+  }
+  return "keys: type prompt | @ agents | C continue | L timeline | : palette | ? help | x exit";
 }
 
 function Pane({
@@ -2624,6 +2692,22 @@ function isDirectFocusAction(action: TuiInkKey): boolean {
     action === "team" ||
     action === "help"
   );
+}
+
+function isImmediateEmptyComposerAction(action: TuiInkKey, focus: TuiInkFocus): boolean {
+  if (isDirectFocusAction(action)) {
+    return true;
+  }
+  if (action === "print_commands") {
+    return focus !== "work";
+  }
+  if (action === "hide_done") {
+    return focus === "graph";
+  }
+  if (action === "skills") {
+    return focus === "memory";
+  }
+  return false;
 }
 
 function isNavigationAction(action: TuiInkKey): boolean {

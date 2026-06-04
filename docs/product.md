@@ -57,11 +57,12 @@ The Memory focus mode is a governance indicator, not a browser: it shows
 proposed/approved/rejected counts, the approved-memory source, explicit
 approval/rejection command hints, selected skills, available skill identifiers,
 and the current context delivery mode.
-The Team read-model pane is available from the default tab cycle, the `[E]am`
-tab shortcut, typing `/team` in the composer, or the command palette. It shows the current
-project's resolved preset, preset-overridden, and custom roles from the same
-role settings used by `team roles list`, including enabled/runnable counts,
-executor labels, default rooms, and the equivalent CLI list command.
+The Team read-model pane is available from the default tab cycle, the `Team`
+tab label, the uppercase `E` focus shortcut, typing `/team` in the composer,
+or the command palette. It shows the current project's resolved preset,
+preset-overridden, and custom roles from the same role settings used by
+`team roles list`, including enabled/runnable counts, executor labels, default
+rooms, and the equivalent CLI list command.
 The command palette (`:`) collects current-context CLI command hints for runs,
 RoleCalls, review, and memory. It is a terminal aid only; it does not add
 project or room browsing.
@@ -176,7 +177,10 @@ editing controls. Empty-composer Work shortcuts that would steal normal prompt
 text use uppercase keys, including `C` for continue and `L` for the mini
 timeline. Runs, RoleCalls, and Tasks show selected rows with a visible `▌`
 marker plus inverse row styling, and the bottom shortcut hint changes by focus
-instead of showing one global command string. Interactive
+instead of showing one global command string. The permanent footer is
+width-aware: narrow terminals keep only primary keys visible, while full
+current-context CLI commands remain in the command palette, focused detail
+panes, or explicit command-print status messages. Interactive
 submit and review-decision actions show bounded busy states without locking the
 keyboard: users can still switch focus, open command hints, and draft the next
 prompt while the current local action is running. The TUI only blocks duplicate

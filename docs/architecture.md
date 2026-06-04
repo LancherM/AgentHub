@@ -450,8 +450,11 @@ Terminal polish is also contained in the CLI renderer. It compacts identifiers,
 renders the Work view as a conversation flow plus bounded active-run boxes,
 moves the shortcut-labelled Work/Runs/View/Graph/Tasks/Memory/Team/Help tabs
 below the composer, renders a focus-specific shortcut hint as the bottom line,
-and uses Ink components for terminal layout instead of hand-wrapped string
-panels.
+uses width-aware tab/footer labels so narrow terminals keep primary keys
+readable, and uses Ink components for terminal layout instead of hand-wrapped
+string panels. Full current-context CLI commands stay in Palette, focused
+detail panes, or explicit command-print status messages rather than permanent
+footer chrome.
 The Ink renderer owns only presentation grammar: reverse-color risk-aware
 headers, a low-flicker idle `◈` indicator, agent-message left bars,
 timestamp/elapsed/usage metadata display, conversation separators, five-minute
@@ -569,8 +572,9 @@ summaries.
 The command hint helper falls back from an absent selected RoleCall to
 `agent-hub team roles list --project-id <project-id>`, the command palette
 includes the same role-list command beside run, review, and memory commands,
-the `[E]am` tab participates in the default focus cycle, and the `/team` slash
-command changes local Ink focus to the Team read-model pane.
+the readable `Team` tab participates in the default focus cycle with the
+uppercase `E` shortcut, and the `/team` slash command changes local Ink focus
+to the Team read-model pane.
 Because the Ink renderer is a NodeNext composite TypeScript project that imports
 workspace package types, root validation runs its TUI check through
 `tsc -b apps/cli/tsconfig.tui-ink.json` so project references emit the required

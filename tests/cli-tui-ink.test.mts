@@ -189,10 +189,31 @@ describe("Ink TUI renderer", () => {
     expect(output).toContain("C continue");
     expect(output).toContain("send @codex  thread Review (#review)  mode runtime_injection");
     expect(output).toContain("> @codex prompt");
-    expect(output.indexOf("> @codex prompt")).toBeLessThan(output.indexOf("[W]ork"));
-    expect(output).toContain("[E]am");
+    expect(output.indexOf("> @codex prompt")).toBeLessThan(output.indexOf("W Work"));
+    expect(output).toContain("Team");
+    expect(output).not.toContain("[E]am");
     expect(output).not.toContain("Runs + Review");
     expect(output).not.toContain("-- more hidden --");
+  });
+
+  it("keeps the narrow footer and tab row compact", () => {
+    const output = renderToString(
+      React.createElement(TuiInkFrame, {
+        model: baseModel,
+        state: createInitialInkState(),
+        terminal: { columns: 48, rows: 20 }
+      }),
+      { columns: 48 }
+    );
+    const footerLine = output
+      .split("\n")
+      .find((value) => value.startsWith("keys:"));
+
+    expect(output).toContain("W R V G T M Team ?");
+    expect(output).toContain("keys: type | : cmd | ? | x");
+    expect(output).not.toContain("[E]am");
+    expect(output).not.toContain("agent-hub team roles list --project-id project_1");
+    expect(footerLine?.length ?? 0).toBeLessThanOrEqual(48);
   });
 
   it("renders active run boxes inside Work", () => {
@@ -625,6 +646,41 @@ describe("Ink TUI renderer", () => {
     expect(output).toContain("agent-hub memory list --project-id project_1");
   });
 
+  it("prints focused commands from non-Work panes without editing the composer", async () => {
+    const instance = render(
+      React.createElement(TuiInkApp, {
+        model: baseModel,
+        state: { ...createInitialInkState(), focus: "runs" },
+        terminal: { columns: 120, rows: 40 },
+        interactive: true
+      })
+    );
+
+    instance.stdin.write("p");
+    await waitForFrame(instance, "Status: agent-hub runs show run_27984312");
+
+    expect(instance.lastFrame()).toContain("> @codex prompt");
+    expect(instance.lastFrame()).not.toContain("> p");
+    instance.unmount();
+  });
+
+  it("keeps single-letter command keys available as prompt text in Work", async () => {
+    const instance = render(
+      React.createElement(TuiInkApp, {
+        model: baseModel,
+        state: createInitialInkState(),
+        terminal: { columns: 120, rows: 40 },
+        interactive: true
+      })
+    );
+
+    instance.stdin.write("p");
+    await waitForFrame(instance, "> p");
+
+    expect(instance.lastFrame()).not.toContain("Status: agent-hub");
+    instance.unmount();
+  });
+
   it("renders the optional startup splash and badge flash state", () => {
     const output = renderToString(
       React.createElement(TuiInkFrame, {
@@ -905,7 +961,8 @@ describe("Ink TUI renderer", () => {
     instance.stdin.write("E");
     await waitForFrame(instance, "Team Roles 2");
 
-    expect(instance.lastFrame()).toContain("[E]am");
+    expect(instance.lastFrame()).toContain("Team");
+    expect(instance.lastFrame()).not.toContain("[E]am");
     expect(instance.lastFrame()).toContain("@engineer preset agent_adapter / codex #planning");
     instance.unmount();
   });
