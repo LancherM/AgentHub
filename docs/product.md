@@ -274,6 +274,12 @@ project context docs, approved memory, project skills, and global skills. The
 index rebuild path is deterministic per project and tracks source hashes so
 unchanged sources are not rewritten; run evidence and thread summaries are not
 indexed in this stable-source path.
+When a project has stable-source index data available, retrieval can add BM25
+ranked candidates to the same `context_retrieval_candidates` artifact. These
+ranked candidates include lexical score diagnostics, matched query terms, layer
+and trust metadata, and duplicate omissions when BM25 finds a source already
+selected through the explicit route. Runtime context selection is still
+unchanged at this phase.
 Runtime context assembly applies hard local policy before memory and skills are
 included: proposed or rejected memory, secret-like source paths,
 repository-root agent instruction exports, and unsupported task/role skill

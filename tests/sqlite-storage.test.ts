@@ -130,7 +130,7 @@ describe("SQLite storage", () => {
 
     await writeText(
       path.join(projectStoreRoot, "context", "project.md"),
-      "# Project\n\nParser code lives in src/parser.ts.\n"
+      "# Project\n\nParser code lives in src/parser.ts. parseRuntime can fail with E_PARSE.\n"
     );
     await writeText(
       path.join(projectStoreRoot, "memory", "approved.md"),
@@ -216,6 +216,36 @@ ORDER BY id ASC;
       }),
       expect.objectContaining({
         id: expect.stringContaining("project_context:context/project.md")
+      })
+    ]);
+    const pathSearch = await repositories.contextIndexRepository.search({
+      projectId: "project_index",
+      query: "Fix parseRuntime E_PARSE in src/parser.ts",
+      terms: ["parser", "ts", "parseruntime", "e_parse"],
+      limit: 2
+    });
+    expect(pathSearch[0]).toMatchObject({
+      rank: 1,
+      entry: expect.objectContaining({
+        sourceKind: "project_context",
+        sourceId: "context/project.md"
+      }),
+      diagnostics: expect.objectContaining({
+        terms: ["parser", "ts", "parseruntime", "e_parse"]
+      })
+    });
+    await expect(
+      repositories.contextIndexRepository.search({
+        projectId: "project_index",
+        query: "runtime injection",
+        limit: 1
+      })
+    ).resolves.toEqual([
+      expect.objectContaining({
+        entry: expect.objectContaining({
+          sourceKind: "approved_memory",
+          content: "Use runtime injection by default."
+        })
       })
     ]);
     expect(

@@ -789,6 +789,20 @@ export interface ContextIndexRebuildResult {
   }>;
 }
 
+export interface ContextIndexSearchInput {
+  projectId: string;
+  query: string;
+  terms?: string[];
+  limit?: number;
+}
+
+export interface ContextIndexSearchResult {
+  entry: ContextIndexEntry;
+  lexicalScore: number;
+  rank: number;
+  diagnostics: Record<string, unknown>;
+}
+
 export interface ContextPlan {
   id: string;
   taskType: TaskType;

@@ -35,11 +35,13 @@ import {
   InMemoryTaskRepository,
   InMemoryTaskRunRepository,
   InMemoryVerificationResultRepository,
+  InMemoryContextIndexRepository,
   InMemoryMemoryItemRepository,
   extractAgentFacingOutput,
   type RunEvent,
   type RunMetadata,
   type WorkgroupRoleRunMetadata,
+  validateContextIndexEntry,
   validateTask,
   validateRunEvent
 } from "@agent-hub/core";
@@ -280,6 +282,80 @@ describe("task runner", () => {
         })
       ])
     );
+  });
+
+  it("persists BM25 retrieval candidates without changing markdown injection", async () => {
+    const projectRoot = await createTestDirectory("agent-hub-bm25-project");
+    const runRoot = await createTestDirectory("agent-hub-bm25-runs");
+    const runArtifactRepository = new InMemoryRunArtifactRepository();
+    const contextIndexRepository = new InMemoryContextIndexRepository();
+    await contextIndexRepository.rebuildProject(
+      "project_bm25",
+      [
+        validateContextIndexEntry({
+          id: "context_index:project_bm25:project_context:context/project.md",
+          projectId: "project_bm25",
+          layer: "project",
+          sourceKind: "project_context",
+          sourceId: "context/project.md",
+          scope: "project",
+          trustLevel: "high",
+          lifetime: "static",
+          title: "Project Context: project",
+          content: "Parser failures with E_PARSE happen in src/parser.ts.",
+          contentHash: "sha256:parser-context",
+          sourcePath: "/tmp/context/project.md",
+          createdAt: "2026-01-01T00:00:00.000Z",
+          indexedAt: "2026-01-01T00:00:00.000Z",
+          metadata: {}
+        })
+      ],
+      "2026-01-01T00:00:00.000Z"
+    );
+    const runner = new TaskRunner({
+      defaultRunRoot: runRoot,
+      workspaceManager: new TestWorkspaceManager(runRoot),
+      diffCollector: new StaticDiffCollector(),
+      verificationRunner: new VerificationRunner(new MockShellExecutor()),
+      runArtifactRepository,
+      contextIndexRepository,
+      idGenerator: new SequenceIdGenerator(),
+      clock: new FixedClock("2026-01-01T00:00:00.000Z")
+    });
+
+    const result = await runner.run({
+      projectRoot,
+      projectId: "project_bm25",
+      targetRepository: { id: "project_bm25" },
+      taskPrompt: "Fix parser.ts E_PARSE",
+      agentKind: "fake",
+      taskId: "task_bm25"
+    });
+
+    expect(result.contextMarkdown).not.toContain("Parser failures with E_PARSE");
+    const retrievalArtifact = await runArtifactRepository.getLatestByRunIdAndKind(
+      result.run.id,
+      "context_retrieval_candidates"
+    );
+    expect(retrievalArtifact).toMatchObject({
+      metadata: expect.objectContaining({
+        candidateCount: 2,
+        routeCounts: {
+          explicit: 1,
+          bm25: 1
+        }
+      })
+    });
+    const retrievalResult = JSON.parse(retrievalArtifact?.content ?? "{}") as {
+      candidates: Array<{ routes: string[]; item: { sourceKind: string } }>;
+    };
+    expect(retrievalResult.candidates).toEqual([
+      expect.objectContaining({ routes: ["explicit"] }),
+      expect.objectContaining({
+        routes: ["bm25"],
+        item: expect.objectContaining({ sourceKind: "project_context" })
+      })
+    ]);
   });
 
   it("omits proposed and rejected memory from persisted runtime context packs", async () => {

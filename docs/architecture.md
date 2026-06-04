@@ -125,6 +125,13 @@ project skills, and global skills; it skips secret-like paths, proposed or
 rejected memory rows, run evidence, thread summaries, logs, diffs, embeddings,
 and code-graph data. Rebuilds compare source hashes and leave unchanged rows
 and FTS entries untouched.
+When a `ContextIndexRepository` is supplied, the retriever builds lexical query
+terms from the current task prompt plus selected file/run hints and queries the
+stable-source FTS index through BM25. BM25 candidates are appended to
+`context_retrieval_candidates` with rank, lexical score, matched terms, layer,
+trust, source ids, and inclusion reasons. Candidates that duplicate explicit
+sources by source id and content hash are omitted with diagnostics; runtime
+markdown injection remains unchanged.
 The context compiler applies hard policy before adding memory or skill sections.
 It filters proposed/rejected memory, secret-like source paths, repository-root
 agent instruction export targets, and unsupported task/role skill scopes, then

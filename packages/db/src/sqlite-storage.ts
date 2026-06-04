@@ -36,6 +36,8 @@ import {
   type ConversationThread,
   type ConversationThreadSummary,
   type ContextIndexEntry,
+  type ContextIndexSearchInput,
+  type ContextIndexSearchResult,
   type MemoryItem,
   type Project,
   type RiskReport,
@@ -2573,6 +2575,54 @@ LIMIT 1;
     const row = rows[0];
     return row ? contextIndexEntryFromRow(row) : undefined;
   }
+
+  async search(
+    input: ContextIndexSearchInput
+  ): Promise<ContextIndexSearchResult[]> {
+    const terms = normalizeContextIndexSearchTerms(input.terms ?? input.query);
+    const ftsQuery = ftsQueryForTerms(terms);
+    if (!ftsQuery) {
+      return [];
+    }
+    const limit = Math.max(1, Math.min(input.limit ?? 10, 50));
+    const rows = await this.database.query<ContextIndexSearchRow>(`
+SELECT
+  e.id,
+  e.project_id AS projectId,
+  e.layer,
+  e.source_kind AS sourceKind,
+  e.source_id AS sourceId,
+  e.scope,
+  e.trust_level AS trustLevel,
+  e.lifetime,
+  e.title,
+  e.content,
+  e.content_hash AS contentHash,
+  e.source_path AS sourcePath,
+  e.metadata_json AS metadataJson,
+  e.created_at AS createdAt,
+  e.updated_at AS updatedAt,
+  e.indexed_at AS indexedAt,
+  bm25(context_text_fts) AS bm25Score
+FROM context_text_fts
+JOIN context_index_entries e ON e.id = context_text_fts.id
+WHERE context_text_fts.project_id = ${sqlString(input.projectId)}
+  AND context_text_fts MATCH ${sqlString(ftsQuery)}
+ORDER BY bm25Score ASC, e.id ASC
+LIMIT ${limit};
+`);
+    return rows.map((row, index) => ({
+      entry: contextIndexEntryFromRow(row),
+      lexicalScore: 1 / (index + 1),
+      rank: index + 1,
+      diagnostics: {
+        query: input.query,
+        terms,
+        ftsQuery,
+        bm25Score: row.bm25Score
+      }
+    }));
+  }
 }
 
 export class SQLiteSettingsRepository implements SettingsRepository {
@@ -3089,6 +3139,10 @@ interface ContextIndexEntryRow extends Record<string, unknown> {
   createdAt: string;
   updatedAt: string | null;
   indexedAt: string;
+}
+
+interface ContextIndexSearchRow extends ContextIndexEntryRow {
+  bm25Score: number;
 }
 
 interface SettingRow extends Record<string, unknown> {
@@ -3992,6 +4046,30 @@ function secretLikePathReason(value: string): string | undefined {
     }
   }
   return undefined;
+}
+
+function normalizeContextIndexSearchTerms(value: string | string[]): string[] {
+  const rawTerms = Array.isArray(value)
+    ? value
+    : value.split(/[^A-Za-z0-9_./-]+/);
+  return [
+    ...new Set(
+      rawTerms
+        .flatMap((term) => term.split(/[^A-Za-z0-9_]+/))
+        .map((term) => term.trim().toLowerCase())
+        .filter((term) => term.length >= 2)
+    )
+  ].slice(0, 32);
+}
+
+function ftsQueryForTerms(terms: string[]): string | undefined {
+  const safeTerms = terms
+    .map((term) => term.replace(/"/g, ""))
+    .filter((term) => /^[a-z0-9_]+$/i.test(term));
+  if (safeTerms.length === 0) {
+    return undefined;
+  }
+  return safeTerms.map((term) => `"${term}"`).join(" OR ");
 }
 
 function sha256(content: string): string {

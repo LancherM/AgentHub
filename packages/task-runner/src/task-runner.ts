@@ -61,6 +61,7 @@ import {
   type AgentKind,
   type CompressionMode,
   type ContextPack,
+  type ContextIndexRepository,
   type ContextLayer,
   type ContextRetrievalResult,
   type InjectedSkillEvidence,
@@ -230,6 +231,7 @@ export interface TaskRunnerDependencies {
   verificationRunner?: VerificationRunner;
   riskReportGenerator?: RiskReportGenerator;
   contextRetriever?: ContextRetriever;
+  contextIndexRepository?: ContextIndexRepository;
   idGenerator?: IdGenerator;
   clock?: Clock;
   defaultRunRoot?: string;
@@ -329,7 +331,10 @@ export class TaskRunner {
     this.riskReportGenerator =
       dependencies.riskReportGenerator ?? new RiskReportGenerator();
     this.contextRetriever =
-      dependencies.contextRetriever ?? new ExplicitContextRetriever();
+      dependencies.contextRetriever ??
+      new ExplicitContextRetriever({
+        contextIndexRepository: dependencies.contextIndexRepository
+      });
     this.shellExecutor = shellExecutor;
     this.idGenerator = dependencies.idGenerator ?? new DefaultIdGenerator();
     this.clock = dependencies.clock ?? new SystemClock();

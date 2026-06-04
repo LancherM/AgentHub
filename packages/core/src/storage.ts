@@ -37,6 +37,8 @@ import {
   type ConversationThreadSummary,
   type ContextIndexEntry,
   type ContextIndexRebuildResult,
+  type ContextIndexSearchInput,
+  type ContextIndexSearchResult,
   type MemoryItem,
   type Project,
   type RiskReport,
@@ -193,6 +195,7 @@ export interface ContextIndexRepository {
   ): Promise<ContextIndexRebuildResult>;
   listByProjectId(projectId: string): Promise<ContextIndexEntry[]>;
   get(entryId: string): Promise<ContextIndexEntry | undefined>;
+  search(input: ContextIndexSearchInput): Promise<ContextIndexSearchResult[]>;
 }
 
 export interface SettingsRepository {
@@ -867,6 +870,36 @@ export class InMemoryContextIndexRepository implements ContextIndexRepository {
     const entry = this.entries.get(entryId);
     return entry ? cloneContextIndexEntry(entry) : undefined;
   }
+
+  async search(input: ContextIndexSearchInput): Promise<ContextIndexSearchResult[]> {
+    const terms = normalizeSearchTerms(input.terms ?? input.query);
+    if (terms.length === 0) {
+      return [];
+    }
+    const scored = (await this.listByProjectId(input.projectId))
+      .map((entry) => {
+        const haystack = `${entry.title}\n${entry.content}\n${entry.sourcePath ?? ""}`.toLowerCase();
+        const matchedTerms = terms.filter((term) => haystack.includes(term));
+        return { entry, matchedTerms };
+      })
+      .filter((result) => result.matchedTerms.length > 0)
+      .sort((left, right) =>
+        right.matchedTerms.length === left.matchedTerms.length
+          ? left.entry.id.localeCompare(right.entry.id)
+          : right.matchedTerms.length - left.matchedTerms.length
+      )
+      .slice(0, input.limit ?? 10);
+    return scored.map((result, index) => ({
+      entry: result.entry,
+      lexicalScore: result.matchedTerms.length / terms.length,
+      rank: index + 1,
+      diagnostics: {
+        query: input.query,
+        terms,
+        matchedTerms: result.matchedTerms
+      }
+    }));
+  }
 }
 
 export class InMemorySettingsRepository implements SettingsRepository {
@@ -1182,6 +1215,20 @@ function contextIndexEntryUnchanged(
     existing.sourcePath === incoming.sourcePath &&
     JSON.stringify(existing.metadata) === JSON.stringify(incoming.metadata)
   );
+}
+
+function normalizeSearchTerms(value: string | string[]): string[] {
+  const rawTerms = Array.isArray(value)
+    ? value
+    : value.split(/[^A-Za-z0-9_./-]+/);
+  return [
+    ...new Set(
+      rawTerms
+        .flatMap((term) => term.split(/[^A-Za-z0-9_]+/))
+        .map((term) => term.trim().toLowerCase())
+        .filter((term) => term.length >= 2)
+    )
+  ];
 }
 
 function cloneRunArtifact(artifact: RunArtifact): RunArtifact {

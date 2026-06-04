@@ -6,6 +6,8 @@ import {
   type ContextBundle,
   type ContextCandidate,
   type ContextItem,
+  type ContextIndexRepository,
+  type ContextIndexSearchResult,
   type ContextLayer,
   type ContextPlan,
   type ContextRetrievalResult,
@@ -53,7 +55,14 @@ export interface ContextRetriever {
   retrieve(input: ContextRetrieverInput): Promise<ContextRetrievalResult>;
 }
 
+export interface ContextRetrieverOptions {
+  contextIndexRepository?: ContextIndexRepository;
+  bm25Limit?: number;
+}
+
 export class ExplicitContextRetriever implements ContextRetriever {
+  constructor(private readonly options: ContextRetrieverOptions = {}) {}
+
   async retrieve(input: ContextRetrieverInput): Promise<ContextRetrievalResult> {
     const candidates: ContextCandidate[] = [];
     const omitted: ContextRetrievalResult["omitted"] = [];
@@ -98,18 +107,117 @@ export class ExplicitContextRetriever implements ContextRetriever {
       candidates.push(runCandidate(run, input));
     }
 
+    const explicitCandidates = dedupeCandidates(candidates);
+    const bm25 = await bm25Candidates(input, explicitCandidates, this.options);
+
     const result = validateContextRetrievalResult({
       id: input.id,
       planId: input.plan.id,
       taskId: input.task.id,
       runId: input.runId,
-      candidates: dedupeCandidates(candidates),
-      omitted,
-      diagnostics,
+      candidates: [...explicitCandidates, ...bm25.candidates],
+      omitted: [...omitted, ...bm25.omitted],
+      diagnostics: [...diagnostics, ...bm25.diagnostics],
       createdAt: input.createdAt
     });
     return result;
   }
+}
+
+async function bm25Candidates(
+  input: ContextRetrieverInput,
+  explicitCandidates: ContextCandidate[],
+  options: ContextRetrieverOptions
+): Promise<{
+  candidates: ContextCandidate[];
+  omitted: ContextRetrievalResult["omitted"];
+  diagnostics: ContextRetrievalResult["diagnostics"];
+}> {
+  if (
+    !options.contextIndexRepository ||
+    !input.plan.retrievalRoutes.includes("bm25")
+  ) {
+    return { candidates: [], omitted: [], diagnostics: [] };
+  }
+  const terms = extractContextQueryTerms(input);
+  if (terms.length === 0) {
+    return {
+      candidates: [],
+      omitted: [],
+      diagnostics: [
+        {
+          severity: "info",
+          message: "BM25 retrieval skipped because no stable query terms were extracted"
+        }
+      ]
+    };
+  }
+  const searchResults = await options.contextIndexRepository.search({
+    projectId: input.contextBundle.targetRepository.id,
+    query: input.taskPrompt,
+    terms,
+    limit: options.bm25Limit ?? 8
+  });
+  const explicitKeys = new Set(
+    explicitCandidates.map((candidateEntry) =>
+      sourceHashKey(candidateEntry.item.sourceId, candidateEntry.item.contentHash)
+    )
+  );
+  const candidates: ContextCandidate[] = [];
+  const omitted: ContextRetrievalResult["omitted"] = [];
+  for (const searchResult of searchResults) {
+    const key = sourceHashKey(
+      searchResult.entry.sourceId,
+      searchResult.entry.contentHash
+    );
+    if (explicitKeys.has(key)) {
+      omitted.push({
+        itemId: searchResult.entry.id,
+        layer: searchResult.entry.layer,
+        reason: "BM25 candidate duplicated an explicit-route source"
+      });
+      continue;
+    }
+    candidates.push(indexSearchCandidate(searchResult, input, terms));
+  }
+  return {
+    candidates,
+    omitted,
+    diagnostics: [
+      {
+        severity: "info",
+        message: "BM25 stable-source retrieval completed",
+        metadata: {
+          queryTerms: terms,
+          resultCount: searchResults.length,
+          selectedCount: candidates.length,
+          omittedDuplicateCount: omitted.length
+        }
+      }
+    ]
+  };
+}
+
+function indexSearchCandidate(
+  searchResult: ContextIndexSearchResult,
+  input: ContextRetrieverInput,
+  terms: string[]
+): ContextCandidate {
+  return candidate({
+    item: searchResult.entry,
+    routes: ["bm25"],
+    relevanceScore: Math.max(0, Math.min(searchResult.lexicalScore, 1)),
+    freshnessScore: 0.75,
+    scopeMatchScore: searchResult.entry.scope === "global" ? 0.7 : 0.9,
+    inclusionReason: `${searchResult.entry.sourceKind} matched BM25 query terms for the current task`,
+    diagnostics: {
+      query: input.taskPrompt,
+      queryTerms: terms,
+      rank: searchResult.rank,
+      lexicalScore: searchResult.lexicalScore,
+      ...searchResult.diagnostics
+    }
+  });
 }
 
 function currentTaskCandidate(
@@ -298,6 +406,7 @@ function candidate(input: {
   inclusionReason: string;
   routes?: RetrievalRoute[];
   graphProximityScore?: number;
+  diagnostics?: Record<string, unknown>;
 }): ContextCandidate {
   return validateContextCandidate({
     item: input.item,
@@ -313,7 +422,8 @@ function candidate(input: {
       sourceKind: input.item.sourceKind,
       sourceId: input.item.sourceId,
       sourcePath: input.item.sourcePath,
-      routes: input.routes ?? ["explicit"]
+      routes: input.routes ?? ["explicit"],
+      ...(input.diagnostics ?? {})
     }
   });
 }
@@ -384,6 +494,53 @@ function matchesSkillReference(
       sourceId.endsWith(`:${reference.id}`)
     );
   });
+}
+
+export function extractContextQueryTerms(input: Pick<
+  ContextRetrieverInput,
+  "taskPrompt" | "selectedFiles" | "selectedRuns"
+>): string[] {
+  const sources = [
+    input.taskPrompt,
+    ...(input.selectedFiles ?? []).map((file) => `${file.path}\n${file.title ?? ""}`),
+    ...(input.selectedRuns ?? []).map((run) => `${run.title ?? ""}\n${run.summary}`)
+  ];
+  const terms = new Set<string>();
+  for (const source of sources) {
+    for (const term of source.split(/[^A-Za-z0-9_./-]+/)) {
+      for (const part of term.split(/[^A-Za-z0-9_]+/)) {
+        const normalized = part.trim().toLowerCase();
+        if (normalized.length < 2 || queryStopWords.has(normalized)) {
+          continue;
+        }
+        terms.add(normalized);
+      }
+    }
+  }
+  return [...terms].slice(0, 32);
+}
+
+const queryStopWords = new Set([
+  "the",
+  "and",
+  "for",
+  "with",
+  "this",
+  "that",
+  "from",
+  "into",
+  "when",
+  "then",
+  "task",
+  "run",
+  "fix",
+  "add",
+  "use",
+  "using"
+]);
+
+function sourceHashKey(sourceId: string, contentHash: string): string {
+  return `${sourceId}:${contentHash}`;
 }
 
 function sourceMetadata(section: ContextSection): Record<string, unknown> {
