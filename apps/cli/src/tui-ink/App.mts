@@ -1733,10 +1733,10 @@ function ActiveRunBoxView({
   const compact = usesCompactActiveRunBox(terminal);
   const contentLines = compact
     ? activeRunCompactOutputLines(box, terminal)
-    : activeRunWrappedOutputLines(box, terminal);
+    : activeRunVisibleOutputLines(box, terminal);
   const contentHeight = compact
     ? contentLines.length
-    : Math.max(activeRunMinimumContentHeight(terminal), contentLines.length);
+    : activeRunContentHeight(contentLines.length, terminal);
   const paddedLines = [
     ...contentLines,
     ...Array.from({ length: Math.max(0, contentHeight - contentLines.length) }, () => "")
@@ -2727,10 +2727,7 @@ function activeRunBoxLineCountForBox(
   if (usesCompactActiveRunBox(terminal)) {
     return activeRunCompactOutputLines(box, terminal).length + 3;
   }
-  return Math.max(
-    activeRunMinimumContentHeight(terminal),
-    activeRunWrappedOutputLines(box, terminal).length
-  ) + 3;
+  return activeRunContentHeight(activeRunVisibleOutputLines(box, terminal).length, terminal) + 3;
 }
 
 function usesCompactActiveRunBox(terminal: TuiInkTerminalSize): boolean {
@@ -2739,6 +2736,15 @@ function usesCompactActiveRunBox(terminal: TuiInkTerminalSize): boolean {
 
 function activeRunMinimumContentHeight(_terminal: TuiInkTerminalSize): number {
   return 5;
+}
+
+function activeRunMaximumContentHeight(terminal: TuiInkTerminalSize): number {
+  return Math.max(1, terminal.rows - 13);
+}
+
+function activeRunContentHeight(lineCount: number, terminal: TuiInkTerminalSize): number {
+  const desiredHeight = Math.max(activeRunMinimumContentHeight(terminal), lineCount);
+  return Math.min(desiredHeight, activeRunMaximumContentHeight(terminal));
 }
 
 function activeRunBoxWidth(terminal: TuiInkTerminalSize): number {
@@ -2764,6 +2770,27 @@ function activeRunCompactOutputLines(
     .map((value) => value.trim())
     .find((value) => value.length > 0) ?? "agent thinking...";
   return [truncateText(latest, width)];
+}
+
+function activeRunVisibleOutputLines(
+  box: TuiActiveRunBox,
+  terminal: TuiInkTerminalSize
+): string[] {
+  const contentWidth = Math.max(1, activeRunBoxWidth(terminal) - 4);
+  const wrappedLines = activeRunWrappedOutputLines(box, terminal);
+  const maxContentHeight = activeRunMaximumContentHeight(terminal);
+  if (wrappedLines.length <= maxContentHeight) {
+    return wrappedLines;
+  }
+  if (maxContentHeight <= 1) {
+    return [truncateText(`... ${wrappedLines.length} older lines hidden`, contentWidth)];
+  }
+  const visibleTailCount = maxContentHeight - 1;
+  const hiddenLineCount = wrappedLines.length - visibleTailCount;
+  return [
+    truncateText(`... ${hiddenLineCount} older lines hidden`, contentWidth),
+    ...wrappedLines.slice(-visibleTailCount)
+  ];
 }
 
 function hardWrapLine(value: string, width: number): string[] {

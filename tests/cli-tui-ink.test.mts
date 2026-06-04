@@ -623,6 +623,37 @@ describe("Ink TUI renderer", () => {
     expect(narrowOutput).toContain("│ Step 2/5");
   });
 
+  it("caps chatty active run boxes to preserve terminal row budget", () => {
+    const output = renderToString(
+      React.createElement(TuiInkFrame, {
+        model: {
+          ...baseModel,
+          conversation: [],
+          activeRuns: [
+            {
+              runId: "run_chatty",
+              agent: "codex",
+              displayHandle: "engineer",
+              title: "@engineer run_chatty ● running",
+              outputLines: Array.from({ length: 30 }, (_value, index) => `active output line ${index}`)
+            }
+          ]
+        },
+        state: createInitialInkState(),
+        terminal: { columns: 78, rows: 20 }
+      }),
+      { columns: 78 }
+    );
+
+    const boxLines = output
+      .split("\n")
+      .filter((value) => value.startsWith("╭") || value.startsWith("│") || value.startsWith("╰"));
+    expect(boxLines).toHaveLength(10);
+    expect(output).toContain("older lines hidden");
+    expect(output).toContain("active output line 29");
+    expect(output).not.toContain("active output line 0");
+  });
+
   it("collapses older active runs and keeps at most three full boxes", () => {
     const output = renderToString(
       React.createElement(TuiInkFrame, {
