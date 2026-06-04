@@ -231,6 +231,11 @@ TUI validation is expected to work from a clean checkout: root typecheck and
 lint scripts check the Ink renderer through TypeScript build-mode references,
 allowing required local `dist` declarations to be generated during validation
 instead of assuming they already exist.
+Every visible TUI workflow change also carries a manual terminal QA contract:
+rebuild the CLI first, smoke `tui --once`, launch the rebuilt interactive TUI in
+normal and narrow PTY sizes, cover the affected core loop, and write an
+untracked note under `docs/ui-verification/` with the commands, observations,
+and remaining UI risks.
 
 ## Core Concepts
 

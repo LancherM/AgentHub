@@ -10,7 +10,7 @@ import {
   type RoleCall
 } from "@agent-hub/core";
 import { runTuiCommand } from "../apps/cli/src/tui";
-import { isJsonModuleExperimentalWarning } from "../apps/cli/src/tui-ink/entry.mts";
+import { isJsonModuleExperimentalWarning } from "../apps/cli/src/tui-ink/json-warning";
 
 const now = "2026-05-29T12:00:00.000Z";
 const projectRoot = "/tmp/tui-project";

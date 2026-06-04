@@ -14,7 +14,7 @@
     "tsBuildInfoFile": "dist/tui-ink/tsconfig.tsbuildinfo",
     "types": ["node"]
   },
-  "include": ["src/tui-ink/**/*.mts"],
+  "include": ["src/tui-ink/**/*.mts", "src/tui-ink/**/*.ts"],
   "references": [
     { "path": "../../packages/shared" },
     { "path": "../../packages/core" }

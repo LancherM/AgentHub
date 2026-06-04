@@ -1,6 +1,6 @@
 # TUI Optimization Roadmap
 
-Status: active implementation; OPT-0 through OPT-5 implemented
+Status: active implementation; OPT-0 through OPT-6 implemented
 Last updated: 2026-06-04
 Baseline: `origin/main` at `0a69476`
 
@@ -356,6 +356,8 @@ node apps/cli/dist/cli.js tui --once
 
 ### Phase OPT-6: Manual Terminal QA Contract
 
+Status: implemented.
+
 Goal: make future TUI polish hard to regress.
 
 Scope:
@@ -376,12 +378,69 @@ Acceptance:
 Verification:
 
 ```sh
-pnpm build
-pnpm typecheck
-pnpm lint
-pnpm test
+./node_modules/.bin/pnpm build
+./node_modules/.bin/pnpm typecheck
+./node_modules/.bin/pnpm lint
+./node_modules/.bin/pnpm test
 git diff --check
 ```
+
+Manual QA contract:
+
+1. Rebuild the CLI before judging a visible TUI change:
+
+   ```sh
+   ./node_modules/.bin/pnpm build
+   ```
+
+2. Run focused automated coverage for the changed TUI surface. For normal TUI
+   polish, include:
+
+   ```sh
+   ./node_modules/.bin/vitest run tests/cli-tui.test.ts tests/cli-tui-ink.test.mts tests/tui-read-model.test.ts
+   ```
+
+   The root `typecheck` path must also exercise
+   `tsc -b apps/cli/tsconfig.tui-ink.json`, because the Ink renderer depends
+   on build-mode project references for local package declarations.
+
+3. Smoke `--once` from the rebuilt CLI at normal and narrow terminal sizes:
+
+   ```sh
+   stty cols 80 rows 24
+   node apps/cli/dist/cli.js tui --once
+
+   stty cols 48 rows 20
+   node apps/cli/dist/cli.js tui --once
+   ```
+
+4. Launch the rebuilt interactive TUI in a real terminal or PTY at normal and
+   narrow sizes:
+
+   ```sh
+   stty cols 80 rows 24
+   node apps/cli/dist/cli.js tui --no-splash
+
+   stty cols 48 rows 20
+   node apps/cli/dist/cli.js tui --no-splash
+   ```
+
+5. Cover the safe core loop: launch, `--once`, exit, Help, command palette,
+   focus navigation, selection movement, composer typing, composer
+   clear/cancel, search, timeline, notify toggle, and the Review, Runs, Graph,
+   Tasks, Memory, and Team surfaces relevant to the change. Prompt submission
+   and review accept/reject shortcuts should be exercised only when the target
+   state is explicitly disposable or otherwise safe.
+
+6. Write the result to an ignored local note:
+
+   ```text
+   docs/ui-verification/<timestamp>-tui-<slug>.md
+   ```
+
+   The note should include the rebuilt launch command, workflows tested,
+   observed result, and residual UI risks. Final task summaries must include
+   the note path.
 
 ## Implementation Boundaries
 

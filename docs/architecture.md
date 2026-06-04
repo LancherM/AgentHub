@@ -596,6 +596,13 @@ workspace package types, root validation runs its TUI check through
 `tsc -b apps/cli/tsconfig.tui-ink.json` so project references emit the required
 local declarations in clean CI checkouts without requiring prebuilt package
 `dist` directories.
+Visible TUI workflow changes must be judged against the rebuilt CLI artifact,
+not source assumptions alone: local verification rebuilds the workspace, smokes
+`node apps/cli/dist/cli.js tui --once`, launches the rebuilt interactive TUI in
+normal and narrow PTY sizes, and records the result in an ignored
+`docs/ui-verification/` note. This is a validation contract for the existing
+CLI renderer boundary; it does not add a background runtime, renderer shell
+access, or any automatic review/apply behavior.
 The hand-rendered string layout has been removed from the TUI runtime path.
 The current renderer direction is documented in
 `docs/tui-ink-rewrite-roadmap.md`: keep the core read model and CLI action

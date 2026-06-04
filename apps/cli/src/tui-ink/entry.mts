@@ -8,6 +8,7 @@ import type {
   TuiInkTerminalSize
 } from "./App.mjs";
 import type { TuiInkState } from "./state.mjs";
+import { isJsonModuleExperimentalWarning } from "./json-warning.js";
 
 export interface TuiInkIO {
   stdin?: NodeJS.ReadableStream;
@@ -155,20 +156,4 @@ async function withJsonModuleWarningSuppressed<T>(operation: () => Promise<T>): 
   } finally {
     process.emitWarning = originalEmitWarning;
   }
-}
-
-export function isJsonModuleExperimentalWarning(
-  warning: string | Error,
-  typeOrOptions?: string | NodeJS.EmitWarningOptions
-): boolean {
-  const warningName = warning instanceof Error
-    ? warning.name
-    : typeof typeOrOptions === "string"
-      ? typeOrOptions
-      : typeOrOptions?.type;
-  const message = warning instanceof Error ? warning.message : warning;
-  return (
-    warningName === "ExperimentalWarning" &&
-    message.includes("Importing JSON modules is an experimental feature")
-  );
 }

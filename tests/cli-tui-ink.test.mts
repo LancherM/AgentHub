@@ -935,6 +935,29 @@ describe("Ink TUI renderer", () => {
     expect(output).toContain("agent-hub memory list --project-id project_1");
   });
 
+  it("keeps Help workflow entry points visible without terminal overflow", () => {
+    for (const columns of [48, 80]) {
+      const output = renderToString(
+        React.createElement(TuiInkFrame, {
+          model: baseModel,
+          state: { ...createInitialInkState(), focus: "help" },
+          terminal: { columns, rows: 20 }
+        }),
+        { columns }
+      );
+      const lines = output.split("\n");
+
+      expect(output).toContain("Help");
+      expect(output).toContain(": palette");
+      expect(output).toContain("/search");
+      expect(output).toContain("/timeline");
+      expect(output).toContain("/notify");
+      expect(output).toContain("review:");
+      expect(output).toContain("prompt:");
+      expect(lines.every((value) => value.length <= columns)).toBe(true);
+    }
+  });
+
   it("prints focused commands from non-Work panes without editing the composer", async () => {
     const instance = render(
       React.createElement(TuiInkApp, {
