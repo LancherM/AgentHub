@@ -314,7 +314,9 @@ from explicit, BM25, embedding, graph, and recency routes after hard filtering, 
 layer-budget checks. The selector applies deterministic, source-aware
 compression before omitting over-budget project docs, run evidence, or
 conversation continuity, and records requested/used layer budgets plus
-compression counts in runtime pack diagnostics. Selected candidates are
+compression counts in runtime pack diagnostics. Conversation compression keeps
+the low-trust override limits and preserves representative freeform continuity
+body lines when no structured summary headings are present. Selected candidates are
 appended to the typed pack with source ids, hashes, trust labels, compression
 metadata, and inclusion reasons; omitted candidates are recorded with reasons.
 The current task and runtime policy remain pinned, and adapter-facing markdown
