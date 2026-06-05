@@ -512,6 +512,7 @@ function appendFirstBodyLines(
   lines: string[],
   maxLines: number
 ): void {
+  let appended = 0;
   for (const line of lines) {
     if (
       /^[a-z_]+:/.test(line) ||
@@ -522,7 +523,8 @@ function appendFirstBodyLines(
       continue;
     }
     target.push(line);
-    if (target.length >= maxLines) {
+    appended += 1;
+    if (appended >= maxLines) {
       return;
     }
   }

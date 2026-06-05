@@ -351,6 +351,67 @@ describe("runtime context retrieval selection", () => {
       ])
     );
   });
+
+  it("preserves freeform conversation body lines when compression is needed", () => {
+    const plan = createContextPlan({
+      id: "context_plan_freeform_conversation",
+      taskPrompt: "Fix parser bug using prior conversation context",
+      createdAt
+    });
+    const freeformConversation = Array.from(
+      { length: 30 },
+      (_, index) => `Plain continuity ${index}: keep parser decisions local.`
+    ).join("\n");
+    const basePack = validateRuntimeContextPack({
+      id: "runtime_pack_freeform_conversation",
+      planId: plan.id,
+      taskId: "task_freeform_conversation",
+      runId: "run_freeform_conversation",
+      sections: [
+        section("runtime_policy:agent_hub", "runtime_policy", "system", "Runtime Policy"),
+        section("task:task", "task", "system", "Current Task"),
+        section(
+          "conversation:thread",
+          "conversation",
+          "low",
+          "Thread Summary",
+          freeformConversation,
+          "structured"
+        )
+      ],
+      omitted: [],
+      diagnostics: [],
+      createdAt
+    });
+    const retrievalResult = validateContextRetrievalResult({
+      id: "context_retrieval_freeform_conversation",
+      planId: plan.id,
+      taskId: "task_freeform_conversation",
+      runId: "run_freeform_conversation",
+      candidates: [],
+      omitted: [],
+      diagnostics: [],
+      createdAt
+    });
+
+    const selected = selectRuntimeContextCandidates({
+      pack: basePack,
+      plan,
+      retrievalResult
+    });
+
+    const compressedConversation = selected.sections.find(
+      (entry) => entry.id === "conversation:thread"
+    );
+    expect(compressedConversation).toMatchObject({
+      compressionMode: "structured",
+      omittedItemCount: 1
+    });
+    expect(compressedConversation?.content).toContain(
+      "Plain continuity 0: keep parser decisions local."
+    );
+    expect(compressedConversation?.renderedCharacterCount).toBeLessThanOrEqual(300);
+  });
 });
 
 function section(
