@@ -65,6 +65,7 @@ import {
   validateTask,
   validateTaskRun,
   type AgentKind,
+  type CodeGraphRepository,
   type CompressionMode,
   type ContextPack,
   type ContextIndexRepository,
@@ -246,6 +247,7 @@ export interface TaskRunnerDependencies {
   riskReportGenerator?: RiskReportGenerator;
   contextRetriever?: ContextRetriever;
   contextIndexRepository?: ContextIndexRepository;
+  codeGraphRepository?: CodeGraphRepository;
   idGenerator?: IdGenerator;
   clock?: Clock;
   defaultRunRoot?: string;
@@ -351,7 +353,8 @@ export class TaskRunner {
     this.contextRetriever =
       dependencies.contextRetriever ??
       new ExplicitContextRetriever({
-        contextIndexRepository: dependencies.contextIndexRepository
+        contextIndexRepository: dependencies.contextIndexRepository,
+        codeGraphRepository: dependencies.codeGraphRepository
       });
     this.shellExecutor = shellExecutor;
     this.idGenerator = dependencies.idGenerator ?? new DefaultIdGenerator();

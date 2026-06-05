@@ -803,6 +803,50 @@ export interface ContextIndexSearchResult {
   diagnostics: Record<string, unknown>;
 }
 
+export interface CodeGraphEntry {
+  id: string;
+  projectId: string;
+  filePath: string;
+  packageName: string;
+  isTest: boolean;
+  imports: string[];
+  exports: string[];
+  symbols: string[];
+  relatedTests: string[];
+  contentHash: string;
+  indexedAt: string;
+  metadata: Record<string, unknown>;
+}
+
+export interface CodeGraphRebuildResult {
+  projectId: string;
+  indexedAt: string;
+  createdCount: number;
+  updatedCount: number;
+  unchangedCount: number;
+  deletedCount: number;
+  indexedIds: string[];
+}
+
+export interface CodeGraphSearchInput {
+  projectId: string;
+  queryTerms: string[];
+  seedPaths?: string[];
+  changedFiles?: string[];
+  limit?: number;
+}
+
+export interface CodeGraphSearchResult {
+  entry: CodeGraphEntry;
+  score: number;
+  rank: number;
+  matchedTerms: string[];
+  matchedSymbols: string[];
+  matchedImports: string[];
+  relatedFiles: string[];
+  diagnostics: Record<string, unknown>;
+}
+
 export interface ContextPlan {
   id: string;
   taskType: TaskType;

@@ -286,8 +286,14 @@ summaries, and thread summaries. Run evidence is medium trust; thread summaries
 remain low-trust continuity. Raw logs, raw diffs, full verification output
 bodies, full risk finding bodies, and full conversation transcripts are not
 included in recency candidates.
+Agent Hub can also build a deterministic local TypeScript code graph for source
+and test files. The graph records imports, exports, symbols, package
+boundaries, source-to-test relationships, and changed-file proximity so graph
+retrieval can add high-trust code or test candidates with graph proximity
+diagnostics. This remains local-only and does not require embeddings or a cloud
+index.
 The typed `runtime_context_pack` now selects policy-allowed retrieval candidates
-from explicit, BM25, and recency routes after hard filtering, ranking, and
+from explicit, BM25, graph, and recency routes after hard filtering, ranking, and
 layer-budget checks. The selector applies deterministic, source-aware
 compression before omitting over-budget project docs, run evidence, or
 conversation continuity, and records requested/used layer budgets plus

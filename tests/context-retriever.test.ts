@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { createContextPlan, ExplicitContextRetriever } from "@agent-hub/task-runner";
 import {
+  buildTypeScriptCodeGraphEntries,
+  createContextPlan,
+  ExplicitContextRetriever
+} from "@agent-hub/task-runner";
+import {
+  InMemoryCodeGraphRepository,
   InMemoryContextIndexRepository,
   validateContextIndexEntry,
   type ContextBundle,
@@ -268,6 +273,136 @@ describe("explicit context retrieval", () => {
         reason: "BM25 candidate duplicated an explicit-route source"
       }
     ]);
+  });
+
+  it("adds graph candidates for TypeScript symbol, import, test, and changed-file relationships", async () => {
+    const codeGraphRepository = new InMemoryCodeGraphRepository();
+    await codeGraphRepository.rebuildProject(
+      "project_1",
+      buildTypeScriptCodeGraphEntries({
+        projectId: "project_1",
+        indexedAt: createdAt,
+        files: [
+          {
+            path: "packages/core/src/parser.ts",
+            content: [
+              "import { TOKEN } from './tokens';",
+              "export class Parser {}",
+              "export function parse(input: string) { return TOKEN + input; }"
+            ].join("\n")
+          },
+          {
+            path: "packages/core/src/tokens.ts",
+            content: "export const TOKEN = 'token';\n"
+          },
+          {
+            path: "packages/core/src/parser.test.ts",
+            content: [
+              "import { parse } from './parser';",
+              "export const parserSpec = () => parse('input');"
+            ].join("\n")
+          }
+        ]
+      }),
+      createdAt
+    );
+    const retriever = new ExplicitContextRetriever({
+      codeGraphRepository
+    });
+    const task = testTask();
+    const plan = createContextPlan({
+      id: "context_plan_graph",
+      taskPrompt: "Fix Parser behavior after tokens.ts changed",
+      createdAt
+    });
+
+    const result = await retriever.retrieve({
+      id: "context_retrieval_graph",
+      plan,
+      task,
+      runId: "run_1",
+      taskPrompt: "Fix Parser behavior after tokens.ts changed",
+      contextBundle: contextBundle([
+        section("task:task", "task", "task", "Current Task", "Fix Parser")
+      ]),
+      selectedFiles: [
+        {
+          path: "packages/core/src/tokens.ts",
+          content: "export const TOKEN = 'token';\n"
+        }
+      ],
+      recentRunEvidence: [
+        {
+          runId: "run_previous",
+          taskId: "task_previous",
+          taskTitle: "Prior parser failure",
+          agentKind: "fake",
+          status: "failed",
+          createdAt,
+          summary: "Parser test failed.",
+          changedFiles: ["packages/core/src/parser.ts"],
+          metadata: {}
+        }
+      ],
+      createdAt
+    });
+
+    const graphCandidates = result.candidates.filter((candidate) =>
+      candidate.routes.includes("graph")
+    );
+    expect(graphCandidates.map((candidate) => candidate.item.sourceId)).toEqual([
+      "packages/core/src/parser.ts",
+      "packages/core/src/parser.test.ts"
+    ]);
+    expect(graphCandidates[0]).toMatchObject({
+      item: {
+        layer: "code",
+        sourceKind: "code_graph",
+        trustLevel: "high",
+        sourceId: "packages/core/src/parser.ts",
+        metadata: expect.objectContaining({
+          matchedSymbols: ["Parser"]
+        })
+      },
+      diagnostics: expect.objectContaining({
+        seedPaths: ["packages/core/src/tokens.ts"],
+        changedFiles: ["packages/core/src/parser.ts"]
+      })
+    });
+    expect(graphCandidates[0]).toMatchObject({
+      graphProximityScore: expect.any(Number),
+      inclusionReason:
+        "code graph matched TypeScript symbols, imports, tests, or changed-file relationships"
+    });
+    expect(graphCandidates[1]).toMatchObject({
+      item: {
+        layer: "test",
+        sourceKind: "code_graph",
+        trustLevel: "high",
+        metadata: expect.objectContaining({
+          isTest: true,
+          matchedImports: ["packages/core/src/parser.ts"]
+        })
+      }
+    });
+    expect(result.omitted).toEqual([
+      {
+        itemId: "code_graph:project_1:packages/core/src/tokens.ts",
+        layer: "code",
+        reason: "graph candidate duplicated an earlier retrieval source"
+      }
+    ]);
+    expect(result.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          message: "code graph retrieval completed",
+          metadata: expect.objectContaining({
+            selectedCount: 2,
+            omittedDuplicateCount: 1
+          })
+        })
+      ])
+    );
   });
 });
 

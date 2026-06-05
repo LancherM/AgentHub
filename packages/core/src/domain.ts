@@ -37,6 +37,7 @@ import {
   type ConversationMessage,
   type ConversationThread,
   type ConversationThreadSummary,
+  type CodeGraphEntry,
   type ContextItem,
   type ContextCandidate,
   type ContextIndexEntry,
@@ -795,6 +796,25 @@ export function validateContextIndexEntry(
     issues
   );
   timestamp(input.indexedAt, "contextIndexEntry.indexedAt", issues);
+  return finish(input, issues);
+}
+
+export function validateCodeGraphEntry(input: CodeGraphEntry): CodeGraphEntry {
+  const issues: string[] = [];
+  required(input.id, "codeGraphEntry.id", issues);
+  required(input.projectId, "codeGraphEntry.projectId", issues);
+  required(input.filePath, "codeGraphEntry.filePath", issues);
+  required(input.packageName, "codeGraphEntry.packageName", issues);
+  if (typeof input.isTest !== "boolean") {
+    issues.push("codeGraphEntry.isTest must be a boolean");
+  }
+  stringArray(input.imports, "codeGraphEntry.imports", issues);
+  stringArray(input.exports, "codeGraphEntry.exports", issues);
+  stringArray(input.symbols, "codeGraphEntry.symbols", issues);
+  stringArray(input.relatedTests, "codeGraphEntry.relatedTests", issues);
+  required(input.contentHash, "codeGraphEntry.contentHash", issues);
+  timestamp(input.indexedAt, "codeGraphEntry.indexedAt", issues);
+  objectValue(input.metadata, "codeGraphEntry.metadata", issues);
   return finish(input, issues);
 }
 

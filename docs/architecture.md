@@ -140,10 +140,18 @@ low-trust continuity candidates only when thread context policy allows them.
 Raw run events, raw logs, raw diff bodies, stdout/stderr verification bodies,
 full risk finding details, and full conversation transcripts are deliberately
 excluded.
-TaskRunner now runs a runtime selection step over explicit, BM25, and recency
-candidates before persisting `runtime_context_pack`. The selector applies hard
-policy first, ranks allowed candidates with relevance, layer priority, trust,
-freshness, and graph-proximity signals, then enforces layer character budgets.
+The code graph route is backed by a deterministic local TypeScript parser and
+an injectable `CodeGraphRepository`. It indexes TS/TSX files by package
+boundary, imports, exports, symbols, test-file status, related tests, and
+changed-file relationships. Graph retrieval expands from task terms, selected
+file seeds, and recent changed files, then emits high-trust `code` or `test`
+candidates with graph proximity diagnostics. Unconfigured repositories leave
+the graph route disabled without affecting other retrieval paths.
+TaskRunner now runs a runtime selection step over explicit, BM25, graph, and
+recency candidates before persisting `runtime_context_pack`. The selector
+applies hard policy first, ranks allowed candidates with relevance, layer
+priority, trust, freshness, and graph-proximity signals, then enforces layer
+character budgets.
 Budget enforcement runs across the typed pack sections and uses deterministic
 compression for project docs, run evidence, and conversation continuity before
 omitting over-budget items. Compression preserves source ids, source hashes,

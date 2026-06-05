@@ -7,6 +7,7 @@ import type {
 } from "@agent-hub/shared";
 import {
   validateAgentProfile,
+  validateCodeGraphEntry,
   validateComparisonReport,
   validateConversationMessage,
   validateConversationThread,
@@ -31,6 +32,10 @@ import {
   validateTaskRunStatusTransition,
   validateTaskStatusTransition,
   type AgentProfile,
+  type CodeGraphEntry,
+  type CodeGraphRebuildResult,
+  type CodeGraphSearchInput,
+  type CodeGraphSearchResult,
   type ComparisonReport,
   type ConversationMessage,
   type ConversationThread,
@@ -196,6 +201,16 @@ export interface ContextIndexRepository {
   listByProjectId(projectId: string): Promise<ContextIndexEntry[]>;
   get(entryId: string): Promise<ContextIndexEntry | undefined>;
   search(input: ContextIndexSearchInput): Promise<ContextIndexSearchResult[]>;
+}
+
+export interface CodeGraphRepository {
+  rebuildProject(
+    projectId: string,
+    entries: CodeGraphEntry[],
+    indexedAt: string
+  ): Promise<CodeGraphRebuildResult>;
+  listByProjectId(projectId: string): Promise<CodeGraphEntry[]>;
+  search(input: CodeGraphSearchInput): Promise<CodeGraphSearchResult[]>;
 }
 
 export interface SettingsRepository {
@@ -902,6 +917,108 @@ export class InMemoryContextIndexRepository implements ContextIndexRepository {
   }
 }
 
+export class InMemoryCodeGraphRepository implements CodeGraphRepository {
+  private readonly entries = new Map<string, CodeGraphEntry>();
+
+  async rebuildProject(
+    projectId: string,
+    entries: CodeGraphEntry[],
+    indexedAt: string
+  ): Promise<CodeGraphRebuildResult> {
+    const validEntries = entries.map(validateCodeGraphEntry);
+    const existingEntries = [...this.entries.values()].filter(
+      (entry) => entry.projectId === projectId
+    );
+    const incomingIds = new Set(validEntries.map((entry) => entry.id));
+    let createdCount = 0;
+    let updatedCount = 0;
+    let unchangedCount = 0;
+    let deletedCount = 0;
+
+    for (const entry of validEntries) {
+      if (entry.projectId !== projectId) {
+        throw new Error(`code graph entry ${entry.id} belongs to project ${entry.projectId}, not ${projectId}`);
+      }
+      const storedEntry = { ...entry, indexedAt };
+      const existing = this.entries.get(entry.id);
+      if (existing && codeGraphEntryUnchanged(existing, storedEntry)) {
+        unchangedCount += 1;
+        continue;
+      }
+      if (existing) {
+        updatedCount += 1;
+      } else {
+        createdCount += 1;
+      }
+      this.entries.set(entry.id, cloneCodeGraphEntry(storedEntry));
+    }
+
+    for (const entry of existingEntries) {
+      if (!incomingIds.has(entry.id)) {
+        this.entries.delete(entry.id);
+        deletedCount += 1;
+      }
+    }
+
+    return {
+      projectId,
+      indexedAt,
+      createdCount,
+      updatedCount,
+      unchangedCount,
+      deletedCount,
+      indexedIds: validEntries.map((entry) => entry.id).sort()
+    };
+  }
+
+  async listByProjectId(projectId: string): Promise<CodeGraphEntry[]> {
+    return [...this.entries.values()]
+      .filter((entry) => entry.projectId === projectId)
+      .sort((left, right) => left.filePath.localeCompare(right.filePath))
+      .map(cloneCodeGraphEntry);
+  }
+
+  async search(input: CodeGraphSearchInput): Promise<CodeGraphSearchResult[]> {
+    const terms = normalizeSearchTerms(input.queryTerms);
+    const seedPaths = normalizePathSet(input.seedPaths ?? []);
+    const changedFiles = normalizePathSet(input.changedFiles ?? []);
+    if (terms.length === 0 && seedPaths.size === 0 && changedFiles.size === 0) {
+      return [];
+    }
+    const scored = (await this.listByProjectId(input.projectId))
+      .map((entry) =>
+        scoreCodeGraphEntry(entry, {
+          terms,
+          seedPaths,
+          changedFiles
+        })
+      )
+      .filter((result) => result.score > 0)
+      .sort((left, right) =>
+        right.score === left.score
+          ? left.entry.filePath.localeCompare(right.entry.filePath)
+          : right.score - left.score
+      )
+      .slice(0, input.limit ?? 8);
+    return scored.map((result, index) => ({
+      entry: result.entry,
+      score: Math.min(1, result.score),
+      rank: index + 1,
+      matchedTerms: result.matchedTerms,
+      matchedSymbols: result.matchedSymbols,
+      matchedImports: result.matchedImports,
+      relatedFiles: result.relatedFiles,
+      diagnostics: {
+        queryTerms: terms,
+        seedPaths: [...seedPaths],
+        changedFiles: [...changedFiles],
+        packageName: result.entry.packageName,
+        isTest: result.entry.isTest
+      }
+    }));
+  }
+}
+
 export class InMemorySettingsRepository implements SettingsRepository {
   private readonly settings = new Map<string, Setting>();
 
@@ -1198,6 +1315,17 @@ function cloneContextIndexEntry(entry: ContextIndexEntry): ContextIndexEntry {
   };
 }
 
+function cloneCodeGraphEntry(entry: CodeGraphEntry): CodeGraphEntry {
+  return {
+    ...entry,
+    imports: [...entry.imports],
+    exports: [...entry.exports],
+    symbols: [...entry.symbols],
+    relatedTests: [...entry.relatedTests],
+    metadata: cloneJsonObject(entry.metadata)
+  };
+}
+
 function contextIndexEntryUnchanged(
   existing: ContextIndexEntry,
   incoming: ContextIndexEntry
@@ -1215,6 +1343,93 @@ function contextIndexEntryUnchanged(
     existing.sourcePath === incoming.sourcePath &&
     JSON.stringify(existing.metadata) === JSON.stringify(incoming.metadata)
   );
+}
+
+function codeGraphEntryUnchanged(
+  existing: CodeGraphEntry,
+  incoming: CodeGraphEntry
+): boolean {
+  return (
+    existing.projectId === incoming.projectId &&
+    existing.filePath === incoming.filePath &&
+    existing.packageName === incoming.packageName &&
+    existing.isTest === incoming.isTest &&
+    existing.contentHash === incoming.contentHash &&
+    arraysEqual(existing.imports, incoming.imports) &&
+    arraysEqual(existing.exports, incoming.exports) &&
+    arraysEqual(existing.symbols, incoming.symbols) &&
+    arraysEqual(existing.relatedTests, incoming.relatedTests) &&
+    JSON.stringify(existing.metadata) === JSON.stringify(incoming.metadata)
+  );
+}
+
+function scoreCodeGraphEntry(
+  entry: CodeGraphEntry,
+  input: {
+    terms: string[];
+    seedPaths: Set<string>;
+    changedFiles: Set<string>;
+  }
+): {
+  entry: CodeGraphEntry;
+  score: number;
+  matchedTerms: string[];
+  matchedSymbols: string[];
+  matchedImports: string[];
+  relatedFiles: string[];
+} {
+  const searchableText = [
+    entry.filePath,
+    entry.packageName,
+    ...entry.symbols,
+    ...entry.exports,
+    ...entry.imports,
+    ...entry.relatedTests
+  ].join("\n").toLowerCase();
+  const matchedTerms = input.terms.filter((term) => searchableText.includes(term));
+  const matchedSymbols = entry.symbols.filter((symbol) =>
+    input.terms.includes(symbol.toLowerCase())
+  );
+  const matchedImports = entry.imports.filter((importPath) =>
+    input.seedPaths.has(importPath) || input.changedFiles.has(importPath)
+  );
+  const relatedFiles = entry.relatedTests.filter((testPath) =>
+    input.seedPaths.has(testPath) || input.changedFiles.has(testPath)
+  );
+  const directPathMatch =
+    input.seedPaths.has(entry.filePath) || input.changedFiles.has(entry.filePath);
+  const relatedSeedMatch = entry.relatedTests.some(
+    (testPath) => input.seedPaths.has(testPath) || input.changedFiles.has(testPath)
+  );
+  const score =
+    matchedTerms.length * 0.16 +
+    matchedSymbols.length * 0.18 +
+    matchedImports.length * 0.2 +
+    relatedFiles.length * 0.18 +
+    (directPathMatch ? 0.45 : 0) +
+    (relatedSeedMatch ? 0.22 : 0) +
+    (entry.isTest && (matchedTerms.length > 0 || relatedSeedMatch) ? 0.08 : 0);
+  return {
+    entry,
+    score,
+    matchedTerms,
+    matchedSymbols,
+    matchedImports,
+    relatedFiles
+  };
+}
+
+function normalizePathSet(values: string[]): Set<string> {
+  return new Set(values.map(normalizeGraphPath).filter(Boolean));
+}
+
+function normalizeGraphPath(value: string): string {
+  return value.replace(/\\/g, "/").replace(/^\.\//, "");
+}
+
+function arraysEqual(left: string[], right: string[]): boolean {
+  return left.length === right.length &&
+    left.every((value, index) => value === right[index]);
 }
 
 function normalizeSearchTerms(value: string | string[]): string[] {

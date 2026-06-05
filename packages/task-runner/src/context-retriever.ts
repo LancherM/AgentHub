@@ -4,6 +4,8 @@ import {
   validateContextCandidate,
   validateContextRetrievalResult,
   type ConversationThreadSummary,
+  type CodeGraphRepository,
+  type CodeGraphSearchResult,
   type ContextBundle,
   type ContextCandidate,
   type ContextItem,
@@ -63,7 +65,9 @@ export interface ContextRetriever {
 
 export interface ContextRetrieverOptions {
   contextIndexRepository?: ContextIndexRepository;
+  codeGraphRepository?: CodeGraphRepository;
   bm25Limit?: number;
+  graphLimit?: number;
 }
 
 export class ExplicitContextRetriever implements ContextRetriever {
@@ -115,9 +119,15 @@ export class ExplicitContextRetriever implements ContextRetriever {
 
     const explicitCandidates = dedupeCandidates(candidates);
     const bm25 = await bm25Candidates(input, explicitCandidates, this.options);
+    const graph = await graphCandidates(
+      input,
+      [...explicitCandidates, ...bm25.candidates],
+      this.options
+    );
     const recency = recencyCandidates(input, [
       ...explicitCandidates,
-      ...bm25.candidates
+      ...bm25.candidates,
+      ...graph.candidates
     ]);
 
     const result = validateContextRetrievalResult({
@@ -125,9 +135,19 @@ export class ExplicitContextRetriever implements ContextRetriever {
       planId: input.plan.id,
       taskId: input.task.id,
       runId: input.runId,
-      candidates: [...explicitCandidates, ...bm25.candidates, ...recency.candidates],
-      omitted: [...omitted, ...bm25.omitted, ...recency.omitted],
-      diagnostics: [...diagnostics, ...bm25.diagnostics, ...recency.diagnostics],
+      candidates: [
+        ...explicitCandidates,
+        ...bm25.candidates,
+        ...graph.candidates,
+        ...recency.candidates
+      ],
+      omitted: [...omitted, ...bm25.omitted, ...graph.omitted, ...recency.omitted],
+      diagnostics: [
+        ...diagnostics,
+        ...bm25.diagnostics,
+        ...graph.diagnostics,
+        ...recency.diagnostics
+      ],
       createdAt: input.createdAt
     });
     return result;
@@ -228,6 +248,159 @@ function indexSearchCandidate(
       ...searchResult.diagnostics
     }
   });
+}
+
+async function graphCandidates(
+  input: ContextRetrieverInput,
+  existingCandidates: ContextCandidate[],
+  options: ContextRetrieverOptions
+): Promise<{
+  candidates: ContextCandidate[];
+  omitted: ContextRetrievalResult["omitted"];
+  diagnostics: ContextRetrievalResult["diagnostics"];
+}> {
+  if (
+    !options.codeGraphRepository ||
+    !input.plan.retrievalRoutes.includes("graph")
+  ) {
+    return { candidates: [], omitted: [], diagnostics: [] };
+  }
+  const terms = extractContextQueryTerms(input);
+  const seedPaths = graphSeedPaths(input);
+  const changedFiles = graphChangedFiles(input);
+  if (terms.length === 0 && seedPaths.length === 0 && changedFiles.length === 0) {
+    return {
+      candidates: [],
+      omitted: [],
+      diagnostics: [
+        {
+          severity: "info",
+          message: "code graph retrieval skipped because no graph query seeds were available"
+        }
+      ]
+    };
+  }
+  const searchResults = await options.codeGraphRepository.search({
+    projectId: input.contextBundle.targetRepository.id,
+    queryTerms: terms,
+    seedPaths,
+    changedFiles,
+    limit: options.graphLimit ?? 8
+  });
+  const existingSourceIds = new Set(
+    existingCandidates.flatMap((candidateEntry) => [
+      candidateEntry.item.sourceId,
+      candidateEntry.item.sourcePath
+    ]).filter((value): value is string => value !== undefined)
+  );
+  const candidates: ContextCandidate[] = [];
+  const omitted: ContextRetrievalResult["omitted"] = [];
+  for (const searchResult of searchResults) {
+    if (existingSourceIds.has(searchResult.entry.filePath)) {
+      omitted.push({
+        itemId: searchResult.entry.id,
+        layer: searchResult.entry.isTest ? "test" : "code",
+        reason: "graph candidate duplicated an earlier retrieval source"
+      });
+      continue;
+    }
+    candidates.push(codeGraphCandidate(searchResult, input));
+  }
+  return {
+    candidates,
+    omitted,
+    diagnostics: [
+      {
+        severity: "info",
+        message: "code graph retrieval completed",
+        metadata: {
+          queryTerms: terms,
+          seedPaths,
+          changedFiles,
+          resultCount: searchResults.length,
+          selectedCount: candidates.length,
+          omittedDuplicateCount: omitted.length
+        }
+      }
+    ]
+  };
+}
+
+function codeGraphCandidate(
+  searchResult: CodeGraphSearchResult,
+  input: ContextRetrieverInput
+): ContextCandidate {
+  const layer: ContextLayer = searchResult.entry.isTest ? "test" : "code";
+  return candidate({
+    item: contextItem({
+      id: searchResult.entry.id,
+      layer,
+      sourceKind: "code_graph",
+      sourceId: searchResult.entry.filePath,
+      scope: "project",
+      trustLevel: "high",
+      lifetime: "indexed_snapshot",
+      title: `${searchResult.entry.isTest ? "Test" : "Code"} Graph: ${searchResult.entry.filePath}`,
+      content: renderCodeGraphEntry(searchResult),
+      createdAt: input.createdAt,
+      sourcePath: searchResult.entry.filePath,
+      contentHash: searchResult.entry.contentHash,
+      metadata: {
+        route: "graph",
+        packageName: searchResult.entry.packageName,
+        isTest: searchResult.entry.isTest,
+        matchedTerms: searchResult.matchedTerms,
+        matchedSymbols: searchResult.matchedSymbols,
+        matchedImports: searchResult.matchedImports,
+        relatedFiles: searchResult.relatedFiles
+      }
+    }),
+    routes: ["graph"],
+    relevanceScore: searchResult.score,
+    freshnessScore: 0.8,
+    graphProximityScore: searchResult.score,
+    scopeMatchScore: 0.9,
+    inclusionReason:
+      "code graph matched TypeScript symbols, imports, tests, or changed-file relationships",
+    diagnostics: {
+      rank: searchResult.rank,
+      score: searchResult.score,
+      ...searchResult.diagnostics,
+      matchedTerms: searchResult.matchedTerms,
+      matchedSymbols: searchResult.matchedSymbols,
+      matchedImports: searchResult.matchedImports,
+      relatedFiles: searchResult.relatedFiles
+    }
+  });
+}
+
+function renderCodeGraphEntry(searchResult: CodeGraphSearchResult): string {
+  const entry = searchResult.entry;
+  const lines = [
+    `file_path: ${entry.filePath}`,
+    `package: ${entry.packageName}`,
+    `kind: ${entry.isTest ? "test" : "source"}`,
+    `graph_score: ${searchResult.score.toFixed(3)}`
+  ];
+  appendGraphList(lines, "symbols", entry.symbols);
+  appendGraphList(lines, "exports", entry.exports);
+  appendGraphList(lines, "imports", entry.imports);
+  appendGraphList(lines, "related_tests", entry.relatedTests);
+  appendGraphList(lines, "matched_terms", searchResult.matchedTerms);
+  appendGraphList(lines, "matched_symbols", searchResult.matchedSymbols);
+  appendGraphList(lines, "matched_imports", searchResult.matchedImports);
+  appendGraphList(lines, "related_files", searchResult.relatedFiles);
+  return `${lines.join("\n").trimEnd()}\n`;
+}
+
+function appendGraphList(lines: string[], label: string, values: string[]): void {
+  if (values.length === 0) {
+    return;
+  }
+  lines.push(`${label}:`);
+  for (const value of values.slice(0, 12)) {
+    lines.push(`- ${value}`);
+  }
 }
 
 function recencyCandidates(
@@ -743,6 +916,20 @@ export function extractContextQueryTerms(input: Pick<
   return [...terms].slice(0, 32);
 }
 
+function graphSeedPaths(input: ContextRetrieverInput): string[] {
+  return uniqueStrings([
+    ...(input.selectedFiles ?? []).map((file) => normalizeSourcePath(file.path))
+  ]);
+}
+
+function graphChangedFiles(input: ContextRetrieverInput): string[] {
+  return uniqueStrings(
+    (input.recentRunEvidence ?? []).flatMap((source) =>
+      source.changedFiles.map(normalizeSourcePath)
+    )
+  ).slice(0, 32);
+}
+
 const queryStopWords = new Set([
   "the",
   "and",
@@ -777,6 +964,10 @@ function unscopedSkillId(value: string): string {
 
 function normalizeSourcePath(value: string): string {
   return value.split(path.sep).join("/").replace(/^\.\//, "");
+}
+
+function uniqueStrings(values: string[]): string[] {
+  return [...new Set(values.filter((value) => value.trim().length > 0))].sort();
 }
 
 function secretLikePathReason(value: string): string | undefined {

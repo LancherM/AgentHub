@@ -4,6 +4,7 @@ export * from "./context-plan";
 export * from "./context-recency";
 export * from "./context-retriever";
 export * from "./context-selection";
+export * from "./code-graph";
 export * from "./memory-proposals";
 export * from "./run-review";
 export * from "./review-decisions";
