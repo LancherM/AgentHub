@@ -623,6 +623,44 @@ describe("Ink TUI renderer", () => {
     expect(narrowOutput).toContain("│ Step 2/5");
   });
 
+  it("wraps display-wide completed agent lines without losing content", () => {
+    const longAgentLine =
+      "1. `DefaultContextCompiler` 先编出基础 `ContextBundle`：当前任务、选中 agent、目标仓库、项目摘要、低可信 conversation brief、approved memory、显式/角色技能、用户约束和执行 hint。见 [context-compiler.ts](/private/project/packages/context-compiler/src/context-compiler.ts:120)，需要实现自动换行。";
+    const output = renderToString(
+      React.createElement(TuiInkFrame, {
+        model: {
+          ...baseModel,
+          activeRuns: [],
+          conversation: [
+            {
+              id: "run:wide-agent-text",
+              type: "agent_completed",
+              timestamp: "2026-05-29T12:05:00.000Z",
+              author: "@codex",
+              agent: "codex",
+              runId: "run_wide_agent_text",
+              statusLabel: "completed",
+              outputLines: [longAgentLine]
+            }
+          ]
+        },
+        state: createInitialInkState(),
+        terminal: { columns: 64, rows: 32 }
+      }),
+      { columns: 64 }
+    );
+    const agentLines = output
+      .split("\n")
+      .filter((value) => value.startsWith("┃   "));
+
+    expect(output).toContain("目标仓库");
+    expect(output).toContain("显式/角色技能");
+    expect(output).toContain("context-compiler.ts");
+    expect(output).toContain("需要实现自动换行");
+    expect(agentLines.length).toBeGreaterThan(1);
+    expect(agentLines.every((value) => value.startsWith("┃   "))).toBe(true);
+  });
+
   it("caps chatty active run boxes to preserve terminal row budget", () => {
     const output = renderToString(
       React.createElement(TuiInkFrame, {
