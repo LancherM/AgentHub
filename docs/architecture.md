@@ -553,8 +553,10 @@ detail panes, or explicit command-print status messages rather than permanent
 footer chrome. Work layout budgets are calculated from terminal width/height
 after reserving fixed chrome rows for the header, warnings/status, attention
 strip, composer, tabs, and status bar: conversation rows are sliced after
-renderer-side wrapping has repeated structural prefixes, and active-run boxes
-switch to a compact four-line variant only on narrow or short terminals. The
+renderer-side display-width-aware wrapping has repeated structural prefixes,
+so CJK/full-width text and long Markdown/path/code tokens do not fall through
+to Ink truncation. Active-run boxes switch to a compact four-line variant only
+on narrow or short terminals. The
 full output remains in the read model; the renderer only bounds the visible
 window. The attention strip is also renderer-owned:
 it derives ordered read-only items from existing run evidence, review

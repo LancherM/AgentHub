@@ -2835,10 +2835,155 @@ function hardWrapLine(value: string, width: number): string[] {
     return [""];
   }
   const lines: string[] = [];
-  for (let index = 0; index < value.length; index += width) {
-    lines.push(value.slice(index, index + width));
+  let current = "";
+  let currentWidth = 0;
+  const tokens = value.match(/\s+|\S+/gu) ?? [value];
+
+  for (const token of tokens) {
+    if (/^\s+$/u.test(token)) {
+      if (current.length === 0) {
+        continue;
+      }
+      const normalizedWhitespace = token.replace(/\s+/g, " ");
+      const whitespaceWidth = terminalDisplayWidth(normalizedWhitespace);
+      if (currentWidth + whitespaceWidth <= width) {
+        current += normalizedWhitespace;
+        currentWidth += whitespaceWidth;
+      }
+      continue;
+    }
+
+    const tokenWidth = terminalDisplayWidth(token);
+    if (tokenWidth > width) {
+      if (current.trimEnd().length > 0) {
+        lines.push(current.trimEnd());
+        current = "";
+        currentWidth = 0;
+      }
+      const wrappedToken = wrapLongTokenByDisplayWidth(token, width);
+      lines.push(...wrappedToken.slice(0, -1));
+      current = wrappedToken.at(-1) ?? "";
+      currentWidth = terminalDisplayWidth(current);
+      continue;
+    }
+
+    if (currentWidth + tokenWidth <= width) {
+      current += token;
+      currentWidth += tokenWidth;
+      continue;
+    }
+
+    if (current.trimEnd().length > 0) {
+      lines.push(current.trimEnd());
+    }
+    current = token;
+    currentWidth = tokenWidth;
   }
-  return lines;
+
+  if (current.length > 0) {
+    lines.push(current.trimEnd());
+  }
+  return lines.length > 0 ? lines : [""];
+}
+
+function wrapLongTokenByDisplayWidth(value: string, width: number): string[] {
+  const lines: string[] = [];
+  let current = "";
+  let currentWidth = 0;
+  for (const cluster of graphemeClusters(value)) {
+    const clusterWidth = terminalDisplayWidth(cluster);
+    if (currentWidth > 0 && currentWidth + clusterWidth > width) {
+      lines.push(current);
+      current = "";
+      currentWidth = 0;
+    }
+    current += cluster;
+    currentWidth += clusterWidth;
+  }
+  if (current.length > 0) {
+    lines.push(current);
+  }
+  return lines.length > 0 ? lines : [""];
+}
+
+type GraphemeSegmenter = {
+  segment(value: string): Iterable<{ segment: string }>;
+};
+
+type GraphemeSegmenterConstructor = new (
+  locale: string | string[] | undefined,
+  options: { granularity: "grapheme" }
+) => GraphemeSegmenter;
+
+function graphemeClusters(value: string): string[] {
+  const Segmenter = (Intl as unknown as { Segmenter?: GraphemeSegmenterConstructor }).Segmenter;
+  if (Segmenter) {
+    return Array.from(new Segmenter(undefined, { granularity: "grapheme" }).segment(value), (part) => part.segment);
+  }
+  return Array.from(value);
+}
+
+function terminalDisplayWidth(value: string): number {
+  let width = 0;
+  for (const cluster of graphemeClusters(value)) {
+    width += terminalGraphemeWidth(cluster);
+  }
+  return width;
+}
+
+function terminalGraphemeWidth(cluster: string): number {
+  if (cluster.length === 0) {
+    return 0;
+  }
+  if (cluster === "\t") {
+    return 4;
+  }
+  if (containsEmoji(cluster)) {
+    return 2;
+  }
+  let width = 0;
+  for (const character of Array.from(cluster)) {
+    const codePoint = character.codePointAt(0);
+    if (codePoint === undefined || isZeroWidthCodePoint(codePoint)) {
+      continue;
+    }
+    width += isFullWidthCodePoint(codePoint) ? 2 : 1;
+  }
+  return width;
+}
+
+function containsEmoji(value: string): boolean {
+  return /\p{Emoji_Presentation}|\p{Extended_Pictographic}/u.test(value);
+}
+
+function isZeroWidthCodePoint(codePoint: number): boolean {
+  return (
+    codePoint === 0 ||
+    codePoint === 0x200d ||
+    (codePoint >= 0x00 && codePoint <= 0x1f) ||
+    (codePoint >= 0x7f && codePoint <= 0x9f) ||
+    (codePoint >= 0x300 && codePoint <= 0x36f) ||
+    (codePoint >= 0xfe00 && codePoint <= 0xfe0f)
+  );
+}
+
+function isFullWidthCodePoint(codePoint: number): boolean {
+  return (
+    codePoint >= 0x1100 &&
+    (
+      codePoint <= 0x115f ||
+      codePoint === 0x2329 ||
+      codePoint === 0x232a ||
+      (codePoint >= 0x2e80 && codePoint <= 0xa4cf && codePoint !== 0x303f) ||
+      (codePoint >= 0xac00 && codePoint <= 0xd7a3) ||
+      (codePoint >= 0xf900 && codePoint <= 0xfaff) ||
+      (codePoint >= 0xfe10 && codePoint <= 0xfe19) ||
+      (codePoint >= 0xfe30 && codePoint <= 0xfe6f) ||
+      (codePoint >= 0xff00 && codePoint <= 0xff60) ||
+      (codePoint >= 0xffe0 && codePoint <= 0xffe6) ||
+      (codePoint >= 0x20000 && codePoint <= 0x3fffd)
+    )
+  );
 }
 
 function boundedWindowSize(value: number, minimum: number, maximum: number): number {

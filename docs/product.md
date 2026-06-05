@@ -100,8 +100,10 @@ does not push earlier visible rows under the header. Conversation content
 keeps file paths underlined and blue with safe OSC 8 file links when the
 terminal supports them, shell-command lines bold, and fenced code blocks lightly
 highlighted for keywords, strings, and comments. Agent output content is not
-truncated; long lines wrap in the terminal surface. Conversation entries are
-separated by terminal divider lines, and gaps of five minutes or more add a
+truncated; long lines wrap in the terminal surface using display-width-aware
+breaks so CJK/full-width text, Markdown links, paths, and inline code keep
+their visible tail instead of relying on Ink truncation. Conversation entries
+are separated by terminal divider lines, and gaps of five minutes or more add a
 compact timeline anchor so long Work histories remain scannable without
 collapsing agent output.
 Active run boxes use rounded frames that grow to fit wrapped visible output.
