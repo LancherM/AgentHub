@@ -729,6 +729,157 @@ export interface ContextItem {
   metadata: Record<string, unknown>;
 }
 
+export interface ContextCandidate {
+  item: ContextItem;
+  routes: RetrievalRoute[];
+  relevanceScore: number;
+  freshnessScore: number;
+  trustScore: number;
+  graphProximityScore?: number;
+  scopeMatchScore: number;
+  inclusionReason: string;
+  diagnostics: Record<string, unknown>;
+}
+
+export interface ContextRetrievalResult {
+  id: string;
+  planId: string;
+  taskId: string;
+  runId?: string;
+  candidates: ContextCandidate[];
+  omitted: Array<{
+    itemId: string;
+    layer: ContextLayer;
+    reason: string;
+  }>;
+  diagnostics: Array<{
+    severity: "info" | "warning" | "error";
+    message: string;
+    metadata?: Record<string, unknown>;
+  }>;
+  createdAt: string;
+}
+
+export const contextIndexSourceKinds = [
+  "project_context",
+  "approved_memory",
+  "project_skill",
+  "global_skill"
+] as const;
+export type ContextIndexSourceKind = (typeof contextIndexSourceKinds)[number];
+
+export interface ContextIndexEntry extends ContextItem {
+  projectId: string;
+  sourceKind: ContextIndexSourceKind;
+  indexedAt: string;
+}
+
+export interface ContextIndexRebuildResult {
+  projectId: string;
+  indexedAt: string;
+  createdCount: number;
+  updatedCount: number;
+  unchangedCount: number;
+  deletedCount: number;
+  skippedCount: number;
+  indexedIds: string[];
+  skipped: Array<{
+    sourcePath?: string;
+    reason: string;
+  }>;
+}
+
+export interface ContextIndexSearchInput {
+  projectId: string;
+  query: string;
+  terms?: string[];
+  limit?: number;
+}
+
+export interface ContextIndexSearchResult {
+  entry: ContextIndexEntry;
+  lexicalScore: number;
+  rank: number;
+  diagnostics: Record<string, unknown>;
+}
+
+export interface CodeGraphEntry {
+  id: string;
+  projectId: string;
+  filePath: string;
+  packageName: string;
+  isTest: boolean;
+  imports: string[];
+  exports: string[];
+  symbols: string[];
+  relatedTests: string[];
+  contentHash: string;
+  indexedAt: string;
+  metadata: Record<string, unknown>;
+}
+
+export interface CodeGraphRebuildResult {
+  projectId: string;
+  indexedAt: string;
+  createdCount: number;
+  updatedCount: number;
+  unchangedCount: number;
+  deletedCount: number;
+  indexedIds: string[];
+}
+
+export interface CodeGraphSearchInput {
+  projectId: string;
+  queryTerms: string[];
+  seedPaths?: string[];
+  changedFiles?: string[];
+  limit?: number;
+}
+
+export interface CodeGraphSearchResult {
+  entry: CodeGraphEntry;
+  score: number;
+  rank: number;
+  matchedTerms: string[];
+  matchedSymbols: string[];
+  matchedImports: string[];
+  relatedFiles: string[];
+  diagnostics: Record<string, unknown>;
+}
+
+export const contextEvalEventKinds = [
+  "run_outcome",
+  "verification",
+  "risk",
+  "missing_context",
+  "noisy_context",
+  "review_decision"
+] as const;
+export type ContextEvalEventKind = (typeof contextEvalEventKinds)[number];
+
+export const contextEvalEventSeverities = [
+  "info",
+  "warning",
+  "error"
+] as const;
+export type ContextEvalEventSeverity =
+  (typeof contextEvalEventSeverities)[number];
+
+export interface ContextEvalEvent {
+  id: string;
+  projectId: string;
+  taskId: string;
+  runId: string;
+  planId?: string;
+  kind: ContextEvalEventKind;
+  severity: ContextEvalEventSeverity;
+  message: string;
+  selectedItemIds: string[];
+  omittedItemIds: string[];
+  metadata: JsonObject;
+  createdAt: string;
+}
+
 export interface ContextPlan {
   id: string;
   taskType: TaskType;

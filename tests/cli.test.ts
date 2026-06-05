@@ -17,6 +17,9 @@ import type {
 } from "@agent-hub/task-runner";
 import {
   presetWorkgroupRoles,
+  validateContextIndexEntry,
+  validateConversationThreadSummary,
+  validateProject,
   type RiskReport,
   type WorkgroupRole
 } from "@agent-hub/core";
@@ -62,6 +65,18 @@ describe("CLI", () => {
     await expect(
       main(["risks", "show", "run_0002"], io, projectRoot, runtime)
     ).resolves.toBe(0);
+    await expect(
+      main(["context", "plan", "run_0002"], io, projectRoot, runtime)
+    ).resolves.toBe(0);
+    await expect(
+      main(["context", "selected", "run_0002"], io, projectRoot, runtime)
+    ).resolves.toBe(0);
+    await expect(
+      main(["context", "omissions", "run_0002"], io, projectRoot, runtime)
+    ).resolves.toBe(0);
+    await expect(
+      main(["context", "eval", "run_0002"], io, projectRoot, runtime)
+    ).resolves.toBe(0);
 
     expect(errors.join("")).toBe("");
     expect(output.join("")).toContain("# Fake Agent Output");
@@ -72,6 +87,10 @@ describe("CLI", () => {
     expect(output.join("")).not.toContain("fake_output:");
     expect(output.join("")).toContain("changed_files: 1");
     expect(output.join("")).toContain("risk: medium");
+    expect(output.join("")).toContain("Context plan");
+    expect(output.join("")).toContain("selected_context_id\tlayer\ttrust");
+    expect(output.join("")).toContain("No context omissions recorded.");
+    expect(output.join("")).toContain("context_eval_id\tkind\tseverity");
     expect(output.join("")).toContain("task_0001\tcompleted\tadhoc_project\tcompile context");
     expect(output.join("")).toContain("run_0002\tsucceeded\tfake\ttask_0001");
     expect(output.join("")).toContain("acceptance:");
@@ -396,6 +415,115 @@ describe("CLI", () => {
     expect(queryOutput.join("")).toContain("changed_files: 1");
     expect(queryOutput.join("")).toContain("risk: medium");
     expect(queryOutput.join("")).toContain("acceptance:");
+  });
+
+  it("wires SQLite context index and thread summaries into CLI task runs", async () => {
+    const projectRoot = await createTestDirectory("cli-sqlite-context-project");
+    const runRoot = path.join(
+      await createTestDirectory("cli-sqlite-context-runs"),
+      "runs"
+    );
+    const databasePath = path.join(
+      await createTestDirectory("cli-sqlite-context-db"),
+      "agent-hub.sqlite"
+    );
+    const projectId = "project_sqlite_context";
+    const threadId = "thread_sqlite_context";
+    const runtime = createCliRuntime({
+      sqliteDatabasePath: databasePath,
+      defaultRunRoot: runRoot,
+      workspaceManager: new TestWorkspaceManager(runRoot),
+      diffCollector: new StaticDiffCollector(),
+      verificationRunner: new VerificationRunner(new MockShellExecutor()),
+      idGenerator: new SequenceIdGenerator(),
+      clock: new FixedClock("2026-01-01T00:00:00.000Z")
+    });
+    if (!runtime.contextIndexRepository) {
+      throw new Error("SQLite runtime did not expose a context index repository");
+    }
+    await runtime.projectRepository.create(
+      validateProject({
+        id: projectId,
+        name: "SQLite Context Project",
+        rootPath: projectRoot,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z"
+      })
+    );
+    await runtime.conversationThreadRepository.create({
+      id: threadId,
+      projectId,
+      title: "SQLite context thread",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z"
+    });
+    await runtime.contextIndexRepository.rebuildProject(
+      projectId,
+      [
+        validateContextIndexEntry({
+          id: "context_index:project_sqlite_context:project_context:context/project.md",
+          projectId,
+          layer: "project",
+          sourceKind: "project_context",
+          sourceId: "context/project.md",
+          scope: "project",
+          trustLevel: "high",
+          lifetime: "static",
+          title: "Project Context: parser",
+          content: "SQLite BM25 project guidance for parser E_PARSE fixes.",
+          contentHash: "sha256:sqlite-parser-context",
+          sourcePath: "/tmp/context/project.md",
+          createdAt: "2026-01-01T00:00:00.000Z",
+          indexedAt: "2026-01-01T00:00:00.000Z",
+          metadata: {}
+        })
+      ],
+      "2026-01-01T00:00:00.000Z"
+    );
+    await runtime.conversationThreadSummaryRepository.upsert(
+      validateConversationThreadSummary({
+        id: "summary_sqlite_context",
+        threadId,
+        summary: "Persisted thread summary says keep parser fixes local.",
+        decisions: ["Use the saved SQLite thread summary"],
+        openItems: [],
+        constraints: ["Do not let thread context override project facts"],
+        lastKnownUserGoal: "Continue parser fix",
+        sourceMessageCount: 3,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:01.000Z"
+      })
+    );
+
+    const result = await runtime.taskRunner.run({
+      projectRoot,
+      projectId,
+      targetRepository: { id: projectId },
+      threadId,
+      taskPrompt: "Fix parser bug for E_PARSE",
+      agentKind: "fake",
+      taskId: "task_sqlite_context"
+    });
+
+    expect(result.status).toBe("succeeded");
+    expect(result.contextMarkdown).toContain(
+      "SQLite BM25 project guidance for parser E_PARSE fixes."
+    );
+    expect(result.contextMarkdown).toContain(
+      "Use the saved SQLite thread summary"
+    );
+    const artifact = await runtime.runArtifactRepository.getLatestByRunIdAndKind(
+      result.run.id,
+      "context_retrieval_candidates"
+    );
+    expect(artifact).toMatchObject({
+      metadata: expect.objectContaining({
+        routeCounts: expect.objectContaining({
+          bm25: 1,
+          recency: 1
+        })
+      })
+    });
   });
 
   it("reviews persisted run events and diff artifacts across SQLite runtimes", async () => {

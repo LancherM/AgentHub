@@ -23,6 +23,7 @@ import {
 import type {
   AgentRunEvent,
   ChangedFile,
+  ContextRetriever,
   DiffCollectionInput,
   DiffCollectionResult,
   DiffCollectorService
@@ -35,11 +36,14 @@ import {
   InMemoryTaskRepository,
   InMemoryTaskRunRepository,
   InMemoryVerificationResultRepository,
+  InMemoryContextIndexRepository,
+  InMemoryContextEvalEventRepository,
   InMemoryMemoryItemRepository,
   extractAgentFacingOutput,
   type RunEvent,
   type RunMetadata,
   type WorkgroupRoleRunMetadata,
+  validateContextIndexEntry,
   validateTask,
   validateRunEvent
 } from "@agent-hub/core";
@@ -168,16 +172,18 @@ describe("task runner", () => {
     });
   });
 
-  it("persists typed runtime context pack artifacts without changing markdown injection", async () => {
+  it("persists typed runtime context pack artifacts and injects selected runtime markdown", async () => {
     const projectRoot = await createTestDirectory("agent-hub-runtime-context-project");
     const runRoot = await createTestDirectory("agent-hub-runtime-context-runs");
     const runArtifactRepository = new InMemoryRunArtifactRepository();
+    const contextEvalEventRepository = new InMemoryContextEvalEventRepository();
     const runner = new TaskRunner({
       defaultRunRoot: runRoot,
       workspaceManager: new TestWorkspaceManager(runRoot),
       diffCollector: new StaticDiffCollector(),
       verificationRunner: new VerificationRunner(new MockShellExecutor()),
       runArtifactRepository,
+      contextEvalEventRepository,
       idGenerator: new SequenceIdGenerator(),
       clock: new FixedClock("2026-01-01T00:00:00.000Z")
     });
@@ -202,6 +208,42 @@ describe("task runner", () => {
         requiredLayers: expect.arrayContaining(["runtime_policy", "task"]),
         retrievalRoutes: ["explicit", "task_rule"]
       })
+    });
+    const retrievalArtifact = await runArtifactRepository.getLatestByRunIdAndKind(
+      result.run.id,
+      "context_retrieval_candidates"
+    );
+    expect(retrievalArtifact).toMatchObject({
+      kind: "context_retrieval_candidates",
+      metadata: expect.objectContaining({
+        planId: planArtifact?.metadata.planId,
+        candidateCount: 2,
+        routeCounts: { explicit: 2 }
+      })
+    });
+    const retrievalResult = JSON.parse(retrievalArtifact?.content ?? "{}") as {
+      planId: string;
+      candidates: Array<{
+        routes: string[];
+        item: { layer: string; trustLevel: string; sourceKind: string };
+      }>;
+    };
+    expect(retrievalResult).toMatchObject({
+      planId: planArtifact?.metadata.planId,
+      candidates: [
+        expect.objectContaining({
+          routes: ["explicit"],
+          item: expect.objectContaining({ layer: "task", trustLevel: "system" })
+        }),
+        expect.objectContaining({
+          routes: ["explicit"],
+          item: expect.objectContaining({
+            layer: "conversation",
+            trustLevel: "low",
+            sourceKind: "thread_summary"
+          })
+        })
+      ]
     });
     const artifact = await runArtifactRepository.getLatestByRunIdAndKind(
       result.run.id,
@@ -244,6 +286,147 @@ describe("task runner", () => {
         })
       ])
     );
+    await expect(
+      contextEvalEventRepository.listByRunId(result.run.id)
+    ).resolves.toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        kind: "run_outcome",
+        severity: "info",
+        selectedItemIds: expect.arrayContaining(["runtime_policy:agent_hub", "task:task"]),
+        omittedItemIds: expect.arrayContaining(["conversation:thread"])
+      }),
+      expect.objectContaining({
+        kind: "verification",
+        severity: "warning",
+        metadata: expect.objectContaining({
+          status: "skipped",
+          missingCommandConfig: true
+        })
+      }),
+      expect.objectContaining({
+        kind: "risk",
+        severity: "warning",
+        metadata: expect.objectContaining({
+          level: "medium"
+        })
+      }),
+      expect.objectContaining({
+        kind: "missing_context",
+        severity: "warning",
+        omittedItemIds: ["conversation:thread"]
+      }),
+      expect.objectContaining({
+        kind: "noisy_context",
+        severity: "warning",
+        metadata: expect.objectContaining({
+          itemsOmitted: 1
+        })
+      })
+    ]));
+  });
+
+  it("persists BM25 retrieval candidates and injects selected context into the run", async () => {
+    const projectRoot = await createTestDirectory("agent-hub-bm25-project");
+    const runRoot = await createTestDirectory("agent-hub-bm25-runs");
+    const runArtifactRepository = new InMemoryRunArtifactRepository();
+    const contextIndexRepository = new InMemoryContextIndexRepository();
+    await contextIndexRepository.rebuildProject(
+      "project_bm25",
+      [
+        validateContextIndexEntry({
+          id: "context_index:project_bm25:project_context:context/project.md",
+          projectId: "project_bm25",
+          layer: "project",
+          sourceKind: "project_context",
+          sourceId: "context/project.md",
+          scope: "project",
+          trustLevel: "high",
+          lifetime: "static",
+          title: "Project Context: project",
+          content: "Parser failures with E_PARSE happen in src/parser.ts.",
+          contentHash: "sha256:parser-context",
+          sourcePath: "/tmp/context/project.md",
+          createdAt: "2026-01-01T00:00:00.000Z",
+          indexedAt: "2026-01-01T00:00:00.000Z",
+          metadata: {}
+        })
+      ],
+      "2026-01-01T00:00:00.000Z"
+    );
+    const runner = new TaskRunner({
+      defaultRunRoot: runRoot,
+      workspaceManager: new TestWorkspaceManager(runRoot),
+      diffCollector: new StaticDiffCollector(),
+      verificationRunner: new VerificationRunner(new MockShellExecutor()),
+      runArtifactRepository,
+      contextIndexRepository,
+      idGenerator: new SequenceIdGenerator(),
+      clock: new FixedClock("2026-01-01T00:00:00.000Z")
+    });
+
+    const result = await runner.run({
+      projectRoot,
+      projectId: "project_bm25",
+      targetRepository: { id: "project_bm25" },
+      taskPrompt: "Fix parser.ts E_PARSE",
+      agentKind: "fake",
+      taskId: "task_bm25"
+    });
+
+    expect(result.contextMarkdown).toContain("Parser failures with E_PARSE");
+    const retrievalArtifact = await runArtifactRepository.getLatestByRunIdAndKind(
+      result.run.id,
+      "context_retrieval_candidates"
+    );
+    expect(retrievalArtifact).toMatchObject({
+      metadata: expect.objectContaining({
+        candidateCount: 2,
+        routeCounts: {
+          explicit: 1,
+          bm25: 1
+        }
+      })
+    });
+    const retrievalResult = JSON.parse(retrievalArtifact?.content ?? "{}") as {
+      candidates: Array<{ routes: string[]; item: { sourceKind: string } }>;
+    };
+    expect(retrievalResult.candidates).toEqual([
+      expect.objectContaining({ routes: ["explicit"] }),
+      expect.objectContaining({
+        routes: ["bm25"],
+        item: expect.objectContaining({ sourceKind: "project_context" })
+      })
+    ]);
+    const runtimeContextArtifact = await runArtifactRepository.getLatestByRunIdAndKind(
+      result.run.id,
+      "runtime_context_pack"
+    );
+    const runtimeContextPack = JSON.parse(runtimeContextArtifact?.content ?? "{}") as {
+      sections: Array<{ id: string; layer: string; sourceItemIds: string[] }>;
+    };
+    expect(runtimeContextPack.sections).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "runtime_policy:agent_hub",
+          layer: "runtime_policy"
+        }),
+        expect.objectContaining({
+          id: "retrieval:context_index:project_bm25:project_context:context/project.md",
+          layer: "project",
+          sourceItemIds: [
+            "context_index:project_bm25:project_context:context/project.md"
+          ]
+        })
+      ])
+    );
+    const taskBriefArtifact = await runArtifactRepository.getLatestByRunIdAndKind(
+      result.run.id,
+      "task_brief"
+    );
+    expect(taskBriefArtifact?.content).toContain("Parser failures with E_PARSE");
+    await expect(
+      fs.readFile(path.join(result.worktreePath ?? "", "fake-agent-output.md"), "utf8")
+    ).resolves.toContain("Parser failures with E_PARSE");
   });
 
   it("omits proposed and rejected memory from persisted runtime context packs", async () => {
@@ -1481,6 +1664,57 @@ describe("task runner", () => {
     );
   });
 
+  it("finalizes task and run state when context retrieval throws", async () => {
+    const projectRoot = await createTestDirectory("agent-hub-project");
+    const runRoot = await createTestDirectory("agent-hub-runs");
+    const taskRepository = new InMemoryTaskRepository();
+    const taskRunRepository = new InMemoryTaskRunRepository();
+    const runEventRepository = new InMemoryRunEventRepository();
+    const runner = new TaskRunner({
+      taskRepository,
+      taskRunRepository,
+      runEventRepository,
+      defaultRunRoot: runRoot,
+      workspaceManager: new TestWorkspaceManager(runRoot),
+      diffCollector: new StaticDiffCollector(),
+      verificationRunner: new VerificationRunner(new MockShellExecutor()),
+      contextRetriever: new ThrowingContextRetriever("FTS query failed"),
+      idGenerator: new SequenceIdGenerator(),
+      clock: new FixedClock("2026-01-01T00:00:00.000Z")
+    });
+
+    const result = await runner.run({
+      projectRoot,
+      rawPrompt: "@fake retrieval fails before worktree"
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.status).toBe("failed");
+    expect(result.error).toBe("context retrieval failed: FTS query failed");
+    expect(result.worktreePath).toBeUndefined();
+    await expect(taskRepository.get(result.task.id)).resolves.toMatchObject({
+      status: "open"
+    });
+    await expect(taskRunRepository.get(result.run.id)).resolves.toMatchObject({
+      status: "failed",
+      completedAt: "2026-01-01T00:00:00.000Z"
+    });
+    await expect(runEventRepository.listByRunId(result.run.id)).resolves.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          metadata: expect.objectContaining({ desktopEventType: "context_compiled" })
+        }),
+        expect.objectContaining({
+          type: "error",
+          message: "context retrieval failed: FTS query failed"
+        }),
+        expect.objectContaining({
+          metadata: expect.objectContaining({ desktopEventType: "run_failed" })
+        })
+      ])
+    );
+  });
+
   it("finalizes a failed run when diff collection throws", async () => {
     const projectRoot = await createTestDirectory("agent-hub-project");
     const runRoot = await createTestDirectory("agent-hub-runs");
@@ -2231,6 +2465,14 @@ class ThrowingDiffCollector implements DiffCollectorService {
   constructor(private readonly message: string) {}
 
   async collect(): Promise<DiffCollectionResult> {
+    throw new Error(this.message);
+  }
+}
+
+class ThrowingContextRetriever implements ContextRetriever {
+  constructor(private readonly message: string) {}
+
+  async retrieve(): Promise<never> {
     throw new Error(this.message);
   }
 }

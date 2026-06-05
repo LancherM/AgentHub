@@ -103,18 +103,88 @@ Repository-level `AGENTS.md`, `CLAUDE.md`, `.claude/skills`, and
 TaskRunner additionally derives a typed `runtime_context_pack` run artifact
 from the compiled context bundle. The artifact records each section's context
 layer, trust level, source item ids, source hashes, compression mode, rendered
-character counts, omissions, and diagnostics while preserving the existing
-markdown task brief passed to adapters.
+character counts, omissions, and diagnostics. After runtime selection, TaskRunner
+renders the selected runtime sections back into the task brief, worktree overlay
+payload, and adapter `contextMarkdown`.
 Before writing the runtime pack, TaskRunner creates a deterministic
 `context_plan` artifact from a rule-based task classifier. The plan records the
 task type, required context layers, planned retrieval routes, trust policy,
-layer budgets, compression policy, and classifier diagnostics. In the current
-runtime this plan is audit evidence; markdown injection remains unchanged until
-later retrieval phases consume the plan for source selection.
+layer budgets, compression policy, and classifier diagnostics. The plan drives
+retrieval and selection before adapter execution.
+TaskRunner also runs an explicit-route `ContextRetriever` boundary before
+artifact persistence. The first implementation emits candidates for sources
+already selected by the run, including the current task, selected and
+role-default skills, selected files, selected runs, and low-trust thread
+continuity. These candidates are persisted as `context_retrieval_candidates`
+for inspection and then passed into runtime selection. If retrieval or selection
+throws after the run row exists, TaskRunner records error/run-failed events,
+marks the run failed, and returns the task to `open`.
+SQLite includes a `context_index_entries` metadata table plus
+`context_text_fts` FTS5 storage for stable text sources. The CR4 stable-index
+rebuild reads only Agent Hub context-store project docs, approved memory,
+project skills, and global skills; it skips secret-like paths, proposed or
+rejected memory rows, run evidence, thread summaries, logs, diffs, embeddings,
+and code-graph data. Rebuilds compare source hashes and leave unchanged rows
+and FTS entries untouched.
+When a `ContextIndexRepository` is supplied, the retriever builds lexical query
+terms from the current task prompt plus selected file/run hints and queries the
+stable-source FTS index through BM25. BM25 candidates are appended to
+`context_retrieval_candidates` with rank, lexical score, matched terms, layer,
+trust, source ids, and inclusion reasons. Candidates that duplicate explicit
+sources by source id and content hash are omitted with diagnostics. Indexed
+project and global skills are filtered out unless the task or role selected the
+matching skill reference. Unscoped references match project skills by default;
+global BM25 skill hits require an explicit `global:<id>` reference.
+The recency route is separate from stable-source indexing. TaskRunner can
+collect recent terminal run evidence from persisted task runs, diff artifact
+metadata, verification result statuses, and risk report summaries, then render
+bounded medium-trust `run_evidence` candidates. Thread summaries are rendered as
+low-trust continuity candidates only when thread context policy allows them.
+Raw run events, raw logs, raw diff bodies, stdout/stderr verification bodies,
+full risk finding details, and full conversation transcripts are deliberately
+excluded.
+The code graph route is backed by a deterministic local TypeScript parser and
+an injectable `CodeGraphRepository`. It indexes TS/TSX files by package
+boundary, imports, exports, symbols, test-file status, related tests, and
+changed-file relationships. Graph retrieval expands from task terms, selected
+file seeds, and recent changed files, then emits high-trust `code` or `test`
+candidates with graph proximity diagnostics. Unconfigured repositories leave
+the graph route disabled without affecting other retrieval paths.
+Optional semantic retrieval is modeled as injectable local capabilities:
+`ContextEmbeddingRetriever` and `ContextCandidateReranker`. Each capability is
+detected before use; unavailable or unconfigured providers produce info
+diagnostics and do not block the run. Candidate fusion happens after route
+retrieval and optional reranking, combining same-source route evidence such as
+BM25 plus embedding while preserving source ids, route lists, and diagnostics.
+No cloud embedding service, hosted vector database, or secret persistence is
+part of the default runtime.
+CR8 adds first-class `context_eval_events` local persistence. TaskRunner writes
+events for run outcome, verification, risk, missing context, and noisy/compressed
+context after final run status is known; review accept/reject commands append
+`review_decision` events. These rows link to project, task, run, and context
+plan ids and store selected/omitted context item ids as JSON arrays. CLI
+inspection commands read persisted artifacts and eval rows only; they do not
+rerun retrieval and do not promote memory.
+TaskRunner now runs a runtime selection step over explicit, BM25, embedding,
+graph, and recency candidates before persisting `runtime_context_pack`. The selector
+applies hard policy first, ranks allowed candidates with relevance, layer
+priority, trust, freshness, and graph-proximity signals, then enforces layer
+character budgets.
+Budget enforcement runs across the typed pack sections and uses deterministic
+compression for project docs, run evidence, and conversation continuity before
+omitting over-budget items. Compression preserves source ids, source hashes,
+compression mode, original/rendered character counts, and omission counts, with
+budget usage diagnostics stored in the artifact. Selected candidates are
+appended to the typed runtime pack and become the source of adapter-facing
+runtime markdown. The synthetic `runtime_policy` section and current task
+sections are pinned and cannot be evicted by retrieval candidates.
 The context compiler applies hard policy before adding memory or skill sections.
 It filters proposed/rejected memory, secret-like source paths, repository-root
 agent instruction export targets, and unsupported task/role skill scopes, then
-records warnings plus structured `RuntimeContextPack.omitted` entries. The
+records warnings plus structured `RuntimeContextPack.omitted` entries. Runtime
+retrieval scans all selected-file path segments for secret-like names before
+creating candidates, and source-aware selection deduplicates indexed
+`memory/approved.md` candidates against the base approved-memory section. The
 conversation section is rendered as `Conversation Continuity [trust=low]` with
 explicit override limits so thread context remains continuity evidence rather
 than a source of project facts.
@@ -220,7 +290,13 @@ The current schema covers:
 - `conversation_threads`, `conversation_messages`,
   `conversation_thread_summaries`;
 - `memory_items`, `skills`, `settings`;
-- `role_calls`, `role_todos`, `role_call_events`.
+- `role_calls`, `role_todos`, `role_call_events`;
+- `context_index_entries`, `context_text_fts`, and `context_eval_events`.
+
+The default SQLite CLI runtime wires the same local repository bundle into
+TaskRunner, including the context index repository and conversation thread
+summary repository, so normal `agent-hub run` executions can retrieve persisted
+BM25 context and saved thread summaries without manual dependency injection.
 
 SQLite migrations add constraints that mirror the domain model: task and run
 status checks, agent-kind checks, project/run relationships, JSON column

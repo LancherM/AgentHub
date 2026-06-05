@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import fs from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import type { DiffCollectionResult } from "@agent-hub/task-runner";
@@ -8,7 +9,11 @@ import {
   presetWorkgroupRoles,
   toWorkgroupRoleRunMetadata
 } from "@agent-hub/core";
-import { SQLITE_MIGRATIONS, createSqliteRepositories } from "@agent-hub/db";
+import {
+  SQLITE_MIGRATIONS,
+  createSqliteRepositories,
+  rebuildStableContextIndex
+} from "@agent-hub/db";
 import type { VerificationSuiteResult } from "@agent-hub/task-runner";
 import type { Workspace, WorkspaceCleanupResult } from "@agent-hub/task-runner";
 import { createTestDirectory } from "./helpers";
@@ -42,7 +47,9 @@ describe("SQLite storage", () => {
       { version: 9 },
       { version: 10 },
       { version: 11 },
-      { version: 12 }
+      { version: 12 },
+      { version: 13 },
+      { version: 14 }
     ]);
     await expect(
       database.query<{ name: string }>(
@@ -78,6 +85,9 @@ describe("SQLite storage", () => {
         { name: "conversation_thread_summaries" },
         { name: "memory_items" },
         { name: "comparison_reports" },
+        { name: "context_index_entries" },
+        { name: "context_eval_events" },
+        { name: "context_text_fts" },
         { name: "skills" },
         { name: "settings" }
       ])
@@ -85,6 +95,324 @@ describe("SQLite storage", () => {
     await expect(database.query<{ journal_mode: string }>("PRAGMA journal_mode;"))
       .resolves.toEqual([{ journal_mode: "wal" }]);
     await database.close();
+  });
+
+  it("rebuilds the stable context FTS index for project docs, approved memory, and skills", async () => {
+    const baseDirectory = await createTestDirectory("sqlite-context-index");
+    const databasePath = path.join(baseDirectory, "agent-hub.sqlite");
+    const projectStoreRoot = path.join(baseDirectory, "project-store");
+    const globalSkillStoreRoot = path.join(baseDirectory, "global-store");
+    const repositories = createSqliteRepositories({ databasePath });
+
+    await repositories.projectRepository.create({
+      id: "project_index",
+      name: "Indexed Project",
+      rootPath: path.join(baseDirectory, "source"),
+      createdAt,
+      updatedAt: createdAt
+    });
+    await repositories.memoryItemRepository.create({
+      id: "memory_proposed",
+      projectId: "project_index",
+      category: "project_fact",
+      status: "proposed",
+      content: "Proposed memory must not be indexed.",
+      createdAt,
+      updatedAt: createdAt
+    });
+    await repositories.memoryItemRepository.create({
+      id: "memory_rejected",
+      projectId: "project_index",
+      category: "project_fact",
+      status: "rejected",
+      content: "Rejected memory must not be indexed.",
+      createdAt,
+      updatedAt: createdAt
+    });
+
+    await writeText(
+      path.join(projectStoreRoot, "context", "project.md"),
+      "# Project\n\nParser code lives in src/parser.ts. parseRuntime can fail with E_PARSE.\n"
+    );
+    await writeText(
+      path.join(projectStoreRoot, "memory", "approved.md"),
+      "# Approved Memory\n\nUse runtime injection by default.\n"
+    );
+    await writeSkill(
+      path.join(projectStoreRoot, "skills", "lint", "SKILL.md"),
+      "lint",
+      "Lint project changes",
+      "Run pnpm lint."
+    );
+    await writeSkill(
+      path.join(globalSkillStoreRoot, "skills", "review", "SKILL.md"),
+      "review",
+      "Review changed files",
+      "Review parser changes."
+    );
+    await writeSkill(
+      path.join(projectStoreRoot, "skills", ".env", "SKILL.md"),
+      "secret-skill",
+      "Should be skipped",
+      "Never index this path."
+    );
+
+    const first = await rebuildStableContextIndex({
+      projectId: "project_index",
+      projectContextStoreRoot: projectStoreRoot,
+      globalSkillStoreRoot,
+      contextIndexRepository: repositories.contextIndexRepository,
+      indexedAt: createdAt
+    });
+
+    expect(first).toMatchObject({
+      createdCount: 4,
+      updatedCount: 0,
+      unchangedCount: 0,
+      deletedCount: 0,
+      skippedCount: 1,
+      skipped: [
+        expect.objectContaining({
+          reason: "secret-like source paths are rejected before context indexing"
+        })
+      ]
+    });
+    await expect(
+      repositories.contextIndexRepository.listByProjectId("project_index")
+    ).resolves.toEqual([
+      expect.objectContaining({
+        sourceKind: "approved_memory",
+        layer: "approved_memory",
+        content: "Use runtime injection by default.",
+        indexedAt: createdAt
+      }),
+      expect.objectContaining({
+        sourceKind: "global_skill",
+        layer: "global",
+        sourceId: "global:review",
+        indexedAt: createdAt
+      }),
+      expect.objectContaining({
+        sourceKind: "project_context",
+        layer: "project",
+        sourceId: "context/project.md",
+        indexedAt: createdAt
+      }),
+      expect.objectContaining({
+        sourceKind: "project_skill",
+        layer: "skill",
+        sourceId: "project:lint",
+        indexedAt: createdAt
+      })
+    ]);
+    await expect(
+      repositories.database.query<{ id: string }>(`
+SELECT id
+FROM context_text_fts
+WHERE context_text_fts MATCH 'parser'
+ORDER BY id ASC;
+`)
+    ).resolves.toEqual([
+      expect.objectContaining({
+        id: expect.stringContaining("global_skill:global:review")
+      }),
+      expect.objectContaining({
+        id: expect.stringContaining("project_context:context/project.md")
+      })
+    ]);
+    const pathSearch = await repositories.contextIndexRepository.search({
+      projectId: "project_index",
+      query: "Fix parseRuntime E_PARSE in src/parser.ts",
+      terms: ["parser", "ts", "parseruntime", "e_parse"],
+      limit: 2
+    });
+    expect(pathSearch[0]).toMatchObject({
+      rank: 1,
+      entry: expect.objectContaining({
+        sourceKind: "project_context",
+        sourceId: "context/project.md"
+      }),
+      diagnostics: expect.objectContaining({
+        terms: ["parser", "ts", "parseruntime", "e_parse"]
+      })
+    });
+    await expect(
+      repositories.contextIndexRepository.search({
+        projectId: "project_index",
+        query: "runtime injection",
+        limit: 1
+      })
+    ).resolves.toEqual([
+      expect.objectContaining({
+        entry: expect.objectContaining({
+          sourceKind: "approved_memory",
+          content: "Use runtime injection by default."
+        })
+      })
+    ]);
+    expect(
+      JSON.stringify(await repositories.contextIndexRepository.listByProjectId("project_index"))
+    ).not.toContain("Proposed memory must not be indexed");
+
+    const second = await rebuildStableContextIndex({
+      projectId: "project_index",
+      projectContextStoreRoot: projectStoreRoot,
+      globalSkillStoreRoot,
+      contextIndexRepository: repositories.contextIndexRepository,
+      indexedAt: updatedAt
+    });
+
+    expect(second).toMatchObject({
+      createdCount: 0,
+      updatedCount: 0,
+      unchangedCount: 4,
+      deletedCount: 0
+    });
+    await expect(
+      repositories.contextIndexRepository.listByProjectId("project_index")
+    ).resolves.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          sourceKind: "project_context",
+          indexedAt: createdAt
+        })
+      ])
+    );
+
+    await writeText(
+      path.join(projectStoreRoot, "context", "project.md"),
+      "# Project\n\nParser code moved to packages/core/src/parser.ts.\n"
+    );
+    await fs.rm(path.join(projectStoreRoot, "skills", "lint"), {
+      recursive: true,
+      force: true
+    });
+    const thirdAt = "2026-01-01T00:00:02.000Z";
+    const third = await rebuildStableContextIndex({
+      projectId: "project_index",
+      projectContextStoreRoot: projectStoreRoot,
+      globalSkillStoreRoot,
+      contextIndexRepository: repositories.contextIndexRepository,
+      indexedAt: thirdAt
+    });
+
+    expect(third).toMatchObject({
+      createdCount: 0,
+      updatedCount: 1,
+      unchangedCount: 2,
+      deletedCount: 1
+    });
+    await expect(
+      repositories.contextIndexRepository.listByProjectId("project_index")
+    ).resolves.toEqual([
+      expect.objectContaining({ sourceKind: "approved_memory", indexedAt: createdAt }),
+      expect.objectContaining({ sourceKind: "global_skill", indexedAt: createdAt }),
+      expect.objectContaining({
+        sourceKind: "project_context",
+        content: expect.stringContaining("packages/core/src/parser.ts"),
+        indexedAt: thirdAt
+      })
+    ]);
+    await repositories.database.close();
+  });
+
+  it("persists context eval events by run and project", async () => {
+    const databasePath = path.join(
+      await createTestDirectory("sqlite-context-eval"),
+      "agent-hub.sqlite"
+    );
+    const repositories = createSqliteRepositories({ databasePath });
+    await repositories.projectRepository.create({
+      id: "project_eval",
+      name: "Eval Project",
+      rootPath: "/tmp/eval-project",
+      createdAt,
+      updatedAt: createdAt
+    });
+    await repositories.taskRepository.create({
+      id: "task_eval",
+      projectId: "project_eval",
+      title: "Evaluate context",
+      status: "open",
+      createdAt,
+      updatedAt: createdAt
+    });
+    await repositories.taskRunRepository.create({
+      id: "run_eval",
+      taskId: "task_eval",
+      agentKind: "fake",
+      status: "queued",
+      createdAt,
+      updatedAt: createdAt
+    });
+
+    await repositories.contextEvalEventRepository.create({
+      id: "context_eval_1",
+      projectId: "project_eval",
+      taskId: "task_eval",
+      runId: "run_eval",
+      planId: "context_plan_1",
+      kind: "missing_context",
+      severity: "warning",
+      message: "One candidate was omitted.",
+      selectedItemIds: ["task:task_eval"],
+      omittedItemIds: ["context_index:large"],
+      metadata: {
+        omissionReasons: {
+          "retrieval candidate exceeds code budget": 1
+        }
+      },
+      createdAt
+    });
+
+    await expect(
+      repositories.contextEvalEventRepository.listByRunId("run_eval")
+    ).resolves.toEqual([
+      expect.objectContaining({
+        id: "context_eval_1",
+        kind: "missing_context",
+        selectedItemIds: ["task:task_eval"],
+        omittedItemIds: ["context_index:large"],
+        metadata: expect.objectContaining({
+          omissionReasons: {
+            "retrieval candidate exceeds code budget": 1
+          }
+        })
+      })
+    ]);
+    await expect(
+      repositories.contextEvalEventRepository.listByProjectId("project_eval")
+    ).resolves.toHaveLength(1);
+    await expect(
+      repositories.database.execute(`
+INSERT INTO context_eval_events (
+  id,
+  project_id,
+  task_id,
+  run_id,
+  kind,
+  severity,
+  message,
+  selected_item_ids_json,
+  omitted_item_ids_json,
+  metadata_json,
+  created_at
+) VALUES (
+  'context_eval_bad',
+  'project_eval',
+  'task_eval',
+  'run_eval',
+  'run_outcome',
+  'info',
+  'Bad arrays.',
+  '{}',
+  '[]',
+  '{}',
+  '${createdAt}'
+);
+`)
+    ).rejects.toThrow();
+    await repositories.database.close();
   });
 
   it("keeps SQLite storage usable after a failed statement closes the CLI session", async () => {
@@ -1147,7 +1475,9 @@ VALUES (
       { version: 9 },
       { version: 10 },
       { version: 11 },
-      { version: 12 }
+      { version: 12 },
+      { version: 13 },
+      { version: 14 }
     ]);
   });
 
@@ -1199,7 +1529,9 @@ VALUES (
       { version: 9 },
       { version: 10 },
       { version: 11 },
-      { version: 12 }
+      { version: 12 },
+      { version: 13 },
+      { version: 14 }
     ]);
     await expect(repositories.database.execute(`
 INSERT INTO tasks (id, project_id, title, status, created_at, updated_at)
@@ -1273,7 +1605,9 @@ VALUES ('message_summary_legacy', 'thread_summary_legacy', 0, 'user', 'text', 'P
       { version: 9 },
       { version: 10 },
       { version: 11 },
-      { version: 12 }
+      { version: 12 },
+      { version: 13 },
+      { version: 14 }
     ]);
   });
 
@@ -1307,7 +1641,9 @@ ALTER TABLE task_runs
       { version: 9 },
       { version: 10 },
       { version: 11 },
-      { version: 12 }
+      { version: 12 },
+      { version: 13 },
+      { version: 14 }
     ]);
     await expect(
       repositories.database.query<{ name: string }>(
@@ -1521,6 +1857,31 @@ function riskReport(): RiskReport {
     findings: [],
     createdAt
   };
+}
+
+async function writeText(filePath: string, content: string): Promise<void> {
+  await fs.mkdir(path.dirname(filePath), { recursive: true });
+  await fs.writeFile(filePath, content, "utf8");
+}
+
+async function writeSkill(
+  filePath: string,
+  name: string,
+  description: string,
+  body: string
+): Promise<void> {
+  await writeText(
+    filePath,
+    [
+      "---",
+      `name: ${name}`,
+      `description: ${description}`,
+      "---",
+      "",
+      body,
+      ""
+    ].join("\n")
+  );
 }
 
 async function initializeSqliteThroughVersion(

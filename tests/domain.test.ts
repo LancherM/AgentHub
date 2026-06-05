@@ -19,9 +19,13 @@ import {
   presetWorkgroupRoles,
   validateAgentProfile,
   validateComparisonReport,
+  validateContextCandidate,
+  validateContextEvalEvent,
+  validateContextIndexEntry,
   validateContextItem,
   validateContextPack,
   validateContextPlan,
+  validateContextRetrievalResult,
   validateConversationMessage,
   validateConversationThread,
   validateConversationThreadSummary,
@@ -205,6 +209,49 @@ describe("domain model validation", () => {
     ).toMatchObject({ layer: "task", trustLevel: "system" });
 
     expect(
+      validateContextIndexEntry({
+        id: "context_index_project",
+        projectId: "project_1",
+        layer: "project",
+        sourceKind: "project_context",
+        sourceId: "context/project.md",
+        scope: "project",
+        trustLevel: "high",
+        lifetime: "static",
+        title: "Project Context",
+        content: "Project facts.",
+        contentHash: "sha256:project",
+        sourcePath: "/tmp/context/project.md",
+        createdAt,
+        indexedAt: createdAt,
+        metadata: {}
+      })
+    ).toMatchObject({
+      sourceKind: "project_context",
+      indexedAt: createdAt
+    });
+
+    expect(
+      validateContextEvalEvent({
+        id: "context_eval_1",
+        projectId: "project_1",
+        taskId: "task_1",
+        runId: "run_1",
+        planId: "context_plan_1",
+        kind: "run_outcome",
+        severity: "info",
+        message: "Run succeeded with selected context.",
+        selectedItemIds: ["task:task"],
+        omittedItemIds: [],
+        metadata: { status: "succeeded" },
+        createdAt
+      })
+    ).toMatchObject({
+      kind: "run_outcome",
+      selectedItemIds: ["task:task"]
+    });
+
+    expect(
       validateContextPlan({
         id: "context_plan_1",
         taskType: "bug_fix",
@@ -224,6 +271,81 @@ describe("domain model validation", () => {
         diagnostics: {}
       })
     ).toMatchObject({ taskType: "bug_fix" });
+
+    expect(
+      validateContextCandidate({
+        item: {
+          id: "context_item_skill",
+          layer: "skill",
+          sourceKind: "selected_skill",
+          sourceId: "project:review",
+          scope: "task",
+          trustLevel: "medium",
+          lifetime: "session",
+          title: "Skill: Review",
+          content: "Review changed files.",
+          contentHash: "sha256:skill",
+          createdAt,
+          metadata: {}
+        },
+        routes: ["explicit"],
+        relevanceScore: 0.9,
+        freshnessScore: 0.8,
+        trustScore: 0.65,
+        scopeMatchScore: 1,
+        inclusionReason: "skill was explicitly selected",
+        diagnostics: {
+          sourceItemId: "context_item_skill"
+        }
+      })
+    ).toMatchObject({
+      routes: ["explicit"],
+      item: { layer: "skill" }
+    });
+
+    expect(
+      validateContextRetrievalResult({
+        id: "context_retrieval_1",
+        planId: "context_plan_1",
+        taskId: "task_1",
+        runId: "run_1",
+        candidates: [
+          {
+            item: {
+              id: "context_item_task",
+              layer: "task",
+              sourceKind: "task",
+              sourceId: "task_1",
+              scope: "task",
+              trustLevel: "system",
+              lifetime: "run",
+              title: "Task",
+              content: "Fix the failing test.",
+              contentHash: "sha256:task",
+              createdAt,
+              metadata: {}
+            },
+            routes: ["explicit"],
+            relevanceScore: 1,
+            freshnessScore: 1,
+            trustScore: 1,
+            scopeMatchScore: 1,
+            inclusionReason: "current task is pinned",
+            diagnostics: {}
+          }
+        ],
+        omitted: [],
+        diagnostics: [
+          {
+            severity: "info",
+            message: "explicit retrieval completed"
+          }
+        ],
+        createdAt
+      })
+    ).toMatchObject({
+      candidates: [expect.objectContaining({ routes: ["explicit"] })]
+    });
 
     expect(
       validateRuntimeContextPack({
@@ -259,6 +381,32 @@ describe("domain model validation", () => {
     ).toMatchObject({
       sections: [expect.objectContaining({ layer: "task" })]
     });
+
+    expect(() =>
+      validateContextCandidate({
+        item: {
+          id: "conversation:thread",
+          layer: "conversation",
+          sourceKind: "thread_summary",
+          sourceId: "thread",
+          scope: "thread",
+          trustLevel: "high",
+          lifetime: "thread",
+          title: "Conversation",
+          content: "Prior chat",
+          contentHash: "sha256:conversation",
+          createdAt,
+          metadata: {}
+        },
+        routes: ["explicit"],
+        relevanceScore: 0.5,
+        freshnessScore: 0.8,
+        trustScore: 0.9,
+        scopeMatchScore: 0.8,
+        inclusionReason: "invalid high-trust conversation",
+        diagnostics: {}
+      })
+    ).toThrow(DomainValidationError);
 
     expect(() =>
       validateRuntimeContextPack({

@@ -94,18 +94,18 @@ function retrievalRoutesForTaskType(taskType: TaskType): RetrievalRoute[] {
   switch (taskType) {
     case "bug_fix":
     case "test_failure":
-      return ["explicit", "task_rule", "bm25", "graph", "recency"];
+      return ["explicit", "task_rule", "bm25", "embedding", "graph", "recency"];
     case "ui_change":
     case "feature":
-      return ["explicit", "task_rule", "bm25", "graph"];
+      return ["explicit", "task_rule", "bm25", "embedding", "graph"];
     case "architecture":
-      return ["explicit", "task_rule", "bm25", "graph"];
+      return ["explicit", "task_rule", "bm25", "embedding", "graph"];
     case "follow_up":
       return ["explicit", "task_rule", "recency"];
     case "code_review":
-      return ["explicit", "task_rule", "bm25", "graph", "recency"];
+      return ["explicit", "task_rule", "bm25", "embedding", "graph", "recency"];
     case "documentation":
-      return ["explicit", "task_rule", "bm25"];
+      return ["explicit", "task_rule", "bm25", "embedding"];
     case "unknown":
       return ["explicit", "task_rule"];
   }
@@ -230,8 +230,8 @@ function compressionModeForLayer(layer: ContextLayer): CompressionMode {
     case "role":
       return "extractive";
     case "run_evidence":
-      return "structured";
     case "conversation":
+      return "structured";
     case "global":
       return "summary";
   }

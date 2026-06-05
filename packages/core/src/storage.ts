@@ -7,10 +7,13 @@ import type {
 } from "@agent-hub/shared";
 import {
   validateAgentProfile,
+  validateCodeGraphEntry,
   validateComparisonReport,
   validateConversationMessage,
   validateConversationThread,
   validateConversationThreadSummary,
+  validateContextEvalEvent,
+  validateContextIndexEntry,
   validateMemoryItem,
   validateProject,
   validateRiskReport,
@@ -30,10 +33,19 @@ import {
   validateTaskRunStatusTransition,
   validateTaskStatusTransition,
   type AgentProfile,
+  type CodeGraphEntry,
+  type CodeGraphRebuildResult,
+  type CodeGraphSearchInput,
+  type CodeGraphSearchResult,
   type ComparisonReport,
   type ConversationMessage,
   type ConversationThread,
   type ConversationThreadSummary,
+  type ContextEvalEvent,
+  type ContextIndexEntry,
+  type ContextIndexRebuildResult,
+  type ContextIndexSearchInput,
+  type ContextIndexSearchResult,
   type MemoryItem,
   type Project,
   type RiskReport,
@@ -180,6 +192,34 @@ export interface ComparisonReportRepository {
 export interface SkillRepository {
   create(skill: Skill): Promise<Skill>;
   list(projectId?: string): Promise<Skill[]>;
+}
+
+export interface ContextIndexRepository {
+  rebuildProject(
+    projectId: string,
+    entries: ContextIndexEntry[],
+    indexedAt: string
+  ): Promise<ContextIndexRebuildResult>;
+  listByProjectId(projectId: string): Promise<ContextIndexEntry[]>;
+  get(entryId: string): Promise<ContextIndexEntry | undefined>;
+  search(input: ContextIndexSearchInput): Promise<ContextIndexSearchResult[]>;
+}
+
+export interface CodeGraphRepository {
+  rebuildProject(
+    projectId: string,
+    entries: CodeGraphEntry[],
+    indexedAt: string
+  ): Promise<CodeGraphRebuildResult>;
+  listByProjectId(projectId: string): Promise<CodeGraphEntry[]>;
+  search(input: CodeGraphSearchInput): Promise<CodeGraphSearchResult[]>;
+}
+
+export interface ContextEvalEventRepository {
+  create(event: ContextEvalEvent): Promise<ContextEvalEvent>;
+  createMany(events: ContextEvalEvent[]): Promise<ContextEvalEvent[]>;
+  listByRunId(runId: string): Promise<ContextEvalEvent[]>;
+  listByProjectId(projectId: string): Promise<ContextEvalEvent[]>;
 }
 
 export interface SettingsRepository {
@@ -788,6 +828,247 @@ export class InMemorySkillRepository implements SkillRepository {
   }
 }
 
+export class InMemoryContextIndexRepository implements ContextIndexRepository {
+  private readonly entries = new Map<string, ContextIndexEntry>();
+
+  async rebuildProject(
+    projectId: string,
+    entries: ContextIndexEntry[],
+    indexedAt: string
+  ): Promise<ContextIndexRebuildResult> {
+    const validEntries = entries.map(validateContextIndexEntry);
+    const existingEntries = [...this.entries.values()].filter(
+      (entry) => entry.projectId === projectId
+    );
+    const incomingIds = new Set(validEntries.map((entry) => entry.id));
+    let createdCount = 0;
+    let updatedCount = 0;
+    let unchangedCount = 0;
+    let deletedCount = 0;
+
+    for (const entry of validEntries) {
+      if (entry.projectId !== projectId) {
+        throw new Error(`context index entry ${entry.id} belongs to project ${entry.projectId}, not ${projectId}`);
+      }
+      const existing = this.entries.get(entry.id);
+      if (existing && contextIndexEntryUnchanged(existing, entry)) {
+        unchangedCount += 1;
+        continue;
+      }
+      if (existing) {
+        updatedCount += 1;
+      } else {
+        createdCount += 1;
+      }
+      this.entries.set(entry.id, cloneContextIndexEntry({ ...entry, indexedAt }));
+    }
+
+    for (const entry of existingEntries) {
+      if (!incomingIds.has(entry.id)) {
+        this.entries.delete(entry.id);
+        deletedCount += 1;
+      }
+    }
+
+    return {
+      projectId,
+      indexedAt,
+      createdCount,
+      updatedCount,
+      unchangedCount,
+      deletedCount,
+      skippedCount: 0,
+      indexedIds: validEntries.map((entry) => entry.id).sort(),
+      skipped: []
+    };
+  }
+
+  async listByProjectId(projectId: string): Promise<ContextIndexEntry[]> {
+    return [...this.entries.values()]
+      .filter((entry) => entry.projectId === projectId)
+      .sort((left, right) => left.id.localeCompare(right.id))
+      .map(cloneContextIndexEntry);
+  }
+
+  async get(entryId: string): Promise<ContextIndexEntry | undefined> {
+    const entry = this.entries.get(entryId);
+    return entry ? cloneContextIndexEntry(entry) : undefined;
+  }
+
+  async search(input: ContextIndexSearchInput): Promise<ContextIndexSearchResult[]> {
+    const terms = normalizeSearchTerms(input.terms ?? input.query);
+    if (terms.length === 0) {
+      return [];
+    }
+    const scored = (await this.listByProjectId(input.projectId))
+      .map((entry) => {
+        const haystack = `${entry.title}\n${entry.content}\n${entry.sourcePath ?? ""}`.toLowerCase();
+        const matchedTerms = terms.filter((term) => haystack.includes(term));
+        return { entry, matchedTerms };
+      })
+      .filter((result) => result.matchedTerms.length > 0)
+      .sort((left, right) =>
+        right.matchedTerms.length === left.matchedTerms.length
+          ? left.entry.id.localeCompare(right.entry.id)
+          : right.matchedTerms.length - left.matchedTerms.length
+      )
+      .slice(0, input.limit ?? 10);
+    return scored.map((result, index) => ({
+      entry: result.entry,
+      lexicalScore: result.matchedTerms.length / terms.length,
+      rank: index + 1,
+      diagnostics: {
+        query: input.query,
+        terms,
+        matchedTerms: result.matchedTerms
+      }
+    }));
+  }
+}
+
+export class InMemoryCodeGraphRepository implements CodeGraphRepository {
+  private readonly entries = new Map<string, CodeGraphEntry>();
+
+  async rebuildProject(
+    projectId: string,
+    entries: CodeGraphEntry[],
+    indexedAt: string
+  ): Promise<CodeGraphRebuildResult> {
+    const validEntries = entries.map(validateCodeGraphEntry);
+    const existingEntries = [...this.entries.values()].filter(
+      (entry) => entry.projectId === projectId
+    );
+    const incomingIds = new Set(validEntries.map((entry) => entry.id));
+    let createdCount = 0;
+    let updatedCount = 0;
+    let unchangedCount = 0;
+    let deletedCount = 0;
+
+    for (const entry of validEntries) {
+      if (entry.projectId !== projectId) {
+        throw new Error(`code graph entry ${entry.id} belongs to project ${entry.projectId}, not ${projectId}`);
+      }
+      const storedEntry = { ...entry, indexedAt };
+      const existing = this.entries.get(entry.id);
+      if (existing && codeGraphEntryUnchanged(existing, storedEntry)) {
+        unchangedCount += 1;
+        continue;
+      }
+      if (existing) {
+        updatedCount += 1;
+      } else {
+        createdCount += 1;
+      }
+      this.entries.set(entry.id, cloneCodeGraphEntry(storedEntry));
+    }
+
+    for (const entry of existingEntries) {
+      if (!incomingIds.has(entry.id)) {
+        this.entries.delete(entry.id);
+        deletedCount += 1;
+      }
+    }
+
+    return {
+      projectId,
+      indexedAt,
+      createdCount,
+      updatedCount,
+      unchangedCount,
+      deletedCount,
+      indexedIds: validEntries.map((entry) => entry.id).sort()
+    };
+  }
+
+  async listByProjectId(projectId: string): Promise<CodeGraphEntry[]> {
+    return [...this.entries.values()]
+      .filter((entry) => entry.projectId === projectId)
+      .sort((left, right) => left.filePath.localeCompare(right.filePath))
+      .map(cloneCodeGraphEntry);
+  }
+
+  async search(input: CodeGraphSearchInput): Promise<CodeGraphSearchResult[]> {
+    const terms = normalizeSearchTerms(input.queryTerms);
+    const seedPaths = normalizePathSet(input.seedPaths ?? []);
+    const changedFiles = normalizePathSet(input.changedFiles ?? []);
+    if (terms.length === 0 && seedPaths.size === 0 && changedFiles.size === 0) {
+      return [];
+    }
+    const scored = (await this.listByProjectId(input.projectId))
+      .map((entry) =>
+        scoreCodeGraphEntry(entry, {
+          terms,
+          seedPaths,
+          changedFiles
+        })
+      )
+      .filter((result) => result.score > 0)
+      .sort((left, right) =>
+        right.score === left.score
+          ? left.entry.filePath.localeCompare(right.entry.filePath)
+          : right.score - left.score
+      )
+      .slice(0, input.limit ?? 8);
+    return scored.map((result, index) => ({
+      entry: result.entry,
+      score: Math.min(1, result.score),
+      rank: index + 1,
+      matchedTerms: result.matchedTerms,
+      matchedSymbols: result.matchedSymbols,
+      matchedImports: result.matchedImports,
+      relatedFiles: result.relatedFiles,
+      diagnostics: {
+        queryTerms: terms,
+        seedPaths: [...seedPaths],
+        changedFiles: [...changedFiles],
+        packageName: result.entry.packageName,
+        isTest: result.entry.isTest
+      }
+    }));
+  }
+}
+
+export class InMemoryContextEvalEventRepository
+  implements ContextEvalEventRepository
+{
+  private readonly events = new Map<string, ContextEvalEvent>();
+
+  async create(event: ContextEvalEvent): Promise<ContextEvalEvent> {
+    const validEvent = validateContextEvalEvent(event);
+    this.events.set(validEvent.id, cloneContextEvalEvent(validEvent));
+    return cloneContextEvalEvent(validEvent);
+  }
+
+  async createMany(events: ContextEvalEvent[]): Promise<ContextEvalEvent[]> {
+    const created: ContextEvalEvent[] = [];
+    for (const event of events) {
+      created.push(await this.create(event));
+    }
+    return created;
+  }
+
+  async listByRunId(runId: string): Promise<ContextEvalEvent[]> {
+    return this.sortedEvents((event) => event.runId === runId);
+  }
+
+  async listByProjectId(projectId: string): Promise<ContextEvalEvent[]> {
+    return this.sortedEvents((event) => event.projectId === projectId);
+  }
+
+  private sortedEvents(
+    predicate: (event: ContextEvalEvent) => boolean
+  ): ContextEvalEvent[] {
+    return [...this.events.values()]
+      .filter(predicate)
+      .sort((left, right) =>
+        left.createdAt === right.createdAt
+          ? left.id.localeCompare(right.id)
+          : left.createdAt.localeCompare(right.createdAt)
+      )
+      .map(cloneContextEvalEvent);
+  }
+}
+
 export class InMemorySettingsRepository implements SettingsRepository {
   private readonly settings = new Map<string, Setting>();
 
@@ -1075,6 +1356,153 @@ function cloneRunEvent(event: RunEvent): RunEvent {
     ...event,
     metadata: cloneJsonObject(event.metadata)
   };
+}
+
+function cloneContextIndexEntry(entry: ContextIndexEntry): ContextIndexEntry {
+  return {
+    ...entry,
+    metadata: cloneJsonObject(entry.metadata)
+  };
+}
+
+function cloneCodeGraphEntry(entry: CodeGraphEntry): CodeGraphEntry {
+  return {
+    ...entry,
+    imports: [...entry.imports],
+    exports: [...entry.exports],
+    symbols: [...entry.symbols],
+    relatedTests: [...entry.relatedTests],
+    metadata: cloneJsonObject(entry.metadata)
+  };
+}
+
+function cloneContextEvalEvent(event: ContextEvalEvent): ContextEvalEvent {
+  return {
+    ...event,
+    selectedItemIds: [...event.selectedItemIds],
+    omittedItemIds: [...event.omittedItemIds],
+    metadata: cloneJsonObject(event.metadata)
+  };
+}
+
+function contextIndexEntryUnchanged(
+  existing: ContextIndexEntry,
+  incoming: ContextIndexEntry
+): boolean {
+  return (
+    existing.projectId === incoming.projectId &&
+    existing.layer === incoming.layer &&
+    existing.sourceKind === incoming.sourceKind &&
+    existing.sourceId === incoming.sourceId &&
+    existing.scope === incoming.scope &&
+    existing.trustLevel === incoming.trustLevel &&
+    existing.lifetime === incoming.lifetime &&
+    existing.title === incoming.title &&
+    existing.contentHash === incoming.contentHash &&
+    existing.sourcePath === incoming.sourcePath &&
+    JSON.stringify(existing.metadata) === JSON.stringify(incoming.metadata)
+  );
+}
+
+function codeGraphEntryUnchanged(
+  existing: CodeGraphEntry,
+  incoming: CodeGraphEntry
+): boolean {
+  return (
+    existing.projectId === incoming.projectId &&
+    existing.filePath === incoming.filePath &&
+    existing.packageName === incoming.packageName &&
+    existing.isTest === incoming.isTest &&
+    existing.contentHash === incoming.contentHash &&
+    arraysEqual(existing.imports, incoming.imports) &&
+    arraysEqual(existing.exports, incoming.exports) &&
+    arraysEqual(existing.symbols, incoming.symbols) &&
+    arraysEqual(existing.relatedTests, incoming.relatedTests) &&
+    JSON.stringify(existing.metadata) === JSON.stringify(incoming.metadata)
+  );
+}
+
+function scoreCodeGraphEntry(
+  entry: CodeGraphEntry,
+  input: {
+    terms: string[];
+    seedPaths: Set<string>;
+    changedFiles: Set<string>;
+  }
+): {
+  entry: CodeGraphEntry;
+  score: number;
+  matchedTerms: string[];
+  matchedSymbols: string[];
+  matchedImports: string[];
+  relatedFiles: string[];
+} {
+  const searchableText = [
+    entry.filePath,
+    entry.packageName,
+    ...entry.symbols,
+    ...entry.exports,
+    ...entry.imports,
+    ...entry.relatedTests
+  ].join("\n").toLowerCase();
+  const matchedTerms = input.terms.filter((term) => searchableText.includes(term));
+  const matchedSymbols = entry.symbols.filter((symbol) =>
+    input.terms.includes(symbol.toLowerCase())
+  );
+  const matchedImports = entry.imports.filter((importPath) =>
+    input.seedPaths.has(importPath) || input.changedFiles.has(importPath)
+  );
+  const relatedFiles = entry.relatedTests.filter((testPath) =>
+    input.seedPaths.has(testPath) || input.changedFiles.has(testPath)
+  );
+  const directPathMatch =
+    input.seedPaths.has(entry.filePath) || input.changedFiles.has(entry.filePath);
+  const relatedSeedMatch = entry.relatedTests.some(
+    (testPath) => input.seedPaths.has(testPath) || input.changedFiles.has(testPath)
+  );
+  const score =
+    matchedTerms.length * 0.16 +
+    matchedSymbols.length * 0.18 +
+    matchedImports.length * 0.2 +
+    relatedFiles.length * 0.18 +
+    (directPathMatch ? 0.45 : 0) +
+    (relatedSeedMatch ? 0.22 : 0) +
+    (entry.isTest && (matchedTerms.length > 0 || relatedSeedMatch) ? 0.08 : 0);
+  return {
+    entry,
+    score,
+    matchedTerms,
+    matchedSymbols,
+    matchedImports,
+    relatedFiles
+  };
+}
+
+function normalizePathSet(values: string[]): Set<string> {
+  return new Set(values.map(normalizeGraphPath).filter(Boolean));
+}
+
+function normalizeGraphPath(value: string): string {
+  return value.replace(/\\/g, "/").replace(/^\.\//, "");
+}
+
+function arraysEqual(left: string[], right: string[]): boolean {
+  return left.length === right.length &&
+    left.every((value, index) => value === right[index]);
+}
+
+function normalizeSearchTerms(value: string | string[]): string[] {
+  const rawTerms = Array.isArray(value)
+    ? value
+    : value.split(/[^A-Za-z0-9_./-]+/);
+  return [
+    ...new Set(
+      rawTerms
+        .flatMap((term) => term.split(/[^A-Za-z0-9_]+/))
+        .map((term) => term.trim().toLowerCase())
+        .filter((term) => term.length >= 2)
+    )
+  ];
 }
 
 function cloneRunArtifact(artifact: RunArtifact): RunArtifact {
