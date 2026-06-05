@@ -137,6 +137,71 @@ describe("runtime context retrieval selection", () => {
     ]);
   });
 
+  it("deduplicates indexed approved memory already present in the base pack", () => {
+    const plan = createContextPlan({
+      id: "context_plan_memory_dedupe",
+      taskPrompt: "Fix parser bug using approved memory",
+      createdAt
+    });
+    const basePack = validateRuntimeContextPack({
+      id: "runtime_pack_memory_dedupe",
+      planId: plan.id,
+      taskId: "task_memory_dedupe",
+      runId: "run_memory_dedupe",
+      sections: [
+        section("runtime_policy:agent_hub", "runtime_policy", "system", "Runtime Policy"),
+        section("task:task", "task", "system", "Current Task"),
+        section(
+          "memory:approved",
+          "approved_memory",
+          "high",
+          "Approved Memory",
+          "Approved parser memory.",
+          "none"
+        )
+      ],
+      omitted: [],
+      diagnostics: [],
+      createdAt
+    });
+    const retrievalResult = validateContextRetrievalResult({
+      id: "context_retrieval_memory_dedupe",
+      planId: plan.id,
+      taskId: "task_memory_dedupe",
+      runId: "run_memory_dedupe",
+      candidates: [
+        candidate({
+          id: "context_index:project_1:approved_memory:memory/approved.md",
+          layer: "approved_memory",
+          trustLevel: "high",
+          sourceKind: "approved_memory",
+          sourceId: "memory/approved.md",
+          content: "Approved parser memory."
+        })
+      ],
+      omitted: [],
+      diagnostics: [],
+      createdAt
+    });
+
+    const selected = selectRuntimeContextCandidates({
+      pack: basePack,
+      plan,
+      retrievalResult
+    });
+
+    expect(selected.sections.map((section) => section.id)).not.toContain(
+      "retrieval:context_index:project_1:approved_memory:memory/approved.md"
+    );
+    expect(selected.omitted).toEqual([
+      {
+        itemId: "context_index:project_1:approved_memory:memory/approved.md",
+        layer: "approved_memory",
+        reason: "retrieval candidate already exists in pinned runtime context"
+      }
+    ]);
+  });
+
   it("compresses long project docs, run evidence, and conversation continuity by layer budget", () => {
     const plan = createContextPlan({
       id: "context_plan_compression",

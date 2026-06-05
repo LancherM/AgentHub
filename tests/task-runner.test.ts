@@ -23,6 +23,7 @@ import {
 import type {
   AgentRunEvent,
   ChangedFile,
+  ContextRetriever,
   DiffCollectionInput,
   DiffCollectionResult,
   DiffCollectorService
@@ -171,7 +172,7 @@ describe("task runner", () => {
     });
   });
 
-  it("persists typed runtime context pack artifacts without changing markdown injection", async () => {
+  it("persists typed runtime context pack artifacts and injects selected runtime markdown", async () => {
     const projectRoot = await createTestDirectory("agent-hub-runtime-context-project");
     const runRoot = await createTestDirectory("agent-hub-runtime-context-runs");
     const runArtifactRepository = new InMemoryRunArtifactRepository();
@@ -324,7 +325,7 @@ describe("task runner", () => {
     ]));
   });
 
-  it("persists BM25 retrieval candidates without changing markdown injection", async () => {
+  it("persists BM25 retrieval candidates and injects selected context into the run", async () => {
     const projectRoot = await createTestDirectory("agent-hub-bm25-project");
     const runRoot = await createTestDirectory("agent-hub-bm25-runs");
     const runArtifactRepository = new InMemoryRunArtifactRepository();
@@ -372,7 +373,7 @@ describe("task runner", () => {
       taskId: "task_bm25"
     });
 
-    expect(result.contextMarkdown).not.toContain("Parser failures with E_PARSE");
+    expect(result.contextMarkdown).toContain("Parser failures with E_PARSE");
     const retrievalArtifact = await runArtifactRepository.getLatestByRunIdAndKind(
       result.run.id,
       "context_retrieval_candidates"
@@ -418,6 +419,14 @@ describe("task runner", () => {
         })
       ])
     );
+    const taskBriefArtifact = await runArtifactRepository.getLatestByRunIdAndKind(
+      result.run.id,
+      "task_brief"
+    );
+    expect(taskBriefArtifact?.content).toContain("Parser failures with E_PARSE");
+    await expect(
+      fs.readFile(path.join(result.worktreePath ?? "", "fake-agent-output.md"), "utf8")
+    ).resolves.toContain("Parser failures with E_PARSE");
   });
 
   it("omits proposed and rejected memory from persisted runtime context packs", async () => {
@@ -1655,6 +1664,57 @@ describe("task runner", () => {
     );
   });
 
+  it("finalizes task and run state when context retrieval throws", async () => {
+    const projectRoot = await createTestDirectory("agent-hub-project");
+    const runRoot = await createTestDirectory("agent-hub-runs");
+    const taskRepository = new InMemoryTaskRepository();
+    const taskRunRepository = new InMemoryTaskRunRepository();
+    const runEventRepository = new InMemoryRunEventRepository();
+    const runner = new TaskRunner({
+      taskRepository,
+      taskRunRepository,
+      runEventRepository,
+      defaultRunRoot: runRoot,
+      workspaceManager: new TestWorkspaceManager(runRoot),
+      diffCollector: new StaticDiffCollector(),
+      verificationRunner: new VerificationRunner(new MockShellExecutor()),
+      contextRetriever: new ThrowingContextRetriever("FTS query failed"),
+      idGenerator: new SequenceIdGenerator(),
+      clock: new FixedClock("2026-01-01T00:00:00.000Z")
+    });
+
+    const result = await runner.run({
+      projectRoot,
+      rawPrompt: "@fake retrieval fails before worktree"
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.status).toBe("failed");
+    expect(result.error).toBe("context retrieval failed: FTS query failed");
+    expect(result.worktreePath).toBeUndefined();
+    await expect(taskRepository.get(result.task.id)).resolves.toMatchObject({
+      status: "open"
+    });
+    await expect(taskRunRepository.get(result.run.id)).resolves.toMatchObject({
+      status: "failed",
+      completedAt: "2026-01-01T00:00:00.000Z"
+    });
+    await expect(runEventRepository.listByRunId(result.run.id)).resolves.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          metadata: expect.objectContaining({ desktopEventType: "context_compiled" })
+        }),
+        expect.objectContaining({
+          type: "error",
+          message: "context retrieval failed: FTS query failed"
+        }),
+        expect.objectContaining({
+          metadata: expect.objectContaining({ desktopEventType: "run_failed" })
+        })
+      ])
+    );
+  });
+
   it("finalizes a failed run when diff collection throws", async () => {
     const projectRoot = await createTestDirectory("agent-hub-project");
     const runRoot = await createTestDirectory("agent-hub-runs");
@@ -2405,6 +2465,14 @@ class ThrowingDiffCollector implements DiffCollectorService {
   constructor(private readonly message: string) {}
 
   async collect(): Promise<DiffCollectionResult> {
+    throw new Error(this.message);
+  }
+}
+
+class ThrowingContextRetriever implements ContextRetriever {
+  constructor(private readonly message: string) {}
+
+  async retrieve(): Promise<never> {
     throw new Error(this.message);
   }
 }

@@ -62,6 +62,7 @@ import {
 import {
   createId,
   nowIso,
+  validateContextPack,
   validateRunArtifact,
   validateRunEvent,
   validateRuntimeContextPack,
@@ -455,8 +456,8 @@ export class TaskRunner {
       selectedSkillReferences: input.selectedSkillReferences,
       roleSkillReferences: input.roleSkillReferences
     });
-    const contextMarkdown = this.contextFormatter.format(contextBundle);
-    const contextPack = createRuntimeContextPack(
+    const baseContextMarkdown = this.contextFormatter.format(contextBundle);
+    const baseContextPack = createRuntimeContextPack(
       contextBundle,
       task.id,
       task.title,
@@ -473,64 +474,6 @@ export class TaskRunner {
       parentMessageId: continuation?.parentMessageId,
       createdAt,
       updatedAt: createdAt
-    });
-    const contextPlan = createContextPlan({
-      id: this.idGenerator.nextId("context_plan"),
-      taskPrompt: parsed.taskPrompt,
-      createdAt
-    });
-    const includeThreadSummary =
-      input.includeThreadSummary ??
-      input.role?.contextPolicy.includeThreadSummary ??
-      true;
-    const threadContextDisabledReason = includeThreadSummary
-      ? undefined
-      : "thread summary context is disabled by run or role context policy";
-    const recentRunEvidence = input.recentRunEvidence ??
-      (contextPlan.retrievalRoutes.includes("recency")
-        ? await collectRecentRunEvidence({
-            projectId: task.projectId,
-            taskRepository: this.taskRepository,
-            taskRunRepository: this.taskRunRepository,
-            runArtifactRepository: this.runArtifactRepository,
-            verificationResultRepository: this.verificationResultRepository,
-            riskReportRepository: this.riskReportRepository,
-            limit: 4
-          })
-        : []);
-    const threadSummaryContext = await collectThreadSummaryContext({
-      threadId: input.threadId,
-      includeThreadSummary,
-      disabledReason: threadContextDisabledReason,
-      conversationThreadSummaryRepository: this.conversationThreadSummaryRepository
-    });
-    const contextRetrievalResult = await this.contextRetriever.retrieve({
-      id: this.idGenerator.nextId("context_retrieval"),
-      plan: contextPlan,
-      task,
-      runId: run.id,
-      taskPrompt: parsed.taskPrompt,
-      contextBundle,
-      selectedSkillReferences: input.selectedSkillReferences,
-      roleSkillReferences: input.roleSkillReferences,
-      selectedFiles: input.selectedFiles,
-      selectedRuns: input.selectedRuns,
-      recentRunEvidence,
-      threadSummary: input.threadSummary ?? threadSummaryContext.summary,
-      includeThreadSummary,
-      threadContextDisabledReason,
-      createdAt
-    });
-    const runtimeContextPack = selectRuntimeContextCandidates({
-      pack: createTypedRuntimeContextPack({
-      bundle: contextBundle,
-      taskId: task.id,
-      runId: run.id,
-      planId: contextPlan.id,
-      createdAt
-      }),
-      plan: contextPlan,
-      retrievalResult: contextRetrievalResult
     });
     await this.taskRunRepository.create(run);
     const events: AgentRunEvent[] = [];
@@ -561,7 +504,6 @@ export class TaskRunner {
         warnings.push(`run event listener failed: ${errorMessage(error)}`);
       }
     };
-
     await emitRunEvent(
       progressEvent(
         "context_compiled",
@@ -573,6 +515,93 @@ export class TaskRunner {
           sectionCount: contextBundle.sections.length
         }
       )
+    );
+
+    const contextPlan = createContextPlan({
+      id: this.idGenerator.nextId("context_plan"),
+      taskPrompt: parsed.taskPrompt,
+      createdAt
+    });
+    const includeThreadSummary =
+      input.includeThreadSummary ??
+      input.role?.contextPolicy.includeThreadSummary ??
+      true;
+    const threadContextDisabledReason = includeThreadSummary
+      ? undefined
+      : "thread summary context is disabled by run or role context policy";
+    let contextRetrievalResult: ContextRetrievalResult;
+    let runtimeContextPack: RuntimeContextPack;
+    try {
+      const recentRunEvidence = input.recentRunEvidence ??
+        (contextPlan.retrievalRoutes.includes("recency")
+          ? await collectRecentRunEvidence({
+              projectId: task.projectId,
+              taskRepository: this.taskRepository,
+              taskRunRepository: this.taskRunRepository,
+              runArtifactRepository: this.runArtifactRepository,
+              verificationResultRepository: this.verificationResultRepository,
+              riskReportRepository: this.riskReportRepository,
+              limit: 4
+            })
+          : []);
+      const threadSummaryContext = await collectThreadSummaryContext({
+        threadId: input.threadId,
+        includeThreadSummary,
+        disabledReason: threadContextDisabledReason,
+        conversationThreadSummaryRepository: this.conversationThreadSummaryRepository
+      });
+      contextRetrievalResult = await this.contextRetriever.retrieve({
+        id: this.idGenerator.nextId("context_retrieval"),
+        plan: contextPlan,
+        task,
+        runId: run.id,
+        taskPrompt: parsed.taskPrompt,
+        contextBundle,
+        selectedSkillReferences: input.selectedSkillReferences,
+        roleSkillReferences: input.roleSkillReferences,
+        selectedFiles: input.selectedFiles,
+        selectedRuns: input.selectedRuns,
+        recentRunEvidence,
+        threadSummary: input.threadSummary ?? threadSummaryContext.summary,
+        includeThreadSummary,
+        threadContextDisabledReason,
+        createdAt
+      });
+      runtimeContextPack = selectRuntimeContextCandidates({
+        pack: createTypedRuntimeContextPack({
+          bundle: contextBundle,
+          taskId: task.id,
+          runId: run.id,
+          planId: contextPlan.id,
+          createdAt
+        }),
+        plan: contextPlan,
+        retrievalResult: contextRetrievalResult
+      });
+    } catch (error) {
+      const message = `context retrieval failed: ${errorMessage(error)}`;
+      await emitRunEvent({ type: "error", message });
+      await emitRunEvent(
+        progressEvent("run_failed", message, {
+          phase: "final",
+          status: "failed"
+        })
+      );
+      return this.failRunBeforeExecution({
+        run,
+        task: currentTask,
+        events,
+        warnings,
+        contextBundle,
+        contextMarkdown: baseContextMarkdown,
+        taskStatusMode: input.taskStatusMode ?? "single_run",
+        error: message
+      });
+    }
+    const contextMarkdown = renderRuntimeContextPackMarkdown(runtimeContextPack);
+    const contextPack = contextPackFromRuntimeContextPack(
+      baseContextPack,
+      runtimeContextPack
     );
 
     if (input.signal?.aborted) {
@@ -1727,6 +1756,55 @@ function createRuntimeContextPack(
     injectedSkills: injectedSkillEvidence(bundle),
     createdAt: nowIso()
   };
+}
+
+function contextPackFromRuntimeContextPack(
+  basePack: ContextPack,
+  runtimePack: RuntimeContextPack
+): ContextPack {
+  return validateContextPack({
+    ...basePack,
+    contextSections: runtimePack.sections.map(renderRuntimeContextSection),
+    approvedMemorySections: runtimePack.sections
+      .filter((section) => section.layer === "approved_memory")
+      .map((section) => section.content)
+  });
+}
+
+function renderRuntimeContextPackMarkdown(pack: RuntimeContextPack): string {
+  const lines = [
+    "# Agent Hub Context Bundle",
+    "",
+    `runtime_context_pack_id: ${pack.id}`,
+    `plan_id: ${pack.planId}`,
+    `task_id: ${pack.taskId}`,
+    pack.runId ? `run_id: ${pack.runId}` : undefined,
+    "",
+    "# Runtime Context Sections",
+    "",
+    ...pack.sections.flatMap((section) => [
+      renderRuntimeContextSection(section),
+      ""
+    ])
+  ].filter((line): line is string => line !== undefined);
+  return `${lines.join("\n").trimEnd()}\n`;
+}
+
+function renderRuntimeContextSection(
+  section: RuntimeContextPack["sections"][number]
+): string {
+  return [
+    `## ${section.title}`,
+    "",
+    `section_id: ${section.id}`,
+    `layer: ${section.layer}`,
+    `trust_level: ${section.trustLevel}`,
+    `compression_mode: ${section.compressionMode}`,
+    `source_item_ids: ${section.sourceItemIds.join(", ")}`,
+    `inclusion_reason: ${section.inclusionReason}`,
+    "",
+    section.content.trimEnd()
+  ].join("\n").trimEnd();
 }
 
 function createTypedRuntimeContextPack(input: {

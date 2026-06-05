@@ -20,11 +20,8 @@ export interface RuntimeContextSelectionInput {
 export function selectRuntimeContextCandidates(
   input: RuntimeContextSelectionInput
 ): RuntimeContextPack {
-  const baseSourceIds = new Set(
-    input.pack.sections.flatMap((section) => [
-      section.id,
-      ...section.sourceItemIds
-    ])
+  const selectedSourceKeys = new Set(
+    input.pack.sections.flatMap(sectionSourceKeys)
   );
   const omitted: RuntimeContextPack["omitted"] = [
     ...input.pack.omitted,
@@ -48,13 +45,17 @@ export function selectRuntimeContextCandidates(
     if (candidate.item.layer === "task") {
       continue;
     }
-    if (baseSourceIds.has(candidate.item.id)) {
+    const candidateKeys = candidateSourceKeys(candidate);
+    if (candidateKeys.some((key) => selectedSourceKeys.has(key))) {
       omitted.push({
         itemId: candidate.item.id,
         layer: candidate.item.layer,
         reason: "retrieval candidate already exists in pinned runtime context"
       });
       continue;
+    }
+    for (const key of candidateKeys) {
+      selectedSourceKeys.add(key);
     }
     allowedCandidates.push(candidate);
   }
@@ -108,6 +109,68 @@ export function selectRuntimeContextCandidates(
     omitted: budgeted.omitted,
     diagnostics: budgeted.diagnostics
   });
+}
+
+function sectionSourceKeys(
+  section: RuntimeContextPack["sections"][number]
+): string[] {
+  return uniqueStrings([
+    sourceKey("id", section.id),
+    ...section.sourceItemIds.flatMap((itemId) =>
+      canonicalLayerSourceKeys(section.layer, itemId)
+    ),
+    ...section.sourceHashes.map((hash) =>
+      sourceKey(`${section.layer}:hash`, normalizeContentHash(hash))
+    )
+  ]);
+}
+
+function candidateSourceKeys(candidate: ContextCandidate): string[] {
+  const item = candidate.item;
+  return uniqueStrings([
+    sourceKey("id", item.id),
+    ...canonicalLayerSourceKeys(item.layer, item.id),
+    ...canonicalLayerSourceKeys(item.layer, item.sourceId),
+    item.sourcePath
+      ? sourceKey(`${item.layer}:path`, normalizeSourcePath(item.sourcePath))
+      : undefined,
+    sourceKey(`${item.layer}:hash`, normalizeContentHash(item.contentHash))
+  ].filter((value): value is string => value !== undefined));
+}
+
+function canonicalLayerSourceKeys(layer: ContextLayer, value: string): string[] {
+  const normalized = normalizeSourcePath(value);
+  const keys = [
+    sourceKey(`${layer}:source`, normalized)
+  ];
+  const approvedMemorySource = canonicalApprovedMemorySource(normalized);
+  if (layer === "approved_memory" && approvedMemorySource) {
+    keys.push(sourceKey(`${layer}:source`, approvedMemorySource));
+  }
+  return keys;
+}
+
+function canonicalApprovedMemorySource(value: string): string | undefined {
+  if (
+    value === "memory:approved" ||
+    value === "memory/approved.md" ||
+    value.endsWith("/memory/approved.md")
+  ) {
+    return "memory/approved.md";
+  }
+  return undefined;
+}
+
+function sourceKey(kind: string, value: string): string {
+  return `${kind}:${value}`;
+}
+
+function normalizeContentHash(value: string): string {
+  return value.toLowerCase().replace(/^sha256:/, "");
+}
+
+function normalizeSourcePath(value: string): string {
+  return value.replace(/\\/g, "/").replace(/^\.\//, "").toLowerCase();
 }
 
 function candidatePolicyOmission(
@@ -525,4 +588,8 @@ function dedupeLines(lines: string[]): string[] {
     deduped.push(line);
   }
   return deduped;
+}
+
+function uniqueStrings(values: string[]): string[] {
+  return [...new Set(values)].sort();
 }

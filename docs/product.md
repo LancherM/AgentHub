@@ -260,15 +260,19 @@ run rather than written into the source checkout.
 Task runs also persist a typed `runtime_context_pack` artifact alongside the
 existing task brief and conversation brief evidence so later review can inspect
 context layers, trust labels, source ids, source hashes, compression metadata,
-and diagnostics without changing the agent-facing markdown injection path.
+and diagnostics. The selected runtime pack is also rendered back into the task
+brief, worktree overlay payload, and adapter runtime markdown so retrieval
+results that survive policy and budget checks are the context the agent sees.
 Each run also records a deterministic `context_plan` artifact with the
 rule-based task type, required layers, retrieval routes, layer trust policy,
 budget policy, and compression policy used to assemble runtime context evidence.
 Runs now also persist an explicit-route `context_retrieval_candidates` artifact
 for already-selected sources such as the current task, selected or role-default
 skills, selected files, selected runs, and current thread continuity. This is
-inspectable audit evidence only; it does not change the adapter-facing markdown
-payload yet.
+inspectable audit evidence and feeds the runtime context selector before agent
+execution. If retrieval or selection fails after a run row is created, the run is
+finalized as failed and the task returns to `open` instead of remaining stuck in
+`running`.
 Agent Hub also maintains local SQLite index storage for stable text sources:
 project context docs, approved memory, project skills, and global skills. The
 index rebuild path is deterministic per project and tracks source hashes so
@@ -278,8 +282,9 @@ When a project has stable-source index data available, retrieval can add BM25
 ranked candidates to the same `context_retrieval_candidates` artifact. These
 ranked candidates include lexical score diagnostics, matched query terms, layer
 and trust metadata, and duplicate omissions when BM25 finds a source already
-selected through the explicit route. Runtime context selection is still
-unchanged at this phase.
+selected through the explicit route. Indexed project or global skills are only
+eligible through BM25 when the task or role selected the matching skill
+reference; otherwise they are omitted as unrequested skills.
 Retrieval also produces bounded recency candidates for volatile local evidence:
 recent run summaries, verification outcomes, risk summaries, changed-file
 summaries, and thread summaries. Run evidence is medium trust; thread summaries
@@ -313,11 +318,14 @@ compression counts in runtime pack diagnostics. Selected candidates are
 appended to the typed pack with source ids, hashes, trust labels, compression
 metadata, and inclusion reasons; omitted candidates are recorded with reasons.
 The current task and runtime policy remain pinned, and adapter-facing markdown
-injection remains compatible with the existing task brief path.
+injection remains compatible with the existing task brief path while using the
+selected runtime sections as its source.
 Runtime context assembly applies hard local policy before memory and skills are
 included: proposed or rejected memory, secret-like source paths,
 repository-root agent instruction exports, and unsupported task/role skill
-scopes are filtered with diagnostics. Conversation context is rendered as
+scopes are filtered with diagnostics. Secret-like selected files are filtered by
+all path segments, and indexed approved memory is deduplicated against the base
+approved-memory section before runtime injection. Conversation context is rendered as
 low-trust continuity and explicitly cannot override the current task, project
 facts, code, tests, approved memory, or runtime policy.
 Role-backed runs add an injected role envelope to that same runtime payload:

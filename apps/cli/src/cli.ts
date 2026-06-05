@@ -59,6 +59,7 @@ import {
   type ConversationMessage,
   type ConversationThread,
   type ConversationThreadSummary,
+  type ContextIndexRepository,
   type JsonObject,
   type MemoryCategory,
   type Project,
@@ -160,6 +161,7 @@ export interface CliRuntime {
   riskReportRepository: RiskReportRepository;
   runMetadataRepository: RunMetadataRepository;
   contextEvalEventRepository: ContextEvalEventRepository;
+  contextIndexRepository?: ContextIndexRepository;
   memoryItemRepository: MemoryItemRepository;
   comparisonReportRepository: ComparisonReportRepository;
   skillRepository: SkillRepository;
@@ -211,7 +213,8 @@ export function createCliRuntime(
     dependencies.settingsRepository !== undefined ||
     dependencies.roleCallRepository !== undefined ||
     dependencies.roleCallEventRepository !== undefined ||
-    dependencies.roleTodoRepository !== undefined;
+    dependencies.roleTodoRepository !== undefined ||
+    dependencies.contextIndexRepository !== undefined;
   const shouldUseSqlite =
     dependencies.storageMode === "sqlite" ||
     (dependencies.storageMode !== "memory" && !hasInjectedStorage);
@@ -271,6 +274,8 @@ export function createCliRuntime(
     dependencies.contextEvalEventRepository ??
     sqliteRepositories?.contextEvalEventRepository ??
     new InMemoryContextEvalEventRepository();
+  const contextIndexRepository =
+    dependencies.contextIndexRepository ?? sqliteRepositories?.contextIndexRepository;
   const memoryItemRepository =
     dependencies.memoryItemRepository ??
     sqliteRepositories?.memoryItemRepository ??
@@ -309,7 +314,9 @@ export function createCliRuntime(
     riskReportRepository,
     memoryItemRepository,
     runMetadataRepository,
-    contextEvalEventRepository
+    conversationThreadSummaryRepository,
+    contextEvalEventRepository,
+    contextIndexRepository
   });
 
   return {
@@ -326,6 +333,7 @@ export function createCliRuntime(
     riskReportRepository,
     runMetadataRepository,
     contextEvalEventRepository,
+    contextIndexRepository,
     memoryItemRepository,
     comparisonReportRepository,
     skillRepository,

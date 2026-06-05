@@ -226,6 +226,18 @@ async function bm25Candidates(
   const candidates: ContextCandidate[] = [];
   const omitted: ContextRetrievalResult["omitted"] = [];
   for (const searchResult of searchResults) {
+    const skillOmissionReason = unselectedIndexedSkillReason(
+      searchResult,
+      input
+    );
+    if (skillOmissionReason) {
+      omitted.push({
+        itemId: searchResult.entry.id,
+        layer: searchResult.entry.layer,
+        reason: skillOmissionReason
+      });
+      continue;
+    }
     const key = sourceHashKey(
       searchResult.entry.sourceId,
       searchResult.entry.contentHash
@@ -256,6 +268,25 @@ async function bm25Candidates(
       }
     ]
   };
+}
+
+function unselectedIndexedSkillReason(
+  searchResult: ContextIndexSearchResult,
+  input: ContextRetrieverInput
+): string | undefined {
+  if (
+    searchResult.entry.sourceKind !== "project_skill" &&
+    searchResult.entry.sourceKind !== "global_skill"
+  ) {
+    return undefined;
+  }
+  if (
+    matchesSkillReference(searchResult.entry.sourceId, input.selectedSkillReferences) ||
+    matchesSkillReference(searchResult.entry.sourceId, input.roleSkillReferences)
+  ) {
+    return undefined;
+  }
+  return "BM25 skill candidate was not selected by the task or role";
 }
 
 function indexSearchCandidate(
@@ -1101,7 +1132,7 @@ function unscopedSkillId(value: string): string {
 }
 
 function normalizeSourcePath(value: string): string {
-  return value.split(path.sep).join("/").replace(/^\.\//, "");
+  return value.replace(/\\/g, "/").split(path.sep).join("/").replace(/^\.\//, "");
 }
 
 function uniqueStrings(values: string[]): string[] {
@@ -1122,21 +1153,24 @@ function contextCandidateRouteCounts(
 
 function secretLikePathReason(value: string): string | undefined {
   const normalized = normalizeSourcePath(value).toLowerCase();
-  const basename = normalized.split("/").at(-1) ?? normalized;
-  if (
-    basename === ".env" ||
-    basename.startsWith(".env.") ||
-    basename === "id_rsa" ||
-    basename === "id_ed25519" ||
-    basename.endsWith(".pem") ||
-    basename.endsWith(".key") ||
-    basename.startsWith("secrets.") ||
-    basename.startsWith("credentials.") ||
-    basename.startsWith("token.")
-  ) {
+  if (normalized.split("/").some(secretLikePathSegment)) {
     return "secret-like selected file paths are excluded before retrieval";
   }
   return undefined;
+}
+
+function secretLikePathSegment(segment: string): boolean {
+  return (
+    segment === ".env" ||
+    segment.startsWith(".env.") ||
+    segment === "id_rsa" ||
+    segment === "id_ed25519" ||
+    segment.endsWith(".pem") ||
+    segment.endsWith(".key") ||
+    segment.startsWith("secrets.") ||
+    segment.startsWith("credentials.") ||
+    segment.startsWith("token.")
+  );
 }
 
 function trustScore(trustLevel: TrustLevel): number {

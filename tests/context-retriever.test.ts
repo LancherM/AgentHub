@@ -58,7 +58,11 @@ describe("explicit context retrieval", () => {
           updatedAt: "2026-01-01T00:01:00.000Z"
         },
         {
-          path: ".env.local",
+          path: ".env/config.ts",
+          content: "TOKEN=secret\n"
+        },
+        {
+          path: ".env.local/settings.ts",
           content: "TOKEN=secret\n"
         }
       ],
@@ -121,7 +125,12 @@ describe("explicit context retrieval", () => {
     });
     expect(result.omitted).toEqual([
       {
-        itemId: "file:.env.local",
+        itemId: "file:.env/config.ts",
+        layer: "code",
+        reason: "secret-like selected file paths are excluded before retrieval"
+      },
+      {
+        itemId: "file:.env.local/settings.ts",
         layer: "code",
         reason: "secret-like selected file paths are excluded before retrieval"
       }
@@ -274,6 +283,116 @@ describe("explicit context retrieval", () => {
         reason: "BM25 candidate duplicated an explicit-route source"
       }
     ]);
+  });
+
+  it("omits BM25 indexed skill candidates that were not selected by task or role", async () => {
+    const contextIndexRepository = new InMemoryContextIndexRepository();
+    await contextIndexRepository.rebuildProject(
+      "project_1",
+      [
+        validateContextIndexEntry({
+          id: "context_index:project_1:project_skill:project:lint",
+          projectId: "project_1",
+          layer: "skill",
+          sourceKind: "project_skill",
+          sourceId: "project:lint",
+          scope: "project",
+          trustLevel: "medium",
+          lifetime: "static",
+          title: "Project Skill: Lint",
+          content: "Use pnpm lint for parser changes.",
+          contentHash: "sha256:lint-content",
+          sourcePath: "/tmp/project-store/skills/lint/SKILL.md",
+          createdAt,
+          indexedAt: createdAt,
+          metadata: {}
+        }),
+        validateContextIndexEntry({
+          id: "context_index:project_1:global_skill:global:review",
+          projectId: "project_1",
+          layer: "skill",
+          sourceKind: "global_skill",
+          sourceId: "global:review",
+          scope: "global",
+          trustLevel: "medium",
+          lifetime: "static",
+          title: "Global Skill: Review",
+          content: "Review parser changes after lint runs.",
+          contentHash: "sha256:review-content",
+          sourcePath: "/tmp/global-skills/review/SKILL.md",
+          createdAt,
+          indexedAt: createdAt,
+          metadata: {}
+        }),
+        validateContextIndexEntry({
+          id: "context_index:project_1:project_context:context/project.md",
+          projectId: "project_1",
+          layer: "project",
+          sourceKind: "project_context",
+          sourceId: "context/project.md",
+          scope: "project",
+          trustLevel: "high",
+          lifetime: "static",
+          title: "Project Context: project",
+          content: "Parser lint review guidance lives in project context.",
+          contentHash: "sha256:project-context",
+          sourcePath: "/tmp/project-store/context/project.md",
+          createdAt,
+          indexedAt: createdAt,
+          metadata: {}
+        })
+      ],
+      createdAt
+    );
+    const retriever = new ExplicitContextRetriever({
+      contextIndexRepository
+    });
+    const task = testTask();
+    const plan = createContextPlan({
+      id: "context_plan_unselected_skills",
+      taskPrompt: "Fix parser lint review regression",
+      createdAt
+    });
+
+    const result = await retriever.retrieve({
+      id: "context_retrieval_unselected_skills",
+      plan,
+      task,
+      runId: "run_1",
+      taskPrompt: "Fix parser lint review regression",
+      contextBundle: contextBundle([
+        section("task:task", "task", "task", "Current Task", "Fix parser")
+      ]),
+      createdAt
+    });
+
+    expect(result.candidates.map((candidate) => candidate.item.sourceKind))
+      .not.toEqual(expect.arrayContaining(["project_skill", "global_skill"]));
+    expect(result.candidates).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          routes: ["bm25"],
+          item: expect.objectContaining({
+            sourceKind: "project_context",
+            sourceId: "context/project.md"
+          })
+        })
+      ])
+    );
+    expect(result.omitted).toEqual(
+      expect.arrayContaining([
+        {
+          itemId: "context_index:project_1:project_skill:project:lint",
+          layer: "skill",
+          reason: "BM25 skill candidate was not selected by the task or role"
+        },
+        {
+          itemId: "context_index:project_1:global_skill:global:review",
+          layer: "skill",
+          reason: "BM25 skill candidate was not selected by the task or role"
+        }
+      ])
+    );
   });
 
   it("keeps retrieval functional when embedding capability is not configured", async () => {
