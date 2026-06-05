@@ -230,8 +230,8 @@ function compressionModeForLayer(layer: ContextLayer): CompressionMode {
     case "role":
       return "extractive";
     case "run_evidence":
-      return "structured";
     case "conversation":
+      return "structured";
     case "global":
       return "summary";
   }

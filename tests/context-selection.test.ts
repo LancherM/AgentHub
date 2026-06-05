@@ -118,6 +118,15 @@ describe("runtime context retrieval selection", () => {
     ]);
     expect(selected.diagnostics).toEqual([
       expect.objectContaining({
+        message: "runtime context layer budget allocation completed",
+        metadata: expect.objectContaining({
+          items_selected: 1,
+          items_compressed: 0,
+          items_omitted: 1,
+          top_omission_reason: "retrieval candidate exceeds code budget"
+        })
+      }),
+      expect.objectContaining({
         message: "runtime context retrieval selection completed",
         metadata: expect.objectContaining({
           candidateCount: 4,
@@ -127,25 +136,177 @@ describe("runtime context retrieval selection", () => {
       })
     ]);
   });
+
+  it("compresses long project docs, run evidence, and conversation continuity by layer budget", () => {
+    const plan = createContextPlan({
+      id: "context_plan_compression",
+      taskPrompt: "Fix parser bug using previous run evidence",
+      createdAt
+    });
+    const longConversation = [
+      "trust: low",
+      "purpose: continuity only",
+      "may_override_current_task: false",
+      "may_override_project_context: false",
+      "may_override_approved_memory: false",
+      "",
+      "Prior discussion ".repeat(80),
+      "decisions:",
+      ...Array.from({ length: 12 }, (_, index) => `- Decision ${index}`),
+      "open_items:",
+      ...Array.from({ length: 12 }, (_, index) => `- Open item ${index}`)
+    ].join("\n");
+    const basePack = validateRuntimeContextPack({
+      id: "runtime_pack_compression",
+      planId: plan.id,
+      taskId: "task_compression",
+      runId: "run_compression",
+      sections: [
+        section("runtime_policy:agent_hub", "runtime_policy", "system", "Runtime Policy"),
+        section("task:task", "task", "system", "Current Task"),
+        section(
+          "conversation:thread",
+          "conversation",
+          "low",
+          "Thread Summary",
+          longConversation,
+          "structured"
+        )
+      ],
+      omitted: [],
+      diagnostics: [],
+      createdAt
+    });
+    const longProjectDoc = [
+      "# Parser Context",
+      "Use packages/task-runner for runtime context.",
+      ...Array.from(
+        { length: 80 },
+        (_, index) => `- Parser rule ${index} lives near src/parser.ts and tests/parser.test.ts.`
+      )
+    ].join("\n");
+    const longRunEvidence = [
+      "run_id: run_prior",
+      "task_id: task_prior",
+      "task_title: Parser fix",
+      "agent_kind: codex",
+      "status: failed",
+      "",
+      "Previous run output ".repeat(160),
+      "changed_files:",
+      ...Array.from({ length: 16 }, (_, index) => `- src/file-${index}.ts`),
+      "verification_summary: pnpm test failed in parser.test.ts",
+      "risk_summary: medium"
+    ].join("\n");
+    const retrievalResult = validateContextRetrievalResult({
+      id: "context_retrieval_compression",
+      planId: plan.id,
+      taskId: "task_compression",
+      runId: "run_compression",
+      candidates: [
+        candidate({
+          id: "context_index:long_project",
+          layer: "project",
+          trustLevel: "high",
+          sourceKind: "project_context",
+          sourceId: "context/project.md",
+          content: longProjectDoc,
+          sourcePath: "/tmp/context/project.md"
+        }),
+        candidate({
+          id: "run_evidence:prior",
+          layer: "run_evidence",
+          trustLevel: "medium",
+          sourceKind: "recent_run_summary",
+          sourceId: "run_prior",
+          content: longRunEvidence
+        })
+      ],
+      omitted: [],
+      diagnostics: [],
+      createdAt
+    });
+
+    const selected = selectRuntimeContextCandidates({
+      pack: basePack,
+      plan,
+      retrievalResult
+    });
+
+    const compressedConversation = selected.sections.find(
+      (entry) => entry.id === "conversation:thread"
+    );
+    const compressedProject = selected.sections.find(
+      (entry) => entry.id === "retrieval:context_index:long_project"
+    );
+    const compressedRun = selected.sections.find(
+      (entry) => entry.id === "retrieval:run_evidence:prior"
+    );
+    expect(compressedConversation).toMatchObject({
+      layer: "conversation",
+      trustLevel: "low",
+      compressionMode: "structured",
+      sourceItemIds: ["conversation:thread"],
+      sourceHashes: ["sha256:conversation:thread"],
+      omittedItemCount: 1
+    });
+    expect(compressedConversation?.content).toContain("may_override_current_task: false");
+    expect(compressedConversation?.renderedCharacterCount).toBeLessThan(
+      compressedConversation?.originalCharacterCount ?? 0
+    );
+    expect(compressedProject).toMatchObject({
+      compressionMode: "extractive",
+      sourceItemIds: ["context_index:long_project"],
+      sourceHashes: ["sha256:context_index:long_project"],
+      omittedItemCount: 1
+    });
+    expect(compressedProject?.content).toContain("compression: extractive");
+    expect(compressedProject?.renderedCharacterCount).toBeLessThanOrEqual(1_200);
+    expect(compressedRun).toMatchObject({
+      compressionMode: "structured",
+      sourceItemIds: ["run_evidence:prior"],
+      sourceHashes: ["sha256:run_evidence:prior"],
+      omittedItemCount: 1
+    });
+    expect(compressedRun?.content).toContain("verification_summary:");
+    expect(compressedRun?.renderedCharacterCount).toBeLessThanOrEqual(1_200);
+    expect(selected.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          message: "runtime context layer budget allocation completed",
+          metadata: expect.objectContaining({
+            items_compressed: 3,
+            layer_budget_requested: expect.objectContaining({
+              project: 1_200,
+              run_evidence: 1_200,
+              conversation: 300
+            })
+          })
+        })
+      ])
+    );
+  });
 });
 
 function section(
   id: string,
   layer: ContextLayer,
   trustLevel: TrustLevel,
-  title: string
+  title: string,
+  content = title,
+  compressionMode: "none" | "extractive" | "structured" | "summary" = "none"
 ) {
   return {
     id,
     layer,
     trustLevel,
     title,
-    content: title,
+    content,
     sourceItemIds: [id],
     sourceHashes: [`sha256:${id}`],
-    compressionMode: "none" as const,
-    originalCharacterCount: title.length,
-    renderedCharacterCount: title.length,
+    compressionMode,
+    originalCharacterCount: content.length,
+    renderedCharacterCount: content.length,
     omittedItemCount: 0,
     inclusionReason: "pinned"
   };

@@ -144,10 +144,14 @@ TaskRunner now runs a runtime selection step over explicit, BM25, and recency
 candidates before persisting `runtime_context_pack`. The selector applies hard
 policy first, ranks allowed candidates with relevance, layer priority, trust,
 freshness, and graph-proximity signals, then enforces layer character budgets.
-Selected candidates are appended only to the typed runtime pack; adapter
-markdown still comes from the existing context formatter. The synthetic
-`runtime_policy` section and current task sections are pinned and cannot be
-evicted by retrieval candidates.
+Budget enforcement runs across the typed pack sections and uses deterministic
+compression for project docs, run evidence, and conversation continuity before
+omitting over-budget items. Compression preserves source ids, source hashes,
+compression mode, original/rendered character counts, and omission counts, with
+budget usage diagnostics stored in the artifact. Selected candidates are
+appended only to the typed runtime pack; adapter markdown still comes from the
+existing context formatter. The synthetic `runtime_policy` section and current
+task sections are pinned and cannot be evicted by retrieval candidates.
 The context compiler applies hard policy before adding memory or skill sections.
 It filters proposed/rejected memory, secret-like source paths, repository-root
 agent instruction export targets, and unsupported task/role skill scopes, then

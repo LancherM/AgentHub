@@ -1810,6 +1810,7 @@ function compressionModeForLayer(layer: ContextLayer): CompressionMode {
       return "extractive";
     case "run_evidence":
     case "conversation":
+      return "structured";
     case "global":
       return "summary";
   }

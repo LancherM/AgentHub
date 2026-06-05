@@ -42,7 +42,7 @@ describe("context plan generation", () => {
         "compressionPolicy": {
           "approved_memory": "none",
           "code": "extractive",
-          "conversation": "summary",
+          "conversation": "structured",
           "global": "summary",
           "project": "extractive",
           "role": "extractive",
@@ -114,7 +114,7 @@ describe("context plan generation", () => {
         "compressionPolicy": {
           "approved_memory": "none",
           "code": "extractive",
-          "conversation": "summary",
+          "conversation": "structured",
           "global": "summary",
           "project": "extractive",
           "role": "extractive",
