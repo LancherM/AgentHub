@@ -126,15 +126,22 @@ export class ExplicitContextRetriever implements ContextRetriever {
     }
 
     const explicitCandidates = dedupeCandidates(candidates);
+    const taskRule = taskRuleCandidates(input);
     const bm25 = await bm25Candidates(input, explicitCandidates, this.options);
     const embedding = await embeddingCandidates(input, this.options);
     const graph = await graphCandidates(
       input,
-      [...explicitCandidates, ...bm25.candidates, ...embedding.candidates],
+      [
+        ...explicitCandidates,
+        ...taskRule.candidates,
+        ...bm25.candidates,
+        ...embedding.candidates
+      ],
       this.options
     );
     const recency = recencyCandidates(input, [
       ...explicitCandidates,
+      ...taskRule.candidates,
       ...bm25.candidates,
       ...embedding.candidates,
       ...graph.candidates
@@ -144,6 +151,7 @@ export class ExplicitContextRetriever implements ContextRetriever {
         ...input,
         candidates: [
           ...explicitCandidates,
+          ...taskRule.candidates,
           ...bm25.candidates,
           ...embedding.candidates,
           ...graph.candidates,
@@ -163,6 +171,7 @@ export class ExplicitContextRetriever implements ContextRetriever {
       omitted: [...omitted, ...bm25.omitted, ...graph.omitted, ...recency.omitted],
       diagnostics: [
         ...diagnostics,
+        ...taskRule.diagnostics,
         ...bm25.diagnostics,
         ...embedding.diagnostics,
         ...graph.diagnostics,
@@ -182,6 +191,95 @@ export class ExplicitContextRetriever implements ContextRetriever {
     });
     return result;
   }
+}
+
+function taskRuleCandidates(input: ContextRetrieverInput): {
+  candidates: ContextCandidate[];
+  diagnostics: ContextRetrievalResult["diagnostics"];
+} {
+  if (!input.plan.retrievalRoutes.includes("task_rule")) {
+    return { candidates: [], diagnostics: [] };
+  }
+  const candidates = input.contextBundle.sections
+    .filter((section) => taskRuleEligibleSection(section, input.plan))
+    .map((section, index) => taskRuleSectionCandidate(section, input, index));
+  return {
+    candidates,
+    diagnostics: [
+      {
+        severity: "info",
+        message: "task-rule deterministic retrieval completed",
+        metadata: {
+          selectedCount: candidates.length,
+          requiredLayers: input.plan.requiredLayers
+        }
+      }
+    ]
+  };
+}
+
+function taskRuleEligibleSection(
+  section: ContextSection,
+  plan: ContextPlan
+): boolean {
+  if (section.body.trim().length === 0) {
+    return false;
+  }
+  if (
+    section.source.kind === "task" ||
+    section.source.kind === "agent" ||
+    section.source.kind === "repository" ||
+    section.source.kind === "skill" ||
+    section.source.kind === "conversation" ||
+    section.source.kind === "user_constraint" ||
+    section.source.kind === "execution_hint"
+  ) {
+    return false;
+  }
+  return plan.requiredLayers.includes(contextLayerForSectionSource(section.source.kind));
+}
+
+function taskRuleSectionCandidate(
+  section: ContextSection,
+  input: ContextRetrieverInput,
+  index: number
+): ContextCandidate {
+  const layer = contextLayerForSectionSource(section.source.kind);
+  const metadata = sourceMetadata(section);
+  const sourcePath =
+    typeof metadata.sourcePath === "string" ? metadata.sourcePath : undefined;
+  return candidate({
+    item: contextItem({
+      id: section.id,
+      layer,
+      sourceKind: section.source.kind,
+      sourceId: section.id,
+      scope: "project",
+      trustLevel: trustLevelForLayer(layer),
+      lifetime: layer === "approved_memory" ? "approved" : "static",
+      title: section.title,
+      content: section.body,
+      createdAt: input.createdAt,
+      sourcePath,
+      contentHash:
+        typeof metadata.contentHash === "string"
+          ? metadata.contentHash
+          : undefined,
+      metadata: {
+        route: "task_rule",
+        sourceItemId: section.id,
+        sourceKind: section.source.kind,
+        sourceLabel: section.source.label,
+        ...(layer === "approved_memory" ? { memoryStatus: "approved" } : {})
+      }
+    }),
+    routes: ["task_rule"],
+    relevanceScore: Math.max(0.65, 0.9 - index * 0.04),
+    freshnessScore: 0.75,
+    scopeMatchScore: 0.9,
+    inclusionReason:
+      "context section matched the task plan required layers through deterministic task rules"
+  });
 }
 
 async function bm25Candidates(
@@ -1025,6 +1123,47 @@ function contextItem(input: {
     updatedAt: input.updatedAt,
     metadata: input.metadata
   };
+}
+
+function contextLayerForSectionSource(
+  kind: ContextSection["source"]["kind"]
+): ContextLayer {
+  switch (kind) {
+    case "task":
+    case "user_constraint":
+    case "execution_hint":
+      return "task";
+    case "repository":
+    case "project":
+    case "agent":
+      return "project";
+    case "memory":
+      return "approved_memory";
+    case "skill":
+      return "skill";
+    case "conversation":
+      return "conversation";
+  }
+}
+
+function trustLevelForLayer(layer: ContextLayer): TrustLevel {
+  switch (layer) {
+    case "runtime_policy":
+    case "task":
+      return "system";
+    case "project":
+    case "code":
+    case "test":
+    case "approved_memory":
+      return "high";
+    case "run_evidence":
+    case "skill":
+    case "role":
+    case "global":
+      return "medium";
+    case "conversation":
+      return "low";
+  }
 }
 
 function dedupeCandidates(candidates: ContextCandidate[]): ContextCandidate[] {

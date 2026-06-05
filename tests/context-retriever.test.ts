@@ -137,6 +137,88 @@ describe("explicit context retrieval", () => {
     ]);
   });
 
+  it("adds task-rule candidates for required compiled context sections", async () => {
+    const retriever = new ExplicitContextRetriever();
+    const task = testTask();
+    const plan = createContextPlan({
+      id: "context_plan_task_rule",
+      taskPrompt: "Implement parser feature with approved memory",
+      createdAt
+    });
+
+    const result = await retriever.retrieve({
+      id: "context_retrieval_task_rule",
+      plan,
+      task,
+      runId: "run_1",
+      taskPrompt: "Implement parser feature with approved memory",
+      contextBundle: contextBundle([
+        section("task:task", "task", "task", "Current Task", "Implement parser"),
+        section(
+          "project:architecture",
+          "project",
+          "context/architecture.md",
+          "Architecture Context",
+          "Parser code belongs in packages/core."
+        ),
+        section(
+          "memory:approved",
+          "memory",
+          "memory/approved.md",
+          "Approved Memory",
+          "Keep runtime context injection as the default delivery path."
+        ),
+        section(
+          "conversation:thread",
+          "conversation",
+          "thread",
+          "Conversation Continuity [trust=low]",
+          "Thread note: continuity only."
+        )
+      ]),
+      createdAt
+    });
+
+    const taskRuleCandidates = result.candidates.filter((candidate) =>
+      candidate.routes.includes("task_rule")
+    );
+    expect(taskRuleCandidates).toEqual([
+      expect.objectContaining({
+        routes: ["task_rule"],
+        item: expect.objectContaining({
+          id: "project:architecture",
+          layer: "project",
+          sourceKind: "project",
+          trustLevel: "high"
+        })
+      }),
+      expect.objectContaining({
+        routes: ["task_rule"],
+        item: expect.objectContaining({
+          id: "memory:approved",
+          layer: "approved_memory",
+          sourceKind: "memory",
+          trustLevel: "high",
+          metadata: expect.objectContaining({ memoryStatus: "approved" })
+        })
+      })
+    ]);
+    expect(taskRuleCandidates.map((candidate) => candidate.item.id)).not.toEqual(
+      expect.arrayContaining(["task:task", "conversation:thread"])
+    );
+    expect(result.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          message: "task-rule deterministic retrieval completed",
+          metadata: expect.objectContaining({
+            selectedCount: 2,
+            requiredLayers: expect.arrayContaining(["project", "approved_memory"])
+          })
+        })
+      ])
+    );
+  });
+
   it("adds BM25 stable-source candidates and dedupes sources already selected explicitly", async () => {
     const contextIndexRepository = new InMemoryContextIndexRepository();
     await contextIndexRepository.rebuildProject(

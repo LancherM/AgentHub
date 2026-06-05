@@ -1422,7 +1422,7 @@ function codeGraphEntryUnchanged(
   );
 }
 
-function scoreCodeGraphEntry(
+export function scoreCodeGraphEntry(
   entry: CodeGraphEntry,
   input: {
     terms: string[];
@@ -1478,7 +1478,7 @@ function scoreCodeGraphEntry(
   };
 }
 
-function normalizePathSet(values: string[]): Set<string> {
+export function normalizePathSet(values: string[]): Set<string> {
   return new Set(values.map(normalizeGraphPath).filter(Boolean));
 }
 
@@ -1491,7 +1491,7 @@ function arraysEqual(left: string[], right: string[]): boolean {
     left.every((value, index) => value === right[index]);
 }
 
-function normalizeSearchTerms(value: string | string[]): string[] {
+export function normalizeSearchTerms(value: string | string[]): string[] {
   const rawTerms = Array.isArray(value)
     ? value
     : value.split(/[^A-Za-z0-9_./-]+/);

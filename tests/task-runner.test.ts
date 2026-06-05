@@ -36,6 +36,7 @@ import {
   InMemoryTaskRepository,
   InMemoryTaskRunRepository,
   InMemoryVerificationResultRepository,
+  InMemoryCodeGraphRepository,
   InMemoryContextIndexRepository,
   InMemoryContextEvalEventRepository,
   InMemoryMemoryItemRepository,
@@ -54,6 +55,7 @@ import {
   TaskRunner,
   TaskRunnerError
 } from "@agent-hub/task-runner";
+import { rebuildStableContextIndex } from "@agent-hub/db";
 import {
   DEFAULT_VERIFICATION_COMMAND_TIMEOUT_MS,
   VerificationRunner
@@ -427,6 +429,205 @@ describe("task runner", () => {
     await expect(
       fs.readFile(path.join(result.worktreePath ?? "", "fake-agent-output.md"), "utf8")
     ).resolves.toContain("Parser failures with E_PARSE");
+  });
+
+  it("refreshes the stable context index before retrieval", async () => {
+    const projectRoot = await createTestDirectory("agent-hub-context-refresh-project");
+    const runRoot = await createTestDirectory("agent-hub-context-refresh-runs");
+    const contextStoreRoot =
+      await createTestDirectory("agent-hub-context-refresh-store");
+    const projectContextPath = path.join(contextStoreRoot, "context", "project.md");
+    await fs.mkdir(path.dirname(projectContextPath), { recursive: true });
+    await fs.writeFile(
+      projectContextPath,
+      "# Project\n\nParser failures with E_PARSE happen in src/parser.ts.\n",
+      "utf8"
+    );
+    const runArtifactRepository = new InMemoryRunArtifactRepository();
+    const contextIndexRepository = new InMemoryContextIndexRepository();
+    const runner = new TaskRunner({
+      defaultRunRoot: runRoot,
+      workspaceManager: new TestWorkspaceManager(runRoot),
+      diffCollector: new StaticDiffCollector(),
+      verificationRunner: new VerificationRunner(new MockShellExecutor()),
+      runArtifactRepository,
+      contextIndexRepository,
+      contextIndexRefresher: async (input) =>
+        rebuildStableContextIndex({
+          projectId: input.projectId,
+          projectContextStoreRoot: input.projectContextStoreRoot,
+          globalSkillStoreRoot: input.globalSkillStoreRoot,
+          contextIndexRepository,
+          indexedAt: input.indexedAt
+        }),
+      idGenerator: new SequenceIdGenerator(),
+      clock: new FixedClock("2026-01-01T00:00:00.000Z")
+    });
+
+    const result = await runner.run({
+      projectRoot,
+      contextStoreRoot,
+      projectId: "project_context_refresh",
+      targetRepository: { id: "project_context_refresh" },
+      taskPrompt: "Fix parser.ts E_PARSE",
+      agentKind: "fake",
+      taskId: "task_context_refresh"
+    });
+
+    await expect(
+      contextIndexRepository.listByProjectId("project_context_refresh")
+    ).resolves.toEqual([
+      expect.objectContaining({
+        sourceKind: "project_context",
+        sourceId: "context/project.md",
+        content: expect.stringContaining("E_PARSE")
+      })
+    ]);
+    expect(result.contextRetrievalResult?.candidates).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          routes: ["bm25"],
+          item: expect.objectContaining({
+            sourceKind: "project_context",
+            sourceId: "context/project.md"
+          })
+        }),
+        expect.objectContaining({
+          routes: ["task_rule"],
+          item: expect.objectContaining({
+            layer: "project"
+          })
+        })
+      ])
+    );
+    expect(result.contextMarkdown).toContain("Parser failures with E_PARSE");
+    const runtimeContextArtifact = await runArtifactRepository.getLatestByRunIdAndKind(
+      result.run.id,
+      "runtime_context_pack"
+    );
+    const runtimeContextPack = JSON.parse(runtimeContextArtifact?.content ?? "{}") as {
+      omitted: Array<{ itemId: string; reason: string }>;
+      diagnostics: Array<{ message: string; metadata?: Record<string, unknown> }>;
+    };
+    expect(runtimeContextPack.omitted).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          itemId: "project:summary",
+          reason: "retrieval candidate already exists in pinned runtime context"
+        })
+      ])
+    );
+    expect(runtimeContextPack.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          message: "runtime context retrieval selection completed"
+        })
+      ])
+    );
+  });
+
+  it("refreshes the TypeScript code graph before graph retrieval", async () => {
+    const projectRoot = await createTestDirectory("agent-hub-graph-refresh-project");
+    const runRoot = await createTestDirectory("agent-hub-graph-refresh-runs");
+    await fs.mkdir(path.join(projectRoot, "packages", "core", "src"), {
+      recursive: true
+    });
+    await fs.writeFile(
+      path.join(projectRoot, "packages", "core", "src", "parser.ts"),
+      [
+        "import { TOKEN } from './tokens';",
+        "export class Parser {}",
+        "export function parse(input: string) { return TOKEN + input; }"
+      ].join("\n"),
+      "utf8"
+    );
+    await fs.writeFile(
+      path.join(projectRoot, "packages", "core", "src", "tokens.ts"),
+      "export const TOKEN = 'token';\n",
+      "utf8"
+    );
+    await fs.writeFile(
+      path.join(projectRoot, "packages", "core", "src", "parser.test.ts"),
+      [
+        "import { parse } from './parser';",
+        "export const parserSpec = () => parse('input');"
+      ].join("\n"),
+      "utf8"
+    );
+    const runArtifactRepository = new InMemoryRunArtifactRepository();
+    const codeGraphRepository = new InMemoryCodeGraphRepository();
+    const runner = new TaskRunner({
+      defaultRunRoot: runRoot,
+      workspaceManager: new TestWorkspaceManager(runRoot),
+      diffCollector: new StaticDiffCollector(),
+      verificationRunner: new VerificationRunner(new MockShellExecutor()),
+      runArtifactRepository,
+      codeGraphRepository,
+      idGenerator: new SequenceIdGenerator(),
+      clock: new FixedClock("2026-01-01T00:00:00.000Z")
+    });
+
+    const result = await runner.run({
+      projectRoot,
+      projectId: "project_graph_refresh",
+      targetRepository: { id: "project_graph_refresh" },
+      taskPrompt: "Fix Parser behavior after tokens.ts changed",
+      agentKind: "fake",
+      taskId: "task_graph_refresh",
+      selectedFiles: [
+        {
+          path: "packages/core/src/tokens.ts",
+          content: "export const TOKEN = 'token';\n"
+        }
+      ]
+    });
+
+    await expect(
+      codeGraphRepository.listByProjectId("project_graph_refresh")
+    ).resolves.toEqual([
+      expect.objectContaining({ filePath: "packages/core/src/parser.test.ts" }),
+      expect.objectContaining({ filePath: "packages/core/src/parser.ts" }),
+      expect.objectContaining({ filePath: "packages/core/src/tokens.ts" })
+    ]);
+    expect(result.contextRetrievalResult?.candidates).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          routes: ["graph"],
+          item: expect.objectContaining({
+            sourceKind: "code_graph",
+            sourceId: "packages/core/src/parser.ts"
+          })
+        }),
+        expect.objectContaining({
+          routes: ["graph"],
+          item: expect.objectContaining({
+            sourceKind: "code_graph",
+            sourceId: "packages/core/src/parser.test.ts"
+          })
+        })
+      ])
+    );
+    const runtimeContextArtifact = await runArtifactRepository.getLatestByRunIdAndKind(
+      result.run.id,
+      "runtime_context_pack"
+    );
+    const runtimeContextPack = JSON.parse(runtimeContextArtifact?.content ?? "{}") as {
+      sections: Array<{ id: string; layer: string; title: string }>;
+    };
+    expect(runtimeContextPack.sections).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "retrieval:code_graph:project_graph_refresh:packages/core/src/parser.ts",
+          layer: "code",
+          title: expect.stringContaining("routes=graph")
+        }),
+        expect.objectContaining({
+          id: "retrieval:code_graph:project_graph_refresh:packages/core/src/parser.test.ts",
+          layer: "test",
+          title: expect.stringContaining("routes=graph")
+        })
+      ])
+    );
   });
 
   it("omits proposed and rejected memory from persisted runtime context packs", async () => {

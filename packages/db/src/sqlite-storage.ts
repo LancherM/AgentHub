@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import {
   validateAgentProfile,
+  validateCodeGraphEntry,
   validateComparisonReport,
   validateConversationMessage,
   validateConversationThread,
@@ -32,6 +33,10 @@ import {
   validateTaskStatusTransition,
   type AgentKind,
   type AgentProfile,
+  type CodeGraphEntry,
+  type CodeGraphRebuildResult,
+  type CodeGraphSearchInput,
+  type CodeGraphSearchResult,
   type ComparisonReport,
   type ConversationMessage,
   type ConversationThread,
@@ -40,6 +45,9 @@ import {
   type ContextIndexEntry,
   type ContextIndexSearchInput,
   type ContextIndexSearchResult,
+  normalizePathSet,
+  normalizeSearchTerms,
+  scoreCodeGraphEntry,
   type MemoryItem,
   type Project,
   type RiskReport,
@@ -70,6 +78,7 @@ import {
   type ConversationThreadRepository,
   type ContextEvalEventRepository,
   type ContextIndexRepository,
+  type CodeGraphRepository,
   type MemoryItemRepository,
   type ProjectRepository,
   type RiskReportRepository,
@@ -112,6 +121,7 @@ export interface SqliteRepositories {
   comparisonReportRepository: ComparisonReportRepository;
   skillRepository: SkillRepository;
   contextIndexRepository: ContextIndexRepository;
+  codeGraphRepository: CodeGraphRepository;
   contextEvalEventRepository: ContextEvalEventRepository;
   settingsRepository: SettingsRepository;
   roleCallRepository: RoleCallRepository;
@@ -1041,6 +1051,36 @@ CREATE INDEX IF NOT EXISTS idx_context_eval_events_project_created
 CREATE INDEX IF NOT EXISTS idx_context_eval_events_kind
   ON context_eval_events(kind);
 `
+  },
+  {
+    version: 15,
+    sql: `
+CREATE TABLE IF NOT EXISTS code_graph_entries (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL,
+  file_path TEXT NOT NULL,
+  package_name TEXT NOT NULL,
+  is_test INTEGER NOT NULL CHECK (is_test IN (0, 1)),
+  imports_json TEXT NOT NULL CHECK (json_valid(imports_json) AND json_type(imports_json) = 'array'),
+  exports_json TEXT NOT NULL CHECK (json_valid(exports_json) AND json_type(exports_json) = 'array'),
+  symbols_json TEXT NOT NULL CHECK (json_valid(symbols_json) AND json_type(symbols_json) = 'array'),
+  related_tests_json TEXT NOT NULL CHECK (json_valid(related_tests_json) AND json_type(related_tests_json) = 'array'),
+  content_hash TEXT NOT NULL,
+  metadata_json TEXT NOT NULL CHECK (json_valid(metadata_json) AND json_type(metadata_json) = 'object'),
+  indexed_at TEXT NOT NULL,
+  FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+  UNIQUE (project_id, file_path)
+);
+
+CREATE INDEX IF NOT EXISTS idx_code_graph_entries_project
+  ON code_graph_entries(project_id);
+CREATE INDEX IF NOT EXISTS idx_code_graph_entries_project_path
+  ON code_graph_entries(project_id, file_path);
+CREATE INDEX IF NOT EXISTS idx_code_graph_entries_project_package
+  ON code_graph_entries(project_id, package_name);
+CREATE INDEX IF NOT EXISTS idx_code_graph_entries_hash
+  ON code_graph_entries(project_id, content_hash);
+`
   }
 ];
 
@@ -1069,6 +1109,7 @@ export function createSqliteRepositories(
     comparisonReportRepository: new SQLiteComparisonReportRepository(database),
     skillRepository: new SQLiteSkillRepository(database),
     contextIndexRepository: new SQLiteContextIndexRepository(database),
+    codeGraphRepository: new SQLiteCodeGraphRepository(database),
     contextEvalEventRepository: new SQLiteContextEvalEventRepository(database),
     settingsRepository: new SQLiteSettingsRepository(database),
     roleCallRepository: new SQLiteRoleCallRepository(database),
@@ -2672,6 +2713,128 @@ LIMIT ${limit};
   }
 }
 
+export class SQLiteCodeGraphRepository implements CodeGraphRepository {
+  constructor(private readonly database: SqliteDatabase) {}
+
+  async rebuildProject(
+    projectId: string,
+    entries: CodeGraphEntry[],
+    indexedAt: string
+  ): Promise<CodeGraphRebuildResult> {
+    const validEntries = entries.map(validateCodeGraphEntry);
+    for (const entry of validEntries) {
+      if (entry.projectId !== projectId) {
+        throw new Error(`code graph entry ${entry.id} belongs to project ${entry.projectId}, not ${projectId}`);
+      }
+    }
+
+    const existingEntries = await this.listByProjectId(projectId);
+    const existingById = new Map(existingEntries.map((entry) => [entry.id, entry]));
+    const incomingIds = new Set(validEntries.map((entry) => entry.id));
+    let createdCount = 0;
+    let updatedCount = 0;
+    let unchangedCount = 0;
+    let deletedCount = 0;
+
+    for (const entry of validEntries) {
+      const indexedEntry = validateCodeGraphEntry({ ...entry, indexedAt });
+      const existing = existingById.get(entry.id);
+      if (existing && codeGraphEntryUnchanged(existing, indexedEntry)) {
+        unchangedCount += 1;
+        continue;
+      }
+      await this.database.execute(upsertCodeGraphEntrySql(indexedEntry));
+      if (existing) {
+        updatedCount += 1;
+      } else {
+        createdCount += 1;
+      }
+    }
+
+    for (const entry of existingEntries) {
+      if (!incomingIds.has(entry.id)) {
+        await this.database.execute(`
+DELETE FROM code_graph_entries WHERE id = ${sqlString(entry.id)};
+`);
+        deletedCount += 1;
+      }
+    }
+
+    return {
+      projectId,
+      indexedAt,
+      createdCount,
+      updatedCount,
+      unchangedCount,
+      deletedCount,
+      indexedIds: validEntries.map((entry) => entry.id).sort()
+    };
+  }
+
+  async listByProjectId(projectId: string): Promise<CodeGraphEntry[]> {
+    const rows = await this.database.query<CodeGraphEntryRow>(`
+SELECT
+  id,
+  project_id AS projectId,
+  file_path AS filePath,
+  package_name AS packageName,
+  is_test AS isTest,
+  imports_json AS importsJson,
+  exports_json AS exportsJson,
+  symbols_json AS symbolsJson,
+  related_tests_json AS relatedTestsJson,
+  content_hash AS contentHash,
+  metadata_json AS metadataJson,
+  indexed_at AS indexedAt
+FROM code_graph_entries
+WHERE project_id = ${sqlString(projectId)}
+ORDER BY file_path ASC;
+`);
+    return rows.map(codeGraphEntryFromRow);
+  }
+
+  async search(input: CodeGraphSearchInput): Promise<CodeGraphSearchResult[]> {
+    const terms = normalizeSearchTerms(input.queryTerms);
+    const seedPaths = normalizePathSet(input.seedPaths ?? []);
+    const changedFiles = normalizePathSet(input.changedFiles ?? []);
+    if (terms.length === 0 && seedPaths.size === 0 && changedFiles.size === 0) {
+      return [];
+    }
+    const limit = Math.max(1, Math.min(input.limit ?? 8, 50));
+    const scored = (await this.listByProjectId(input.projectId))
+      .map((entry) =>
+        scoreCodeGraphEntry(entry, {
+          terms,
+          seedPaths,
+          changedFiles
+        })
+      )
+      .filter((result) => result.score > 0)
+      .sort((left, right) =>
+        right.score === left.score
+          ? left.entry.filePath.localeCompare(right.entry.filePath)
+          : right.score - left.score
+      )
+      .slice(0, limit);
+    return scored.map((result, index) => ({
+      entry: result.entry,
+      score: Math.min(1, result.score),
+      rank: index + 1,
+      matchedTerms: result.matchedTerms,
+      matchedSymbols: result.matchedSymbols,
+      matchedImports: result.matchedImports,
+      relatedFiles: result.relatedFiles,
+      diagnostics: {
+        queryTerms: terms,
+        seedPaths: [...seedPaths],
+        changedFiles: [...changedFiles],
+        packageName: result.entry.packageName,
+        isTest: result.entry.isTest
+      }
+    }));
+  }
+}
+
 export class SQLiteContextEvalEventRepository
   implements ContextEvalEventRepository
 {
@@ -3275,6 +3438,21 @@ interface ContextIndexSearchRow extends ContextIndexEntryRow {
   bm25Score: number;
 }
 
+interface CodeGraphEntryRow extends Record<string, unknown> {
+  id: string;
+  projectId: string;
+  filePath: string;
+  packageName: string;
+  isTest: number;
+  importsJson: string;
+  exportsJson: string;
+  symbolsJson: string;
+  relatedTestsJson: string;
+  contentHash: string;
+  metadataJson: string;
+  indexedAt: string;
+}
+
 interface SettingRow extends Record<string, unknown> {
   key: string;
   valueJson: string;
@@ -3576,6 +3754,23 @@ function contextIndexEntryFromRow(row: ContextIndexEntryRow): ContextIndexEntry 
     sourcePath: nullToUndefined(row.sourcePath),
     createdAt: row.createdAt,
     updatedAt: nullToUndefined(row.updatedAt),
+    indexedAt: row.indexedAt,
+    metadata: parseJson<Record<string, unknown>>(row.metadataJson) ?? {}
+  });
+}
+
+function codeGraphEntryFromRow(row: CodeGraphEntryRow): CodeGraphEntry {
+  return validateCodeGraphEntry({
+    id: row.id,
+    projectId: row.projectId,
+    filePath: row.filePath,
+    packageName: row.packageName,
+    isTest: row.isTest === 1,
+    imports: parseJson<string[]>(row.importsJson) ?? [],
+    exports: parseJson<string[]>(row.exportsJson) ?? [],
+    symbols: parseJson<string[]>(row.symbolsJson) ?? [],
+    relatedTests: parseJson<string[]>(row.relatedTestsJson) ?? [],
+    contentHash: row.contentHash,
     indexedAt: row.indexedAt,
     metadata: parseJson<Record<string, unknown>>(row.metadataJson) ?? {}
   });
@@ -4305,6 +4500,50 @@ INSERT INTO context_text_fts (
   ${sqlString(entry.content)},
   ${sqlNullableString(entry.sourcePath)}
 );
+  `;
+}
+
+function upsertCodeGraphEntrySql(entry: CodeGraphEntry): string {
+  return `
+INSERT INTO code_graph_entries (
+  id,
+  project_id,
+  file_path,
+  package_name,
+  is_test,
+  imports_json,
+  exports_json,
+  symbols_json,
+  related_tests_json,
+  content_hash,
+  metadata_json,
+  indexed_at
+) VALUES (
+  ${sqlString(entry.id)},
+  ${sqlString(entry.projectId)},
+  ${sqlString(entry.filePath)},
+  ${sqlString(entry.packageName)},
+  ${entry.isTest ? 1 : 0},
+  ${sqlString(JSON.stringify(entry.imports))},
+  ${sqlString(JSON.stringify(entry.exports))},
+  ${sqlString(JSON.stringify(entry.symbols))},
+  ${sqlString(JSON.stringify(entry.relatedTests))},
+  ${sqlString(entry.contentHash)},
+  ${sqlJson(entry.metadata)},
+  ${sqlString(entry.indexedAt)}
+)
+ON CONFLICT(id) DO UPDATE SET
+  project_id = excluded.project_id,
+  file_path = excluded.file_path,
+  package_name = excluded.package_name,
+  is_test = excluded.is_test,
+  imports_json = excluded.imports_json,
+  exports_json = excluded.exports_json,
+  symbols_json = excluded.symbols_json,
+  related_tests_json = excluded.related_tests_json,
+  content_hash = excluded.content_hash,
+  metadata_json = excluded.metadata_json,
+  indexed_at = excluded.indexed_at;
 `;
 }
 
@@ -4342,6 +4581,29 @@ function contextIndexEntryUnchanged(
     existing.sourcePath === incoming.sourcePath &&
     JSON.stringify(existing.metadata) === JSON.stringify(incoming.metadata)
   );
+}
+
+function codeGraphEntryUnchanged(
+  existing: CodeGraphEntry,
+  incoming: CodeGraphEntry
+): boolean {
+  return (
+    existing.projectId === incoming.projectId &&
+    existing.filePath === incoming.filePath &&
+    existing.packageName === incoming.packageName &&
+    existing.isTest === incoming.isTest &&
+    existing.contentHash === incoming.contentHash &&
+    arraysEqual(existing.imports, incoming.imports) &&
+    arraysEqual(existing.exports, incoming.exports) &&
+    arraysEqual(existing.symbols, incoming.symbols) &&
+    arraysEqual(existing.relatedTests, incoming.relatedTests) &&
+    JSON.stringify(existing.metadata) === JSON.stringify(incoming.metadata)
+  );
+}
+
+function arraysEqual(left: string[], right: string[]): boolean {
+  return left.length === right.length &&
+    left.every((value, index) => value === right[index]);
 }
 
 function parseJson<T>(value: string | null): T | undefined {

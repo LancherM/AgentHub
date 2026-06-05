@@ -20,10 +20,12 @@ import {
   RoleCallTaskRunnerExecutor,
   type AgentRunEvent,
   type Clock,
+  type ContextIndexRefreshInput,
   type IdGenerator,
   type RoleCallExecutionResult,
   type TaskRunnerDependencies
 } from "@agent-hub/task-runner";
+import { rebuildStableContextIndex } from "@agent-hub/db";
 import {
   isAgentKindEnabled,
   normalizeWorkgroupRoleHandle,
@@ -661,6 +663,7 @@ class RepositoryRunService implements RunService {
 
   private createTaskRunner(runId: string): TaskRunner {
     const defaultRunRoot = this.desktopWorkspaceBasePath();
+    const contextIndexRepository = this.context.repositories.contextIndexRepository;
     return new TaskRunner({
       ...this.dependencies.taskRunnerDependencies,
       defaultRunRoot,
@@ -673,6 +676,18 @@ class RepositoryRunService implements RunService {
       riskReportRepository: this.context.repositories.riskReportRepository,
       memoryItemRepository: this.context.repositories.memoryItemRepository,
       runMetadataRepository: this.metadata,
+      conversationThreadSummaryRepository:
+        this.context.repositories.conversationThreadSummaryRepository,
+      contextIndexRepository,
+      contextIndexRefresher: async (input: ContextIndexRefreshInput) =>
+        rebuildStableContextIndex({
+          projectId: input.projectId,
+          projectContextStoreRoot: input.projectContextStoreRoot,
+          globalSkillStoreRoot: input.globalSkillStoreRoot,
+          contextIndexRepository,
+          indexedAt: input.indexedAt
+        }),
+      codeGraphRepository: this.context.repositories.codeGraphRepository,
       idGenerator: new DesktopTaskRunnerIdGenerator(this.context, runId),
       clock: new DesktopTaskRunnerClock(this.context)
     });

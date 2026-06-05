@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import type { DiffCollectionResult } from "@agent-hub/task-runner";
+import { buildTypeScriptCodeGraphEntries } from "@agent-hub/task-runner";
 import type { RiskReport } from "@agent-hub/core";
 import {
   conservativePermissionSet,
@@ -31,6 +32,7 @@ describe("SQLite storage", () => {
 
     await database.ensureInitialized();
 
+    expect(SQLITE_MIGRATIONS.at(-1)?.version).toBe(15);
     await expect(
       database.query<{ version: number }>(
         "SELECT version FROM schema_migrations ORDER BY version ASC;"
@@ -49,7 +51,8 @@ describe("SQLite storage", () => {
       { version: 11 },
       { version: 12 },
       { version: 13 },
-      { version: 14 }
+      { version: 14 },
+      { version: 15 }
     ]);
     await expect(
       database.query<{ name: string }>(
@@ -85,6 +88,7 @@ describe("SQLite storage", () => {
         { name: "conversation_thread_summaries" },
         { name: "memory_items" },
         { name: "comparison_reports" },
+        { name: "code_graph_entries" },
         { name: "context_index_entries" },
         { name: "context_eval_events" },
         { name: "context_text_fts" },
@@ -311,6 +315,148 @@ ORDER BY id ASC;
         sourceKind: "project_context",
         content: expect.stringContaining("packages/core/src/parser.ts"),
         indexedAt: thirdAt
+      })
+    ]);
+    await repositories.database.close();
+  });
+
+  it("persists and searches TypeScript code graph entries", async () => {
+    const databasePath = path.join(
+      await createTestDirectory("sqlite-code-graph"),
+      "agent-hub.sqlite"
+    );
+    const repositories = createSqliteRepositories({ databasePath });
+    await repositories.projectRepository.create({
+      id: "project_graph",
+      name: "Graph Project",
+      rootPath: "/tmp/graph-project",
+      createdAt,
+      updatedAt: createdAt
+    });
+
+    const first = await repositories.codeGraphRepository.rebuildProject(
+      "project_graph",
+      buildTypeScriptCodeGraphEntries({
+        projectId: "project_graph",
+        indexedAt: createdAt,
+        files: [
+          {
+            path: "packages/core/src/parser.ts",
+            content: [
+              "import { TOKEN } from './tokens';",
+              "export class Parser {}",
+              "export function parse(input: string) { return TOKEN + input; }"
+            ].join("\n")
+          },
+          {
+            path: "packages/core/src/tokens.ts",
+            content: "export const TOKEN = 'token';\n"
+          },
+          {
+            path: "packages/core/src/parser.test.ts",
+            content: [
+              "import { parse } from './parser';",
+              "export const parserSpec = () => parse('input');"
+            ].join("\n")
+          }
+        ]
+      }),
+      createdAt
+    );
+
+    expect(first).toMatchObject({
+      projectId: "project_graph",
+      indexedAt: createdAt,
+      createdCount: 3,
+      updatedCount: 0,
+      unchangedCount: 0,
+      deletedCount: 0
+    });
+    await expect(
+      repositories.codeGraphRepository.listByProjectId("project_graph")
+    ).resolves.toEqual([
+      expect.objectContaining({
+        filePath: "packages/core/src/parser.test.ts",
+        isTest: true,
+        imports: ["packages/core/src/parser.ts"]
+      }),
+      expect.objectContaining({
+        filePath: "packages/core/src/parser.ts",
+        isTest: false,
+        imports: ["packages/core/src/tokens.ts"],
+        relatedTests: ["packages/core/src/parser.test.ts"]
+      }),
+      expect.objectContaining({
+        filePath: "packages/core/src/tokens.ts",
+        isTest: false
+      })
+    ]);
+
+    const searchResults = await repositories.codeGraphRepository.search({
+      projectId: "project_graph",
+      queryTerms: ["parser"],
+      seedPaths: ["packages/core/src/tokens.ts"],
+      changedFiles: ["packages/core/src/parser.ts"],
+      limit: 3
+    });
+    expect(searchResults.map((result) => result.entry.filePath)).toEqual([
+      "packages/core/src/parser.ts",
+      "packages/core/src/tokens.ts",
+      "packages/core/src/parser.test.ts"
+    ]);
+    expect(searchResults[0]).toMatchObject({
+      rank: 1,
+      matchedTerms: ["parser"],
+      matchedSymbols: ["Parser"],
+      matchedImports: ["packages/core/src/tokens.ts"],
+      diagnostics: expect.objectContaining({
+        seedPaths: ["packages/core/src/tokens.ts"],
+        changedFiles: ["packages/core/src/parser.ts"]
+      })
+    });
+
+    const updatedAt = "2026-01-01T00:00:02.000Z";
+    const second = await repositories.codeGraphRepository.rebuildProject(
+      "project_graph",
+      buildTypeScriptCodeGraphEntries({
+        projectId: "project_graph",
+        indexedAt: updatedAt,
+        files: [
+          {
+            path: "packages/core/src/parser.ts",
+            content: [
+              "import { TOKEN } from './tokens';",
+              "export class Parser {}",
+              "export const parserVersion = 2;"
+            ].join("\n")
+          },
+          {
+            path: "packages/core/src/tokens.ts",
+            content: "export const TOKEN = 'token';\n"
+          }
+        ]
+      }),
+      updatedAt
+    );
+
+    expect(second).toMatchObject({
+      createdCount: 0,
+      updatedCount: 1,
+      unchangedCount: 1,
+      deletedCount: 1
+    });
+    await expect(
+      repositories.codeGraphRepository.listByProjectId("project_graph")
+    ).resolves.toEqual([
+      expect.objectContaining({
+        filePath: "packages/core/src/parser.ts",
+        indexedAt: updatedAt,
+        exports: expect.arrayContaining(["parserVersion"]),
+        relatedTests: []
+      }),
+      expect.objectContaining({
+        filePath: "packages/core/src/tokens.ts",
+        indexedAt: createdAt
       })
     ]);
     await repositories.database.close();
@@ -1477,7 +1623,8 @@ VALUES (
       { version: 11 },
       { version: 12 },
       { version: 13 },
-      { version: 14 }
+      { version: 14 },
+      { version: 15 }
     ]);
   });
 
@@ -1531,7 +1678,8 @@ VALUES (
       { version: 11 },
       { version: 12 },
       { version: 13 },
-      { version: 14 }
+      { version: 14 },
+      { version: 15 }
     ]);
     await expect(repositories.database.execute(`
 INSERT INTO tasks (id, project_id, title, status, created_at, updated_at)
@@ -1607,7 +1755,8 @@ VALUES ('message_summary_legacy', 'thread_summary_legacy', 0, 'user', 'text', 'P
       { version: 11 },
       { version: 12 },
       { version: 13 },
-      { version: 14 }
+      { version: 14 },
+      { version: 15 }
     ]);
   });
 
@@ -1643,7 +1792,8 @@ ALTER TABLE task_runs
       { version: 11 },
       { version: 12 },
       { version: 13 },
-      { version: 14 }
+      { version: 14 },
+      { version: 15 }
     ]);
     await expect(
       repositories.database.query<{ name: string }>(

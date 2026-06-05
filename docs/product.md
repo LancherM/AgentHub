@@ -268,18 +268,22 @@ results that survive policy and budget checks are the context the agent sees.
 Each run also records a deterministic `context_plan` artifact with the
 rule-based task type, required layers, retrieval routes, layer trust policy,
 budget policy, and compression policy used to assemble runtime context evidence.
-Runs now also persist an explicit-route `context_retrieval_candidates` artifact
-for already-selected sources such as the current task, selected or role-default
-skills, selected files, selected runs, and current thread continuity. This is
-inspectable audit evidence and feeds the runtime context selector before agent
-execution. If retrieval or selection fails after a run row is created, the run is
-finalized as failed and the task returns to `open` instead of remaining stuck in
-`running`.
+Runs now also persist a `context_retrieval_candidates` artifact for
+already-selected explicit sources such as the current task, selected or
+role-default skills, selected files, selected runs, and current thread
+continuity. The same retrieval boundary also emits deterministic `task_rule`
+candidates for compiled project context and approved memory sections whose
+layers are required by the current context plan. This is inspectable audit
+evidence and feeds the runtime context selector before agent execution. If
+retrieval or selection fails after a run row is created, the run is finalized as
+failed and the task returns to `open` instead of remaining stuck in `running`.
 Agent Hub also maintains local SQLite index storage for stable text sources:
 project context docs, approved memory, project skills, and global skills. The
 index rebuild path is deterministic per project and tracks source hashes so
 unchanged sources are not rewritten; run evidence and thread summaries are not
-indexed in this stable-source path.
+indexed in this stable-source path. The default CLI and desktop TaskRunner
+paths refresh this stable-source index before run retrieval when a project
+context store is available.
 When a project has stable-source index data available, retrieval can add BM25
 ranked candidates to the same `context_retrieval_candidates` artifact. These
 ranked candidates include lexical score diagnostics, matched query terms, layer
@@ -295,16 +299,17 @@ summaries, and thread summaries. Run evidence is medium trust; thread summaries
 remain low-trust continuity. Raw logs, raw diffs, full verification output
 bodies, full risk finding bodies, and full conversation transcripts are not
 included in recency candidates.
-Agent Hub can also build a deterministic local TypeScript code graph for source
-and test files. The graph records imports, exports, symbols, package
-boundaries, source-to-test relationships, and changed-file proximity so graph
-retrieval can add high-trust code or test candidates with graph proximity
-diagnostics. This remains local-only and does not require embeddings or a cloud
-index.
+Agent Hub also builds a deterministic local TypeScript code graph for source and
+test files when a code graph repository is configured. The graph is persisted in
+local SQLite for the default CLI and desktop paths and records imports, exports,
+symbols, package boundaries, source-to-test relationships, and changed-file
+proximity so graph retrieval can add high-trust code or test candidates with
+graph proximity diagnostics. This remains local-only and does not require
+embeddings or a cloud index.
 Semantic retrieval is optional. Runs may configure a local embedding retriever
 and a local reranker, both guarded by capability detection. With no configured
 provider, Agent Hub records a skip diagnostic and continues with deterministic
-explicit, BM25, graph, and recency retrieval. Hybrid fusion can combine
+explicit, task-rule, BM25, graph, and recency retrieval. Hybrid fusion can combine
 same-source route signals such as BM25 plus embedding without introducing a
 cloud dependency or secret storage.
 Completed runs also record local context evaluation events linked to run
@@ -314,15 +319,16 @@ plan, selected runtime context sections, omissions, and eval events through
 `agent-hub context plan|selected|omissions|eval <run-id>`. Eval events are
 audit evidence only and do not automatically approve or promote memory.
 The typed `runtime_context_pack` now selects policy-allowed retrieval candidates
-from explicit, BM25, embedding, graph, and recency routes after hard filtering, ranking, and
-layer-budget checks. The selector applies deterministic, source-aware
-compression before omitting over-budget project docs, run evidence, or
-conversation continuity, and records requested/used layer budgets plus
-compression counts in runtime pack diagnostics. Conversation compression keeps
-the low-trust override limits and preserves representative freeform continuity
-body lines when no structured summary headings are present. Selected candidates are
-appended to the typed pack with source ids, hashes, trust labels, compression
-metadata, and inclusion reasons; omitted candidates are recorded with reasons.
+from explicit, task-rule, BM25, embedding, graph, and recency routes after hard
+filtering, ranking, and layer-budget checks. The selector applies
+deterministic, source-aware compression before omitting over-budget project
+docs, run evidence, or conversation continuity, and records requested/used
+layer budgets plus compression counts in runtime pack diagnostics.
+Conversation compression keeps the low-trust override limits and preserves
+representative freeform continuity body lines when no structured summary
+headings are present. Selected candidates are appended to the typed pack with
+source ids, hashes, trust labels, compression metadata, and inclusion reasons;
+omitted candidates are recorded with reasons.
 The current task and runtime policy remain pinned, and adapter-facing markdown
 injection remains compatible with the existing task brief path while using the
 selected runtime sections as its source.
