@@ -174,7 +174,9 @@ Budget enforcement runs across the typed pack sections and uses deterministic
 compression for project docs, run evidence, and conversation continuity before
 omitting over-budget items. Compression preserves source ids, source hashes,
 compression mode, original/rendered character counts, and omission counts, with
-budget usage diagnostics stored in the artifact. Selected candidates are
+budget usage diagnostics stored in the artifact. Conversation compression keeps
+the explicit low-trust override limits while retaining representative freeform
+body lines when a thread summary has no structured headings. Selected candidates are
 appended to the typed runtime pack and become the source of adapter-facing
 runtime markdown. The synthetic `runtime_policy` section and current task
 sections are pinned and cannot be evicted by retrieval candidates.
