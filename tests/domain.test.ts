@@ -4,6 +4,9 @@ import {
   DomainValidationError,
   DomainStateTransitionError,
   availableAgentKinds,
+  compressionModes,
+  contextLayers,
+  contextPolicyDecisions,
   defaultAgentKind,
   InMemoryConversationMessageRepository,
   InMemoryConversationThreadSummaryRepository,
@@ -16,7 +19,9 @@ import {
   presetWorkgroupRoles,
   validateAgentProfile,
   validateComparisonReport,
+  validateContextItem,
   validateContextPack,
+  validateContextPlan,
   validateConversationMessage,
   validateConversationThread,
   validateConversationThreadSummary,
@@ -24,6 +29,7 @@ import {
   validateRiskReport,
   validateRunArtifact,
   validateRunEvent,
+  validateRuntimeContextPack,
   validateMemoryStatusTransition,
   validateProject,
   validateSetting,
@@ -175,6 +181,108 @@ describe("domain model validation", () => {
         type: "tool_call" as never,
         message: "First-class tool-call events are not in the MVP event model.",
         metadata: {},
+        createdAt
+      })
+    ).toThrow(DomainValidationError);
+  });
+
+  it("validates typed runtime context contracts", () => {
+    expect(
+      validateContextItem({
+        id: "context_item_task",
+        layer: "task",
+        sourceKind: "task",
+        sourceId: "task_1",
+        scope: "task",
+        trustLevel: "system",
+        lifetime: "run",
+        title: "Task",
+        content: "Fix the failing test.",
+        contentHash: "sha256:task",
+        createdAt,
+        metadata: {}
+      })
+    ).toMatchObject({ layer: "task", trustLevel: "system" });
+
+    expect(
+      validateContextPlan({
+        id: "context_plan_1",
+        taskType: "bug_fix",
+        taskPromptHash: "sha256:prompt",
+        requiredLayers: ["runtime_policy", "task", "project"],
+        retrievalRoutes: ["explicit", "task_rule"],
+        trustPolicy: Object.fromEntries(
+          contextLayers.map((layer) => [layer, "allow"])
+        ) as Record<(typeof contextLayers)[number], (typeof contextPolicyDecisions)[number]>,
+        budgetPolicy: Object.fromEntries(
+          contextLayers.map((layer) => [layer, layer === "conversation" ? 5 : 10])
+        ) as Record<(typeof contextLayers)[number], number>,
+        compressionPolicy: Object.fromEntries(
+          contextLayers.map((layer) => [layer, "none"])
+        ) as Record<(typeof contextLayers)[number], (typeof compressionModes)[number]>,
+        createdAt,
+        diagnostics: {}
+      })
+    ).toMatchObject({ taskType: "bug_fix" });
+
+    expect(
+      validateRuntimeContextPack({
+        id: "runtime_context_pack_1",
+        planId: "context_plan_1",
+        taskId: "task_1",
+        runId: "run_1",
+        sections: [
+          {
+            id: "task:task",
+            layer: "task",
+            trustLevel: "system",
+            title: "Task Prompt",
+            content: "Fix the failing test.",
+            sourceItemIds: ["task:task"],
+            sourceHashes: ["sha256:task"],
+            compressionMode: "none",
+            originalCharacterCount: 21,
+            renderedCharacterCount: 21,
+            omittedItemCount: 0,
+            inclusionReason: "current task is pinned"
+          }
+        ],
+        omitted: [],
+        diagnostics: [
+          {
+            severity: "info",
+            message: "runtime context pack generated"
+          }
+        ],
+        createdAt
+      })
+    ).toMatchObject({
+      sections: [expect.objectContaining({ layer: "task" })]
+    });
+
+    expect(() =>
+      validateRuntimeContextPack({
+        id: "runtime_context_pack_bad",
+        planId: "context_plan_1",
+        taskId: "task_1",
+        sections: [
+          {
+            id: "conversation:thread",
+            layer: "conversation",
+            trustLevel: "high",
+            title: "Conversation",
+            content: "Prior chat",
+            sourceItemIds: ["conversation:thread"],
+            sourceHashes: ["sha256:conversation"],
+            compressionMode: "summary",
+            originalCharacterCount: -1,
+            renderedCharacterCount: 10,
+            omittedItemCount: 0,
+            inclusionReason: "prior thread continuity"
+          }
+        ],
+        omitted: [],
+        diagnostics: [],
         createdAt
       })
     ).toThrow(DomainValidationError);
