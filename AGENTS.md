@@ -145,9 +145,10 @@ Implemented:
 - Domain models, SQLite persistence, context compilation, task running, agent
   adapters, safety scanning, risk report generation, and shared types.
 - CLI commands for project registration/listing, context store init/show,
-  context pack build, optional repo export, task creation/listing/history, task
-  runs, manual run-event recording, threaded chat, metadata-backed rooms, team
-  role management, terminal TUI review, RoleCall audit workflows, global skill
+  context pack build, runtime context plan/selection/omission/eval inspection,
+  optional repo export, task creation/listing/history, task runs, manual
+  run-event recording, threaded chat, metadata-backed rooms, team role
+  management, terminal TUI review, RoleCall audit workflows, global skill
   create/list workflows, review decisions, memory workflows, and run
   comparison.
 - Interactive CLI with `@agent` prompts, `/agents`, `/use`, `/context`,
@@ -156,6 +157,9 @@ Implemented:
 - Runtime context pack and task brief generation, worktree-local runtime file
   writing, verification command execution, agent event capture, and diff
   collection.
+- Typed runtime context plans, explicit/BM25/recency/code-graph retrieval,
+  optional local semantic retrieval hooks, runtime context selection,
+  deterministic context compression, and local context eval evidence.
 - Opt-in `worktree_overlay` delivery for task runs. It materializes generated
   context files inside the isolated worktree only and excludes those overlay
   files from collected diffs.
@@ -265,6 +269,10 @@ Implemented commands:
 - `agent-hub context show`
 - `agent-hub context build`
 - `agent-hub context export`
+- `agent-hub context plan`
+- `agent-hub context selected`
+- `agent-hub context omissions`
+- `agent-hub context eval`
 - `agent-hub skills global create`
 - `agent-hub skills global list`
 - `agent-hub task create`
@@ -450,6 +458,8 @@ Responsible for:
 - Capturing run events
 - Running verification commands
 - Collecting git diffs
+- Persisting context plans, retrieval candidates, selected runtime context
+  packs, and local context eval events
 - Producing task run summaries
 - Producing comparison reports
 - Executing accepted RoleCalls through the same isolated TaskRunner path
@@ -458,6 +468,9 @@ Current status:
 
 - Worktree creation, adapter execution, verification commands, diff collection,
   and task run summaries are implemented.
+- Runtime context planning, explicit/BM25/recency/code-graph retrieval,
+  optional local embedding/reranker hooks, candidate selection, compression,
+  and context eval persistence are implemented.
 - Accepted `agent_adapter` RoleCalls can be linked to TaskRunner runs and
   persisted back to local RoleCall evidence.
 - Automatic proposed-memory generation and comparison report aggregation run
