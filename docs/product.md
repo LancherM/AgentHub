@@ -304,8 +304,10 @@ test files when a code graph repository is configured. The graph is persisted in
 local SQLite for the default CLI and desktop paths and records imports, exports,
 symbols, package boundaries, source-to-test relationships, and changed-file
 proximity so graph retrieval can add high-trust code or test candidates with
-graph proximity diagnostics. This remains local-only and does not require
-embeddings or a cloud index.
+graph proximity diagnostics. Extensionless directory imports resolve to
+TypeScript, TSX, MTS, and CTS index files so module-format projects retain graph
+proximity. This remains local-only and does not require embeddings or a cloud
+index.
 Semantic retrieval is optional. Runs may configure a local embedding retriever
 and a local reranker, both guarded by capability detection. With no configured
 provider, Agent Hub records a skip diagnostic and continues with deterministic

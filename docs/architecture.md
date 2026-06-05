@@ -154,10 +154,13 @@ an injectable `CodeGraphRepository`. SQLite stores graph entries in
 `code_graph_entries`; the TaskRunner refreshes the project graph before
 retrieval when a repository is configured. The index records TS/TSX files by
 package boundary, imports, exports, symbols, test-file status, related tests,
-and changed-file relationships. Graph retrieval expands from task terms,
-selected file seeds, and recent changed files, then emits high-trust `code` or
-`test` candidates with graph proximity diagnostics. Unconfigured repositories
-leave the graph route disabled without affecting other retrieval paths.
+and changed-file relationships. Extensionless relative imports are resolved
+against TS, TSX, MTS, and CTS files plus their directory index variants so
+module-format projects keep source and test proximity. Graph retrieval expands
+from task terms, selected file seeds, and recent changed files, then emits
+high-trust `code` or `test` candidates with graph proximity diagnostics.
+Unconfigured repositories leave the graph route disabled without affecting
+other retrieval paths.
 Optional semantic retrieval is modeled as injectable local capabilities:
 `ContextEmbeddingRetriever` and `ContextCandidateReranker`. Each capability is
 detected before use; unavailable or unconfigured providers produce info

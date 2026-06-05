@@ -312,7 +312,9 @@ function resolveImportSpecifier(
     `${basePath}.mts`,
     `${basePath}.cts`,
     `${basePath}/index.ts`,
-    `${basePath}/index.tsx`
+    `${basePath}/index.tsx`,
+    `${basePath}/index.mts`,
+    `${basePath}/index.cts`
   ];
   return candidates.find((candidate) => filePathSet.has(candidate)) ?? basePath;
 }
