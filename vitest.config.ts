@@ -27,7 +27,8 @@ export default defineConfig({
         "apps/cli/src/**/*.{ts,tsx,mts}",
         "apps/desktop/electron/**/*.{ts,tsx}",
         "apps/desktop/src/**/*.{ts,tsx}",
-        "packages/*/src/**/*.{ts,tsx}"
+        "packages/*/src/**/*.{ts,tsx}",
+        "scripts/**/*.mjs"
       ],
       exclude: ["**/*.d.ts", "**/dist/**", "**/out/**", "**/node_modules/**"]
     }

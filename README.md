@@ -317,6 +317,7 @@ docs                      Product, architecture, and design notes
 pnpm typecheck
 pnpm test
 pnpm test:coverage
+pnpm coverage:diff
 pnpm lint
 pnpm build
 ```
@@ -328,6 +329,7 @@ after install:
 ./node_modules/.bin/pnpm typecheck
 ./node_modules/.bin/pnpm test
 ./node_modules/.bin/pnpm test:coverage
+./node_modules/.bin/pnpm coverage:diff
 ./node_modules/.bin/pnpm lint
 ./node_modules/.bin/pnpm build
 ```

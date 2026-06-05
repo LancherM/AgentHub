@@ -21,6 +21,7 @@ permissions:
 env:
   NODE_VERSION: "22"
   PNPM_VERSION: "10.10.0"
+  DIFF_COVERAGE_THRESHOLD: "70"
 
 jobs:
   validate:
@@ -97,6 +98,13 @@ jobs:
           name: coverage-report
           path: coverage/
           if-no-files-found: warn
+
+      - name: Check diff coverage
+        if: github.event_name == 'pull_request'
+        run: |
+          set -o pipefail
+          git fetch --no-tags --depth=1 origin "${{ github.base_ref }}:refs/remotes/origin/${{ github.base_ref }}"
+          pnpm run coverage:diff --base "origin/${{ github.base_ref }}" --head HEAD --threshold "$DIFF_COVERAGE_THRESHOLD" | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Build
         run: pnpm build

@@ -16,6 +16,7 @@
     "typecheck": "tsc --noEmit --pretty false -p tsconfig.json && tsc -b apps/cli/tsconfig.tui-ink.json --pretty false && pnpm --filter desktop typecheck",
     "test": "tsc -b apps/cli/tsconfig.tui-ink.json --pretty false && vitest run",
     "test:coverage": "tsc -b apps/cli/tsconfig.tui-ink.json --pretty false && vitest run --coverage",
+    "coverage:diff": "node scripts/check-diff-coverage.mjs",
     "lint": "tsc --noEmit --pretty false -p tsconfig.json && tsc -b apps/cli/tsconfig.tui-ink.json --pretty false && pnpm --filter desktop lint"
   },
   "devDependencies": {
