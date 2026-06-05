@@ -48,7 +48,8 @@ describe("SQLite storage", () => {
       { version: 10 },
       { version: 11 },
       { version: 12 },
-      { version: 13 }
+      { version: 13 },
+      { version: 14 }
     ]);
     await expect(
       database.query<{ name: string }>(
@@ -85,6 +86,7 @@ describe("SQLite storage", () => {
         { name: "memory_items" },
         { name: "comparison_reports" },
         { name: "context_index_entries" },
+        { name: "context_eval_events" },
         { name: "context_text_fts" },
         { name: "skills" },
         { name: "settings" }
@@ -311,6 +313,105 @@ ORDER BY id ASC;
         indexedAt: thirdAt
       })
     ]);
+    await repositories.database.close();
+  });
+
+  it("persists context eval events by run and project", async () => {
+    const databasePath = path.join(
+      await createTestDirectory("sqlite-context-eval"),
+      "agent-hub.sqlite"
+    );
+    const repositories = createSqliteRepositories({ databasePath });
+    await repositories.projectRepository.create({
+      id: "project_eval",
+      name: "Eval Project",
+      rootPath: "/tmp/eval-project",
+      createdAt,
+      updatedAt: createdAt
+    });
+    await repositories.taskRepository.create({
+      id: "task_eval",
+      projectId: "project_eval",
+      title: "Evaluate context",
+      status: "open",
+      createdAt,
+      updatedAt: createdAt
+    });
+    await repositories.taskRunRepository.create({
+      id: "run_eval",
+      taskId: "task_eval",
+      agentKind: "fake",
+      status: "queued",
+      createdAt,
+      updatedAt: createdAt
+    });
+
+    await repositories.contextEvalEventRepository.create({
+      id: "context_eval_1",
+      projectId: "project_eval",
+      taskId: "task_eval",
+      runId: "run_eval",
+      planId: "context_plan_1",
+      kind: "missing_context",
+      severity: "warning",
+      message: "One candidate was omitted.",
+      selectedItemIds: ["task:task_eval"],
+      omittedItemIds: ["context_index:large"],
+      metadata: {
+        omissionReasons: {
+          "retrieval candidate exceeds code budget": 1
+        }
+      },
+      createdAt
+    });
+
+    await expect(
+      repositories.contextEvalEventRepository.listByRunId("run_eval")
+    ).resolves.toEqual([
+      expect.objectContaining({
+        id: "context_eval_1",
+        kind: "missing_context",
+        selectedItemIds: ["task:task_eval"],
+        omittedItemIds: ["context_index:large"],
+        metadata: expect.objectContaining({
+          omissionReasons: {
+            "retrieval candidate exceeds code budget": 1
+          }
+        })
+      })
+    ]);
+    await expect(
+      repositories.contextEvalEventRepository.listByProjectId("project_eval")
+    ).resolves.toHaveLength(1);
+    await expect(
+      repositories.database.execute(`
+INSERT INTO context_eval_events (
+  id,
+  project_id,
+  task_id,
+  run_id,
+  kind,
+  severity,
+  message,
+  selected_item_ids_json,
+  omitted_item_ids_json,
+  metadata_json,
+  created_at
+) VALUES (
+  'context_eval_bad',
+  'project_eval',
+  'task_eval',
+  'run_eval',
+  'run_outcome',
+  'info',
+  'Bad arrays.',
+  '{}',
+  '[]',
+  '{}',
+  '${createdAt}'
+);
+`)
+    ).rejects.toThrow();
     await repositories.database.close();
   });
 
@@ -1375,7 +1476,8 @@ VALUES (
       { version: 10 },
       { version: 11 },
       { version: 12 },
-      { version: 13 }
+      { version: 13 },
+      { version: 14 }
     ]);
   });
 
@@ -1428,7 +1530,8 @@ VALUES (
       { version: 10 },
       { version: 11 },
       { version: 12 },
-      { version: 13 }
+      { version: 13 },
+      { version: 14 }
     ]);
     await expect(repositories.database.execute(`
 INSERT INTO tasks (id, project_id, title, status, created_at, updated_at)
@@ -1503,7 +1606,8 @@ VALUES ('message_summary_legacy', 'thread_summary_legacy', 0, 'user', 'text', 'P
       { version: 10 },
       { version: 11 },
       { version: 12 },
-      { version: 13 }
+      { version: 13 },
+      { version: 14 }
     ]);
   });
 
@@ -1538,7 +1642,8 @@ ALTER TABLE task_runs
       { version: 10 },
       { version: 11 },
       { version: 12 },
-      { version: 13 }
+      { version: 13 },
+      { version: 14 }
     ]);
     await expect(
       repositories.database.query<{ name: string }>(

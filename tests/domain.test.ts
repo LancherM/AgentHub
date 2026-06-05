@@ -20,6 +20,7 @@ import {
   validateAgentProfile,
   validateComparisonReport,
   validateContextCandidate,
+  validateContextEvalEvent,
   validateContextIndexEntry,
   validateContextItem,
   validateContextPack,
@@ -228,6 +229,26 @@ describe("domain model validation", () => {
     ).toMatchObject({
       sourceKind: "project_context",
       indexedAt: createdAt
+    });
+
+    expect(
+      validateContextEvalEvent({
+        id: "context_eval_1",
+        projectId: "project_1",
+        taskId: "task_1",
+        runId: "run_1",
+        planId: "context_plan_1",
+        kind: "run_outcome",
+        severity: "info",
+        message: "Run succeeded with selected context.",
+        selectedItemIds: ["task:task"],
+        omittedItemIds: [],
+        metadata: { status: "succeeded" },
+        createdAt
+      })
+    ).toMatchObject({
+      kind: "run_outcome",
+      selectedItemIds: ["task:task"]
     });
 
     expect(

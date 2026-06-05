@@ -10,6 +10,7 @@ import {
   validateConversationMessage,
   validateConversationThread,
   validateConversationThreadSummary,
+  validateContextEvalEvent,
   validateContextIndexEntry,
   validateMemoryItem,
   validateProject,
@@ -35,6 +36,7 @@ import {
   type ConversationMessage,
   type ConversationThread,
   type ConversationThreadSummary,
+  type ContextEvalEvent,
   type ContextIndexEntry,
   type ContextIndexSearchInput,
   type ContextIndexSearchResult,
@@ -66,6 +68,7 @@ import {
   type ConversationMessageRepository,
   type ConversationThreadSummaryRepository,
   type ConversationThreadRepository,
+  type ContextEvalEventRepository,
   type ContextIndexRepository,
   type MemoryItemRepository,
   type ProjectRepository,
@@ -109,6 +112,7 @@ export interface SqliteRepositories {
   comparisonReportRepository: ComparisonReportRepository;
   skillRepository: SkillRepository;
   contextIndexRepository: ContextIndexRepository;
+  contextEvalEventRepository: ContextEvalEventRepository;
   settingsRepository: SettingsRepository;
   roleCallRepository: RoleCallRepository;
   roleCallEventRepository: RoleCallEventRepository;
@@ -995,6 +999,48 @@ CREATE VIRTUAL TABLE IF NOT EXISTS context_text_fts USING fts5(
   source_path
 );
 `
+  },
+  {
+    version: 14,
+    sql: `
+CREATE TABLE IF NOT EXISTS context_eval_events (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL,
+  task_id TEXT NOT NULL,
+  run_id TEXT NOT NULL,
+  plan_id TEXT,
+  kind TEXT NOT NULL CHECK (
+    kind IN (
+      'run_outcome',
+      'verification',
+      'risk',
+      'missing_context',
+      'noisy_context',
+      'review_decision'
+    )
+  ),
+  severity TEXT NOT NULL CHECK (severity IN ('info', 'warning', 'error')),
+  message TEXT NOT NULL,
+  selected_item_ids_json TEXT NOT NULL CHECK (
+    json_valid(selected_item_ids_json) AND json_type(selected_item_ids_json) = 'array'
+  ),
+  omitted_item_ids_json TEXT NOT NULL CHECK (
+    json_valid(omitted_item_ids_json) AND json_type(omitted_item_ids_json) = 'array'
+  ),
+  metadata_json TEXT NOT NULL CHECK (json_valid(metadata_json) AND json_type(metadata_json) = 'object'),
+  created_at TEXT NOT NULL,
+  FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+  FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE,
+  FOREIGN KEY (run_id) REFERENCES task_runs(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_context_eval_events_run_created
+  ON context_eval_events(run_id, created_at, id);
+CREATE INDEX IF NOT EXISTS idx_context_eval_events_project_created
+  ON context_eval_events(project_id, created_at, id);
+CREATE INDEX IF NOT EXISTS idx_context_eval_events_kind
+  ON context_eval_events(kind);
+`
   }
 ];
 
@@ -1023,6 +1069,7 @@ export function createSqliteRepositories(
     comparisonReportRepository: new SQLiteComparisonReportRepository(database),
     skillRepository: new SQLiteSkillRepository(database),
     contextIndexRepository: new SQLiteContextIndexRepository(database),
+    contextEvalEventRepository: new SQLiteContextEvalEventRepository(database),
     settingsRepository: new SQLiteSettingsRepository(database),
     roleCallRepository: new SQLiteRoleCallRepository(database),
     roleCallEventRepository: new SQLiteRoleCallEventRepository(database),
@@ -2625,6 +2672,74 @@ LIMIT ${limit};
   }
 }
 
+export class SQLiteContextEvalEventRepository
+  implements ContextEvalEventRepository
+{
+  constructor(private readonly database: SqliteDatabase) {}
+
+  async create(event: ContextEvalEvent): Promise<ContextEvalEvent> {
+    const validEvent = validateContextEvalEvent(event);
+    await this.database.execute(`
+INSERT INTO context_eval_events (
+  id,
+  project_id,
+  task_id,
+  run_id,
+  plan_id,
+  kind,
+  severity,
+  message,
+  selected_item_ids_json,
+  omitted_item_ids_json,
+  metadata_json,
+  created_at
+) VALUES (
+  ${sqlString(validEvent.id)},
+  ${sqlString(validEvent.projectId)},
+  ${sqlString(validEvent.taskId)},
+  ${sqlString(validEvent.runId)},
+  ${sqlNullableString(validEvent.planId)},
+  ${sqlString(validEvent.kind)},
+  ${sqlString(validEvent.severity)},
+  ${sqlString(validEvent.message)},
+  ${sqlJson(validEvent.selectedItemIds)},
+  ${sqlJson(validEvent.omittedItemIds)},
+  ${sqlJson(validEvent.metadata)},
+  ${sqlString(validEvent.createdAt)}
+);
+`);
+    return cloneContextEvalEvent(validEvent);
+  }
+
+  async createMany(events: ContextEvalEvent[]): Promise<ContextEvalEvent[]> {
+    const created: ContextEvalEvent[] = [];
+    for (const event of events) {
+      created.push(await this.create(event));
+    }
+    return created;
+  }
+
+  async listByRunId(runId: string): Promise<ContextEvalEvent[]> {
+    const rows = await this.database.query<ContextEvalEventRow>(`
+SELECT ${contextEvalEventSelectColumns()}
+FROM context_eval_events
+WHERE run_id = ${sqlString(runId)}
+ORDER BY created_at ASC, id ASC;
+`);
+    return rows.map(contextEvalEventFromRow);
+  }
+
+  async listByProjectId(projectId: string): Promise<ContextEvalEvent[]> {
+    const rows = await this.database.query<ContextEvalEventRow>(`
+SELECT ${contextEvalEventSelectColumns()}
+FROM context_eval_events
+WHERE project_id = ${sqlString(projectId)}
+ORDER BY created_at ASC, id ASC;
+`);
+    return rows.map(contextEvalEventFromRow);
+  }
+}
+
 export class SQLiteSettingsRepository implements SettingsRepository {
   constructor(private readonly database: SqliteDatabase) {}
 
@@ -3024,6 +3139,21 @@ interface RunArtifactRow extends Record<string, unknown> {
   createdAt: string;
 }
 
+interface ContextEvalEventRow extends Record<string, unknown> {
+  id: string;
+  projectId: string;
+  taskId: string;
+  runId: string;
+  planId: string | null;
+  kind: string;
+  severity: string;
+  message: string;
+  selectedItemIdsJson: string;
+  omittedItemIdsJson: string;
+  metadataJson: string;
+  createdAt: string;
+}
+
 interface ConversationThreadRow extends Record<string, unknown> {
   id: string;
   projectId: string;
@@ -3288,6 +3418,23 @@ function runArtifactFromRow(row: RunArtifactRow): RunArtifact {
     taskRunId: row.taskRunId,
     kind: row.kind,
     content: row.content,
+    metadata: parseJson(row.metadataJson) ?? {},
+    createdAt: row.createdAt
+  });
+}
+
+function contextEvalEventFromRow(row: ContextEvalEventRow): ContextEvalEvent {
+  return validateContextEvalEvent({
+    id: row.id,
+    projectId: row.projectId,
+    taskId: row.taskId,
+    runId: row.runId,
+    planId: nullToUndefined(row.planId),
+    kind: row.kind as ContextEvalEvent["kind"],
+    severity: row.severity as ContextEvalEvent["severity"],
+    message: row.message,
+    selectedItemIds: parseJson(row.selectedItemIdsJson) ?? [],
+    omittedItemIds: parseJson(row.omittedItemIdsJson) ?? [],
     metadata: parseJson(row.metadataJson) ?? {},
     createdAt: row.createdAt
   });
@@ -3784,6 +3931,15 @@ function cloneRunArtifact(artifact: RunArtifact): RunArtifact {
   };
 }
 
+function cloneContextEvalEvent(event: ContextEvalEvent): ContextEvalEvent {
+  return {
+    ...event,
+    selectedItemIds: [...event.selectedItemIds],
+    omittedItemIds: [...event.omittedItemIds],
+    metadata: cloneJsonObject(event.metadata)
+  };
+}
+
 function cloneConversationThread(thread: ConversationThread): ConversationThread {
   return {
     ...thread,
@@ -4149,6 +4305,23 @@ INSERT INTO context_text_fts (
   ${sqlString(entry.content)},
   ${sqlNullableString(entry.sourcePath)}
 );
+`;
+}
+
+function contextEvalEventSelectColumns(): string {
+  return `
+  id,
+  project_id AS projectId,
+  task_id AS taskId,
+  run_id AS runId,
+  plan_id AS planId,
+  kind,
+  severity,
+  message,
+  selected_item_ids_json AS selectedItemIdsJson,
+  omitted_item_ids_json AS omittedItemIdsJson,
+  metadata_json AS metadataJson,
+  created_at AS createdAt
 `;
 }
 

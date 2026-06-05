@@ -5,6 +5,8 @@ import {
   conversationMessageKinds,
   conversationMessageRoles,
   contextDeliveryModes,
+  contextEvalEventKinds,
+  contextEvalEventSeverities,
   contextIndexSourceKinds,
   contextLayers,
   contextLifetimes,
@@ -38,6 +40,7 @@ import {
   type ConversationThread,
   type ConversationThreadSummary,
   type CodeGraphEntry,
+  type ContextEvalEvent,
   type ContextItem,
   type ContextCandidate,
   type ContextIndexEntry,
@@ -815,6 +818,30 @@ export function validateCodeGraphEntry(input: CodeGraphEntry): CodeGraphEntry {
   required(input.contentHash, "codeGraphEntry.contentHash", issues);
   timestamp(input.indexedAt, "codeGraphEntry.indexedAt", issues);
   objectValue(input.metadata, "codeGraphEntry.metadata", issues);
+  return finish(input, issues);
+}
+
+export function validateContextEvalEvent(
+  input: ContextEvalEvent
+): ContextEvalEvent {
+  const issues: string[] = [];
+  required(input.id, "contextEvalEvent.id", issues);
+  required(input.projectId, "contextEvalEvent.projectId", issues);
+  required(input.taskId, "contextEvalEvent.taskId", issues);
+  required(input.runId, "contextEvalEvent.runId", issues);
+  optionalString(input.planId, "contextEvalEvent.planId", issues);
+  enumValue(input.kind, contextEvalEventKinds, "contextEvalEvent.kind", issues);
+  enumValue(
+    input.severity,
+    contextEvalEventSeverities,
+    "contextEvalEvent.severity",
+    issues
+  );
+  required(input.message, "contextEvalEvent.message", issues);
+  stringArray(input.selectedItemIds, "contextEvalEvent.selectedItemIds", issues);
+  stringArray(input.omittedItemIds, "contextEvalEvent.omittedItemIds", issues);
+  objectValue(input.metadata, "contextEvalEvent.metadata", issues);
+  timestamp(input.createdAt, "contextEvalEvent.createdAt", issues);
   return finish(input, issues);
 }
 

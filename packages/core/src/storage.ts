@@ -12,6 +12,7 @@ import {
   validateConversationMessage,
   validateConversationThread,
   validateConversationThreadSummary,
+  validateContextEvalEvent,
   validateContextIndexEntry,
   validateMemoryItem,
   validateProject,
@@ -40,6 +41,7 @@ import {
   type ConversationMessage,
   type ConversationThread,
   type ConversationThreadSummary,
+  type ContextEvalEvent,
   type ContextIndexEntry,
   type ContextIndexRebuildResult,
   type ContextIndexSearchInput,
@@ -211,6 +213,13 @@ export interface CodeGraphRepository {
   ): Promise<CodeGraphRebuildResult>;
   listByProjectId(projectId: string): Promise<CodeGraphEntry[]>;
   search(input: CodeGraphSearchInput): Promise<CodeGraphSearchResult[]>;
+}
+
+export interface ContextEvalEventRepository {
+  create(event: ContextEvalEvent): Promise<ContextEvalEvent>;
+  createMany(events: ContextEvalEvent[]): Promise<ContextEvalEvent[]>;
+  listByRunId(runId: string): Promise<ContextEvalEvent[]>;
+  listByProjectId(projectId: string): Promise<ContextEvalEvent[]>;
 }
 
 export interface SettingsRepository {
@@ -1019,6 +1028,47 @@ export class InMemoryCodeGraphRepository implements CodeGraphRepository {
   }
 }
 
+export class InMemoryContextEvalEventRepository
+  implements ContextEvalEventRepository
+{
+  private readonly events = new Map<string, ContextEvalEvent>();
+
+  async create(event: ContextEvalEvent): Promise<ContextEvalEvent> {
+    const validEvent = validateContextEvalEvent(event);
+    this.events.set(validEvent.id, cloneContextEvalEvent(validEvent));
+    return cloneContextEvalEvent(validEvent);
+  }
+
+  async createMany(events: ContextEvalEvent[]): Promise<ContextEvalEvent[]> {
+    const created: ContextEvalEvent[] = [];
+    for (const event of events) {
+      created.push(await this.create(event));
+    }
+    return created;
+  }
+
+  async listByRunId(runId: string): Promise<ContextEvalEvent[]> {
+    return this.sortedEvents((event) => event.runId === runId);
+  }
+
+  async listByProjectId(projectId: string): Promise<ContextEvalEvent[]> {
+    return this.sortedEvents((event) => event.projectId === projectId);
+  }
+
+  private sortedEvents(
+    predicate: (event: ContextEvalEvent) => boolean
+  ): ContextEvalEvent[] {
+    return [...this.events.values()]
+      .filter(predicate)
+      .sort((left, right) =>
+        left.createdAt === right.createdAt
+          ? left.id.localeCompare(right.id)
+          : left.createdAt.localeCompare(right.createdAt)
+      )
+      .map(cloneContextEvalEvent);
+  }
+}
+
 export class InMemorySettingsRepository implements SettingsRepository {
   private readonly settings = new Map<string, Setting>();
 
@@ -1323,6 +1373,15 @@ function cloneCodeGraphEntry(entry: CodeGraphEntry): CodeGraphEntry {
     symbols: [...entry.symbols],
     relatedTests: [...entry.relatedTests],
     metadata: cloneJsonObject(entry.metadata)
+  };
+}
+
+function cloneContextEvalEvent(event: ContextEvalEvent): ContextEvalEvent {
+  return {
+    ...event,
+    selectedItemIds: [...event.selectedItemIds],
+    omittedItemIds: [...event.omittedItemIds],
+    metadata: cloneJsonObject(event.metadata)
   };
 }
 

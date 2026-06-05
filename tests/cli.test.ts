@@ -62,6 +62,18 @@ describe("CLI", () => {
     await expect(
       main(["risks", "show", "run_0002"], io, projectRoot, runtime)
     ).resolves.toBe(0);
+    await expect(
+      main(["context", "plan", "run_0002"], io, projectRoot, runtime)
+    ).resolves.toBe(0);
+    await expect(
+      main(["context", "selected", "run_0002"], io, projectRoot, runtime)
+    ).resolves.toBe(0);
+    await expect(
+      main(["context", "omissions", "run_0002"], io, projectRoot, runtime)
+    ).resolves.toBe(0);
+    await expect(
+      main(["context", "eval", "run_0002"], io, projectRoot, runtime)
+    ).resolves.toBe(0);
 
     expect(errors.join("")).toBe("");
     expect(output.join("")).toContain("# Fake Agent Output");
@@ -72,6 +84,10 @@ describe("CLI", () => {
     expect(output.join("")).not.toContain("fake_output:");
     expect(output.join("")).toContain("changed_files: 1");
     expect(output.join("")).toContain("risk: medium");
+    expect(output.join("")).toContain("Context plan");
+    expect(output.join("")).toContain("selected_context_id\tlayer\ttrust");
+    expect(output.join("")).toContain("No context omissions recorded.");
+    expect(output.join("")).toContain("context_eval_id\tkind\tseverity");
     expect(output.join("")).toContain("task_0001\tcompleted\tadhoc_project\tcompile context");
     expect(output.join("")).toContain("run_0002\tsucceeded\tfake\ttask_0001");
     expect(output.join("")).toContain("acceptance:");

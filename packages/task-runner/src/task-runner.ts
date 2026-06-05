@@ -72,6 +72,7 @@ import {
   type CodeGraphRepository,
   type CompressionMode,
   type ContextPack,
+  type ContextEvalEvent,
   type ContextIndexRepository,
   type ContextLayer,
   type ContextRetrievalResult,
@@ -102,7 +103,9 @@ import {
   InMemoryTaskRunRepository,
   InMemoryVerificationResultRepository,
   InMemoryConversationThreadSummaryRepository,
+  InMemoryContextEvalEventRepository,
   InMemoryMemoryItemRepository,
+  type ContextEvalEventRepository,
   type ConversationThreadSummaryRepository,
   type MemoryItemRepository,
   type RiskReportRepository,
@@ -242,6 +245,7 @@ export interface TaskRunnerDependencies {
   memoryItemRepository?: MemoryItemRepository;
   runMetadataRepository?: RunMetadataRepository;
   conversationThreadSummaryRepository?: ConversationThreadSummaryRepository;
+  contextEvalEventRepository?: ContextEvalEventRepository;
   agentRegistry?: AgentRegistry;
   shellExecutor?: ShellExecutor;
   processRunner?: ProcessRunner;
@@ -306,6 +310,7 @@ export class TaskRunner {
   readonly memoryItemRepository: MemoryItemRepository;
   readonly runMetadataRepository: RunMetadataRepository;
   readonly conversationThreadSummaryRepository: ConversationThreadSummaryRepository;
+  readonly contextEvalEventRepository: ContextEvalEventRepository;
   private readonly contextCompiler: ContextCompiler;
   private readonly hasCustomContextCompiler: boolean;
   private readonly contextFormatter: ContextFormatter;
@@ -346,6 +351,9 @@ export class TaskRunner {
     this.conversationThreadSummaryRepository =
       dependencies.conversationThreadSummaryRepository ??
       new InMemoryConversationThreadSummaryRepository();
+    this.contextEvalEventRepository =
+      dependencies.contextEvalEventRepository ??
+      new InMemoryContextEvalEventRepository();
     this.agentRegistry =
       dependencies.agentRegistry ??
       createDefaultAgentRegistry(processRunner);
@@ -1175,6 +1183,25 @@ export class TaskRunner {
       completedAt,
       input.taskStatusMode ?? "single_run"
     );
+    try {
+      await this.contextEvalEventRepository.createMany(
+        buildContextEvalEvents({
+          projectId: currentTask.projectId,
+          taskId: currentTask.id,
+          runId: updatedRun.id,
+          planId: contextPlan.id,
+          status,
+          runtimeContextPack,
+          contextRetrievalResult,
+          verification,
+          riskReport,
+          createdAt: completedAt,
+          idGenerator: this.idGenerator
+        })
+      );
+    } catch (error) {
+      warnings.push(`context eval event persistence failed: ${errorMessage(error)}`);
+    }
     if (status === "succeeded") {
       try {
         await generateMemoryProposalsFromCompletedRun(
@@ -1841,6 +1868,188 @@ function contextRetrievalRouteCounts(
     }
   }
   return counts;
+}
+
+function buildContextEvalEvents(input: {
+  projectId: string;
+  taskId: string;
+  runId: string;
+  planId: string;
+  status: RunStatus;
+  runtimeContextPack: RuntimeContextPack;
+  contextRetrievalResult: ContextRetrievalResult;
+  verification: VerificationSuiteResult;
+  riskReport?: RiskReport;
+  createdAt: string;
+  idGenerator: IdGenerator;
+}): ContextEvalEvent[] {
+  const selectedItemIds = uniqueStrings(
+    input.runtimeContextPack.sections.flatMap((section) => section.sourceItemIds)
+  );
+  const omittedItemIds = uniqueStrings(
+    input.runtimeContextPack.omitted.map((omission) => omission.itemId)
+  );
+  const events: ContextEvalEvent[] = [
+    contextEvalEvent(input, {
+      kind: "run_outcome",
+      severity: input.status === "succeeded" ? "info" : "warning",
+      message: `Run ${input.status} with ${selectedItemIds.length} selected context items and ${omittedItemIds.length} omitted context items.`,
+      selectedItemIds,
+      omittedItemIds,
+      metadata: {
+        status: input.status,
+        selectedSectionCount: input.runtimeContextPack.sections.length,
+        omittedItemCount: input.runtimeContextPack.omitted.length,
+        routeCounts: contextRetrievalRouteCounts(input.contextRetrievalResult)
+      }
+    }),
+    contextEvalEvent(input, {
+      kind: "verification",
+      severity: verificationEvalSeverity(input.verification),
+      message: input.verification.summary,
+      selectedItemIds,
+      omittedItemIds: [],
+      metadata: {
+        status: input.verification.status,
+        missingCommandConfig: input.verification.missingCommandConfig,
+        failedCommandCount: input.verification.failedCommands.length
+      }
+    })
+  ];
+
+  if (input.riskReport) {
+    events.push(
+      contextEvalEvent(input, {
+        kind: "risk",
+        severity: riskEvalSeverity(input.riskReport.level),
+        message: input.riskReport.summary,
+        selectedItemIds,
+        omittedItemIds,
+        metadata: {
+          level: input.riskReport.level,
+          findingCount: input.riskReport.findings.length,
+          failedChecks: input.riskReport.failedChecks,
+          riskFactors: input.riskReport.riskFactors
+        }
+      })
+    );
+  }
+
+  if (omittedItemIds.length > 0) {
+    events.push(
+      contextEvalEvent(input, {
+        kind: "missing_context",
+        severity: "warning",
+        message: `${omittedItemIds.length} context items were omitted before runtime injection.`,
+        selectedItemIds: [],
+        omittedItemIds,
+        metadata: {
+          omissionReasons: countByReason(input.runtimeContextPack.omitted)
+        }
+      })
+    );
+  }
+
+  const compressionDiagnostics = compressionEvalDiagnostics(
+    input.runtimeContextPack
+  );
+  if (compressionDiagnostics.itemsCompressed > 0 || compressionDiagnostics.itemsOmitted > 0) {
+    events.push(
+      contextEvalEvent(input, {
+        kind: "noisy_context",
+        severity: compressionDiagnostics.itemsOmitted > 0 ? "warning" : "info",
+        message: "Runtime context budget or compression diagnostics were recorded.",
+        selectedItemIds,
+        omittedItemIds,
+        metadata: compressionDiagnostics
+      })
+    );
+  }
+
+  return events;
+}
+
+function contextEvalEvent(
+  input: {
+    projectId: string;
+    taskId: string;
+    runId: string;
+    planId: string;
+    createdAt: string;
+    idGenerator: IdGenerator;
+  },
+  event: Pick<
+    ContextEvalEvent,
+    "kind" | "severity" | "message" | "selectedItemIds" | "omittedItemIds" | "metadata"
+  >
+): ContextEvalEvent {
+  return {
+    id: input.idGenerator.nextId("context_eval"),
+    projectId: input.projectId,
+    taskId: input.taskId,
+    runId: input.runId,
+    planId: input.planId,
+    kind: event.kind,
+    severity: event.severity,
+    message: event.message,
+    selectedItemIds: event.selectedItemIds,
+    omittedItemIds: event.omittedItemIds,
+    metadata: event.metadata,
+    createdAt: input.createdAt
+  };
+}
+
+function verificationEvalSeverity(
+  verification: VerificationSuiteResult
+): ContextEvalEvent["severity"] {
+  if (verification.status === "failed") {
+    return "error";
+  }
+  if (verification.status === "skipped" || verification.missingCommandConfig) {
+    return "warning";
+  }
+  return "info";
+}
+
+function riskEvalSeverity(level: RiskReport["level"]): ContextEvalEvent["severity"] {
+  if (level === "high" || level === "blocking") {
+    return "error";
+  }
+  if (level === "medium") {
+    return "warning";
+  }
+  return "info";
+}
+
+function countByReason(
+  omissions: RuntimeContextPack["omitted"]
+): Record<string, number> {
+  const counts: Record<string, number> = {};
+  for (const omission of omissions) {
+    counts[omission.reason] = (counts[omission.reason] ?? 0) + 1;
+  }
+  return counts;
+}
+
+function compressionEvalDiagnostics(
+  pack: RuntimeContextPack
+): {
+  itemsCompressed: number;
+  itemsOmitted: number;
+  compressedSectionIds: string[];
+} {
+  const compressedSections = pack.sections.filter(
+    (section) => section.renderedCharacterCount < section.originalCharacterCount
+  );
+  return {
+    itemsCompressed: compressedSections.length,
+    itemsOmitted: pack.omitted.length,
+    compressedSectionIds: compressedSections.map((section) => section.id)
+  };
+}
+
+function uniqueStrings(values: string[]): string[] {
+  return [...new Set(values)].sort();
 }
 
 function createDiffArtifact(

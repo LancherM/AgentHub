@@ -36,6 +36,7 @@ import {
   InMemoryTaskRunRepository,
   InMemoryVerificationResultRepository,
   InMemoryContextIndexRepository,
+  InMemoryContextEvalEventRepository,
   InMemoryMemoryItemRepository,
   extractAgentFacingOutput,
   type RunEvent,
@@ -174,12 +175,14 @@ describe("task runner", () => {
     const projectRoot = await createTestDirectory("agent-hub-runtime-context-project");
     const runRoot = await createTestDirectory("agent-hub-runtime-context-runs");
     const runArtifactRepository = new InMemoryRunArtifactRepository();
+    const contextEvalEventRepository = new InMemoryContextEvalEventRepository();
     const runner = new TaskRunner({
       defaultRunRoot: runRoot,
       workspaceManager: new TestWorkspaceManager(runRoot),
       diffCollector: new StaticDiffCollector(),
       verificationRunner: new VerificationRunner(new MockShellExecutor()),
       runArtifactRepository,
+      contextEvalEventRepository,
       idGenerator: new SequenceIdGenerator(),
       clock: new FixedClock("2026-01-01T00:00:00.000Z")
     });
@@ -282,6 +285,43 @@ describe("task runner", () => {
         })
       ])
     );
+    await expect(
+      contextEvalEventRepository.listByRunId(result.run.id)
+    ).resolves.toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        kind: "run_outcome",
+        severity: "info",
+        selectedItemIds: expect.arrayContaining(["runtime_policy:agent_hub", "task:task"]),
+        omittedItemIds: expect.arrayContaining(["conversation:thread"])
+      }),
+      expect.objectContaining({
+        kind: "verification",
+        severity: "warning",
+        metadata: expect.objectContaining({
+          status: "skipped",
+          missingCommandConfig: true
+        })
+      }),
+      expect.objectContaining({
+        kind: "risk",
+        severity: "warning",
+        metadata: expect.objectContaining({
+          level: "medium"
+        })
+      }),
+      expect.objectContaining({
+        kind: "missing_context",
+        severity: "warning",
+        omittedItemIds: ["conversation:thread"]
+      }),
+      expect.objectContaining({
+        kind: "noisy_context",
+        severity: "warning",
+        metadata: expect.objectContaining({
+          itemsOmitted: 1
+        })
+      })
+    ]));
   });
 
   it("persists BM25 retrieval candidates without changing markdown injection", async () => {

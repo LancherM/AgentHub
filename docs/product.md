@@ -298,6 +298,12 @@ provider, Agent Hub records a skip diagnostic and continues with deterministic
 explicit, BM25, graph, and recency retrieval. Hybrid fusion can combine
 same-source route signals such as BM25 plus embedding without introducing a
 cloud dependency or secret storage.
+Completed runs also record local context evaluation events linked to run
+outcome, verification status, risk level, omitted context, compression/noise
+signals, and explicit review decisions. The CLI can inspect a run's context
+plan, selected runtime context sections, omissions, and eval events through
+`agent-hub context plan|selected|omissions|eval <run-id>`. Eval events are
+audit evidence only and do not automatically approve or promote memory.
 The typed `runtime_context_pack` now selects policy-allowed retrieval candidates
 from explicit, BM25, embedding, graph, and recency routes after hard filtering, ranking, and
 layer-budget checks. The selector applies deterministic, source-aware

@@ -52,6 +52,7 @@ import {
   validateWorkgroupRole,
   toWorkgroupRoleRunMetadata,
   type ContextDeliveryMode,
+  type ContextPlan,
   type ContextStoreMode,
   type AgentAvailabilityOptions,
   type AgentKind,
@@ -62,6 +63,7 @@ import {
   type MemoryCategory,
   type Project,
   type RunContextDeliveryMode,
+  type RuntimeContextPack,
   type RunEventType,
   type RoleCall,
   type RoleCallEvent,
@@ -99,6 +101,7 @@ import {
   InMemoryAgentProfileRepository,
   InMemoryComparisonReportRepository,
   InMemoryConversationMessageRepository,
+  InMemoryContextEvalEventRepository,
   InMemoryConversationThreadSummaryRepository,
   InMemoryConversationThreadRepository,
   InMemoryMemoryItemRepository,
@@ -118,6 +121,7 @@ import {
   type AgentProfileRepository,
   type ComparisonReportRepository,
   type ConversationMessageRepository,
+  type ContextEvalEventRepository,
   type ConversationThreadSummaryRepository,
   type ConversationThreadRepository,
   type MemoryItemRepository,
@@ -155,6 +159,7 @@ export interface CliRuntime {
   verificationResultRepository: VerificationResultRepository;
   riskReportRepository: RiskReportRepository;
   runMetadataRepository: RunMetadataRepository;
+  contextEvalEventRepository: ContextEvalEventRepository;
   memoryItemRepository: MemoryItemRepository;
   comparisonReportRepository: ComparisonReportRepository;
   skillRepository: SkillRepository;
@@ -173,6 +178,7 @@ export interface CliRuntimeDependencies extends TaskRunnerDependencies {
   conversationThreadRepository?: ConversationThreadRepository;
   conversationMessageRepository?: ConversationMessageRepository;
   conversationThreadSummaryRepository?: ConversationThreadSummaryRepository;
+  contextEvalEventRepository?: ContextEvalEventRepository;
   memoryItemRepository?: MemoryItemRepository;
   comparisonReportRepository?: ComparisonReportRepository;
   skillRepository?: SkillRepository;
@@ -195,6 +201,7 @@ export function createCliRuntime(
     dependencies.conversationThreadRepository !== undefined ||
     dependencies.conversationMessageRepository !== undefined ||
     dependencies.conversationThreadSummaryRepository !== undefined ||
+    dependencies.contextEvalEventRepository !== undefined ||
     dependencies.verificationResultRepository !== undefined ||
     dependencies.riskReportRepository !== undefined ||
     dependencies.runMetadataRepository !== undefined ||
@@ -260,6 +267,10 @@ export function createCliRuntime(
     dependencies.runMetadataRepository ??
     sqliteRepositories?.runMetadataRepository ??
     new InMemoryRunMetadataRepository();
+  const contextEvalEventRepository =
+    dependencies.contextEvalEventRepository ??
+    sqliteRepositories?.contextEvalEventRepository ??
+    new InMemoryContextEvalEventRepository();
   const memoryItemRepository =
     dependencies.memoryItemRepository ??
     sqliteRepositories?.memoryItemRepository ??
@@ -297,7 +308,8 @@ export function createCliRuntime(
     verificationResultRepository,
     riskReportRepository,
     memoryItemRepository,
-    runMetadataRepository
+    runMetadataRepository,
+    contextEvalEventRepository
   });
 
   return {
@@ -313,6 +325,7 @@ export function createCliRuntime(
     verificationResultRepository,
     riskReportRepository,
     runMetadataRepository,
+    contextEvalEventRepository,
     memoryItemRepository,
     comparisonReportRepository,
     skillRepository,
@@ -410,6 +423,22 @@ export async function main(
 
   if (command === "context" && rest[0] === "export") {
     return contextExport(rest.slice(1), io, cwd);
+  }
+
+  if (command === "context" && rest[0] === "plan") {
+    return contextPlanInspect(rest.slice(1), io, activeRuntime);
+  }
+
+  if (command === "context" && rest[0] === "selected") {
+    return contextSelectedInspect(rest.slice(1), io, activeRuntime);
+  }
+
+  if (command === "context" && rest[0] === "omissions") {
+    return contextOmissionsInspect(rest.slice(1), io, activeRuntime);
+  }
+
+  if (command === "context" && rest[0] === "eval") {
+    return contextEvalInspect(rest.slice(1), io, activeRuntime);
   }
 
   if (command === "skills" && rest[0] === "global" && rest[1] === "create") {
@@ -632,6 +661,10 @@ export function helpText(debug = isEnvironmentDebugEnabled()): string {
     "  agent-hub context show --project-root <path> --project-id <project-id>",
     "  agent-hub context build --project-root <path> --project-id <project-id> --task-id <task-id> --title <title> --prompt <prompt>",
     "  agent-hub context export --project-root <path> --project-id <project-id> [--target repo] --dry-run|--write",
+    "  agent-hub [--db <path>] context plan <run-id>",
+    "  agent-hub [--db <path>] context selected <run-id>",
+    "  agent-hub [--db <path>] context omissions <run-id>",
+    "  agent-hub [--db <path>] context eval <run-id>",
     "  agent-hub skills global create --id <id> --name <name> --description <text> [--body <markdown>] [--agent-hub-home <path>]",
     "  agent-hub skills global list [--agent-hub-home <path>]",
     `  agent-hub [--db <path>] run --task <task-id> --agent ${agentChoices} [--workspace-base <path>] [--skill [scope:]id]`,
@@ -3969,6 +4002,205 @@ async function contextExport(args: string[], io: CliIO, cwd: string): Promise<nu
   }
 }
 
+async function contextPlanInspect(
+  args: string[],
+  io: CliIO,
+  runtime: CliRuntime
+): Promise<number> {
+  try {
+    const parsed = parseContextInspectArgs(args);
+    const plan = await loadContextPlanArtifact(runtime, parsed.runId);
+    if (parsed.json) {
+      io.stdout.write(`${JSON.stringify({ contextPlan: plan }, null, 2)}\n`);
+      return 0;
+    }
+    io.stdout.write(
+      [
+        "Context plan",
+        `run_id: ${parsed.runId}`,
+        `plan_id: ${plan.id}`,
+        `task_type: ${plan.taskType}`,
+        `retrieval_routes: ${plan.retrievalRoutes.join(",")}`,
+        `required_layers: ${plan.requiredLayers.join(",")}`,
+        "budget_policy:",
+        ...Object.entries(plan.budgetPolicy).map(([layer, budget]) =>
+          `  ${layer}: ${budget}`
+        ),
+        ""
+      ].join("\n")
+    );
+    return 0;
+  } catch (error) {
+    io.stderr.write(`error: ${error instanceof Error ? error.message : String(error)}\n`);
+    return 1;
+  }
+}
+
+async function contextSelectedInspect(
+  args: string[],
+  io: CliIO,
+  runtime: CliRuntime
+): Promise<number> {
+  try {
+    const parsed = parseContextInspectArgs(args);
+    const pack = await loadRuntimeContextPackArtifact(runtime, parsed.runId);
+    const selected = pack.sections.map((section) => ({
+      id: section.id,
+      layer: section.layer,
+      trustLevel: section.trustLevel,
+      title: section.title,
+      sourceItemIds: section.sourceItemIds,
+      compressionMode: section.compressionMode,
+      originalCharacterCount: section.originalCharacterCount,
+      renderedCharacterCount: section.renderedCharacterCount,
+      inclusionReason: section.inclusionReason
+    }));
+    if (parsed.json) {
+      io.stdout.write(`${JSON.stringify({ selectedContext: selected }, null, 2)}\n`);
+      return 0;
+    }
+    io.stdout.write(
+      [
+        "selected_context_id\tlayer\ttrust\tcompression\trendered/original\ttitle",
+        ...selected.map((section) =>
+          [
+            section.id,
+            section.layer,
+            section.trustLevel,
+            section.compressionMode,
+            `${section.renderedCharacterCount}/${section.originalCharacterCount}`,
+            inlineText(section.title)
+          ].join("\t")
+        ),
+        ""
+      ].join("\n")
+    );
+    return 0;
+  } catch (error) {
+    io.stderr.write(`error: ${error instanceof Error ? error.message : String(error)}\n`);
+    return 1;
+  }
+}
+
+async function contextOmissionsInspect(
+  args: string[],
+  io: CliIO,
+  runtime: CliRuntime
+): Promise<number> {
+  try {
+    const parsed = parseContextInspectArgs(args);
+    const pack = await loadRuntimeContextPackArtifact(runtime, parsed.runId);
+    if (parsed.json) {
+      io.stdout.write(`${JSON.stringify({ omissions: pack.omitted }, null, 2)}\n`);
+      return 0;
+    }
+    if (pack.omitted.length === 0) {
+      io.stdout.write("No context omissions recorded.\n");
+      return 0;
+    }
+    io.stdout.write(
+      [
+        "item_id\tlayer\treason",
+        ...pack.omitted.map((omission) =>
+          [omission.itemId, omission.layer, inlineText(omission.reason)].join("\t")
+        ),
+        ""
+      ].join("\n")
+    );
+    return 0;
+  } catch (error) {
+    io.stderr.write(`error: ${error instanceof Error ? error.message : String(error)}\n`);
+    return 1;
+  }
+}
+
+async function contextEvalInspect(
+  args: string[],
+  io: CliIO,
+  runtime: CliRuntime
+): Promise<number> {
+  try {
+    const parsed = parseContextInspectArgs(args);
+    const events = await runtime.contextEvalEventRepository.listByRunId(parsed.runId);
+    if (parsed.json) {
+      io.stdout.write(`${JSON.stringify({ contextEvalEvents: events }, null, 2)}\n`);
+      return 0;
+    }
+    if (events.length === 0) {
+      io.stdout.write("No context eval events recorded.\n");
+      return 0;
+    }
+    io.stdout.write(
+      [
+        "context_eval_id\tkind\tseverity\tselected\tomitted\tmessage",
+        ...events.map((event) =>
+          [
+            event.id,
+            event.kind,
+            event.severity,
+            event.selectedItemIds.length,
+            event.omittedItemIds.length,
+            inlineText(event.message)
+          ].join("\t")
+        ),
+        ""
+      ].join("\n")
+    );
+    return 0;
+  } catch (error) {
+    io.stderr.write(`error: ${error instanceof Error ? error.message : String(error)}\n`);
+    return 1;
+  }
+}
+
+interface ParsedContextInspectArgs {
+  runId: string;
+  json: boolean;
+}
+
+function parseContextInspectArgs(args: string[]): ParsedContextInspectArgs {
+  const positional = args.filter((arg) => !arg.startsWith("--"));
+  const runId = positional[0];
+  if (!runId) {
+    throw new Error("run id is required");
+  }
+  if (positional.length > 1) {
+    throw new Error(`unexpected argument ${positional[1]}`);
+  }
+  return {
+    runId,
+    json: args.includes("--json")
+  };
+}
+
+async function loadContextPlanArtifact(
+  runtime: CliRuntime,
+  runId: string
+): Promise<ContextPlan> {
+  const artifact = await runtime.runArtifactRepository.getLatestByRunIdAndKind(
+    runId,
+    "context_plan"
+  );
+  if (!artifact) {
+    throw new Error(`context plan artifact not found for run ${runId}`);
+  }
+  return JSON.parse(artifact.content) as ContextPlan;
+}
+
+async function loadRuntimeContextPackArtifact(
+  runtime: CliRuntime,
+  runId: string
+): Promise<RuntimeContextPack> {
+  const artifact = await runtime.runArtifactRepository.getLatestByRunIdAndKind(
+    runId,
+    "runtime_context_pack"
+  );
+  if (!artifact) {
+    throw new Error(`runtime context pack artifact not found for run ${runId}`);
+  }
+  return JSON.parse(artifact.content) as RuntimeContextPack;
+}
+
 async function createGlobalSkillCommand(
   args: string[],
   io: CliIO,
@@ -4449,12 +4681,66 @@ async function recordReviewDecisionCommand(
         now: nowIso
       }
     );
+    await recordContextReviewDecisionEvalEvent(runtime, decision);
     io.stdout.write(renderReviewDecision(decision));
     return 0;
   } catch (error) {
     io.stderr.write(`error: ${errorMessage(error)}\n`);
     return 1;
   }
+}
+
+async function recordContextReviewDecisionEvalEvent(
+  runtime: CliRuntime,
+  decision: {
+    runId: string;
+    reviewStatus: string;
+    acceptedAt?: string;
+    rejectedAt?: string;
+    reason?: string;
+  }
+): Promise<void> {
+  const run = await runtime.taskRunRepository.get(decision.runId);
+  if (!run) {
+    return;
+  }
+  const task = await runtime.taskRepository.get(run.taskId);
+  if (!task) {
+    return;
+  }
+  let selectedItemIds: string[] = [];
+  let omittedItemIds: string[] = [];
+  let planId: string | undefined;
+  try {
+    const pack = await loadRuntimeContextPackArtifact(runtime, run.id);
+    selectedItemIds = uniqueStrings(
+      pack.sections.flatMap((section) => section.sourceItemIds)
+    );
+    omittedItemIds = uniqueStrings(pack.omitted.map((omission) => omission.itemId));
+    planId = pack.planId;
+  } catch {
+    selectedItemIds = [];
+    omittedItemIds = [];
+  }
+  await runtime.contextEvalEventRepository.create({
+    id: createId("context_eval"),
+    projectId: task.projectId,
+    taskId: task.id,
+    runId: run.id,
+    planId,
+    kind: "review_decision",
+    severity: decision.reviewStatus === "accepted" ? "info" : "warning",
+    message: `Review decision recorded: ${decision.reviewStatus}.`,
+    selectedItemIds,
+    omittedItemIds,
+    metadata: {
+      reviewStatus: decision.reviewStatus,
+      acceptedAt: decision.acceptedAt,
+      rejectedAt: decision.rejectedAt,
+      reason: decision.reason
+    },
+    createdAt: nowIso()
+  });
 }
 
 function renderReviewDecision(decision: {
@@ -5139,6 +5425,10 @@ function firstLine(value: string): string {
 
 function inlineText(value: string): string {
   return value.replace(/\r?\n/g, "\\n");
+}
+
+function uniqueStrings(values: string[]): string[] {
+  return [...new Set(values)].sort();
 }
 
 type CliRunResult = Awaited<ReturnType<TaskRunner["run"]>>;

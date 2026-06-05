@@ -847,6 +847,39 @@ export interface CodeGraphSearchResult {
   diagnostics: Record<string, unknown>;
 }
 
+export const contextEvalEventKinds = [
+  "run_outcome",
+  "verification",
+  "risk",
+  "missing_context",
+  "noisy_context",
+  "review_decision"
+] as const;
+export type ContextEvalEventKind = (typeof contextEvalEventKinds)[number];
+
+export const contextEvalEventSeverities = [
+  "info",
+  "warning",
+  "error"
+] as const;
+export type ContextEvalEventSeverity =
+  (typeof contextEvalEventSeverities)[number];
+
+export interface ContextEvalEvent {
+  id: string;
+  projectId: string;
+  taskId: string;
+  runId: string;
+  planId?: string;
+  kind: ContextEvalEventKind;
+  severity: ContextEvalEventSeverity;
+  message: string;
+  selectedItemIds: string[];
+  omittedItemIds: string[];
+  metadata: JsonObject;
+  createdAt: string;
+}
+
 export interface ContextPlan {
   id: string;
   taskType: TaskType;

@@ -155,6 +155,13 @@ retrieval and optional reranking, combining same-source route evidence such as
 BM25 plus embedding while preserving source ids, route lists, and diagnostics.
 No cloud embedding service, hosted vector database, or secret persistence is
 part of the default runtime.
+CR8 adds first-class `context_eval_events` local persistence. TaskRunner writes
+events for run outcome, verification, risk, missing context, and noisy/compressed
+context after final run status is known; review accept/reject commands append
+`review_decision` events. These rows link to project, task, run, and context
+plan ids and store selected/omitted context item ids as JSON arrays. CLI
+inspection commands read persisted artifacts and eval rows only; they do not
+rerun retrieval and do not promote memory.
 TaskRunner now runs a runtime selection step over explicit, BM25, embedding,
 graph, and recency candidates before persisting `runtime_context_pack`. The selector
 applies hard policy first, ranks allowed candidates with relevance, layer
