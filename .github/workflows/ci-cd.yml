@@ -55,6 +55,49 @@ jobs:
       - name: Test
         run: pnpm test
 
+      - name: Coverage
+        run: pnpm test:coverage
+
+      - name: Summarize coverage
+        if: always()
+        run: |
+          if [ ! -f coverage/coverage-summary.json ]; then
+            {
+              echo "### Coverage"
+              echo ""
+              echo "Coverage summary was not generated."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          node <<'NODE' >> "$GITHUB_STEP_SUMMARY"
+          const fs = require("node:fs");
+
+          const summary = JSON.parse(fs.readFileSync("coverage/coverage-summary.json", "utf8"));
+          const total = summary.total;
+          const metrics = ["lines", "statements", "branches", "functions"];
+
+          console.log("### Coverage");
+          console.log("");
+          console.log("Coverage is reported for visibility only. No threshold is enforced yet.");
+          console.log("");
+          console.log("| Metric | Covered | Total | Pct |");
+          console.log("| --- | ---: | ---: | ---: |");
+
+          for (const metric of metrics) {
+            const value = total[metric];
+            console.log(`| ${metric} | ${value.covered} | ${value.total} | ${value.pct}% |`);
+          }
+          NODE
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage/
+          if-no-files-found: warn
+
       - name: Build
         run: pnpm build
 

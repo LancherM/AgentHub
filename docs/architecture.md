@@ -476,14 +476,20 @@ Root scripts:
 pnpm typecheck
 pnpm lint
 pnpm test
+pnpm test:coverage
 pnpm build
 pnpm desktop:build
 pnpm desktop:dist:mac
 ```
 
 GitHub CI runs local validation and builds CLI package artifacts and macOS DMG
-artifacts. Release workflows publish repository artifacts only; they do not
-deploy services or change the local-first runtime model.
+artifacts. The Validate job also runs a report-only Vitest coverage pass,
+writes the aggregate totals to the GitHub Actions step summary, and uploads the
+`coverage/` directory as an artifact. Coverage thresholds are intentionally not
+enforced yet; the report is used to establish a baseline before package-specific
+or diff-specific gates are introduced. Release workflows publish repository
+artifacts only; they do not deploy services or change the local-first runtime
+model.
 
 ## Extension Rules
 
