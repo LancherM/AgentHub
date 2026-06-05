@@ -68,6 +68,7 @@ describe("context plan generation", () => {
           "explicit",
           "task_rule",
           "bm25",
+          "embedding",
           "graph",
           "recency",
         ],

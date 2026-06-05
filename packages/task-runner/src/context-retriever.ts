@@ -1,6 +1,11 @@
 import { createHash } from "node:crypto";
 import path from "node:path";
 import {
+  fuseContextCandidates,
+  type ContextCandidateReranker,
+  type ContextEmbeddingRetriever
+} from "./context-fusion";
+import {
   validateContextCandidate,
   validateContextRetrievalResult,
   type ConversationThreadSummary,
@@ -66,8 +71,11 @@ export interface ContextRetriever {
 export interface ContextRetrieverOptions {
   contextIndexRepository?: ContextIndexRepository;
   codeGraphRepository?: CodeGraphRepository;
+  embeddingRetriever?: ContextEmbeddingRetriever;
+  reranker?: ContextCandidateReranker;
   bm25Limit?: number;
   graphLimit?: number;
+  embeddingLimit?: number;
 }
 
 export class ExplicitContextRetriever implements ContextRetriever {
@@ -119,34 +127,56 @@ export class ExplicitContextRetriever implements ContextRetriever {
 
     const explicitCandidates = dedupeCandidates(candidates);
     const bm25 = await bm25Candidates(input, explicitCandidates, this.options);
+    const embedding = await embeddingCandidates(input, this.options);
     const graph = await graphCandidates(
       input,
-      [...explicitCandidates, ...bm25.candidates],
+      [...explicitCandidates, ...bm25.candidates, ...embedding.candidates],
       this.options
     );
     const recency = recencyCandidates(input, [
       ...explicitCandidates,
       ...bm25.candidates,
+      ...embedding.candidates,
       ...graph.candidates
     ]);
+    const reranked = await rerankCandidates(
+      {
+        ...input,
+        candidates: [
+          ...explicitCandidates,
+          ...bm25.candidates,
+          ...embedding.candidates,
+          ...graph.candidates,
+          ...recency.candidates
+        ]
+      },
+      this.options
+    );
+    const fusedCandidates = fuseContextCandidates(reranked.candidates);
 
     const result = validateContextRetrievalResult({
       id: input.id,
       planId: input.plan.id,
       taskId: input.task.id,
       runId: input.runId,
-      candidates: [
-        ...explicitCandidates,
-        ...bm25.candidates,
-        ...graph.candidates,
-        ...recency.candidates
-      ],
+      candidates: fusedCandidates,
       omitted: [...omitted, ...bm25.omitted, ...graph.omitted, ...recency.omitted],
       diagnostics: [
         ...diagnostics,
         ...bm25.diagnostics,
+        ...embedding.diagnostics,
         ...graph.diagnostics,
-        ...recency.diagnostics
+        ...recency.diagnostics,
+        ...reranked.diagnostics,
+        {
+          severity: "info",
+          message: "hybrid retrieval fusion completed",
+          metadata: {
+            rawCandidateCount: reranked.candidates.length,
+            fusedCandidateCount: fusedCandidates.length,
+            routeCounts: contextCandidateRouteCounts(fusedCandidates)
+          }
+        }
       ],
       createdAt: input.createdAt
     });
@@ -248,6 +278,114 @@ function indexSearchCandidate(
       ...searchResult.diagnostics
     }
   });
+}
+
+async function embeddingCandidates(
+  input: ContextRetrieverInput,
+  options: ContextRetrieverOptions
+): Promise<{
+  candidates: ContextCandidate[];
+  diagnostics: ContextRetrievalResult["diagnostics"];
+}> {
+  if (!input.plan.retrievalRoutes.includes("embedding")) {
+    return { candidates: [], diagnostics: [] };
+  }
+  if (!options.embeddingRetriever) {
+    return {
+      candidates: [],
+      diagnostics: [
+        {
+          severity: "info",
+          message: "embedding retrieval skipped because no local embedding retriever is configured"
+        }
+      ]
+    };
+  }
+  const capability = await options.embeddingRetriever.detect();
+  if (!capability.available) {
+    return {
+      candidates: [],
+      diagnostics: [
+        {
+          severity: "info",
+          message: "embedding retrieval skipped because the configured retriever is unavailable",
+          metadata: { ...capability }
+        }
+      ]
+    };
+  }
+  const terms = extractContextQueryTerms(input);
+  const candidates = (await options.embeddingRetriever.retrieve({
+    plan: input.plan,
+    task: input.task,
+    taskPrompt: input.taskPrompt,
+    contextBundle: input.contextBundle,
+    queryTerms: terms,
+    limit: options.embeddingLimit ?? 8
+  })).map(validateContextCandidate);
+  return {
+    candidates,
+    diagnostics: [
+      {
+        severity: "info",
+        message: "embedding retrieval completed",
+        metadata: {
+          provider: capability.provider,
+          candidateCount: candidates.length,
+          queryTerms: terms
+        }
+      }
+    ]
+  };
+}
+
+async function rerankCandidates(
+  input: ContextRetrieverInput & { candidates: ContextCandidate[] },
+  options: ContextRetrieverOptions
+): Promise<{
+  candidates: ContextCandidate[];
+  diagnostics: ContextRetrievalResult["diagnostics"];
+}> {
+  if (!options.reranker || input.candidates.length === 0) {
+    return { candidates: input.candidates, diagnostics: [] };
+  }
+  const capability = options.reranker.detect
+    ? await options.reranker.detect()
+    : {
+        available: true,
+        provider: "configured_reranker"
+      };
+  if (!capability.available) {
+    return {
+      candidates: input.candidates,
+      diagnostics: [
+        {
+          severity: "info",
+          message: "reranking skipped because the configured reranker is unavailable",
+          metadata: { ...capability }
+        }
+      ]
+    };
+  }
+  const candidates = (await options.reranker.rerank({
+    plan: input.plan,
+    taskPrompt: input.taskPrompt,
+    candidates: input.candidates
+  })).map(validateContextCandidate);
+  return {
+    candidates,
+    diagnostics: [
+      {
+        severity: "info",
+        message: "context candidates reranked",
+        metadata: {
+          provider: capability.provider,
+          inputCandidateCount: input.candidates.length,
+          outputCandidateCount: candidates.length
+        }
+      }
+    ]
+  };
 }
 
 async function graphCandidates(
@@ -968,6 +1106,18 @@ function normalizeSourcePath(value: string): string {
 
 function uniqueStrings(values: string[]): string[] {
   return [...new Set(values.filter((value) => value.trim().length > 0))].sort();
+}
+
+function contextCandidateRouteCounts(
+  candidates: ContextCandidate[]
+): Record<string, number> {
+  const counts: Record<string, number> = {};
+  for (const candidateEntry of candidates) {
+    for (const route of candidateEntry.routes) {
+      counts[route] = (counts[route] ?? 0) + 1;
+    }
+  }
+  return counts;
 }
 
 function secretLikePathReason(value: string): string | undefined {

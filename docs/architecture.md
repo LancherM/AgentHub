@@ -147,8 +147,16 @@ changed-file relationships. Graph retrieval expands from task terms, selected
 file seeds, and recent changed files, then emits high-trust `code` or `test`
 candidates with graph proximity diagnostics. Unconfigured repositories leave
 the graph route disabled without affecting other retrieval paths.
-TaskRunner now runs a runtime selection step over explicit, BM25, graph, and
-recency candidates before persisting `runtime_context_pack`. The selector
+Optional semantic retrieval is modeled as injectable local capabilities:
+`ContextEmbeddingRetriever` and `ContextCandidateReranker`. Each capability is
+detected before use; unavailable or unconfigured providers produce info
+diagnostics and do not block the run. Candidate fusion happens after route
+retrieval and optional reranking, combining same-source route evidence such as
+BM25 plus embedding while preserving source ids, route lists, and diagnostics.
+No cloud embedding service, hosted vector database, or secret persistence is
+part of the default runtime.
+TaskRunner now runs a runtime selection step over explicit, BM25, embedding,
+graph, and recency candidates before persisting `runtime_context_pack`. The selector
 applies hard policy first, ranks allowed candidates with relevance, layer
 priority, trust, freshness, and graph-proximity signals, then enforces layer
 character budgets.

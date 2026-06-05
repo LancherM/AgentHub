@@ -292,8 +292,14 @@ boundaries, source-to-test relationships, and changed-file proximity so graph
 retrieval can add high-trust code or test candidates with graph proximity
 diagnostics. This remains local-only and does not require embeddings or a cloud
 index.
+Semantic retrieval is optional. Runs may configure a local embedding retriever
+and a local reranker, both guarded by capability detection. With no configured
+provider, Agent Hub records a skip diagnostic and continues with deterministic
+explicit, BM25, graph, and recency retrieval. Hybrid fusion can combine
+same-source route signals such as BM25 plus embedding without introducing a
+cloud dependency or secret storage.
 The typed `runtime_context_pack` now selects policy-allowed retrieval candidates
-from explicit, BM25, graph, and recency routes after hard filtering, ranking, and
+from explicit, BM25, embedding, graph, and recency routes after hard filtering, ranking, and
 layer-budget checks. The selector applies deterministic, source-aware
 compression before omitting over-budget project docs, run evidence, or
 conversation continuity, and records requested/used layer budgets plus

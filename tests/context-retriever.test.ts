@@ -7,6 +7,7 @@ import {
 import {
   InMemoryCodeGraphRepository,
   InMemoryContextIndexRepository,
+  validateContextCandidate,
   validateContextIndexEntry,
   type ContextBundle,
   type ContextSection,
@@ -273,6 +274,153 @@ describe("explicit context retrieval", () => {
         reason: "BM25 candidate duplicated an explicit-route source"
       }
     ]);
+  });
+
+  it("keeps retrieval functional when embedding capability is not configured", async () => {
+    const retriever = new ExplicitContextRetriever();
+    const task = testTask();
+    const plan = createContextPlan({
+      id: "context_plan_embedding_disabled",
+      taskPrompt: "Fix parser.ts E_PARSE with semantic context",
+      createdAt
+    });
+
+    const result = await retriever.retrieve({
+      id: "context_retrieval_embedding_disabled",
+      plan,
+      task,
+      runId: "run_1",
+      taskPrompt: "Fix parser.ts E_PARSE with semantic context",
+      contextBundle: contextBundle([
+        section("task:task", "task", "task", "Current Task", "Fix parser.ts")
+      ]),
+      createdAt
+    });
+
+    expect(result.candidates).toEqual([
+      expect.objectContaining({
+        routes: ["explicit"],
+        item: expect.objectContaining({ layer: "task" })
+      })
+    ]);
+    expect(result.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          message: "embedding retrieval skipped because no local embedding retriever is configured"
+        }),
+        expect.objectContaining({
+          message: "hybrid retrieval fusion completed"
+        })
+      ])
+    );
+  });
+
+  it("uses optional embedding retrieval and reranking when local capabilities are available", async () => {
+    const semanticCandidate = validateContextCandidate({
+      item: {
+        id: "embedding:context/project.md",
+        layer: "project",
+        sourceKind: "project_context",
+        sourceId: "context/project.md",
+        scope: "project",
+        trustLevel: "high",
+        lifetime: "static",
+        title: "Project Context",
+        content: "Semantic parser architecture guidance.",
+        contentHash: "sha256:semantic-project",
+        sourcePath: "/tmp/context/project.md",
+        createdAt,
+        metadata: {
+          provider: "mock_local_embedding"
+        }
+      },
+      routes: ["embedding"],
+      relevanceScore: 0.88,
+      freshnessScore: 0.75,
+      trustScore: 0.85,
+      scopeMatchScore: 0.9,
+      inclusionReason: "embedding similarity matched the current task",
+      diagnostics: {
+        provider: "mock_local_embedding"
+      }
+    });
+    const retriever = new ExplicitContextRetriever({
+      embeddingRetriever: {
+        async detect() {
+          return { available: true, provider: "mock_local_embedding" };
+        },
+        async retrieve() {
+          return [semanticCandidate];
+        }
+      },
+      reranker: {
+        async detect() {
+          return { available: true, provider: "mock_reranker" };
+        },
+        async rerank(input) {
+          return [
+            ...input.candidates.filter((candidate) =>
+              candidate.routes.includes("embedding")
+            ),
+            ...input.candidates.filter((candidate) =>
+              !candidate.routes.includes("embedding")
+            )
+          ];
+        }
+      }
+    });
+    const task = testTask();
+    const plan = createContextPlan({
+      id: "context_plan_embedding",
+      taskPrompt: "Fix parser semantic architecture regression",
+      createdAt
+    });
+
+    const result = await retriever.retrieve({
+      id: "context_retrieval_embedding",
+      plan,
+      task,
+      runId: "run_1",
+      taskPrompt: "Fix parser semantic architecture regression",
+      contextBundle: contextBundle([
+        section("task:task", "task", "task", "Current Task", "Fix parser")
+      ]),
+      createdAt
+    });
+
+    expect(result.candidates[0]).toMatchObject({
+      routes: ["embedding"],
+      item: expect.objectContaining({
+        sourceKind: "project_context",
+        sourceId: "context/project.md"
+      })
+    });
+    expect(result.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          message: "embedding retrieval completed",
+          metadata: expect.objectContaining({
+            provider: "mock_local_embedding",
+            candidateCount: 1
+          })
+        }),
+        expect.objectContaining({
+          message: "context candidates reranked",
+          metadata: expect.objectContaining({
+            provider: "mock_reranker"
+          })
+        }),
+        expect.objectContaining({
+          message: "hybrid retrieval fusion completed",
+          metadata: expect.objectContaining({
+            routeCounts: expect.objectContaining({
+              embedding: 1,
+              explicit: 1
+            })
+          })
+        })
+      ])
+    );
   });
 
   it("adds graph candidates for TypeScript symbol, import, test, and changed-file relationships", async () => {

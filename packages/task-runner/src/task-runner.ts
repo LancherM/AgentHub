@@ -44,6 +44,10 @@ import {
   type ExplicitFileContextSource,
   type ExplicitRunContextSource
 } from "./context-retriever";
+import type {
+  ContextCandidateReranker,
+  ContextEmbeddingRetriever
+} from "./context-fusion";
 import {
   collectRecentRunEvidence,
   collectThreadSummaryContext,
@@ -248,6 +252,8 @@ export interface TaskRunnerDependencies {
   contextRetriever?: ContextRetriever;
   contextIndexRepository?: ContextIndexRepository;
   codeGraphRepository?: CodeGraphRepository;
+  embeddingRetriever?: ContextEmbeddingRetriever;
+  contextReranker?: ContextCandidateReranker;
   idGenerator?: IdGenerator;
   clock?: Clock;
   defaultRunRoot?: string;
@@ -354,7 +360,9 @@ export class TaskRunner {
       dependencies.contextRetriever ??
       new ExplicitContextRetriever({
         contextIndexRepository: dependencies.contextIndexRepository,
-        codeGraphRepository: dependencies.codeGraphRepository
+        codeGraphRepository: dependencies.codeGraphRepository,
+        embeddingRetriever: dependencies.embeddingRetriever,
+        reranker: dependencies.contextReranker
       });
     this.shellExecutor = shellExecutor;
     this.idGenerator = dependencies.idGenerator ?? new DefaultIdGenerator();
