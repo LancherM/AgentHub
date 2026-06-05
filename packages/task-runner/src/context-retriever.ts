@@ -1048,17 +1048,39 @@ function matchesSkillReference(
   if (!references || references.length === 0) {
     return false;
   }
-  const unscopedSourceId = unscopedSkillId(sourceId);
+  const sourceReference = parseSkillSourceId(sourceId);
   return references.some((reference) => {
-    const scopedReference = reference.scope
-      ? `${reference.scope}:${reference.id}`
-      : reference.id;
+    if (reference.scope === "task" || reference.scope === "role") {
+      return false;
+    }
+    if (reference.scope === "project" || reference.scope === "global") {
+      return (
+        sourceReference.scope === reference.scope &&
+        sourceReference.id === reference.id
+      );
+    }
     return (
-      sourceId === scopedReference ||
-      unscopedSourceId === reference.id ||
-      sourceId.endsWith(`:${reference.id}`)
+      sourceReference.id === reference.id &&
+      (sourceReference.scope === undefined || sourceReference.scope === "project")
     );
   });
+}
+
+function parseSkillSourceId(value: string): {
+  scope?: "project" | "global";
+  id: string;
+} {
+  const normalized = value.startsWith("skill:")
+    ? value.slice("skill:".length)
+    : value;
+  const scoped = /^(project|global):(.+)$/.exec(normalized);
+  if (!scoped) {
+    return { id: normalized };
+  }
+  return {
+    scope: scoped[1] as "project" | "global",
+    id: scoped[2]
+  };
 }
 
 export function extractContextQueryTerms(input: Pick<
@@ -1124,11 +1146,6 @@ function sourceHashKey(sourceId: string, contentHash: string): string {
 
 function sourceMetadata(section: ContextSection): Record<string, unknown> {
   return section.source as unknown as Record<string, unknown>;
-}
-
-function unscopedSkillId(value: string): string {
-  const separator = value.indexOf(":");
-  return separator === -1 ? value : value.slice(separator + 1);
 }
 
 function normalizeSourcePath(value: string): string {

@@ -284,7 +284,9 @@ ranked candidates include lexical score diagnostics, matched query terms, layer
 and trust metadata, and duplicate omissions when BM25 finds a source already
 selected through the explicit route. Indexed project or global skills are only
 eligible through BM25 when the task or role selected the matching skill
-reference; otherwise they are omitted as unrequested skills.
+reference; otherwise they are omitted as unrequested skills. Unscoped skill
+references follow the same project-first resolver used by context compilation;
+global skills require an explicit `global:<id>` reference.
 Retrieval also produces bounded recency candidates for volatile local evidence:
 recent run summaries, verification outcomes, risk summaries, changed-file
 summaries, and thread summaries. Run evidence is medium trust; thread summaries

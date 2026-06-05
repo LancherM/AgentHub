@@ -133,7 +133,8 @@ stable-source FTS index through BM25. BM25 candidates are appended to
 trust, source ids, and inclusion reasons. Candidates that duplicate explicit
 sources by source id and content hash are omitted with diagnostics. Indexed
 project and global skills are filtered out unless the task or role selected the
-matching skill reference.
+matching skill reference. Unscoped references match project skills by default;
+global BM25 skill hits require an explicit `global:<id>` reference.
 The recency route is separate from stable-source indexing. TaskRunner can
 collect recent terminal run evidence from persisted task runs, diff artifact
 metadata, verification result statuses, and risk report summaries, then render

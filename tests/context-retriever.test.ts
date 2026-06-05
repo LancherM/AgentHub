@@ -160,6 +160,23 @@ describe("explicit context retrieval", () => {
           metadata: {}
         }),
         validateContextIndexEntry({
+          id: "context_index:project_1:global_skill:global:lint",
+          projectId: "project_1",
+          layer: "skill",
+          sourceKind: "global_skill",
+          sourceId: "global:lint",
+          scope: "global",
+          trustLevel: "medium",
+          lifetime: "static",
+          title: "Global Skill: Lint",
+          content: "Use the global lint flow for parser changes.",
+          contentHash: "sha256:global-lint-content",
+          sourcePath: "/tmp/global-skills/lint/SKILL.md",
+          createdAt,
+          indexedAt: createdAt,
+          metadata: {}
+        }),
+        validateContextIndexEntry({
           id: "context_index:project_1:project_context:context/project.md",
           projectId: "project_1",
           layer: "project",
@@ -276,13 +293,20 @@ describe("explicit context retrieval", () => {
         "sourceKind": "project_context",
       }
     `);
-    expect(result.omitted).toEqual([
-      {
-        itemId: "context_index:project_1:project_skill:project:lint",
-        layer: "skill",
-        reason: "BM25 candidate duplicated an explicit-route source"
-      }
-    ]);
+    expect(result.omitted).toEqual(
+      expect.arrayContaining([
+        {
+          itemId: "context_index:project_1:project_skill:project:lint",
+          layer: "skill",
+          reason: "BM25 candidate duplicated an explicit-route source"
+        },
+        {
+          itemId: "context_index:project_1:global_skill:global:lint",
+          layer: "skill",
+          reason: "BM25 skill candidate was not selected by the task or role"
+        }
+      ])
+    );
   });
 
   it("omits BM25 indexed skill candidates that were not selected by task or role", async () => {
