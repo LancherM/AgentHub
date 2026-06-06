@@ -283,7 +283,9 @@ index rebuild path is deterministic per project and tracks source hashes so
 unchanged sources are not rewritten; run evidence and thread summaries are not
 indexed in this stable-source path. The default CLI and desktop TaskRunner
 paths refresh this stable-source index before run retrieval when a project
-context store is available.
+context store is available. Indexed retrieval is keyed by the TaskRunner task
+project id, so normal CLI and desktop runs still search the freshly refreshed
+index when repository metadata uses its default `repo_<name>` id.
 When a project has stable-source index data available, retrieval can add BM25
 ranked candidates to the same `context_retrieval_candidates` artifact. These
 ranked candidates include lexical score diagnostics, matched query terms, layer
@@ -304,8 +306,9 @@ test files when a code graph repository is configured. The graph is persisted in
 local SQLite for the default CLI and desktop paths and records imports, exports,
 symbols, package boundaries, source-to-test relationships, and changed-file
 proximity so graph retrieval can add high-trust code or test candidates with
-graph proximity diagnostics. This remains local-only and does not require
-embeddings or a cloud index.
+graph proximity diagnostics. Graph search uses the same task project id as the
+index refresh path. This remains local-only and does not require embeddings or
+a cloud index.
 Semantic retrieval is optional. Runs may configure a local embedding retriever
 and a local reranker, both guarded by capability detection. With no configured
 provider, Agent Hub records a skip diagnostic and continues with deterministic
