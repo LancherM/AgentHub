@@ -58,4 +58,38 @@ describe("TypeScript code graph indexing", () => {
       exports: ["parserSpec"]
     });
   });
+
+  it("resolves extensionless directory imports to module-format index files", () => {
+    const entries = buildTypeScriptCodeGraphEntries({
+      projectId: "project_graph",
+      indexedAt,
+      files: [
+        {
+          path: "apps/cli/src/consumer.mts",
+          content: [
+            "import { loadFeature } from './feature';",
+            "export const run = () => loadFeature();"
+          ].join("\n")
+        },
+        {
+          path: "apps/cli/src/feature/index.mts",
+          content: "export function loadFeature() { return 'ok'; }\n"
+        },
+        {
+          path: "apps/cli/src/feature/index.test.mts",
+          content: [
+            "import { loadFeature } from './index';",
+            "export const spec = () => loadFeature();"
+          ].join("\n")
+        }
+      ]
+    });
+
+    expect(entries.find((entry) => entry.filePath.endsWith("consumer.mts"))).toMatchObject({
+      imports: ["apps/cli/src/feature/index.mts"]
+    });
+    expect(entries.find((entry) => entry.filePath.endsWith("feature/index.mts"))).toMatchObject({
+      relatedTests: ["apps/cli/src/feature/index.test.mts"]
+    });
+  });
 });
