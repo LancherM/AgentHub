@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { PassThrough } from "node:stream";
 import { describe, expect, it } from "vitest";
-import { createCliRuntime, main } from "@agent-hub/cli";
+import { createCliRuntime, main, submitTuiPrompt } from "@agent-hub/cli";
 import {
   conservativePermissionSet,
   type RoleCall
@@ -202,6 +202,65 @@ describe("CLI TUI command", () => {
     ).resolves.toBe(0);
     expect(errors.join("")).toBe("");
     expect(output.join("")).toContain("TUI Project");
+  });
+
+  it("submits background TUI prompts through the CLI chat path", async () => {
+    const runtime = createCliRuntime({ storageMode: "memory" });
+    const root = createGitFixture();
+    const workspaceBase = fs.mkdtempSync(path.join(os.tmpdir(), "agent-hub-tui-bg-worktrees-"));
+    await runtime.projectRepository.create({
+      id: "project_background",
+      name: "Background Submit Project",
+      rootPath: root,
+      createdAt: now,
+      updatedAt: now
+    });
+    await runtime.conversationThreadRepository.create({
+      id: "thread_background",
+      projectId: "project_background",
+      title: "Background Room",
+      metadata: { roomHandle: "background" },
+      createdAt: now,
+      updatedAt: now
+    });
+    const output: string[] = [];
+    const errors: string[] = [];
+
+    const result = await submitTuiPrompt({
+      prompt: "@fake background prompt",
+      projectRoot: root,
+      projectId: "project_background",
+      roomRef: "background",
+      selectedAgent: "fake",
+      debug: true,
+      dryRun: false,
+      retainOnFailure: false,
+      workspaceBasePath: workspaceBase,
+      mode: "background"
+    }, testIo(output, errors), process.cwd(), runtime);
+
+    const messages = await runtime.conversationMessageRepository.listByThreadId(
+      "thread_background"
+    );
+    const tasks = await runtime.taskRepository.listByProjectId("project_background");
+    expect(errors.join("")).toBe("");
+    expect(result).toMatchObject({
+      ok: true,
+      exitCode: 0,
+      projectId: "project_background",
+      threadId: "thread_background",
+      message: "Submitted prompt to #background."
+    });
+    expect(messages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          role: "user",
+          content: "background prompt",
+          metadata: expect.objectContaining({ source: "cli_chat" })
+        })
+      ])
+    );
+    expect(tasks.some((task) => task.description === "background prompt")).toBe(true);
   });
 
   it("submits prompts through the CLI chat path and keeps unknown mentions as text", async () => {

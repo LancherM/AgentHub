@@ -848,11 +848,15 @@ class RepositoryThreadService implements ThreadService {
       excludeRunId: created.run.id
     });
     if (blocker) {
-      this.subscribeRoleQueueDrain({
-        projectId: thread.projectId,
-        roleHandle,
-        runId: blocker.runId
-      });
+      if (blocker.status === "queued") {
+        void this.drainRoleQueue(thread.projectId, roleHandle);
+      } else {
+        this.subscribeRoleQueueDrain({
+          projectId: thread.projectId,
+          roleHandle,
+          runId: blocker.runId
+        });
+      }
       return;
     }
 
