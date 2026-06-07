@@ -239,6 +239,12 @@ TUI validation is expected to work from a clean checkout: root typecheck and
 lint scripts check the Ink renderer through TypeScript build-mode references,
 allowing required local `dist` declarations to be generated during validation
 instead of assuming they already exist.
+CI also publishes a report-only Vitest full-coverage summary and coverage
+artifact from the required Validate job. Pull requests additionally run a
+blocking diff-coverage check over changed executable source lines with an
+initial 70% threshold; non-source, test, documentation, workflow, and
+non-executable line changes are ignored while the project establishes
+package-level full-coverage baselines.
 Every visible TUI workflow change also carries a manual terminal QA contract:
 rebuild the CLI first, smoke `tui --once`, launch the rebuilt interactive TUI in
 normal and narrow PTY sizes, cover the affected core loop, and write an
