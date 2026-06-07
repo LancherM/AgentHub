@@ -17,6 +17,20 @@ export default defineConfig({
   test: {
     include: ["tests/**/*.test.ts", "tests/**/*.test.mts"],
     restoreMocks: true,
-    testTimeout: 15_000
+    testTimeout: 15_000,
+    coverage: {
+      provider: "v8",
+      reportsDirectory: "coverage",
+      reporter: ["text", "text-summary", "json-summary", "lcov"],
+      all: true,
+      include: [
+        "apps/cli/src/**/*.{ts,tsx,mts}",
+        "apps/desktop/electron/**/*.{ts,tsx}",
+        "apps/desktop/src/**/*.{ts,tsx}",
+        "packages/*/src/**/*.{ts,tsx}",
+        "scripts/**/*.mjs"
+      ],
+      exclude: ["**/*.d.ts", "**/dist/**", "**/out/**", "**/node_modules/**"]
+    }
   }
 });
