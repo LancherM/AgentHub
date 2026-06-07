@@ -47,6 +47,7 @@ export interface TuiPromptSubmissionInput {
   dryRun: boolean;
   retainOnFailure: boolean;
   workspaceBasePath?: string;
+  mode?: "blocking" | "background";
 }
 
 export interface TuiPromptSubmissionResult {
@@ -232,7 +233,8 @@ export async function runTuiCommand(options: RunTuiCommandOptions): Promise<numb
       debug: parsed.debug || options.debug === true,
       dryRun: parsed.dryRun,
       retainOnFailure: parsed.retainOnFailure,
-      workspaceBasePath: parsed.workspaceBasePath
+      workspaceBasePath: parsed.workspaceBasePath,
+      mode: "blocking"
     });
     launch = {
       projectId: submission.projectId ?? launch.projectId,
@@ -308,7 +310,8 @@ export async function runTuiCommand(options: RunTuiCommandOptions): Promise<numb
             debug: parsed.debug || options.debug === true,
             dryRun: parsed.dryRun,
             retainOnFailure: parsed.retainOnFailure,
-            workspaceBasePath: parsed.workspaceBasePath
+            workspaceBasePath: parsed.workspaceBasePath,
+            mode: tuiPromptSubmissionMode({ interactive })
           });
           activeModelInput = {
             ...activeModelInput,
@@ -410,6 +413,12 @@ export function createInitialTuiShellState(composer = ""): TuiShellState {
     paletteQuery: "",
     paletteSelectedIndex: 0
   };
+}
+
+export function tuiPromptSubmissionMode(input: {
+  interactive: boolean;
+}): "blocking" | "background" {
+  return input.interactive ? "background" : "blocking";
 }
 
 async function renderInkTui(input: {

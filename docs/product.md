@@ -211,13 +211,17 @@ uses readable labels for approved memory, skill source, and context.
 Interactive
 submit and review-decision actions show bounded busy states without locking the
 keyboard: users can still switch focus, open command hints, and draft the next
-prompt while the current local action is running. The TUI only blocks duplicate
-submits or duplicate review-decision writes until that action finishes or times
-out.
+prompt while the current local action is running. Composer submit returns after
+the local chat turn is recorded and the background run is started or queued; it
+does not wait for agent execution to finish. Review-decision writes remain
+single-flight until that local action finishes or times out.
 Prompt submission keeps the terminal workbench in control of the screen: agent
 stdout, run debug details, and raw adapter text are persisted through the normal
 chat/run records and then shown through TUI panes, not dumped directly into the
 Ink alternate screen during an interactive submit.
+Role-backed prompt submissions preserve role order per project: consecutive
+turns targeting the same `@role` queue behind that role's active run, while
+different roles and direct adapter mentions may run concurrently.
 Interactive TUI sessions periodically refresh the same current-context read
 model so externally changing run, task, conversation, RoleCall, and review
 state can appear without a manual keypress. Active-run refreshes stay
@@ -500,6 +504,10 @@ autocomplete, `/` prompt suggestions, a room shared-context switch, and bounded
 workflow metadata for `handoff`, `review_loop`, and `panel_discussion`. These
 controls do not add a remote workflow engine or autonomous hidden follow-up
 runs.
+Submitting a new desktop prompt does not wait for active runs to complete.
+Role-backed desktop runs preserve order per project: a second run for the same
+`@role` remains queued until that role's active run reaches a terminal status,
+while different roles and direct adapter mentions can proceed independently.
 
 Inline run cards show compact status, agent or role attribution, current
 agent-facing output, and review affordances. Routine completed no-change runs

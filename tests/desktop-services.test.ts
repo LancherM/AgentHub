@@ -2381,6 +2381,52 @@ describe("desktop services", () => {
     expect(brief?.content).toContain("role_instructions:");
   });
 
+  it("queues consecutive desktop submissions for the same role without blocking the composer", async () => {
+    const fixture = await createFixture();
+    const context = createDesktopServiceContext(fixture.repositories);
+    const projects = createProjectService(context);
+    const memory = createMemoryService(context);
+    const review = createReviewService(context, { memoryService: memory });
+    const runs = createTestRunService(context, review, memory, fixture, {
+      agentRegistry: new DefaultAgentRegistry([
+        new FakeAgentAdapter({ stepDelayMs: 500 })
+      ])
+    });
+    const threads = createThreadService({ context, projects, runs });
+    const project = await projects.open(fixture.projectRoot);
+
+    const first = await threads.sendMessage({
+      projectId: project.id,
+      text: "@researcher first role task",
+      contextMode: "auto"
+    });
+    const firstRun = first.messages.find(
+      (message) => message.type === "agent_run"
+    );
+    if (!firstRun || firstRun.type !== "agent_run") {
+      throw new Error("expected first role-backed run card");
+    }
+    await waitForRun(runs, firstRun.runId, "running");
+
+    const second = await threads.sendMessage({
+      threadId: first.id,
+      text: "@researcher second role task",
+      contextMode: "auto"
+    });
+    const secondRun = second.messages
+      .filter((message): message is AgentRunMessage => message.type === "agent_run")
+      .at(-1);
+    if (!secondRun) {
+      throw new Error("expected second role-backed run card");
+    }
+
+    await expect(runs.getRun(secondRun.runId)).resolves.toMatchObject({
+      status: "queued"
+    });
+    await waitForRun(runs, firstRun.runId, "completed");
+    await waitForRun(runs, secondRun.runId, "completed");
+  });
+
   it("stores project team roles and resolves custom role mentions through IPC-safe services", async () => {
     const fixture = await createFixture();
     const context = createDesktopServiceContext(fixture.repositories);

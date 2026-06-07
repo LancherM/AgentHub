@@ -407,8 +407,9 @@ Electron main-process services own privileged operations:
 
 - `ProjectService`: project registration and selection.
 - `ThreadService`: room/thread reads and writes, message sending, role
-  resolution, workflow metadata, assistant-output reconciliation, RoleCall
-  parsing, and delegated run-card creation.
+  resolution, workflow metadata, same-project role-run queueing,
+  assistant-output reconciliation, RoleCall parsing, and delegated run-card
+  creation.
 - `RunService`: run creation, TaskRunner integration, live event subscription,
   cancellation, continuation, and RoleCall execution bridge.
 - `ReviewService`, `DiffService`, and `RiskService`: inspector summary,
@@ -689,12 +690,17 @@ the selected target, thread metadata, and context mode. This keeps normal prompt
 text from being stolen by global focus shortcuts without trapping focus inside
 the composer.
 Interactive TUI prompt submission reuses the CLI chat/task-runner path with a
-buffered CLI IO adapter. The run still persists messages, run cards, run
-events, diffs, risks, and review evidence through the shared repositories, but
-agent stdout and debug text do not write directly to the Ink terminal surface;
-the TUI refreshes from the persisted read model instead. Because TaskRunner now
-persists emitted run events before final completion, the refresh loop can show
-active adapter progress without adding a separate live-log channel.
+buffered CLI IO adapter. One-shot `--submit --once` remains blocking for smoke
+checks and scripts, while interactive composer submission returns after the
+local user message and task are persisted and the background chat turn has
+started. The run still persists messages, run cards, run events, diffs, risks,
+and review evidence through the shared repositories, but agent stdout and debug
+text do not write directly to the Ink terminal surface; the TUI refreshes from
+the persisted read model instead. Because TaskRunner persists emitted run
+events before final completion, the refresh loop can show active adapter
+progress without adding a separate live-log channel. Role-backed CLI/TUI runs
+use a project+role promise queue so consecutive turns for the same `@role`
+execute in order without blocking unrelated prompt submissions.
 The Ink app never reads SQLite, git, shell, or filesystem directly. It receives
 `loadModel`, `submitPrompt`, and `recordReviewDecision` callbacks from the CLI
 boundary, wraps interactive submit/review callbacks in bounded UI timeouts, and
@@ -704,8 +710,10 @@ uses a faster interval while runs are active and a slower interval while the
 workbench is idle, and does not add an event daemon, remote worker, or
 incremental orchestration path.
 Busy submit/review state remains local Ink state too: the renderer keeps
-keyboard navigation and composer editing active, but gates additional submit or
-review-decision writes until the in-flight callback finishes. Scrollable
+keyboard navigation and composer editing active, but only review-decision writes
+remain single-flight while their callback is in flight. Prompt submission
+callbacks are expected to return after local enqueue/start work, leaving active
+agent execution to the CLI background turn and read-model polling. Scrollable
 conversation state is line-based and re-anchors to the bottom when new
 conversation or active-run output appears. Active-run selection and
 terminal-height list windows remain local Ink state, while selected runs,

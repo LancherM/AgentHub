@@ -9,7 +9,7 @@ import {
   conservativePermissionSet,
   type RoleCall
 } from "@agent-hub/core";
-import { runTuiCommand } from "../apps/cli/src/tui";
+import { runTuiCommand, tuiPromptSubmissionMode } from "../apps/cli/src/tui";
 import { isJsonModuleExperimentalWarning } from "../apps/cli/src/tui-ink/json-warning";
 
 const now = "2026-05-29T12:00:00.000Z";
@@ -262,6 +262,42 @@ describe("CLI TUI command", () => {
     expect(rendered).toContain("run_");
     expect(rendered).not.toContain("run_summary:");
     expect(rendered).not.toContain("## Context");
+  });
+
+  it("marks one-shot TUI submissions as blocking", async () => {
+    const runtime = createCliRuntime({ storageMode: "memory" });
+    await seedTuiContext(runtime);
+    const output: string[] = [];
+    const errors: string[] = [];
+    const modes: Array<string | undefined> = [];
+
+    await expect(
+      runTuiCommand({
+        args: ["--room", "review", "--submit", "@fake one-shot", "--once"],
+        io: testIo(output, errors),
+        cwd: process.cwd(),
+        projectRoot,
+        runtime,
+        submitPrompt: async (input) => {
+          modes.push(input.mode);
+          return {
+            ok: true,
+            exitCode: 0,
+            projectId: input.projectId,
+            threadId: input.threadId,
+            message: "submitted"
+          };
+        }
+      })
+    ).resolves.toBe(0);
+
+    expect(errors.join("")).toBe("");
+    expect(modes).toEqual(["blocking"]);
+  });
+
+  it("uses background prompt submission mode for interactive TUI sessions", () => {
+    expect(tuiPromptSubmissionMode({ interactive: true })).toBe("background");
+    expect(tuiPromptSubmissionMode({ interactive: false })).toBe("blocking");
   });
 
   it("records audit-only review decisions from CLI and TUI without changing run state", async () => {
