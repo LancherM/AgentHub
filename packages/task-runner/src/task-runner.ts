@@ -54,6 +54,7 @@ import {
   type RecentRunEvidenceContextSource
 } from "./context-recency";
 import { selectRuntimeContextCandidates } from "./context-selection";
+import { rebuildTypeScriptCodeGraphIndex } from "./code-graph";
 import {
   assertAgentKindEnabled,
   defaultAgentKind,
@@ -74,6 +75,7 @@ import {
   type CompressionMode,
   type ContextPack,
   type ContextEvalEvent,
+  type ContextIndexRebuildResult,
   type ContextIndexRepository,
   type ContextLayer,
   type ContextRetrievalResult,
@@ -256,6 +258,7 @@ export interface TaskRunnerDependencies {
   riskReportGenerator?: RiskReportGenerator;
   contextRetriever?: ContextRetriever;
   contextIndexRepository?: ContextIndexRepository;
+  contextIndexRefresher?: ContextIndexRefresher;
   codeGraphRepository?: CodeGraphRepository;
   embeddingRetriever?: ContextEmbeddingRetriever;
   contextReranker?: ContextCandidateReranker;
@@ -263,6 +266,18 @@ export interface TaskRunnerDependencies {
   clock?: Clock;
   defaultRunRoot?: string;
 }
+
+export interface ContextIndexRefreshInput {
+  projectId: string;
+  projectRoot: string;
+  projectContextStoreRoot: string;
+  globalSkillStoreRoot?: string;
+  indexedAt: string;
+}
+
+export type ContextIndexRefresher = (
+  input: ContextIndexRefreshInput
+) => Promise<ContextIndexRebuildResult>;
 
 export class TaskRunnerError extends Error {
   constructor(message: string) {
@@ -325,6 +340,9 @@ export class TaskRunner {
   private readonly idGenerator: IdGenerator;
   private readonly clock: Clock;
   private readonly defaultRunRoot: string;
+  private readonly contextIndexRepository: ContextIndexRepository | undefined;
+  private readonly contextIndexRefresher: ContextIndexRefresher | undefined;
+  private readonly codeGraphRepository: CodeGraphRepository | undefined;
 
   constructor(dependencies: TaskRunnerDependencies = {}) {
     const shellExecutor = dependencies.shellExecutor ?? new NodeShellExecutor();
@@ -378,6 +396,9 @@ export class TaskRunner {
     this.clock = dependencies.clock ?? new SystemClock();
     this.defaultRunRoot =
       dependencies.defaultRunRoot ?? path.join(os.tmpdir(), "agent-hub-runs");
+    this.contextIndexRepository = dependencies.contextIndexRepository;
+    this.contextIndexRefresher = dependencies.contextIndexRefresher;
+    this.codeGraphRepository = dependencies.codeGraphRepository;
   }
 
   private contextCompilerForRun(input: RunTaskInput): ContextCompiler {
@@ -408,6 +429,47 @@ export class TaskRunner {
       selectedSkillReferences: input.selectedSkillReferences,
       roleSkillReferences: input.roleSkillReferences
     });
+  }
+
+  private async refreshContextIndexes(input: {
+    projectId: string;
+    projectRoot: string;
+    contextStoreRoot?: string;
+    globalSkillStoreRoot: string;
+    indexedAt: string;
+    warnings: string[];
+  }): Promise<void> {
+    if (
+      this.contextIndexRepository &&
+      this.contextIndexRefresher &&
+      input.contextStoreRoot &&
+      await directoryExists(input.contextStoreRoot)
+    ) {
+      try {
+        await this.contextIndexRefresher({
+          projectId: input.projectId,
+          projectRoot: input.projectRoot,
+          projectContextStoreRoot: input.contextStoreRoot,
+          globalSkillStoreRoot: input.globalSkillStoreRoot,
+          indexedAt: input.indexedAt
+        });
+      } catch (error) {
+        input.warnings.push(`stable context index refresh failed: ${errorMessage(error)}`);
+      }
+    }
+
+    if (this.codeGraphRepository) {
+      try {
+        await rebuildTypeScriptCodeGraphIndex({
+          projectId: input.projectId,
+          projectRoot: input.projectRoot,
+          codeGraphRepository: this.codeGraphRepository,
+          indexedAt: input.indexedAt
+        });
+      } catch (error) {
+        input.warnings.push(`code graph index refresh failed: ${errorMessage(error)}`);
+      }
+    }
   }
 
   async run(input: RunTaskInput): Promise<RunResult> {
@@ -521,6 +583,24 @@ export class TaskRunner {
       id: this.idGenerator.nextId("context_plan"),
       taskPrompt: parsed.taskPrompt,
       createdAt
+    });
+    await this.refreshContextIndexes({
+      projectId: task.projectId,
+      projectRoot,
+      contextStoreRoot:
+        input.contextStoreRoot ??
+        (input.projectId
+          ? resolveProjectContextStoreRoot({
+              projectRoot: input.projectRoot,
+              projectId: input.projectId,
+              agentHubHome: input.agentHubHome
+            })
+          : undefined),
+      globalSkillStoreRoot: resolveGlobalSkillStoreRoot({
+        agentHubHome: input.agentHubHome
+      }),
+      indexedAt: createdAt,
+      warnings
     });
     const includeThreadSummary =
       input.includeThreadSummary ??
@@ -2389,6 +2469,14 @@ async function assertDirectoryExists(directoryPath: string, label: string): Prom
       throw error;
     }
     throw new TaskRunnerError(`${label} is not available: ${directoryPath}`);
+  }
+}
+
+async function directoryExists(directoryPath: string): Promise<boolean> {
+  try {
+    return (await fs.stat(directoryPath)).isDirectory();
+  } catch {
+    return false;
   }
 }
 

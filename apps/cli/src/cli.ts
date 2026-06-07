@@ -59,6 +59,7 @@ import {
   type ConversationMessage,
   type ConversationThread,
   type ConversationThreadSummary,
+  type CodeGraphRepository,
   type ContextIndexRepository,
   type JsonObject,
   type MemoryCategory,
@@ -91,12 +92,13 @@ import {
   RoleCallTaskRunnerExecutor,
   TaskRunner,
   type RunDiffReview,
+  type ContextIndexRefreshInput,
   type RunContinuationInput,
   type RunTaskInput,
   type TaskRunnerDependencies
 } from "@agent-hub/task-runner";
 import { scanSensitivePaths, validateRoleCallPolicy } from "@agent-hub/safety";
-import { createSqliteRepositories } from "@agent-hub/db";
+import { createSqliteRepositories, rebuildStableContextIndex } from "@agent-hub/db";
 import { runTuiCommand, type TuiPromptSubmissionInput } from "./tui";
 import {
   InMemoryAgentProfileRepository,
@@ -162,6 +164,7 @@ export interface CliRuntime {
   runMetadataRepository: RunMetadataRepository;
   contextEvalEventRepository: ContextEvalEventRepository;
   contextIndexRepository?: ContextIndexRepository;
+  codeGraphRepository?: CodeGraphRepository;
   memoryItemRepository: MemoryItemRepository;
   comparisonReportRepository: ComparisonReportRepository;
   skillRepository: SkillRepository;
@@ -214,7 +217,8 @@ export function createCliRuntime(
     dependencies.roleCallRepository !== undefined ||
     dependencies.roleCallEventRepository !== undefined ||
     dependencies.roleTodoRepository !== undefined ||
-    dependencies.contextIndexRepository !== undefined;
+    dependencies.contextIndexRepository !== undefined ||
+    dependencies.codeGraphRepository !== undefined;
   const shouldUseSqlite =
     dependencies.storageMode === "sqlite" ||
     (dependencies.storageMode !== "memory" && !hasInjectedStorage);
@@ -276,6 +280,20 @@ export function createCliRuntime(
     new InMemoryContextEvalEventRepository();
   const contextIndexRepository =
     dependencies.contextIndexRepository ?? sqliteRepositories?.contextIndexRepository;
+  const codeGraphRepository =
+    dependencies.codeGraphRepository ?? sqliteRepositories?.codeGraphRepository;
+  const contextIndexRefresher =
+    dependencies.contextIndexRefresher ??
+    (sqliteRepositories?.contextIndexRepository
+      ? async (input: ContextIndexRefreshInput) =>
+          rebuildStableContextIndex({
+            projectId: input.projectId,
+            projectContextStoreRoot: input.projectContextStoreRoot,
+            globalSkillStoreRoot: input.globalSkillStoreRoot,
+            contextIndexRepository: sqliteRepositories.contextIndexRepository,
+            indexedAt: input.indexedAt
+          })
+      : undefined);
   const memoryItemRepository =
     dependencies.memoryItemRepository ??
     sqliteRepositories?.memoryItemRepository ??
@@ -316,7 +334,9 @@ export function createCliRuntime(
     runMetadataRepository,
     conversationThreadSummaryRepository,
     contextEvalEventRepository,
-    contextIndexRepository
+    contextIndexRepository,
+    contextIndexRefresher,
+    codeGraphRepository
   });
 
   return {
@@ -334,6 +354,7 @@ export function createCliRuntime(
     runMetadataRepository,
     contextEvalEventRepository,
     contextIndexRepository,
+    codeGraphRepository,
     memoryItemRepository,
     comparisonReportRepository,
     skillRepository,

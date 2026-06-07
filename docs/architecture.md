@@ -71,18 +71,20 @@ core sequence:
 1. Resolve the project root and requested agent.
 2. Reject unsupported delivery modes and unsafe repository-local git config.
 3. Build the task-specific context pack and task brief.
-4. Create an isolated git worktree under the configured Agent Hub worktree base.
-5. Materialize generated runtime files inside the worktree.
-6. Run the adapter from the worktree cwd with runtime-injected context and,
+4. Refresh local stable-source and TypeScript code graph indexes when the
+   configured repositories are available.
+5. Create an isolated git worktree under the configured Agent Hub worktree base.
+6. Materialize generated runtime files inside the worktree.
+7. Run the adapter from the worktree cwd with runtime-injected context and,
    for role-backed runs, role/team metadata.
-7. Persist ordered run events and progress events as they are produced.
-8. Run structured verification commands in the worktree.
-9. Collect diff metadata and a bounded persisted patch artifact.
-10. Generate and persist a safety/risk report.
-11. Persist run artifacts, run metadata, status transitions, and warnings.
-12. Generate conservative proposed memory from durable evidence for successful
+8. Persist ordered run events and progress events as they are produced.
+9. Run structured verification commands in the worktree.
+10. Collect diff metadata and a bounded persisted patch artifact.
+11. Generate and persist a safety/risk report.
+12. Persist run artifacts, run metadata, status transitions, and warnings.
+13. Generate conservative proposed memory from durable evidence for successful
     runs.
-13. Apply cleanup policy without accepting, merging, pushing, or deleting
+14. Apply cleanup policy without accepting, merging, pushing, or deleting
     branches automatically.
 
 After a task-run row exists, finalization is defensive. Diff, verification,
@@ -111,21 +113,25 @@ Before writing the runtime pack, TaskRunner creates a deterministic
 task type, required context layers, planned retrieval routes, trust policy,
 layer budgets, compression policy, and classifier diagnostics. The plan drives
 retrieval and selection before adapter execution.
-TaskRunner also runs an explicit-route `ContextRetriever` boundary before
-artifact persistence. The first implementation emits candidates for sources
-already selected by the run, including the current task, selected and
-role-default skills, selected files, selected runs, and low-trust thread
-continuity. These candidates are persisted as `context_retrieval_candidates`
-for inspection and then passed into runtime selection. If retrieval or selection
-throws after the run row exists, TaskRunner records error/run-failed events,
-marks the run failed, and returns the task to `open`.
+TaskRunner also runs a `ContextRetriever` boundary before artifact persistence.
+The explicit route emits candidates for sources already selected by the run,
+including the current task, selected and role-default skills, selected files,
+selected runs, and low-trust thread continuity. The `task_rule` route emits
+deterministic candidates for already-compiled project context and approved
+memory sections whose layers are required by the current plan. These candidates
+are persisted as `context_retrieval_candidates` for inspection and then passed
+into runtime selection. If retrieval or selection throws after the run row
+exists, TaskRunner records error/run-failed events, marks the run failed, and
+returns the task to `open`.
 SQLite includes a `context_index_entries` metadata table plus
 `context_text_fts` FTS5 storage for stable text sources. The CR4 stable-index
 rebuild reads only Agent Hub context-store project docs, approved memory,
 project skills, and global skills; it skips secret-like paths, proposed or
 rejected memory rows, run evidence, thread summaries, logs, diffs, embeddings,
 and code-graph data. Rebuilds compare source hashes and leave unchanged rows
-and FTS entries untouched.
+and FTS entries untouched. The default CLI and desktop TaskRunner paths provide
+a `ContextIndexRefresher`, so stable context-store sources are refreshed before
+retrieval without requiring a separate manual `context build` step.
 When a `ContextIndexRepository` is supplied, the retriever builds lexical query
 terms from the current task prompt plus selected file/run hints and queries the
 stable-source FTS index through BM25. BM25 candidates are appended to
@@ -134,7 +140,9 @@ trust, source ids, and inclusion reasons. Candidates that duplicate explicit
 sources by source id and content hash are omitted with diagnostics. Indexed
 project and global skills are filtered out unless the task or role selected the
 matching skill reference. Unscoped references match project skills by default;
-global BM25 skill hits require an explicit `global:<id>` reference.
+global BM25 skill hits require an explicit `global:<id>` reference. BM25 lookup
+uses the TaskRunner task project id, matching the stable-index refresh key even
+when context-bundle repository metadata falls back to `repo_<name>`.
 The recency route is separate from stable-source indexing. TaskRunner can
 collect recent terminal run evidence from persisted task runs, diff artifact
 metadata, verification result statuses, and risk report summaries, then render
@@ -144,12 +152,15 @@ Raw run events, raw logs, raw diff bodies, stdout/stderr verification bodies,
 full risk finding details, and full conversation transcripts are deliberately
 excluded.
 The code graph route is backed by a deterministic local TypeScript parser and
-an injectable `CodeGraphRepository`. It indexes TS/TSX files by package
-boundary, imports, exports, symbols, test-file status, related tests, and
-changed-file relationships. Graph retrieval expands from task terms, selected
-file seeds, and recent changed files, then emits high-trust `code` or `test`
-candidates with graph proximity diagnostics. Unconfigured repositories leave
-the graph route disabled without affecting other retrieval paths.
+an injectable `CodeGraphRepository`. SQLite stores graph entries in
+`code_graph_entries`; the TaskRunner refreshes the project graph before
+retrieval when a repository is configured. The index records TS/TSX files by
+package boundary, imports, exports, symbols, test-file status, related tests,
+and changed-file relationships. Graph retrieval expands from task terms,
+selected file seeds, and recent changed files, then emits high-trust `code` or
+`test` candidates with graph proximity diagnostics. Graph lookup uses the same
+task project id as the rebuild path. Unconfigured repositories leave the graph
+route disabled without affecting other retrieval paths.
 Optional semantic retrieval is modeled as injectable local capabilities:
 `ContextEmbeddingRetriever` and `ContextCandidateReranker`. Each capability is
 detected before use; unavailable or unconfigured providers produce info
@@ -165,11 +176,11 @@ context after final run status is known; review accept/reject commands append
 plan ids and store selected/omitted context item ids as JSON arrays. CLI
 inspection commands read persisted artifacts and eval rows only; they do not
 rerun retrieval and do not promote memory.
-TaskRunner now runs a runtime selection step over explicit, BM25, embedding,
-graph, and recency candidates before persisting `runtime_context_pack`. The selector
-applies hard policy first, ranks allowed candidates with relevance, layer
-priority, trust, freshness, and graph-proximity signals, then enforces layer
-character budgets.
+TaskRunner now runs a runtime selection step over explicit, task-rule, BM25,
+embedding, graph, and recency candidates before persisting
+`runtime_context_pack`. The selector applies hard policy first, ranks allowed
+candidates with relevance, layer priority, trust, freshness, and
+graph-proximity signals, then enforces layer character budgets.
 Budget enforcement runs across the typed pack sections and uses deterministic
 compression for project docs, run evidence, and conversation continuity before
 omitting over-budget items. Compression preserves source ids, source hashes,
@@ -293,12 +304,14 @@ The current schema covers:
   `conversation_thread_summaries`;
 - `memory_items`, `skills`, `settings`;
 - `role_calls`, `role_todos`, `role_call_events`;
-- `context_index_entries`, `context_text_fts`, and `context_eval_events`.
+- `context_index_entries`, `context_text_fts`, `code_graph_entries`, and
+  `context_eval_events`.
 
-The default SQLite CLI runtime wires the same local repository bundle into
-TaskRunner, including the context index repository and conversation thread
-summary repository, so normal `agent-hub run` executions can retrieve persisted
-BM25 context and saved thread summaries without manual dependency injection.
+The default SQLite CLI and desktop runtimes wire the same local repository
+bundle into TaskRunner, including the context index repository, context index
+refresher, code graph repository, and conversation thread summary repository,
+so normal `agent-hub run` executions can retrieve persisted BM25 context,
+graph context, and saved thread summaries without manual dependency injection.
 
 SQLite migrations add constraints that mirror the domain model: task and run
 status checks, agent-kind checks, project/run relationships, JSON column
