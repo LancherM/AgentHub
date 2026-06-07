@@ -15,10 +15,13 @@
     "desktop:dist:mac": "bash scripts/build-macos-dmg.sh",
     "typecheck": "tsc --noEmit --pretty false -p tsconfig.json && tsc -b apps/cli/tsconfig.tui-ink.json --pretty false && pnpm --filter desktop typecheck",
     "test": "tsc -b apps/cli/tsconfig.tui-ink.json --pretty false && vitest run",
+    "test:coverage": "tsc -b apps/cli/tsconfig.tui-ink.json --pretty false && vitest run --coverage",
+    "coverage:diff": "node scripts/check-diff-coverage.mjs",
     "lint": "tsc --noEmit --pretty false -p tsconfig.json && tsc -b apps/cli/tsconfig.tui-ink.json --pretty false && pnpm --filter desktop lint"
   },
   "devDependencies": {
     "@types/node": "22.19.19",
+    "@vitest/coverage-v8": "1.6.0",
     "pnpm": "10.10.0",
     "typescript": "5.7.2",
     "vitest": "1.6.0"
