@@ -140,7 +140,9 @@ trust, source ids, and inclusion reasons. Candidates that duplicate explicit
 sources by source id and content hash are omitted with diagnostics. Indexed
 project and global skills are filtered out unless the task or role selected the
 matching skill reference. Unscoped references match project skills by default;
-global BM25 skill hits require an explicit `global:<id>` reference.
+global BM25 skill hits require an explicit `global:<id>` reference. BM25 lookup
+uses the TaskRunner task project id, matching the stable-index refresh key even
+when context-bundle repository metadata falls back to `repo_<name>`.
 The recency route is separate from stable-source indexing. TaskRunner can
 collect recent terminal run evidence from persisted task runs, diff artifact
 metadata, verification result statuses, and risk report summaries, then render
@@ -154,13 +156,11 @@ an injectable `CodeGraphRepository`. SQLite stores graph entries in
 `code_graph_entries`; the TaskRunner refreshes the project graph before
 retrieval when a repository is configured. The index records TS/TSX files by
 package boundary, imports, exports, symbols, test-file status, related tests,
-and changed-file relationships. Extensionless relative imports are resolved
-against TS, TSX, MTS, and CTS files plus their directory index variants so
-module-format projects keep source and test proximity. Graph retrieval expands
-from task terms, selected file seeds, and recent changed files, then emits
-high-trust `code` or `test` candidates with graph proximity diagnostics.
-Unconfigured repositories leave the graph route disabled without affecting
-other retrieval paths.
+and changed-file relationships. Graph retrieval expands from task terms,
+selected file seeds, and recent changed files, then emits high-trust `code` or
+`test` candidates with graph proximity diagnostics. Graph lookup uses the same
+task project id as the rebuild path. Unconfigured repositories leave the graph
+route disabled without affecting other retrieval paths.
 Optional semantic retrieval is modeled as injectable local capabilities:
 `ContextEmbeddingRetriever` and `ContextCandidateReranker`. Each capability is
 detected before use; unavailable or unconfigured providers produce info

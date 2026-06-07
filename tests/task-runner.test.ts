@@ -468,7 +468,6 @@ describe("task runner", () => {
       projectRoot,
       contextStoreRoot,
       projectId: "project_context_refresh",
-      targetRepository: { id: "project_context_refresh" },
       taskPrompt: "Fix parser.ts E_PARSE",
       agentKind: "fake",
       taskId: "task_context_refresh"
@@ -570,7 +569,6 @@ describe("task runner", () => {
     const result = await runner.run({
       projectRoot,
       projectId: "project_graph_refresh",
-      targetRepository: { id: "project_graph_refresh" },
       taskPrompt: "Fix Parser behavior after tokens.ts changed",
       agentKind: "fake",
       taskId: "task_graph_refresh",

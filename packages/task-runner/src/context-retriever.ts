@@ -311,7 +311,7 @@ async function bm25Candidates(
     };
   }
   const searchResults = await options.contextIndexRepository.search({
-    projectId: input.contextBundle.targetRepository.id,
+    projectId: input.task.projectId,
     query: input.taskPrompt,
     terms,
     limit: options.bm25Limit ?? 8
@@ -548,7 +548,7 @@ async function graphCandidates(
     };
   }
   const searchResults = await options.codeGraphRepository.search({
-    projectId: input.contextBundle.targetRepository.id,
+    projectId: input.task.projectId,
     queryTerms: terms,
     seedPaths,
     changedFiles,
