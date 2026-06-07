@@ -28,6 +28,7 @@ import {
 import {
   defaultAgentKind,
   isAgentKindEnabled,
+  normalizeWorkgroupRoleHandle,
   presetWorkgroupRoles,
   toWorkgroupRoleRunMetadata,
   type AgentAvailabilityOptions
@@ -171,6 +172,16 @@ interface AgentRunTaskMetadata {
   workflowState?: CollaborationWorkflowState;
 }
 
+interface RoleRunQueueEntry {
+  runId: string;
+  threadId: string;
+  taskId: string;
+  agentId: AgentId;
+  role: WorkgroupRoleRunMetadata;
+  status: RunStatus;
+  createdAt: string;
+}
+
 export function createThreadService(
   dependencies: ThreadServiceDependencies
 ): ThreadService {
@@ -189,6 +200,8 @@ class RepositoryThreadService implements ThreadService {
   private readonly conversationThreadSummaryBuilder = new ConversationThreadSummaryBuilder();
   private readonly threadReconciliationByThreadId = new Map<string, Promise<void>>();
   private readonly workflowReconciliationByThreadId = new Map<string, Promise<void>>();
+  private readonly roleQueueDrains = new Map<string, Promise<void>>();
+  private readonly roleQueueSubscriptions = new Map<string, () => void>();
   private legacyRunImportPromise: Promise<void> | undefined;
   private importedLegacyRuns = false;
 
@@ -807,39 +820,234 @@ class RepositoryThreadService implements ThreadService {
         assignment
       );
     }
-    for (const { run, participant } of createdRuns) {
-      try {
-        await this.dependencies.runs.startRun(run.id);
-      } catch (error) {
-        await this.appendSystemMessage(
-          currentThread.id,
-          `@${participant.role?.roleHandle ?? participant.agentId} could not start: ${errorMessage(error)}`,
-          {
-            taskEvent: "assignment_start_failed",
-            taskId: task.id,
-            runId: run.id,
-            timelineEvent: timelineEvent({
-              kind: "assignment_start_failed",
-              actor: "system",
-              title: "Run start failed",
-              summary: errorMessage(error),
-              status: "failed",
-              taskId: task.id,
-              runId: run.id,
-              chips: [
-                {
-                  kind: "assignment_start_failed",
-                  label: "start failed",
-                  tone: "warning"
-                }
-              ]
-            })
-          }
-        );
-      }
+    for (const created of createdRuns) {
+      await this.startCreatedRunOrQueueRole(currentThread, task.id, created);
     }
 
     return this.getThread(currentThread.id);
+  }
+
+  private async startCreatedRunOrQueueRole(
+    thread: ConversationThread,
+    taskId: string,
+    created: {
+      run: RunSummary;
+      participant: WorkgroupMentionParticipant;
+      assignment: WorkgroupTaskAssignmentMetadata;
+    }
+  ): Promise<void> {
+    const roleHandle = created.participant.role?.roleHandle;
+    if (!roleHandle) {
+      await this.startCreatedRun(thread.id, taskId, created.run, created.participant);
+      return;
+    }
+
+    const blocker = await this.blockingRoleRun({
+      projectId: thread.projectId,
+      roleHandle,
+      excludeRunId: created.run.id
+    });
+    if (blocker) {
+      if (blocker.status === "queued") {
+        void this.drainRoleQueue(thread.projectId, roleHandle);
+      } else {
+        this.subscribeRoleQueueDrain({
+          projectId: thread.projectId,
+          roleHandle,
+          runId: blocker.runId
+        });
+      }
+      return;
+    }
+
+    await this.startCreatedRun(thread.id, taskId, created.run, created.participant);
+    this.subscribeRoleQueueDrain({
+      projectId: thread.projectId,
+      roleHandle,
+      runId: created.run.id
+    });
+  }
+
+  private async startCreatedRun(
+    threadId: string,
+    taskId: string,
+    run: RunSummary,
+    participant: WorkgroupMentionParticipant
+  ): Promise<void> {
+    try {
+      await this.dependencies.runs.startRun(run.id);
+    } catch (error) {
+      await this.appendRunStartFailure(threadId, taskId, run.id, participant, error);
+    }
+  }
+
+  private async appendRunStartFailure(
+    threadId: string,
+    taskId: string,
+    runId: string,
+    participant: WorkgroupMentionParticipant | { agentId: AgentId; role?: WorkgroupRoleRunMetadata },
+    error: unknown
+  ): Promise<void> {
+    await this.appendSystemMessage(
+      threadId,
+      `@${participant.role?.roleHandle ?? participant.agentId} could not start: ${errorMessage(error)}`,
+      {
+        taskEvent: "assignment_start_failed",
+        taskId,
+        runId,
+        timelineEvent: timelineEvent({
+          kind: "assignment_start_failed",
+          actor: "system",
+          title: "Run start failed",
+          summary: errorMessage(error),
+          status: "failed",
+          taskId,
+          runId,
+          chips: [
+            {
+              kind: "assignment_start_failed",
+              label: "start failed",
+              tone: "warning"
+            }
+          ]
+        })
+      }
+    );
+  }
+
+  private async blockingRoleRun(input: {
+    projectId: string;
+    roleHandle: string;
+    excludeRunId: string;
+  }): Promise<RoleRunQueueEntry | undefined> {
+    const entries = await this.roleRunQueueEntries(input.projectId, input.roleHandle);
+    const current = entries.find((entry) => entry.runId === input.excludeRunId);
+    return entries
+      .filter((entry) => entry.runId !== input.excludeRunId)
+      .filter((entry) => isActiveRunStatus(entry.status))
+      .filter((entry) => !current || entry.createdAt <= current.createdAt)
+      .sort(compareRoleRunQueueEntries)[0];
+  }
+
+  private subscribeRoleQueueDrain(input: {
+    projectId: string;
+    roleHandle: string;
+    runId: string;
+  }): void {
+    const subscriptionKey = `${roleQueueKey(input.projectId, input.roleHandle)}:${input.runId}`;
+    if (this.roleQueueSubscriptions.has(subscriptionKey)) {
+      return;
+    }
+    const unsubscribe = this.dependencies.runs.subscribe(input.runId, (event) => {
+      const status = event.payload.status;
+      if (!status || !isTerminalRunStatus(status)) {
+        return;
+      }
+      const stop = this.roleQueueSubscriptions.get(subscriptionKey);
+      stop?.();
+      this.roleQueueSubscriptions.delete(subscriptionKey);
+      void this.drainRoleQueue(input.projectId, input.roleHandle);
+    });
+    this.roleQueueSubscriptions.set(subscriptionKey, unsubscribe);
+  }
+
+  private async drainRoleQueue(projectId: string, roleHandle: string): Promise<void> {
+    const queueKey = roleQueueKey(projectId, roleHandle);
+    const existing = this.roleQueueDrains.get(queueKey);
+    if (existing) {
+      await existing;
+      return;
+    }
+    const drain = this.drainRoleQueueUnlocked(projectId, roleHandle).finally(() => {
+      this.roleQueueDrains.delete(queueKey);
+    });
+    this.roleQueueDrains.set(queueKey, drain);
+    await drain;
+  }
+
+  private async drainRoleQueueUnlocked(
+    projectId: string,
+    roleHandle: string
+  ): Promise<void> {
+    const entries = await this.roleRunQueueEntries(projectId, roleHandle);
+    const running = entries.find((entry) => entry.status === "running" || entry.status === "verifying");
+    if (running) {
+      this.subscribeRoleQueueDrain({ projectId, roleHandle, runId: running.runId });
+      return;
+    }
+    const next = entries
+      .filter((entry) => entry.status === "queued")
+      .sort(compareRoleRunQueueEntries)[0];
+    if (!next) {
+      return;
+    }
+    try {
+      await this.dependencies.runs.startRun(next.runId);
+      this.subscribeRoleQueueDrain({ projectId, roleHandle, runId: next.runId });
+    } catch (error) {
+      await this.appendRunStartFailure(
+        next.threadId,
+        next.taskId,
+        next.runId,
+        { agentId: next.agentId, role: next.role },
+        error
+      );
+    }
+  }
+
+  private async roleRunQueueEntries(
+    projectId: string,
+    roleHandle: string
+  ): Promise<RoleRunQueueEntry[]> {
+    const normalizedRole = normalizeWorkgroupRoleHandle(roleHandle);
+    const threads = await this.threads.list(projectId);
+    const messagesByThread = await Promise.all(
+      threads.map(async (thread) => ({
+        thread,
+        messages: await this.messages.listByThreadId(thread.id)
+      }))
+    );
+    const entries: RoleRunQueueEntry[] = [];
+    const seenRunIds = new Set<string>();
+    for (const { thread, messages } of messagesByThread) {
+      for (const message of messages) {
+        if (
+          message.kind !== "run_card" ||
+          !message.runId ||
+          !message.agentKind ||
+          seenRunIds.has(message.runId)
+        ) {
+          continue;
+        }
+        const messageRole = runCardRoleHandle(message);
+        if (!messageRole || normalizeWorkgroupRoleHandle(messageRole) !== normalizedRole) {
+          continue;
+        }
+        const role = metadataRoleRun(message.metadata);
+        const assignment = metadataAssignment(message.metadata);
+        const taskId = metadataString(message.metadata, "taskId") ?? assignment?.taskId;
+        if (!role || !taskId) {
+          continue;
+        }
+        const run = await this.dependencies.context.repositories.taskRunRepository.get(
+          message.runId
+        );
+        if (!run) {
+          continue;
+        }
+        entries.push({
+          runId: run.id,
+          threadId: thread.id,
+          taskId,
+          agentId: toAgentId(message.agentKind),
+          role,
+          status: toDesktopRunStatus(run.status),
+          createdAt: run.createdAt
+        });
+        seenRunIds.add(run.id);
+      }
+    }
+    return entries.sort(compareRoleRunQueueEntries);
   }
 
   private async linkUserMessageToTask(
@@ -2966,6 +3174,21 @@ function isActiveRunStatus(status: RunStatus): boolean {
 
 function isTerminalRunStatus(status: RunStatus): boolean {
   return status === "completed" || status === "failed" || status === "cancelled";
+}
+
+function roleQueueKey(projectId: string, roleHandle: string): string {
+  return `${projectId}:${normalizeWorkgroupRoleHandle(roleHandle)}`;
+}
+
+function compareRoleRunQueueEntries(
+  left: RoleRunQueueEntry,
+  right: RoleRunQueueEntry
+): number {
+  const created = left.createdAt.localeCompare(right.createdAt);
+  if (created !== 0) {
+    return created;
+  }
+  return left.runId.localeCompare(right.runId);
 }
 
 function isAssistantOutputMessage(message: ConversationMessage): boolean {

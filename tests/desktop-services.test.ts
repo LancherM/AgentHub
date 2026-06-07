@@ -26,7 +26,11 @@ import { createLifecycleService } from "../apps/desktop/electron/services/lifecy
 import { createMemoryService } from "../apps/desktop/electron/services/memory-service";
 import { createKnowledgeService } from "../apps/desktop/electron/services/knowledge-service";
 import { createTeamService } from "../apps/desktop/electron/services/team-service";
-import { createRunService } from "../apps/desktop/electron/services/run-service";
+import {
+  DESKTOP_RUN_INPUT_ARTIFACT_KIND,
+  createRunService,
+  type RunService
+} from "../apps/desktop/electron/services/run-service";
 import { createThreadService } from "../apps/desktop/electron/services/thread-service";
 import { createSettingsService } from "../apps/desktop/electron/services/settings-service";
 import { createComparisonService } from "../apps/desktop/electron/services/comparison-service";
@@ -50,7 +54,9 @@ import {
 import type {
   AgentRunMessage,
   RunDetail,
-  RunEvent
+  RunEvent,
+  RunStatus,
+  RunSummary
 } from "../apps/desktop/src/lib/types";
 import { MockProcessRunner, MockShellExecutor } from "./helpers";
 import {
@@ -2381,6 +2387,291 @@ describe("desktop services", () => {
     expect(brief?.content).toContain("role_instructions:");
   });
 
+  it("queues consecutive desktop submissions for the same role without blocking the composer", async () => {
+    const fixture = await createFixture();
+    const context = createDesktopServiceContext(fixture.repositories);
+    const projects = createProjectService(context);
+    const memory = createMemoryService(context);
+    const review = createReviewService(context, { memoryService: memory });
+    const runs = createTestRunService(context, review, memory, fixture, {
+      agentRegistry: new DefaultAgentRegistry([
+        new FakeAgentAdapter({ stepDelayMs: 500 })
+      ])
+    });
+    const threads = createThreadService({ context, projects, runs });
+    const project = await projects.open(fixture.projectRoot);
+
+    const first = await threads.sendMessage({
+      projectId: project.id,
+      text: "@researcher first role task",
+      contextMode: "auto"
+    });
+    const firstRun = first.messages.find(
+      (message) => message.type === "agent_run"
+    );
+    if (!firstRun || firstRun.type !== "agent_run") {
+      throw new Error("expected first role-backed run card");
+    }
+    await waitForRun(runs, firstRun.runId, "running");
+    const researcher = presetWorkgroupRoles.find((role) => role.handle === "researcher");
+    const writer = presetWorkgroupRoles.find((role) => role.handle === "writer");
+    if (!researcher || !writer || !firstRun.taskId) {
+      throw new Error("expected role metadata for queued run coverage");
+    }
+    const researcherRole = toWorkgroupRoleRunMetadata(researcher);
+    const writerRole = toWorkgroupRoleRunMetadata(writer);
+    await fixture.repositories.taskRunRepository.create(
+      validateTaskRun({
+        id: "run_writer_noise",
+        taskId: firstRun.taskId,
+        agentKind: "fake",
+        status: "queued",
+        createdAt: context.now(),
+        updatedAt: context.now()
+      })
+    );
+    await fixture.repositories.conversationMessageRepository.createMany([
+      validateConversationMessage({
+        id: "message_queue_noise_duplicate",
+        threadId: first.id,
+        sequence: 100,
+        role: "tool",
+        kind: "run_card",
+        content: "duplicate run",
+        agentKind: "fake",
+        runId: firstRun.runId,
+        metadata: {
+          role: researcherRole,
+          taskId: firstRun.taskId
+        },
+        createdAt: context.now()
+      }),
+      validateConversationMessage({
+        id: "message_queue_noise_role_mismatch",
+        threadId: first.id,
+        sequence: 101,
+        role: "tool",
+        kind: "run_card",
+        content: "writer run",
+        agentKind: "fake",
+        runId: "run_writer_noise",
+        metadata: {
+          role: writerRole,
+          taskId: firstRun.taskId
+        },
+        createdAt: context.now()
+      })
+    ]);
+
+    const second = await threads.sendMessage({
+      threadId: first.id,
+      text: "@researcher second role task",
+      contextMode: "auto"
+    });
+    const secondRun = second.messages
+      .filter((message): message is AgentRunMessage => message.type === "agent_run")
+      .filter((message) => message.assignment?.roleHandle === "researcher")
+      .at(-1);
+    if (!secondRun) {
+      throw new Error("expected second role-backed run card");
+    }
+
+    await expect(runs.getRun(secondRun.runId)).resolves.toMatchObject({
+      status: "queued"
+    });
+    await waitForRun(runs, firstRun.runId, "completed");
+    await waitForRun(runs, secondRun.runId, "completed");
+  });
+
+  it("records desktop role run start failures without throwing from sendMessage", async () => {
+    const fixture = await createFixture();
+    const context = createDesktopServiceContext(fixture.repositories);
+    const projects = createProjectService(context);
+    const runs = createStartFailureRunService(context);
+    const threads = createThreadService({ context, projects, runs });
+    const project = await projects.open(fixture.projectRoot);
+
+    const detail = await threads.sendMessage({
+      projectId: project.id,
+      text: "@researcher start failure",
+      contextMode: "auto"
+    });
+
+    const systemMessages = detail.messages.filter(
+      (message) => message.type === "system"
+    );
+    expect(systemMessages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          text: expect.stringContaining("@researcher could not start: start failure for run_")
+        })
+      ])
+    );
+    const rawMessages =
+      await fixture.repositories.conversationMessageRepository.listByThreadId(
+        detail.id
+      );
+    expect(rawMessages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          metadata: expect.objectContaining({
+            taskEvent: "assignment_start_failed",
+            timelineEvent: expect.objectContaining({
+              kind: "assignment_start_failed",
+              status: "failed",
+              title: "Run start failed"
+            })
+          })
+        })
+      ])
+    );
+  });
+
+  it("starts a persisted queued same-role run after desktop services restart", async () => {
+    const fixture = await createFixture();
+    const context = createDesktopServiceContext(fixture.repositories);
+    const projects = createProjectService(context);
+    const memory = createMemoryService(context);
+    const review = createReviewService(context, { memoryService: memory });
+    const runsBeforeRestart = createTestRunService(context, review, memory, fixture, {
+      agentRegistry: new DefaultAgentRegistry([new FakeAgentAdapter()])
+    });
+    const project = await projects.open(fixture.projectRoot);
+    const researcher = presetWorkgroupRoles.find((role) => role.handle === "researcher");
+    if (!researcher) {
+      throw new Error("missing researcher role preset");
+    }
+    const researcherRole = toWorkgroupRoleRunMetadata(researcher);
+    const thread = await fixture.repositories.conversationThreadRepository.create(
+      validateConversationThread({
+        id: "thread_restart_queue",
+        projectId: project.id,
+        title: "Restart Queue",
+        metadata: { roomHandle: "restart" },
+        createdAt: context.now(),
+        updatedAt: context.now()
+      })
+    );
+    await fixture.repositories.conversationMessageRepository.create(
+      validateConversationMessage({
+        id: "message_restart_source",
+        threadId: thread.id,
+        sequence: 0,
+        role: "user",
+        kind: "text",
+        content: "@researcher queued before restart",
+        metadata: {
+          source: "desktop_thread",
+          roleMentions: [researcherRole]
+        },
+        createdAt: context.now()
+      })
+    );
+    const assignment = {
+      assignmentId: "assignment_restart_queue",
+      taskId: "task_restart_queue",
+      threadId: thread.id,
+      sourceMessageId: "message_restart_source",
+      assignmentRole: "role" as const,
+      displayName: "Researcher",
+      roleHandle: "researcher",
+      executorKind: "agent_adapter" as const,
+      adapterKind: "fake" as const,
+      executable: true,
+      status: "queued" as const
+    };
+    const task = await fixture.repositories.taskRepository.create(
+      validateTask({
+        id: assignment.taskId,
+        projectId: project.id,
+        title: "Queued restart task",
+        description: "queued restart task",
+        metadata: {
+          threadId: thread.id,
+          sourceMessageId: "message_restart_source",
+          assignments: [assignment]
+        },
+        status: "open",
+        createdAt: context.now(),
+        updatedAt: context.now()
+      })
+    );
+    const queuedRun = await runsBeforeRestart.createRun({
+      taskId: task.id,
+      projectId: project.id,
+      prompt: "queued restart task",
+      title: task.title,
+      agentId: "fake",
+      role: researcherRole,
+      teamRoles: [researcherRole],
+      assignment,
+      contextMode: "auto",
+      deliveryMode: "runtime_injection",
+      conversationBrief: "Persisted queued role brief.",
+      startImmediately: false
+    });
+    const linkedAssignment = { ...assignment, runId: queuedRun.id };
+    await fixture.repositories.taskRepository.create(
+      validateTask({
+        ...task,
+        metadata: {
+          ...task.metadata,
+          assignments: [linkedAssignment]
+        },
+        updatedAt: context.now()
+      })
+    );
+    await fixture.repositories.conversationMessageRepository.create(
+      validateConversationMessage({
+        id: "message_restart_run_card",
+        threadId: thread.id,
+        sequence: 1,
+        role: "tool",
+        kind: "run_card",
+        content: "@researcher queued",
+        agentKind: "fake",
+        runId: queuedRun.id,
+        status: "queued",
+        metadata: {
+          source: "desktop_thread",
+          role: researcherRole,
+          taskId: task.id,
+          assignment: linkedAssignment
+        },
+        createdAt: context.now()
+      })
+    );
+    await expect(
+      fixture.repositories.runArtifactRepository.getLatestByRunIdAndKind(
+        queuedRun.id,
+        DESKTOP_RUN_INPUT_ARTIFACT_KIND
+      )
+    ).resolves.toBeDefined();
+
+    const runsAfterRestart = createTestRunService(context, review, memory, fixture, {
+      agentRegistry: new DefaultAgentRegistry([new FakeAgentAdapter()])
+    });
+    const threadsAfterRestart = createThreadService({
+      context,
+      projects,
+      runs: runsAfterRestart
+    });
+    await threadsAfterRestart.sendMessage({
+      threadId: thread.id,
+      text: "@researcher new same-role task",
+      contextMode: "auto"
+    });
+
+    await waitForRun(runsAfterRestart, queuedRun.id, "completed");
+    const queuedTask = await fixture.repositories.taskRepository.get(task.id);
+    expect(queuedTask?.metadata?.assignments).toEqual([
+      expect.objectContaining({
+        runId: queuedRun.id,
+        status: "completed"
+      })
+    ]);
+  });
+
   it("stores project team roles and resolves custom role mentions through IPC-safe services", async () => {
     const fixture = await createFixture();
     const context = createDesktopServiceContext(fixture.repositories);
@@ -4391,6 +4682,108 @@ function createTestRunService(
       ...taskRunnerDependencies
     }
   });
+}
+
+function createStartFailureRunService(
+  context: ReturnType<typeof createDesktopServiceContext>
+): RunService {
+  const statuses = new Map<string, RunStatus>();
+  const summaries = new Map<string, RunSummary>();
+  return {
+    async createRun(input) {
+      const project = await context.repositories.projectRepository.get(input.projectId);
+      const runId = context.nextId("run");
+      const createdAt = context.now();
+      const taskId = input.taskId ?? context.nextId("task");
+      await context.repositories.taskRunRepository.create(
+        validateTaskRun({
+          id: runId,
+          taskId,
+          agentKind: input.agentId === "claude" ? "claude-code" : input.agentId,
+          status: "queued",
+          createdAt,
+          updatedAt: createdAt
+        })
+      );
+      const summary: RunSummary = {
+        id: runId,
+        projectId: input.projectId,
+        projectName: project?.name ?? "Project",
+        taskId,
+        title: input.title ?? input.prompt,
+        taskPrompt: input.prompt,
+        agentId: input.agentId,
+        status: "queued",
+        canContinueCodeState: false,
+        createdAt,
+        updatedAt: createdAt
+      };
+      statuses.set(runId, "queued");
+      summaries.set(runId, summary);
+      return summary;
+    },
+    async executeRoleCall() {
+      throw new Error("role call execution is not used in this test");
+    },
+    async startRoleCall() {
+      throw new Error("role call start is not used in this test");
+    },
+    async getRun(runId) {
+      const summary = summaries.get(runId);
+      if (!summary) {
+        throw new Error(`run ${runId} not found`);
+      }
+      return {
+        ...summary,
+        status: statuses.get(runId) ?? summary.status,
+        events: [],
+        changedFiles: [],
+        verification: {
+          runId,
+          status: "skipped",
+          commands: [],
+          message: "not run"
+        },
+        risk: {
+          runId,
+          level: "low",
+          findings: [],
+          generatedAt: summary.updatedAt,
+          message: "not run"
+        },
+        memoryProposals: [],
+        summary: "not run"
+      };
+    },
+    async getConversationRunSnapshot(runId) {
+      const detail = await this.getRun(runId);
+      return {
+        id: detail.id,
+        agentId: detail.agentId,
+        status: detail.status,
+        summary: detail.summary,
+        events: []
+      };
+    },
+    async listRuns() {
+      return [...summaries.values()].map((summary) => ({
+        ...summary,
+        status: statuses.get(summary.id) ?? summary.status
+      }));
+    },
+    async listRunStatuses() {
+      return new Map(statuses);
+    },
+    async startRun(runId) {
+      throw new Error(`start failure for ${runId}`);
+    },
+    async cancelRun(runId) {
+      statuses.set(runId, "cancelled");
+    },
+    subscribe() {
+      return () => undefined;
+    }
+  };
 }
 
 class DesktopAbortProcessRunner implements ProcessRunner {

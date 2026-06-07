@@ -173,6 +173,7 @@ export interface CliRuntime {
   roleCallEventRepository: RoleCallEventRepository;
   roleTodoRepository: RoleTodoRepository;
   taskRunner: TaskRunner;
+  roleRunQueues: Map<string, Promise<void>>;
 }
 
 export interface CliRuntimeDependencies extends TaskRunnerDependencies {
@@ -338,6 +339,7 @@ export function createCliRuntime(
     contextIndexRefresher,
     codeGraphRepository
   });
+  const roleRunQueues = new Map<string, Promise<void>>();
 
   return {
     projectRepository,
@@ -362,7 +364,8 @@ export function createCliRuntime(
     roleCallRepository,
     roleCallEventRepository,
     roleTodoRepository,
-    taskRunner
+    taskRunner,
+    roleRunQueues
   };
 }
 
@@ -1122,6 +1125,17 @@ interface ChatState {
   pendingContinueFrom?: RunContinuationInput;
 }
 
+interface ChatTurnStarted {
+  projectId: string;
+  threadId: string;
+  taskId: string;
+  userMessageId: string;
+}
+
+interface RunChatTurnHooks {
+  onTurnStarted?: (event: ChatTurnStarted) => void | Promise<void>;
+}
+
 export async function runChat(options: ChatOptions = {}): Promise<number> {
   const io = options.io ?? {
     stdin: process.stdin,
@@ -1435,7 +1449,8 @@ async function runChatTurn(
   rawLine: string,
   io: CliIO,
   runtime: CliRuntime,
-  state: ChatState
+  state: ChatState,
+  hooks: RunChatTurnHooks = {}
 ): Promise<number> {
   const parsed = await parseCliChatTurn(runtime, state, rawLine);
   const prompt = parsed.prompt.trim();
@@ -1484,6 +1499,12 @@ async function runChatTurn(
       updatedAt: userMessage.createdAt
     })
   );
+  await hooks.onTurnStarted?.({
+    projectId: state.project.id,
+    threadId: currentThread.id,
+    taskId,
+    userMessageId: userMessage.id
+  });
 
   const executableParticipants = parsed.participants.filter((participant) =>
     Boolean(assignmentForCliParticipant(assignments, participant)?.executable)
@@ -1545,7 +1566,12 @@ async function runChatTurn(
 
     let result: CliRunResult | undefined;
     try {
-      result = await runtime.taskRunner.run(runInput);
+      result = await runCliParticipantTask({
+        runtime,
+        projectId: state.project.id,
+        participant,
+        runInput
+      });
     } catch (error) {
       assignments = updateCliAssignment(assignments, assignment.assignmentId, {
         status: "failed"
@@ -1618,6 +1644,38 @@ async function runChatTurn(
 
   await refreshChatThreadSummary(runtime, currentThread.id);
   return ok ? 0 : 1;
+}
+
+async function runCliParticipantTask(input: {
+  runtime: CliRuntime;
+  projectId: string;
+  participant: CliMentionParticipant;
+  runInput: RunTaskInput;
+}): Promise<CliRunResult> {
+  const roleHandle = input.participant.role?.roleHandle;
+  if (!roleHandle) {
+    return input.runtime.taskRunner.run(input.runInput);
+  }
+  const queueKey = cliRoleQueueKey(input.projectId, roleHandle);
+  const previous = input.runtime.roleRunQueues.get(queueKey) ?? Promise.resolve();
+  const runPromise = previous
+    .catch(() => undefined)
+    .then(() => input.runtime.taskRunner.run(input.runInput));
+  const queueTail = runPromise.then(
+    () => undefined,
+    () => undefined
+  );
+  input.runtime.roleRunQueues.set(queueKey, queueTail);
+  void queueTail.finally(() => {
+    if (input.runtime.roleRunQueues.get(queueKey) === queueTail) {
+      input.runtime.roleRunQueues.delete(queueKey);
+    }
+  });
+  return runPromise;
+}
+
+function cliRoleQueueKey(projectId: string, roleHandle: string): string {
+  return `${projectId}:${normalizeWorkgroupRoleHandle(roleHandle)}`;
 }
 
 async function processCliRoleCallOutput(input: {
@@ -2265,7 +2323,7 @@ async function sendRoomMessage(
   }
 }
 
-async function submitTuiPrompt(
+export async function submitTuiPrompt(
   input: TuiPromptSubmissionInput,
   io: CliIO,
   cwd: string,
@@ -2300,6 +2358,21 @@ async function submitTuiPrompt(
       debug: input.debug
     };
     const capturedIo = createBufferedCliIO(io);
+    if (input.mode === "background") {
+      const started = await startBackgroundChatTurn({
+        prompt: input.prompt,
+        io: capturedIo.io,
+        runtime,
+        state
+      });
+      return {
+        ok: true,
+        exitCode: 0,
+        projectId: started.projectId,
+        threadId: started.threadId,
+        message: `Submitted prompt to ${state.roomHandle ? `#${state.roomHandle}` : started.threadId}.`
+      };
+    }
     const exitCode = await runChatTurn(input.prompt, capturedIo.io, runtime, state);
     const capturedError = firstLine(capturedIo.stderr.join(""));
     return {
@@ -2320,6 +2393,63 @@ async function submitTuiPrompt(
       threadId: input.threadId,
       message: errorMessage(error)
     };
+  }
+}
+
+async function startBackgroundChatTurn(input: {
+  prompt: string;
+  io: CliIO;
+  runtime: CliRuntime;
+  state: ChatState;
+}): Promise<ChatTurnStarted> {
+  let started = false;
+  let resolveStarted: (event: ChatTurnStarted) => void = () => undefined;
+  let rejectStarted: (error: unknown) => void = () => undefined;
+  const startedPromise = new Promise<ChatTurnStarted>((resolve, reject) => {
+    resolveStarted = resolve;
+    rejectStarted = reject;
+  });
+
+  const runPromise = runChatTurn(input.prompt, input.io, input.runtime, input.state, {
+    onTurnStarted: (event) => {
+      if (started) {
+        return;
+      }
+      started = true;
+      input.state.threadId = event.threadId;
+      resolveStarted(event);
+    }
+  });
+  void runPromise.catch(async (error) => {
+    if (!started) {
+      started = true;
+      rejectStarted(error);
+      return;
+    }
+    await appendBackgroundChatFailure(input.runtime, input.state.threadId, error);
+  });
+
+  return startedPromise;
+}
+
+async function appendBackgroundChatFailure(
+  runtime: CliRuntime,
+  threadId: string | undefined,
+  error: unknown
+): Promise<void> {
+  if (!threadId) {
+    return;
+  }
+  try {
+    await appendChatMessage(runtime, threadId, {
+      role: "system",
+      kind: "text",
+      content: `Background prompt failed: ${errorMessage(error)}`,
+      metadata: { source: "cli_chat", taskEvent: "background_prompt_failed" }
+    });
+  } catch {
+    // The TUI will continue polling durable state; avoid surfacing background
+    // cleanup failures as unhandled promise rejections.
   }
 }
 

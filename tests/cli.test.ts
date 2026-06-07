@@ -3,12 +3,14 @@ import path from "node:path";
 import { Readable } from "node:stream";
 import { describe, expect, it } from "vitest";
 import { createCliRuntime, main } from "@agent-hub/cli";
-import type {
-  ProcessDetectionInput,
-  ProcessDetectionResult,
-  ProcessRunEvent,
-  ProcessRunInput,
-  ProcessRunner
+import {
+  DefaultAgentRegistry,
+  FakeAgentAdapter,
+  type ProcessDetectionInput,
+  type ProcessDetectionResult,
+  type ProcessRunEvent,
+  type ProcessRunInput,
+  type ProcessRunner
 } from "@agent-hub/agent-adapters";
 import type {
   ChangedFile,
@@ -1607,6 +1609,89 @@ describe("CLI", () => {
     ).resolves.toBe(0);
     expect(output.join("")).toContain("Room #general");
     expect(output.join("")).toContain("@researcher");
+  });
+
+  it("queues concurrent CLI room sends for the same role", async () => {
+    const projectRoot = await createTestDirectory("cli-room-send-role-queue-project");
+    const runRoot = path.join(await createTestDirectory("cli-room-send-role-queue-runs"), "runs");
+    const runtime = createCliRuntime({
+      storageMode: "memory",
+      defaultRunRoot: runRoot,
+      workspaceManager: new TestWorkspaceManager(runRoot),
+      diffCollector: new StaticDiffCollector(),
+      verificationRunner: new VerificationRunner(new MockShellExecutor()),
+      agentRegistry: new DefaultAgentRegistry([
+        new FakeAgentAdapter({ stepDelayMs: 150 })
+      ]),
+      idGenerator: new SequenceIdGenerator(),
+      clock: new FixedClock("2026-01-01T00:00:00.000Z")
+    });
+    await runtime.projectRepository.create({
+      id: "project_room_role_queue",
+      name: "Room Role Queue",
+      rootPath: projectRoot,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z"
+    });
+    const output: string[] = [];
+    const errors: string[] = [];
+    const io = {
+      stdout: { write: (chunk: string) => { output.push(chunk); return true; } },
+      stderr: { write: (chunk: string) => { errors.push(chunk); return true; } }
+    };
+
+    const first = main([
+      "rooms",
+      "send",
+      "--project-id",
+      "project_room_role_queue",
+      "--room",
+      "general",
+      "--message",
+      "@researcher first queued role task"
+    ], io, projectRoot, runtime);
+    await waitForCondition(() => runtime.roleRunQueues.size === 1);
+
+    const second = main([
+      "rooms",
+      "send",
+      "--project-id",
+      "project_room_role_queue",
+      "--room",
+      "general",
+      "--message",
+      "@researcher second queued role task"
+    ], io, projectRoot, runtime);
+    await waitForCondition(async () => {
+      const tasks = await runtime.taskRepository.listByProjectId("project_room_role_queue");
+      return tasks.length === 2;
+    });
+
+    const queuedTasks = await runtime.taskRepository.listByProjectId("project_room_role_queue");
+    const secondAssignment = (queuedTasks[1]?.metadata?.assignments as Array<{
+      roleHandle?: string;
+      status?: string;
+      runId?: string;
+    }> | undefined)?.[0];
+    expect(secondAssignment).toMatchObject({
+      roleHandle: "researcher",
+      status: "queued"
+    });
+    expect(secondAssignment?.runId).toBeUndefined();
+
+    await expect(first).resolves.toBe(0);
+    await expect(second).resolves.toBe(0);
+    const completedTasks = await runtime.taskRepository.listByProjectId(
+      "project_room_role_queue"
+    );
+    const completedAssignments = completedTasks.map(
+      (task) =>
+        (task.metadata?.assignments as Array<{ status?: string; runId?: string }> | undefined)?.[0]
+    );
+    expect(completedAssignments.every((assignment) => assignment?.status === "completed"))
+      .toBe(true);
+    expect(completedAssignments.every((assignment) => Boolean(assignment?.runId))).toBe(true);
+    expect(errors.join("")).toBe("");
   });
 
   it("orchestrates RoleCalls emitted by custom PM role output", async () => {
@@ -3223,6 +3308,19 @@ function createDeferred<T = void>(): Deferred<T> {
     reject = promiseReject;
   });
   return { promise, resolve, reject };
+}
+
+async function waitForCondition(
+  predicate: () => boolean | Promise<boolean>
+): Promise<void> {
+  const deadline = Date.now() + 5_000;
+  while (Date.now() < deadline) {
+    if (await predicate()) {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error("timed out waiting for condition");
 }
 
 class ControlledProcessRunner implements ProcessRunner {
