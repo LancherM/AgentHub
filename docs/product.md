@@ -221,7 +221,10 @@ chat/run records and then shown through TUI panes, not dumped directly into the
 Ink alternate screen during an interactive submit.
 Role-backed prompt submissions preserve role order per project: consecutive
 turns targeting the same `@role` queue behind that role's active run, while
-different roles and direct adapter mentions may run concurrently.
+different roles and direct adapter mentions may run concurrently. Queued
+role-backed desktop runs keep their execution input as local run evidence so a
+later desktop service instance can start the older queued run before accepting
+new same-role work.
 Interactive TUI sessions periodically refresh the same current-context read
 model so externally changing run, task, conversation, RoleCall, and review
 state can appear without a manual keypress. Active-run refreshes stay
@@ -508,6 +511,9 @@ Submitting a new desktop prompt does not wait for active runs to complete.
 Role-backed desktop runs preserve order per project: a second run for the same
 `@role` remains queued until that role's active run reaches a terminal status,
 while different roles and direct adapter mentions can proceed independently.
+When a same-role queued run is still present after a desktop service restart,
+the next same-role submission drains the older queued run from persisted local
+execution input instead of leaving the queue blocked on in-memory state.
 
 Inline run cards show compact status, agent or role attribution, current
 agent-facing output, and review affordances. Routine completed no-change runs

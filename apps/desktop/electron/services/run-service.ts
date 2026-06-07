@@ -3,10 +3,12 @@ import os from "node:os";
 import path from "node:path";
 import type { ConversationContextBrief } from "@agent-hub/context-compiler";
 import {
+  validateRunArtifact,
   validateRunEvent,
   validateTask,
   validateTaskRun,
   type ProjectRepository,
+  type RunArtifactRepository,
   type RunEvent as CoreRunEvent,
   type RunEventRepository,
   type RunMetadataRepository,
@@ -151,6 +153,7 @@ const semanticRunEventTypes: readonly RunEventType[] = [
   "run_failed",
   "run_cancelled"
 ] as const;
+export const DESKTOP_RUN_INPUT_ARTIFACT_KIND = "desktop_run_input";
 
 export function createRunService(
   context: DesktopServiceContext,
@@ -164,6 +167,7 @@ class RepositoryRunService implements RunService {
   private readonly tasks: TaskRepository;
   private readonly runs: TaskRunRepository;
   private readonly events: RunEventRepository;
+  private readonly artifacts: RunArtifactRepository;
   private readonly metadata: RunMetadataRepository;
   private readonly emitter = new EventEmitter();
   private readonly activeRuns = new Map<string, ActiveRun>();
@@ -177,6 +181,7 @@ class RepositoryRunService implements RunService {
     this.tasks = context.repositories.taskRepository;
     this.runs = context.repositories.taskRunRepository;
     this.events = context.repositories.runEventRepository;
+    this.artifacts = context.repositories.runArtifactRepository;
     this.metadata = context.repositories.runMetadataRepository;
   }
 
@@ -314,6 +319,7 @@ class RepositoryRunService implements RunService {
       });
     }
     this.runInputs.set(run.id, parsed);
+    await this.persistDesktopRunInput(run.id, parsed, createdAt);
 
     if (parsed.startImmediately) {
       queueMicrotask(() => {
@@ -611,7 +617,7 @@ class RepositoryRunService implements RunService {
     project: { id: string; rootPath: string },
     active: ActiveRun
   ): Promise<void> {
-    const input = this.runInputs.get(run.id);
+    const input = await this.executionInputForRun(run.id);
     if (!input) {
       throw new Error(`run ${run.id} is missing desktop execution input`);
     }
@@ -691,6 +697,48 @@ class RepositoryRunService implements RunService {
       idGenerator: new DesktopTaskRunnerIdGenerator(this.context, runId),
       clock: new DesktopTaskRunnerClock(this.context)
     });
+  }
+
+  private async persistDesktopRunInput(
+    runId: string,
+    input: ParsedCreateRunInput,
+    createdAt: string
+  ): Promise<void> {
+    await this.artifacts.create(
+      validateRunArtifact({
+        id: this.context.nextId("artifact"),
+        taskRunId: runId,
+        kind: DESKTOP_RUN_INPUT_ARTIFACT_KIND,
+        content: JSON.stringify({ version: 1, ...input }),
+        metadata: {
+          source: "desktop_run_service",
+          version: 1
+        },
+        createdAt
+      })
+    );
+  }
+
+  private async executionInputForRun(
+    runId: string
+  ): Promise<ParsedCreateRunInput | undefined> {
+    const inMemory = this.runInputs.get(runId);
+    if (inMemory) {
+      return inMemory;
+    }
+    const artifact = await this.artifacts.getLatestByRunIdAndKind(
+      runId,
+      DESKTOP_RUN_INPUT_ARTIFACT_KIND
+    );
+    if (!artifact) {
+      return undefined;
+    }
+    const parsed = parsePersistedDesktopRunInput(
+      artifact.content,
+      this.context.agentAvailability
+    );
+    this.runInputs.set(runId, parsed);
+    return parsed;
   }
 
   private desktopWorkspaceBasePath(): string {
@@ -1048,6 +1096,26 @@ function parseCreateRunInput(
     continueFromRunId: input.continueFromRunId,
     continueFromMessageId: input.continueFromMessageId
   };
+}
+
+function parsePersistedDesktopRunInput(
+  content: string,
+  availability: AgentAvailabilityOptions
+): ParsedCreateRunInput {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(content);
+  } catch {
+    throw new Error("persisted desktop execution input is not valid JSON");
+  }
+  if (!parsed || typeof parsed !== "object") {
+    throw new Error("persisted desktop execution input must be an object");
+  }
+  const version = (parsed as { version?: unknown }).version;
+  if (version !== 1) {
+    throw new Error("persisted desktop execution input version is unsupported");
+  }
+  return parseCreateRunInput(parsed as CreateDesktopRunInput, availability);
 }
 
 function parseTaskAssignmentMetadata(

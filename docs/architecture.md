@@ -408,10 +408,11 @@ Electron main-process services own privileged operations:
 - `ProjectService`: project registration and selection.
 - `ThreadService`: room/thread reads and writes, message sending, role
   resolution, workflow metadata, same-project role-run queueing,
-  assistant-output reconciliation, RoleCall parsing, and delegated run-card
-  creation.
+  queued-role drain recovery, assistant-output reconciliation, RoleCall
+  parsing, and delegated run-card creation.
 - `RunService`: run creation, TaskRunner integration, live event subscription,
-  cancellation, continuation, and RoleCall execution bridge.
+  durable desktop execution-input artifacts for queued runs, cancellation,
+  continuation, and RoleCall execution bridge.
 - `ReviewService`, `DiffService`, and `RiskService`: inspector summary,
   artifacts, logs, diffs, verification, risk, retained-worktree handoff, and
   fallback deterministic risk.
@@ -701,6 +702,9 @@ events before final completion, the refresh loop can show active adapter
 progress without adding a separate live-log channel. Role-backed CLI/TUI runs
 use a project+role promise queue so consecutive turns for the same `@role`
 execute in order without blocking unrelated prompt submissions.
+Desktop queued role runs additionally persist a `desktop_run_input` artifact at
+run creation time, allowing a later main-process service instance to rehydrate
+TaskRunner input for a queued run before draining newer same-role work.
 The Ink app never reads SQLite, git, shell, or filesystem directly. It receives
 `loadModel`, `submitPrompt`, and `recordReviewDecision` callbacks from the CLI
 boundary, wraps interactive submit/review callbacks in bounded UI timeouts, and

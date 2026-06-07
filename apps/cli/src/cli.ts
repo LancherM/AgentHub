@@ -2323,7 +2323,7 @@ async function sendRoomMessage(
   }
 }
 
-async function submitTuiPrompt(
+export async function submitTuiPrompt(
   input: TuiPromptSubmissionInput,
   io: CliIO,
   cwd: string,
