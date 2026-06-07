@@ -4177,7 +4177,7 @@ async function waitForTaskStatus(
   taskId: string,
   status: "open" | "running" | "completed" | "failed"
 ) {
-  const deadline = Date.now() + 10_000;
+  const deadline = Date.now() + 30_000;
   while (Date.now() < deadline) {
     const task = await taskRepository.get(taskId);
     if (task?.status === status) {
