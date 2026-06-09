@@ -43,7 +43,9 @@ export const IPC_CHANNELS = {
   teamWorkspace: "agent-hub:team:workspace",
   teamSaveRole: "agent-hub:team:save-role",
   settingsGetVerification: "agent-hub:settings:get-verification",
-  settingsSaveVerification: "agent-hub:settings:save-verification"
+  settingsSaveVerification: "agent-hub:settings:save-verification",
+  settingsGetMemoryPolicy: "agent-hub:settings:get-memory-policy",
+  settingsSaveMemoryPolicy: "agent-hub:settings:save-memory-policy"
 } as const;
 
 export function runEventChannel(runId: string): string {

@@ -112,6 +112,26 @@ export function MemoryProposals({
                   <span>{item.source}</span>
                 </label>
                 <p>{item.content}</p>
+                {item.autoApproval ? (
+                  <div className="memory-automation-badges">
+                    <span className="timeline-chip accent">
+                      auto approved
+                    </span>
+                    <span className="timeline-chip neutral">
+                      {item.autoApproval.policyMode}
+                    </span>
+                    {item.autoApproval.riskLevel ? (
+                      <span className="timeline-chip neutral">
+                        risk {item.autoApproval.riskLevel}
+                      </span>
+                    ) : null}
+                    {item.autoApproval.verificationStatus ? (
+                      <span className="timeline-chip neutral">
+                        checks {item.autoApproval.verificationStatus}
+                      </span>
+                    ) : null}
+                  </div>
+                ) : null}
                 {item.rationale ? (
                   <small>{item.rationale}</small>
                 ) : null}

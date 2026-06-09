@@ -12,6 +12,7 @@ import {
 } from "@agent-hub/core";
 import type { JsonObject } from "@agent-hub/shared";
 import type {
+  MemoryAutoApprovalAudit,
   KnowledgeAuditEvent,
   KnowledgeItem,
   KnowledgeSourceLink,
@@ -208,7 +209,8 @@ function knowledgeItemFromMemory(
     updatedAt: item.updatedAt,
     sourceLinks,
     audit: memoryAudit(item),
-    bounded: preview.bounded
+    bounded: preview.bounded,
+    autoApproval: parseAutoApproval(item.metadata?.autoApproval)
   };
 }
 
@@ -391,13 +393,53 @@ function memoryTitle(item: MemoryItem): string {
 }
 
 function memoryAudit(item: MemoryItem): KnowledgeAuditEvent[] {
+  const autoApproval = parseAutoApproval(item.metadata?.autoApproval);
   return [
+    ...(autoApproval
+      ? [
+          {
+            at: autoApproval.approvedAt,
+            label: "Auto-approved memory",
+            detail: `${autoApproval.policyMode}${autoApproval.riskLevel ? ` / risk ${autoApproval.riskLevel}` : ""}`
+          }
+        ]
+      : []),
     {
       at: item.updatedAt,
       label: item.status === "proposed" ? "Memory proposed" : `Memory ${item.status}`
     },
     { at: item.createdAt, label: "Memory item created", detail: item.category }
   ];
+}
+
+function parseAutoApproval(value: unknown): MemoryAutoApprovalAudit | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  const record = value as Record<string, unknown>;
+  const policyMode = record.policyMode;
+  const approvedAt = record.approvedAt;
+  if (
+    policyMode !== "auto_after_review_accept" &&
+    policyMode !== "auto_safe_on_success"
+  ) {
+    return undefined;
+  }
+  if (typeof approvedAt !== "string") {
+    return undefined;
+  }
+  return {
+    policyMode,
+    approvedAt,
+    reason: typeof record.reason === "string" ? record.reason : undefined,
+    riskLevel: typeof record.riskLevel === "string" ? record.riskLevel : undefined,
+    verificationStatus:
+      typeof record.verificationStatus === "string"
+        ? record.verificationStatus
+        : undefined,
+    writebackPath:
+      typeof record.writebackPath === "string" ? record.writebackPath : undefined
+  };
 }
 
 function decisionTitle(decision: string): string {

@@ -334,6 +334,53 @@ describe("desktop services", () => {
         ]
       })
     ).rejects.toThrow(/secret-like option name/);
+    await expect(
+      handlers[IPC_CHANNELS.settingsGetMemoryPolicy](
+        { sender } as never,
+        project.id
+      )
+    ).resolves.toMatchObject({
+      projectId: project.id,
+      mode: "suggest_only",
+      maxRiskLevel: "low"
+    });
+    await expect(
+      handlers[IPC_CHANNELS.settingsSaveMemoryPolicy]({ sender } as never, {
+        projectId: project.id,
+        mode: "auto_after_review_accept",
+        maxRiskLevel: "medium",
+        allowSkippedVerification: true,
+        allowedCategories: ["workflow_rule", "project_fact"],
+        maxAutoApprovalsPerRun: 3
+      })
+    ).resolves.toMatchObject({
+      projectId: project.id,
+      mode: "auto_after_review_accept",
+      maxRiskLevel: "medium",
+      allowedCategories: ["workflow_rule", "project_fact"]
+    });
+    await expect(settings.getMemoryPolicy(project.id)).resolves.toMatchObject({
+      mode: "auto_after_review_accept",
+      allowSkippedVerification: true,
+      maxAutoApprovalsPerRun: 3
+    });
+    const unsafeMemoryPolicy = {
+      projectId: project.id,
+      mode: "auto_safe_on_success",
+      maxRiskLevel: "low",
+      allowSkippedVerification: false,
+      allowedCategories: ["workflow_rule"],
+      maxAutoApprovalsPerRun: 1
+    };
+    await expect(
+      settings.saveMemoryPolicy(unsafeMemoryPolicy)
+    ).rejects.toThrow(/auto_safe_on_success/);
+    await expect(
+      handlers[IPC_CHANNELS.settingsSaveMemoryPolicy](
+        { sender } as never,
+        unsafeMemoryPolicy
+      )
+    ).rejects.toThrow(/local desktop request/);
   });
 
   it("keeps fake agent out of normal desktop runtime config", async () => {
@@ -1066,6 +1113,7 @@ describe("desktop services", () => {
     const projects = createProjectService(context);
     const memory = createMemoryService(context);
     const review = createReviewService(context, { memoryService: memory });
+    const knowledge = createKnowledgeService(context);
     const runs = createTestRunService(context, review, memory, fixture);
     const before = await fs.readdir(fixture.projectRoot);
     const project = await projects.open(fixture.projectRoot);
@@ -1101,6 +1149,7 @@ describe("desktop services", () => {
     const projects = createProjectService(context);
     const memory = createMemoryService(context);
     const review = createReviewService(context, { memoryService: memory });
+    const knowledge = createKnowledgeService(context);
     const runs = createTestRunService(context, review, memory, fixture);
     const project = await projects.open(fixture.projectRoot);
     await saveProjectMemoryAutomationPolicy(
@@ -1127,6 +1176,7 @@ describe("desktop services", () => {
 
     const accepted = await review.acceptRun(run.id);
     const proposals = await memory.listProposals(run.id);
+    const workspace = await knowledge.getWorkspace(project.id);
     const approvedPath = path.join(
       fixture.agentHubHome,
       "context-stores",
@@ -1141,7 +1191,23 @@ describe("desktop services", () => {
       expect.objectContaining({
         status: "approved",
         content: "Desktop renderer must not access Node APIs directly.",
-        approvedMemoryPath: approvedPath
+        approvedMemoryPath: approvedPath,
+        autoApproval: expect.objectContaining({
+          policyMode: "auto_after_review_accept",
+          writebackPath: approvedPath
+        })
+      })
+    );
+    expect(workspace.items).toContainEqual(
+      expect.objectContaining({
+        kind: "memory",
+        status: "approved",
+        autoApproval: expect.objectContaining({
+          policyMode: "auto_after_review_accept"
+        }),
+        audit: expect.arrayContaining([
+          expect.objectContaining({ label: "Auto-approved memory" })
+        ])
       })
     );
     expect(approvedMemory).toContain(

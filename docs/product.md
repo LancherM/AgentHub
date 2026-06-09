@@ -518,6 +518,11 @@ Projects can opt into `auto_after_review_accept` with
 When enabled, an explicit CLI or desktop review acceptance auto-approves only
 eligible proposed memory and writes it through the Agent Hub-owned approved
 memory path. The default remains `suggest_only`.
+The desktop Project Settings panel exposes the same project policy for local
+operators: users can keep proposals queued, opt into auto-after-review,
+choose the risk threshold, per-run limit, skipped-verification behavior, and
+allowed memory categories without giving the renderer direct SQLite or
+filesystem access.
 
 ## Desktop Experience
 
@@ -555,7 +560,8 @@ artifact previews out of the normal transcript.
 
 Desktop lifecycle actions are explicit and audited:
 
-- accept/reject records review decisions only;
+- accept/reject records review decisions and, when the project explicitly opts
+  into memory automation, review acceptance may approve eligible memory;
 - memory approval writes approved memory to Agent Hub's context store;
 - retained-worktree handoff exposes local review evidence and review-only
   commands;
@@ -566,6 +572,11 @@ Desktop lifecycle actions are explicit and audited:
 
 Desktop apply does not commit, merge, push, create pull requests, delete
 branches, export repository context, or approve memory.
+
+The Knowledge workspace surfaces memory governance evidence. Auto-approved
+memory is tagged in the memory list, its detail pane shows the applied policy,
+risk level, verification status, and approved-memory path, and the audit trail
+records the local auto-approval event alongside normal memory lifecycle events.
 
 ## Safety And Review
 

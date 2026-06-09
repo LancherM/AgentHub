@@ -338,6 +338,10 @@ same state transitions for tests and injected runtimes.
 Settings reject secret-like keys and values at the domain/repository boundary.
 Desktop verification command settings also reject secret-like option names in
 args before storage.
+Desktop memory automation policy settings are validated in the main-process
+`SettingsService` before storage. The renderer can save only bounded project
+policy fields, and `auto_safe_on_success` remains rejected until a later phase
+adds that unattended-success path.
 
 ## Conversations, Rooms, And Roles
 
@@ -439,7 +443,8 @@ Electron main-process services own privileged operations:
 - `ComparisonService`: same-task or same-turn local run comparison.
 - `KnowledgeService`: project-scoped memory, summary, and decision read model.
 - `TeamService`: preset overrides and custom role settings.
-- `SettingsService`: validated per-project verification command settings.
+- `SettingsService`: validated per-project verification command settings and
+  memory automation policy settings.
 
 Renderer state is presentation-only: navigation, sidebar density, scroll
 behavior, target chips, autocomplete, command palette, inspector tab selection,
@@ -458,7 +463,9 @@ Run review is read-only by default. `runs events`, `runs diff`, `runs show`,
 evidence. They do not rerun agents or mutate worktrees.
 
 Accept/reject decisions are `review_decision` artifacts. They do not alter run
-status, branches, files, memory, or cleanup state.
+status, branches, files, or cleanup state. Review acceptance is also the only
+desktop path that can trigger memory automation, and only for projects whose
+stored policy explicitly selects `auto_after_review_accept`.
 
 Lifecycle actions are separate audited operations. Cleanup validates retained
 worktree ownership and exact confirmation before removing an Agent Hub-owned
@@ -467,9 +474,12 @@ raw persisted patch to an Agent Hub temp path, runs `git apply --check`, and
 then runs `git apply` only after human confirmation. It does not commit, merge,
 push, create pull requests, delete branches, export context, or approve memory.
 
-Memory approval is explicit. Approved items are appended idempotently to the
-Agent Hub-owned context store; proposed and rejected SQLite rows are never
-injected.
+Memory approval is explicit unless a project has opted into
+`auto_after_review_accept` and a human records review acceptance. Approved
+items are appended idempotently to the Agent Hub-owned context store; proposed
+and rejected SQLite rows are never injected. Auto-approved rows carry policy,
+risk, verification, and writeback metadata that desktop memory and Knowledge
+read models expose as local audit evidence.
 
 Comparison reports are generated from persisted run evidence: statuses, changed
 files, diff stats, verification results, risk levels, risk factors, and

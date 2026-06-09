@@ -426,8 +426,8 @@ export function App(): JSX.Element {
       },
       {
         id: "settings",
-        label: "Open Verification Settings",
-        detail: "Edit project verification commands",
+        label: "Open Project Settings",
+        detail: "Edit verification and memory automation",
         shortcut: ",",
         run: () => setSettingsOpen(true)
       },
