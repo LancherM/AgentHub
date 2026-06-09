@@ -36,12 +36,13 @@ Desktop renderer
   mapping, RoleResult helpers, graph convergence helpers, and bounded
   current-context TUI read models over existing persisted evidence.
 - `packages/db` owns SQLite migrations, default database path resolution, a
-  queued `sqlite3` session driver, and SQLite implementations of the core
+  native `better-sqlite3` connection, and SQLite implementations of the core
   repository interfaces.
 - `packages/context-compiler` owns Agent Hub context stores, context pack and
-  task brief generation, conversation brief building, managed-block export,
-  worktree overlay materialization, approved-memory writeback, and project or
-  global skill resolution.
+  task brief generation, managed-block export, worktree overlay materialization,
+  approved-memory writeback, and project or global skill resolution. Conversation
+  brief building, managed-block replacement, task-brief rendering, and context
+  policy filtering live in separate package modules under the same boundary.
 - `packages/agent-adapters` owns the adapter interface, adapter registry,
   `FakeAgentAdapter`, `CodexAdapter`, `ClaudeCodeAdapter`, process preflight,
   JSONL event mapping, and direct process spawning through `ProcessRunner`.
@@ -51,10 +52,10 @@ Desktop renderer
   code-state continuation, RoleCall TaskRunner execution, and cleanup policy.
 - `packages/safety` owns dangerous-command detection, diff/event safety scans,
   risk report generation, and RoleCall policy validation.
-- `apps/cli` owns command parsing, interactive shell behavior, persistent chat
-  and room command UX, the read-only TUI renderer/key handling, output
-  rendering, debug rendering, and CLI-only persistence operations such as
-  manual run-event recording.
+- `apps/cli` owns a declarative command route registry, interactive shell
+  behavior, persistent chat and room command UX, the read-only TUI renderer/key
+  handling, output rendering, debug rendering, and CLI-only persistence
+  operations such as manual run-event recording.
 - `apps/desktop` owns Electron main/preload, React renderer, desktop layout,
   local UI preferences, IPC service facades, and desktop-only presentation
   state. It does not own task orchestration.
@@ -294,6 +295,10 @@ cancellation can terminate process-backed runs or checks with `SIGTERM`.
 
 The default SQLite database is in Agent Hub app data. `AGENT_HUB_HOME`,
 `AGENT_HUB_DB_PATH`, and CLI `--db` provide local overrides.
+SQLite access is in-process through `better-sqlite3`; Agent Hub no longer
+depends on a system `sqlite3` executable or stdout/stderr protocol parsing for
+normal CLI, desktop, or test storage access. The desktop package rebuilds native
+bindings during packaging and unpacks `.node` files from the app archive.
 
 The current schema covers:
 
@@ -671,7 +676,7 @@ advance from an internal animation timer. None of these states adds tables,
 settings, filesystem writes, shell execution, adapter calls, or run lifecycle
 mutations.
 The direct CLI entrypoint exits after command completion, so one-shot TUI smoke
-renders do not leave local SQLite helper processes holding the terminal open.
+renders do not leave local SQLite connections holding the terminal open.
 For interactive launches, the CLI default IO includes `process.stdin`, and the
 TUI also falls back to `process.stdin` for TTY/raw-mode detection when a custom
 test IO object omits stdin. This keeps `agent-hub tui` interactive in a real

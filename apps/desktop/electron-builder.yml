@@ -2,7 +2,9 @@ appId: dev.agenthub.desktop
 productName: Agent Hub
 artifactName: Agent-Hub-${version}-${arch}.${ext}
 asar: true
-npmRebuild: false
+npmRebuild: true
+asarUnpack:
+  - "**/*.node"
 
 directories:
   output: release

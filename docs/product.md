@@ -262,7 +262,9 @@ and remaining UI risks.
 
 Projects are local repository roots registered in Agent Hub's SQLite database.
 SQLite and context stores live in Agent Hub-owned application data by default,
-not inside the target repository.
+not inside the target repository. SQLite access is in-process through a native
+local driver, so normal CLI and desktop usage does not require a system
+`sqlite3` executable.
 
 Tasks are local work items. Task runs execute one agent adapter inside an
 isolated git worktree and persist events, artifacts, verification rows, risk
@@ -434,6 +436,11 @@ The current CLI exposes these command groups:
 - Memory and comparison: `memory list`, `memory propose`, `memory approve`,
   `memory reject`, and `compare`.
 
+The CLI command dispatcher is backed by a single route registry that defines
+command patterns, aliases, help usage lines, and handler callbacks together.
+This keeps generated help and top-level command dispatch aligned as new local
+commands are added.
+
 Normal `run` output is optimized for humans: it prints the final agent-facing
 answer after the run completes. Lifecycle events, raw logs, metadata, diffs,
 verification output, and risk evidence are persisted for review commands and
@@ -571,6 +578,8 @@ SQLite stores projects, agent profiles, tasks, task runs, run events, run
 artifacts, verification results, risk reports, conversation threads, messages,
 thread summaries, memory items, comparison reports, skills, settings, status
 transitions, role calls, role todos, and role call events.
+The storage layer uses a native local SQLite driver with WAL/busy-timeout
+configuration instead of a spawned SQLite CLI session.
 
 `AGENT_HUB_HOME` changes the Agent Hub app-data directory. `AGENT_HUB_DB_PATH`
 or CLI `--db <path>` can point to a specific database for testing or local
