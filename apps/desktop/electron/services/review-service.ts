@@ -430,7 +430,7 @@ class RepositoryReviewService implements ReviewService {
 
   private async countMemoryProposals(runId: string, task: Task): Promise<number> {
     if (this.dependencies.memoryService) {
-      return (await this.dependencies.memoryService.generateProposalsForRun(runId)).length;
+      return (await this.dependencies.memoryService.listProposals(runId)).length;
     }
     const items = await this.memory.listByProjectId(task.projectId);
     return items.filter((item) => item.taskId === task.id).length;

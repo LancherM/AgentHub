@@ -1,7 +1,4 @@
-import fs from "node:fs/promises";
-import path from "node:path";
 import {
-  validateMemoryItem,
   type MemoryItem,
   type MemoryItemRepository,
   type ProjectRepository,
@@ -9,22 +6,22 @@ import {
   type Task,
   type TaskRepository,
   type TaskRun,
-  type TaskRunRepository,
-  type VerificationResultRepository
+  type TaskRunRepository
 } from "@agent-hub/core";
 import {
   appendApprovedMemory,
   resolveApprovedMemoryPath
 } from "@agent-hub/context-compiler";
-import { isSafeMemoryVerificationCommand } from "@agent-hub/task-runner";
+import {
+  generateMemoryProposalsFromCompletedRun,
+  normalizeMemoryContent
+} from "@agent-hub/task-runner";
 import type {
   MemoryApprovalResult,
   MemoryProposal,
   MemoryProposalSource
 } from "../../src/lib/types";
 import type { DesktopServiceContext } from "./project-service";
-
-const MAX_GENERATED_PROPOSALS = 2;
 
 export interface MemoryService {
   listProposals(runId: string): Promise<MemoryProposal[]>;
@@ -38,7 +35,6 @@ export function createMemoryService(context: DesktopServiceContext): MemoryServi
     context.repositories.taskRunRepository,
     context.repositories.taskRepository,
     context.repositories.projectRepository,
-    context.repositories.verificationResultRepository,
     context.repositories.memoryItemRepository,
     context
   );
@@ -51,13 +47,12 @@ class RepositoryMemoryService implements MemoryService {
     private readonly runs: TaskRunRepository,
     private readonly tasks: TaskRepository,
     private readonly projects: ProjectRepository,
-    private readonly verification: VerificationResultRepository,
     private readonly memory: MemoryItemRepository,
     private readonly context: DesktopServiceContext
   ) {}
 
   async listProposals(runId: string): Promise<MemoryProposal[]> {
-    return this.generateProposalsForRun(runId);
+    return this.listStoredProposalsForRun(runId);
   }
 
   async generateProposalsForRun(runId: string): Promise<MemoryProposal[]> {
@@ -80,63 +75,43 @@ class RepositoryMemoryService implements MemoryService {
   private async generateProposalsForRunLocked(
     runId: string
   ): Promise<MemoryProposal[]> {
-    const { run, task } = await this.requireRunAndTask(runId);
+    const { run } = await this.requireRunAndTask(runId);
+    if (run.status === "succeeded") {
+      await generateMemoryProposalsFromCompletedRun(
+        {
+          taskRunRepository: this.context.repositories.taskRunRepository,
+          taskRepository: this.context.repositories.taskRepository,
+          runArtifactRepository: this.context.repositories.runArtifactRepository,
+          verificationResultRepository:
+            this.context.repositories.verificationResultRepository,
+          riskReportRepository: this.context.repositories.riskReportRepository,
+          memoryItemRepository: this.context.repositories.memoryItemRepository
+        },
+        {
+          runId,
+          idGenerator: {
+            nextId: (prefix) => this.context.nextId(prefix)
+          },
+          clock: {
+            now: () => this.context.now()
+          }
+        }
+      );
+    }
+    return this.listStoredProposalsForRun(runId);
+  }
+
+  private async listStoredProposalsForRun(runId: string): Promise<MemoryProposal[]> {
+    const { task } = await this.requireRunAndTask(runId);
     const project = await this.projects.get(task.projectId);
     if (!project) {
       throw new Error(`project ${task.projectId} not found`);
     }
     const approvedMemoryPath = this.approvedMemoryPath(project);
-    let projectItems = await this.memory.listByProjectId(project.id);
-    if (run.status === "queued" || run.status === "running") {
-      return toMemoryProposalsForTask(
-        runId,
-        projectItems,
-        task.id,
-        approvedMemoryPath
-      );
-    }
-    const candidates = await this.buildCandidates(run, task, project.rootPath);
-    for (const candidate of candidates) {
-      if (
-        uniqueMemoryItemsForTask(projectItems, task.id).length >=
-        MAX_GENERATED_PROPOSALS
-      ) {
-        break;
-      }
-      const normalizedContent = normalizeMemoryContent(candidate.content);
-      if (hasProjectMemoryContent(projectItems, normalizedContent)) {
-        continue;
-      }
-
-      projectItems = await this.memory.listByProjectId(project.id);
-      if (
-        uniqueMemoryItemsForTask(projectItems, task.id).length >=
-        MAX_GENERATED_PROPOSALS
-      ) {
-        break;
-      }
-      if (hasProjectMemoryContent(projectItems, normalizedContent)) {
-        continue;
-      }
-
-      const now = this.context.now();
-      const item = await this.memory.create(
-        validateMemoryItem({
-          id: this.context.nextId("memory"),
-          projectId: project.id,
-          taskId: task.id,
-          category: "workflow_rule",
-          status: "proposed",
-          content: candidate.content,
-          createdAt: now,
-          updatedAt: now
-        })
-      );
-      projectItems = [...projectItems, item];
-    }
+    const projectItems = await this.memory.listByProjectId(project.id);
     return toMemoryProposalsForTask(
       runId,
-      await this.memory.listByProjectId(project.id),
+      projectItems,
       task.id,
       approvedMemoryPath
     );
@@ -218,46 +193,6 @@ class RepositoryMemoryService implements MemoryService {
       throw new Error(`task ${run.taskId} not found`);
     }
     return { run, task };
-  }
-
-  private async buildCandidates(
-    run: TaskRun,
-    task: Task,
-    projectRoot: string
-  ): Promise<Array<{ content: string; source: MemoryProposalSource }>> {
-    const candidates: Array<{ content: string; source: MemoryProposalSource }> = [];
-    if (await usesPnpm(projectRoot)) {
-      candidates.push({
-        content: "This project uses pnpm rather than npm.",
-        source: "run"
-      });
-    }
-
-    const verificationRows = await this.verification.listByRunId(run.id);
-    const realCommand = verificationRows
-      .map((row) => row.command.trim())
-      .find(isSafeMemoryVerificationCommand);
-    if (realCommand) {
-      candidates.push({
-        content: `Verification command for this project is ${realCommand}.`,
-        source: "verification"
-      });
-    }
-
-    if (/desktop|renderer|electron/i.test(task.title) || run.agentKind === "fake") {
-      candidates.push({
-        content: "Desktop renderer must not access Node APIs directly.",
-        source: "run"
-      });
-    }
-
-    candidates.push({
-      content:
-        "Agent Hub does not write AGENTS.md or CLAUDE.md into target repositories by default.",
-      source: "run"
-    });
-
-    return candidates;
   }
 
   private approvedMemoryPath(project: Project): string {
@@ -349,45 +284,6 @@ function memoryStatusRank(status: MemoryItem["status"]): number {
   return 1;
 }
 
-function hasProjectMemoryContent(
-  items: MemoryItem[],
-  normalizedContent: string
-): boolean {
-  return items.some(
-    (item) => normalizeMemoryContent(item.content) === normalizedContent
-  );
-}
-
-async function usesPnpm(projectRoot: string): Promise<boolean> {
-  if (await pathExists(path.join(projectRoot, "pnpm-lock.yaml"))) {
-    return true;
-  }
-  try {
-    const packageJson = JSON.parse(
-      await fs.readFile(path.join(projectRoot, "package.json"), "utf8")
-    ) as { packageManager?: unknown };
-    return typeof packageJson.packageManager === "string" &&
-      packageJson.packageManager.startsWith("pnpm@");
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-      return false;
-    }
-    return false;
-  }
-}
-
-async function pathExists(filePath: string): Promise<boolean> {
-  try {
-    await fs.access(filePath);
-    return true;
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-      return false;
-    }
-    throw error;
-  }
-}
-
 function rationaleFor(content: string): string {
   if (/pnpm/.test(content)) {
     return "Detected from the registered project's package manager files.";
@@ -406,8 +302,4 @@ function sourceFor(content: string): MemoryProposalSource {
     return "verification";
   }
   return "run";
-}
-
-function normalizeMemoryContent(content: string): string {
-  return content.trim().replace(/\s+/g, " ").toLowerCase();
 }

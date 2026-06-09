@@ -1100,7 +1100,14 @@ describe("task runner", () => {
           taskId: result.task.id,
           category: "workflow_rule",
           status: "proposed",
-          content: "Verification command for this project is pnpm test."
+          content: "Verification command for this project is pnpm test.",
+          metadata: {
+            sourceRunId: result.run.id,
+            sourceTaskId: result.task.id,
+            sourceKind: "verification",
+            generatedBy: "task_runner",
+            confidence: "high"
+          }
         })
       ]);
   });

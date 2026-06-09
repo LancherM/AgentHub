@@ -1889,7 +1889,7 @@ describe("desktop services", () => {
     );
   });
 
-  it("does not propose secret-like desktop verification commands as memory", async () => {
+  it("uses explicit shared generation for desktop memory proposals", async () => {
     const fixture = await createFixture();
     const context = createDesktopServiceContext(fixture.repositories);
     const projects = createProjectService(context);
@@ -1948,7 +1948,9 @@ describe("desktop services", () => {
       })
     ]);
 
-    const proposals = await memory.listProposals(runId);
+    await expect(memory.listProposals(runId)).resolves.toEqual([]);
+
+    const proposals = await memory.generateProposalsForRun(runId);
     const proposalText = proposals.map((proposal) => proposal.content).join("\n");
 
     expect(proposalText).not.toContain("OPENAI_API_KEY");
@@ -1958,6 +1960,7 @@ describe("desktop services", () => {
           "Verification command for this project is pnpm test -- tests/desktop-services.test.ts."
       })
     );
+    await expect(memory.listProposals(runId)).resolves.toEqual(proposals);
   });
 
   it("thread sendMessage creates one user message and one run card per agent", async () => {

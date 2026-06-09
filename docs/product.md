@@ -503,7 +503,9 @@ Approved memory is read from the Agent Hub context store at
 not injected into future runs. Memory rows now carry optional local audit
 metadata so future automation can explain source run, policy, and writeback
 decisions, but approving memory is still explicit from CLI or desktop review
-and writes only to the Agent Hub-owned context store by default.
+and writes only to the Agent Hub-owned context store by default. TaskRunner
+finalization and desktop explicit generation use the same deterministic
+proposal generator, while listing proposals remains read-only.
 
 ## Desktop Experience
 
