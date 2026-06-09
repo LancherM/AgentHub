@@ -519,6 +519,11 @@ Inline run cards show compact status, agent or role attribution, current
 agent-facing output, and review affordances. Routine completed no-change runs
 can collapse behind the durable assistant answer; file-changing, failed,
 cancelled, delegated RoleCall, or comparison-ready runs remain visible.
+While a desktop run is queued, running, or verifying, run detail reads stay
+lightweight: they replay persisted events and placeholder check/risk state
+without collecting worktree diffs or risk evidence. Full diff, verification,
+risk, and memory proposal evidence is loaded after the run reaches a terminal
+status.
 
 The workgroup inspector exposes review evidence through Brief, Evidence,
 Artifacts, Memory, and Audit tabs. It loads data lazily through IPC and keeps

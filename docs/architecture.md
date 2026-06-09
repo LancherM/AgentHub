@@ -411,8 +411,9 @@ Electron main-process services own privileged operations:
   queued-role drain recovery, assistant-output reconciliation, RoleCall
   parsing, and delegated run-card creation.
 - `RunService`: run creation, TaskRunner integration, live event subscription,
-  durable desktop execution-input artifacts for queued runs, cancellation,
-  continuation, and RoleCall execution bridge.
+  lightweight non-terminal run details, durable desktop execution-input
+  artifacts for queued runs, cancellation, continuation, and RoleCall execution
+  bridge.
 - `ReviewService`, `DiffService`, and `RiskService`: inspector summary,
   artifacts, logs, diffs, verification, risk, retained-worktree handoff, and
   fallback deterministic risk.

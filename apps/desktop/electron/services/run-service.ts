@@ -49,8 +49,10 @@ import type {
   RunEvent,
   RunEventPayload,
   RunEventType,
+  RiskReport,
   RunStatus,
-  RunSummary
+  RunSummary,
+  VerificationReport
 } from "../../src/lib/types";
 import type { MemoryService } from "./memory-service";
 import type { DesktopServiceContext } from "./project-service";
@@ -239,16 +241,24 @@ class RepositoryRunService implements RunService {
       throw new Error(`project ${task.projectId} not found`);
     }
     const status = this.currentDesktopStatus(run);
-    const [events, diff, verification, risk, memoryProposals] =
-      await Promise.all([
-        this.events.listByRunId(runId),
-        this.dependencies.reviewService.getDiff(runId),
-        this.dependencies.reviewService.getVerification(runId),
-        this.dependencies.reviewService.getRisk(runId),
-        isTerminalStatus(status)
-          ? this.dependencies.memoryService.listProposals(runId)
-          : Promise.resolve([])
-      ]);
+    const events = await this.events.listByRunId(runId);
+    if (!isTerminalStatus(status)) {
+      return {
+        ...(await this.toRunSummary(run, task, project, events)),
+        events: events.map(toRunEvent),
+        changedFiles: [],
+        verification: pendingVerificationReport(runId, status),
+        risk: pendingRiskReport(runId, status, this.context.now()),
+        memoryProposals: [],
+        summary: finalSummary(events) ?? summaryForStatus(status)
+      };
+    }
+    const [diff, verification, risk, memoryProposals] = await Promise.all([
+      this.dependencies.reviewService.getDiff(runId),
+      this.dependencies.reviewService.getVerification(runId),
+      this.dependencies.reviewService.getRisk(runId),
+      this.dependencies.memoryService.listProposals(runId)
+    ]);
     const summary = finalSummary(events) ?? statusSummary(run);
     return {
       ...(await this.toRunSummary(run, task, project, events)),
@@ -1503,6 +1513,10 @@ function finalSummary(events: CoreRunEvent[]): string | undefined {
 
 function statusSummary(run: TaskRun): string {
   const status = toDesktopRunStatus(run.status);
+  return summaryForStatus(status);
+}
+
+function summaryForStatus(status: RunStatus): string {
   switch (status) {
     case "queued":
       return "Run is queued.";
@@ -1517,6 +1531,32 @@ function statusSummary(run: TaskRun): string {
     default:
       return "Run is being verified.";
   }
+}
+
+function pendingVerificationReport(
+  runId: string,
+  status: RunStatus
+): VerificationReport {
+  return {
+    runId,
+    status: "unknown",
+    commands: [],
+    message: `Verification is not available while the run is ${status}.`
+  };
+}
+
+function pendingRiskReport(
+  runId: string,
+  status: RunStatus,
+  generatedAt: string
+): RiskReport {
+  return {
+    runId,
+    level: "unknown",
+    findings: [],
+    generatedAt,
+    message: `Risk analysis is not available while the run is ${status}.`
+  };
 }
 
 function isTerminalStatus(status: RunStatus): boolean {
