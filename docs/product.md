@@ -605,9 +605,10 @@ Not implemented as product behavior today:
 Roadmaps for future work live in `docs/local-ai-workgroup-roadmap.md`,
 `docs/interaction-optimization-roadmap.md`, `docs/tui-roadmap.md`,
 `docs/tui-conversation-terminal-roadmap.md`,
-`docs/tui-optimization-roadmap.md`, and the Adaptive Role Calls specification
-documents. Those files describe direction; this document describes the current
-product state. The conversation-terminal TUI roadmap now records the
+`docs/tui-optimization-roadmap.md`, `docs/memory-automation-roadmap.md`, and
+the Adaptive Role Calls specification documents. Those files describe
+direction; this document describes the current product state. The
+conversation-terminal TUI roadmap now records the
 implemented Work-view direction and remaining hardening guidance: the current
 TUI keeps the Ink/local read-model boundary while presenting a
 conversation-first Work surface, moving Runs, Review, Graph, Tasks, and Memory

@@ -533,7 +533,9 @@ Future changes should preserve these boundaries:
 - add new executor backends only behind explicit local execution semantics and
   review boundaries;
 - never turn review, comparison, role collaboration, or memory proposals into
-  automatic acceptance, merge, push, PR creation, or memory promotion.
+  automatic acceptance, merge, push, PR creation, or memory promotion unless a
+  future opt-in local memory policy explicitly implements the bounded automation
+  described in `docs/memory-automation-roadmap.md`.
 
 The planned terminal UI direction is captured in `docs/tui-roadmap.md`. It
 should reuse persisted transcript, task, run, RoleCall, verification, risk,
