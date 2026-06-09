@@ -233,11 +233,12 @@ function parseMemoryPolicyMode(
   input: unknown
 ): MemoryAutomationPolicySettings["mode"] {
   const mode = parseNonEmptyString(input, "memory automation policy mode");
-  if (mode === "suggest_only" || mode === "auto_after_review_accept") {
+  if (
+    mode === "suggest_only" ||
+    mode === "auto_after_review_accept" ||
+    mode === "auto_safe_on_success"
+  ) {
     return mode;
-  }
-  if (mode === "auto_safe_on_success") {
-    throw new Error("auto_safe_on_success is not enabled in this phase");
   }
   throw new Error("memory automation policy mode is unsupported");
 }

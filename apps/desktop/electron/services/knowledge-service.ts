@@ -380,6 +380,7 @@ function workspaceMetrics(items: KnowledgeItem[]): KnowledgeWorkspaceMetrics {
     proposed: items.filter((item) => item.status === "proposed").length,
     approved: items.filter((item) => item.status === "approved").length,
     rejected: items.filter((item) => item.status === "rejected").length,
+    retired: items.filter((item) => item.status === "retired").length,
     summaries: items.filter((item) => item.kind === "thread_summary").length,
     decisions: items.filter(
       (item) => item.kind === "thread_decision" || item.kind === "review_decision"

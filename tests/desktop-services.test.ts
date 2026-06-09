@@ -364,23 +364,29 @@ describe("desktop services", () => {
       allowSkippedVerification: true,
       maxAutoApprovalsPerRun: 3
     });
-    const unsafeMemoryPolicy = {
+    const safeSuccessMemoryPolicy = {
       projectId: project.id,
-      mode: "auto_safe_on_success",
-      maxRiskLevel: "low",
+      mode: "auto_safe_on_success" as const,
+      maxRiskLevel: "low" as const,
       allowSkippedVerification: false,
-      allowedCategories: ["workflow_rule"],
+      allowedCategories: ["workflow_rule" as const],
       maxAutoApprovalsPerRun: 1
     };
     await expect(
-      settings.saveMemoryPolicy(unsafeMemoryPolicy)
-    ).rejects.toThrow(/auto_safe_on_success/);
+      settings.saveMemoryPolicy(safeSuccessMemoryPolicy)
+    ).resolves.toMatchObject({
+      mode: "auto_safe_on_success",
+      maxRiskLevel: "low"
+    });
     await expect(
       handlers[IPC_CHANNELS.settingsSaveMemoryPolicy](
         { sender } as never,
-        unsafeMemoryPolicy
+        safeSuccessMemoryPolicy
       )
-    ).rejects.toThrow(/local desktop request/);
+    ).resolves.toMatchObject({
+      mode: "auto_safe_on_success",
+      maxRiskLevel: "low"
+    });
   });
 
   it("keeps fake agent out of normal desktop runtime config", async () => {
@@ -922,6 +928,17 @@ describe("desktop services", () => {
         updatedAt: now
       })
     );
+    await fixture.repositories.memoryItemRepository.create(
+      validateMemoryItem({
+        id: "memory_knowledge_retired",
+        projectId: project.id,
+        category: "workflow_rule",
+        status: "retired",
+        content: "Retired memory remains visible for audit only.",
+        createdAt: now,
+        updatedAt: now
+      })
+    );
     const thread = await fixture.repositories.conversationThreadRepository.create(
       validateConversationThread({
         id: "thread_knowledge_review",
@@ -983,6 +1000,7 @@ describe("desktop services", () => {
       proposed: 1,
       approved: 1,
       rejected: 1,
+      retired: 1,
       summaries: 1,
       decisions: 2
     });
@@ -993,6 +1011,14 @@ describe("desktop services", () => {
           kind: "memory",
           status: "proposed",
           taskId: task.id
+        }),
+        expect.objectContaining({
+          id: "memory_knowledge_retired",
+          kind: "memory",
+          status: "retired",
+          audit: expect.arrayContaining([
+            expect.objectContaining({ label: "Memory retired" })
+          ])
         }),
         expect.objectContaining({
           id: "summary_knowledge_review",

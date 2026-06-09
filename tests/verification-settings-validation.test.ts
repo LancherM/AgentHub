@@ -53,9 +53,7 @@ describe("verification settings renderer validation", () => {
       validateDraftMemoryAutomationPolicy(
         draftMemoryPolicy({ mode: "auto_safe_on_success" })
       )
-    ).toEqual({
-      message: "Choose Suggest only or Auto after review accept."
-    });
+    ).toEqual({});
     expect(
       validateDraftMemoryAutomationPolicy(
         draftMemoryPolicy({ allowedCategories: [] })

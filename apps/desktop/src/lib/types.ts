@@ -169,7 +169,7 @@ export type RiskCategory =
   | "large_change"
   | "unknown";
 export type MemoryProposalSource = "run" | "diff" | "verification" | "manual";
-export type MemoryProposalStatus = "pending" | "approved" | "ignored";
+export type MemoryProposalStatus = "pending" | "approved" | "ignored" | "retired";
 export type RunLogLevel = "info" | "stdout" | "stderr" | "error" | "debug";
 export type KnowledgeItemKind =
   | "memory"
@@ -180,6 +180,7 @@ export type KnowledgeItemStatus =
   | "proposed"
   | "approved"
   | "rejected"
+  | "retired"
   | "summary"
   | "accepted"
   | "decision";
@@ -873,6 +874,7 @@ export interface KnowledgeWorkspaceMetrics {
   proposed: number;
   approved: number;
   rejected: number;
+  retired: number;
   summaries: number;
   decisions: number;
 }
@@ -894,7 +896,7 @@ export interface TeamRoleActivity {
 
 export interface TeamRoleLinkedMemory {
   id: string;
-  status: "proposed" | "approved" | "rejected";
+  status: "proposed" | "approved" | "rejected" | "retired";
   content: string;
   updatedAt: string;
 }

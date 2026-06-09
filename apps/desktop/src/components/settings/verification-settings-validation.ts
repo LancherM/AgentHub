@@ -83,9 +83,10 @@ export function validateDraftMemoryAutomationPolicy(
 ): DraftMemoryPolicyValidationResult {
   if (
     policy.mode !== "suggest_only" &&
-    policy.mode !== "auto_after_review_accept"
+    policy.mode !== "auto_after_review_accept" &&
+    policy.mode !== "auto_safe_on_success"
   ) {
-    return { message: "Choose Suggest only or Auto after review accept." };
+    return { message: "Choose a valid memory automation mode." };
   }
   if (
     policy.maxRiskLevel !== "low" &&

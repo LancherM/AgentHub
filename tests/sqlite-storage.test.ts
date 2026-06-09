@@ -47,7 +47,7 @@ describe("SQLite storage", () => {
 
     await database.ensureInitialized();
 
-    expect(SQLITE_MIGRATIONS.at(-1)?.version).toBe(16);
+    expect(SQLITE_MIGRATIONS.at(-1)?.version).toBe(17);
     await expect(
       database.query<{ version: number }>(
         "SELECT version FROM schema_migrations ORDER BY version ASC;"
@@ -68,7 +68,8 @@ describe("SQLite storage", () => {
       { version: 13 },
       { version: 14 },
       { version: 15 },
-      { version: 16 }
+      { version: 16 },
+      { version: 17 }
     ]);
     await expect(
       database.query<{ name: string }>(
@@ -1557,6 +1558,15 @@ INSERT INTO conversation_thread_summaries (
       createdAt,
       updatedAt: createdAt
     });
+    await repositories.memoryItemRepository.create({
+      id: "memory_retire_lifecycle",
+      projectId: "project_lifecycle",
+      category: "workflow_rule",
+      status: "approved",
+      content: "Retire this memory.",
+      createdAt,
+      updatedAt: createdAt
+    });
 
     await expect(
       repositories.taskRepository.updateStatus("task_lifecycle", "completed", updatedAt)
@@ -1599,6 +1609,13 @@ INSERT INTO conversation_thread_summaries (
         "2026-01-01T00:00:02.000Z"
       )
     ).rejects.toThrow("invalid memory item status transition rejected -> approved");
+    await expect(
+      repositories.memoryItemRepository.updateStatus(
+        "memory_retire_lifecycle",
+        "retired",
+        "2026-01-01T00:00:02.000Z"
+      )
+    ).resolves.toMatchObject({ status: "retired" });
   });
 
   it("backfills legacy ad-hoc task projects during version 3 migration", async () => {
@@ -1652,7 +1669,8 @@ VALUES (
       { version: 13 },
       { version: 14 },
       { version: 15 },
-      { version: 16 }
+      { version: 16 },
+      { version: 17 }
     ]);
   });
 
@@ -1708,7 +1726,8 @@ VALUES (
       { version: 13 },
       { version: 14 },
       { version: 15 },
-      { version: 16 }
+      { version: 16 },
+      { version: 17 }
     ]);
     await expect(repositories.database.execute(`
 INSERT INTO tasks (id, project_id, title, status, created_at, updated_at)
@@ -1786,7 +1805,8 @@ VALUES ('message_summary_legacy', 'thread_summary_legacy', 0, 'user', 'text', 'P
       { version: 13 },
       { version: 14 },
       { version: 15 },
-      { version: 16 }
+      { version: 16 },
+      { version: 17 }
     ]);
   });
 
@@ -1824,7 +1844,8 @@ ALTER TABLE task_runs
       { version: 13 },
       { version: 14 },
       { version: 15 },
-      { version: 16 }
+      { version: 16 },
+      { version: 17 }
     ]);
     await expect(
       repositories.database.query<{ name: string }>(

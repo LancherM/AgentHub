@@ -1688,6 +1688,89 @@ describe("task runner", () => {
     ).resolves.toContain("Old run approved memory.");
   });
 
+  it("auto-approves safe memory after successful run finalization when policy opts in", async () => {
+    const projectRoot = await createTestDirectory("agent-hub-auto-safe-project");
+    const runRoot = await createTestDirectory("agent-hub-auto-safe-runs");
+    const agentHubHome = await createTestDirectory("agent-hub-auto-safe-home");
+    await fs.writeFile(path.join(projectRoot, "README.md"), "fixture\n", "utf8");
+    const projectRepository = new InMemoryProjectRepository();
+    const settingsRepository = new InMemorySettingsRepository();
+    const memoryItemRepository = new InMemoryMemoryItemRepository();
+    await projectRepository.create({
+      id: "project_auto_safe",
+      name: "Auto Safe",
+      rootPath: projectRoot,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z"
+    });
+    await saveProjectMemoryAutomationPolicy(
+      { settingsRepository },
+      {
+        projectId: "project_auto_safe",
+        policy: {
+          mode: "auto_safe_on_success",
+          maxRiskLevel: "medium",
+          allowSkippedVerification: false,
+          allowedCategories: ["workflow_rule"],
+          maxAutoApprovalsPerRun: 2
+        },
+        updatedAt: "2026-01-01T00:00:00.000Z"
+      }
+    );
+    const runner = new TaskRunner({
+      defaultRunRoot: runRoot,
+      projectRepository,
+      settingsRepository,
+      memoryItemRepository,
+      workspaceManager: new TestWorkspaceManager(runRoot),
+      diffCollector: new StaticDiffCollector(),
+      verificationRunner: new VerificationRunner(new MockShellExecutor()),
+      idGenerator: new SequenceIdGenerator(),
+      clock: new FixedClock("2026-01-01T00:00:00.000Z")
+    });
+
+    const result = await runner.run({
+      projectRoot,
+      projectId: "project_auto_safe",
+      taskPrompt: "Capture a safe verification memory.",
+      agentKind: "fake",
+      agentHubHome,
+      verificationCommands: [
+        {
+          id: "test",
+          command: "pnpm",
+          args: ["test"]
+        }
+      ]
+    });
+    const items = await memoryItemRepository.listByProjectId("project_auto_safe");
+    const approvedMemory = await fs.readFile(
+      path.join(agentHubHome, "context-stores", "project_auto_safe", "memory", "approved.md"),
+      "utf8"
+    );
+
+    expect(result.status).toBe("succeeded");
+    expect(result.warnings).not.toContainEqual(
+      expect.stringContaining("memory automation finalization failed")
+    );
+    expect(items).toContainEqual(
+      expect.objectContaining({
+        status: "approved",
+        content: "Verification command for this project is pnpm test.",
+        metadata: expect.objectContaining({
+          autoApproval: expect.objectContaining({
+            policyMode: "auto_safe_on_success",
+            verificationStatus: "passed",
+            riskLevel: "low"
+          })
+        })
+      })
+    );
+    expect(approvedMemory).toContain(
+      "Verification command for this project is pnpm test."
+    );
+  });
+
   it("blocks unsafe memory automation evidence", async () => {
     const taskRepository = new InMemoryTaskRepository();
     const taskRunRepository = new InMemoryTaskRunRepository();

@@ -20,6 +20,7 @@ import {
   exportContextToRepository,
   initContextStore,
   listGlobalSkills,
+  retireApprovedMemory,
   showContextStore,
   type ContextBuildResult,
   type ConversationContextMessage
@@ -345,6 +346,8 @@ export function createCliRuntime(
     verificationResultRepository,
     riskReportRepository,
     memoryItemRepository,
+    projectRepository,
+    settingsRepository,
     runMetadataRepository,
     conversationThreadSummaryRepository,
     contextEvalEventRepository,
@@ -751,7 +754,7 @@ function cliCommandRoutes(debug: boolean): CliCommandRoute<CliCommandContext>[] 
     },
     {
       patterns: [["memory", "policy", "set"]],
-      usage: ["  agent-hub memory policy set --project-id <project-id> --mode suggest_only|auto_after_review_accept [--max-risk low|medium|high|blocking] [--allow-skipped-verification true|false] [--category <category>] [--max-auto-approvals-per-run <n>]"],
+      usage: ["  agent-hub memory policy set --project-id <project-id> --mode suggest_only|auto_after_review_accept|auto_safe_on_success [--max-risk low|medium|high|blocking] [--allow-skipped-verification true|false] [--category <category>] [--max-auto-approvals-per-run <n>]"],
       run: (args, context) => setMemoryPolicy(args, context.io, context.runtime)
     },
     {
@@ -773,6 +776,11 @@ function cliCommandRoutes(debug: boolean): CliCommandRoute<CliCommandContext>[] 
       patterns: [["memory", "reject"]],
       usage: ["  agent-hub memory reject --memory-id <memory-id>"],
       run: (args, context) => rejectMemory(args, context.io, context.runtime)
+    },
+    {
+      patterns: [["memory", "retire"]],
+      usage: ["  agent-hub memory retire --memory-id <memory-id> --reason <text>"],
+      run: (args, context) => retireMemory(args, context.io, context.cwd, context.runtime)
     },
     {
       patterns: [["compare"]],
@@ -5606,9 +5614,6 @@ async function setMemoryPolicy(
     if (!(memoryAutomationPolicyModes as readonly string[]).includes(mode)) {
       throw new Error(`--mode must be one of ${memoryAutomationPolicyModes.join(", ")}`);
     }
-    if (mode === "auto_safe_on_success") {
-      throw new Error("auto_safe_on_success is not enabled in this phase");
-    }
     const maxRiskLevel = optionalFlag(args, "--max-risk") ?? current.maxRiskLevel;
     if (!(riskLevels as readonly string[]).includes(maxRiskLevel)) {
       throw new Error(`--max-risk must be one of ${riskLevels.join(", ")}`);
@@ -5794,6 +5799,68 @@ async function rejectMemory(
         "Rejected memory",
         `id: ${item.id}`,
         `status: ${item.status}`,
+        ""
+      ].join("\n")
+    );
+    return 0;
+  } catch (error) {
+    io.stderr.write(`error: ${error instanceof Error ? error.message : String(error)}\n`);
+    return 1;
+  }
+}
+
+async function retireMemory(
+  args: string[],
+  io: CliIO,
+  cwd: string,
+  runtime: CliRuntime
+): Promise<number> {
+  try {
+    const memoryId = requiredFlag(args, "--memory-id");
+    const existing = await runtime.memoryItemRepository.get(memoryId);
+    if (!existing) {
+      throw new Error(`memory item ${memoryId} not found`);
+    }
+    const project = await runtime.projectRepository.get(existing.projectId);
+    if (!project) {
+      throw new Error(`project ${existing.projectId} not found`);
+    }
+    const retiredAt = nowIso();
+    const reason = requiredFlag(args, "--reason").trim();
+    if (!reason) {
+      throw new Error("--reason must not be empty");
+    }
+    const item = await runtime.memoryItemRepository.create(
+      validateMemoryItem({
+        ...existing,
+        status: "retired",
+        metadata: {
+          ...(existing.metadata ?? {}),
+          retirement: {
+            retiredAt,
+            ...(reason ? { reason } : {})
+          }
+        },
+        updatedAt: retiredAt
+      })
+    );
+    const retired = await retireApprovedMemory({
+      projectRoot: project.rootPath,
+      projectId: project.id,
+      memoryId: item.id,
+      retiredAt,
+      reason,
+      agentHubHome: optionalFlag(args, "--agent-hub-home")
+        ? path.resolve(cwd, requiredFlag(args, "--agent-hub-home"))
+        : undefined
+    });
+    io.stdout.write(
+      [
+        "Retired memory",
+        `id: ${item.id}`,
+        `status: ${item.status}`,
+        `approved_memory_path: ${retired.path}`,
+        `approved_memory_updated: ${retired.retired}`,
         ""
       ].join("\n")
     );

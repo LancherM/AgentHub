@@ -2806,6 +2806,39 @@ describe("CLI", () => {
     await expect(
       main(["memory", "list", "--project-id", "adhoc_project"], io, projectRoot, runtime)
     ).resolves.toBe(0);
+    await expect(
+      main([
+        "memory",
+        "policy",
+        "set",
+        "--project-id",
+        "adhoc_project",
+        "--mode",
+        "auto_safe_on_success",
+        "--max-risk",
+        "low"
+      ], io, projectRoot, runtime)
+    ).resolves.toBe(0);
+    const approvedItems = await runtime.memoryItemRepository.listByProjectId(
+      "adhoc_project"
+    );
+    const approvedItem = approvedItems.find((item) => item.status === "approved");
+    expect(approvedItem).toBeDefined();
+    await expect(
+      main([
+        "memory",
+        "retire",
+        "--memory-id",
+        approvedItem!.id,
+        "--reason",
+        "obsolete workflow",
+        "--agent-hub-home",
+        agentHubHome
+      ], io, projectRoot, runtime)
+    ).resolves.toBe(0);
+    await expect(
+      main(["memory", "list", "--project-id", "adhoc_project"], io, projectRoot, runtime)
+    ).resolves.toBe(0);
 
     const renderedOutput = output.join("");
     const approvedPath = path.join(
@@ -2820,14 +2853,19 @@ describe("CLI", () => {
     expect(errors.join("")).toBe("");
     expect(renderedOutput).toContain("mode: suggest_only");
     expect(renderedOutput).toContain("mode: auto_after_review_accept");
+    expect(renderedOutput).toContain("mode: auto_safe_on_success");
     expect(renderedOutput).toContain("Memory automation");
     expect(renderedOutput).toContain("auto_approved: 1");
+    expect(renderedOutput).toContain("Retired memory");
+    expect(renderedOutput).toContain(`${approvedItem!.id}\tretired`);
     expect(renderedOutput).toContain(
       "approved\tworkflow_rule\tVerification command for this project is pnpm test."
     );
     expect(approvedMemory).toContain(
       "Verification command for this project is pnpm test."
     );
+    expect(approvedMemory).toContain("retired_at:");
+    expect(approvedMemory).toContain("retired_reason: obsolete workflow");
   });
 
   it("creates and persists comparison reports from SQLite run records", async () => {

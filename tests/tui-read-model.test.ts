@@ -29,7 +29,8 @@ describe("TUI current-context read model", () => {
     expect(model.memory.counts).toEqual({
       proposed: 0,
       approved: 0,
-      rejected: 0
+      rejected: 0,
+      retired: 0
     });
     expect(model.warnings).toEqual([
       "thread missing_thread not found",
@@ -145,7 +146,8 @@ describe("TUI current-context read model", () => {
     expect(model.memory.counts).toEqual({
       proposed: 2,
       approved: 1,
-      rejected: 1
+      rejected: 1,
+      retired: 0
     });
     expect(model.skills.selected.map((skill) => `${skill.scope}:${skill.id}`)).toEqual([
       "project:reviewer-checklist",
