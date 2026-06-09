@@ -13,8 +13,10 @@ import {
   InMemoryConversationThreadRepository,
   InMemorySettingsRepository,
   InMemoryTaskRunRepository,
+  createDefaultMemoryAutomationPolicy,
   nowIso,
   isAgentKindEnabled,
+  parseMemoryAutomationPolicySettingValue,
   parseAgentKind,
   presetWorkgroupRoles,
   validateAgentProfile,
@@ -30,6 +32,9 @@ import {
   validateConversationThread,
   validateConversationThreadSummary,
   validateMemoryItem,
+  validateMemoryAutomationDecision,
+  validateMemoryAutomationEvaluation,
+  validateMemoryAutomationPolicy,
   validateRiskReport,
   validateRunArtifact,
   validateRunEvent,
@@ -638,10 +643,19 @@ describe("domain model validation", () => {
         category: "workflow_rule",
         status: "proposed",
         content: "Keep runs isolated.",
+        metadata: {
+          sourceRunId: "run_1",
+          generatedBy: "task_runner"
+        },
         createdAt: now,
         updatedAt: now
-      }).status
-    ).toBe("proposed");
+      })
+    ).toMatchObject({
+      status: "proposed",
+      metadata: {
+        sourceRunId: "run_1"
+      }
+    });
 
     expect(() =>
       validateMemoryItem({
@@ -654,6 +668,114 @@ describe("domain model validation", () => {
         updatedAt: now
       })
     ).toThrow(DomainValidationError);
+    expect(() =>
+      validateMemoryItem({
+        id: "memory_3",
+        projectId: "project_1",
+        category: "workflow_rule",
+        status: "approved",
+        content: "Invalid metadata",
+        metadata: ["not", "an", "object"] as never,
+        createdAt: now,
+        updatedAt: now
+      })
+    ).toThrow("memoryItem.metadata must be an object");
+  });
+
+  it("validates memory automation policy and evaluation contracts", () => {
+    const now = nowIso();
+    expect(createDefaultMemoryAutomationPolicy()).toEqual({
+      mode: "suggest_only",
+      maxRiskLevel: "low",
+      allowSkippedVerification: false,
+      allowedCategories: ["workflow_rule"],
+      maxAutoApprovalsPerRun: 2
+    });
+
+    expect(
+      parseMemoryAutomationPolicySettingValue({
+        mode: "auto_after_review_accept",
+        maxRiskLevel: "medium",
+        allowSkippedVerification: true,
+        allowedCategories: ["workflow_rule", "project_fact"],
+        maxAutoApprovalsPerRun: 1
+      })
+    ).toEqual({
+      mode: "auto_after_review_accept",
+      maxRiskLevel: "medium",
+      allowSkippedVerification: true,
+      allowedCategories: ["workflow_rule", "project_fact"],
+      maxAutoApprovalsPerRun: 1
+    });
+
+    expect(parseMemoryAutomationPolicySettingValue({})).toEqual(
+      createDefaultMemoryAutomationPolicy()
+    );
+
+    expect(() =>
+      parseMemoryAutomationPolicySettingValue({
+        mode: "automatic",
+        maxRiskLevel: "low",
+        allowSkippedVerification: false,
+        allowedCategories: ["workflow_rule"],
+        maxAutoApprovalsPerRun: 2
+      })
+    ).toThrow("memoryAutomationPolicy.mode must be one of");
+    expect(() =>
+      parseMemoryAutomationPolicySettingValue({
+        mode: "suggest_only",
+        maxRiskLevel: "low",
+        allowSkippedVerification: false,
+        allowedCategories: ["workflow_rule", "workflow_rule"],
+        maxAutoApprovalsPerRun: 2
+      })
+    ).toThrow("memoryAutomationPolicy.allowedCategories must not contain duplicate category workflow_rule");
+    expect(() =>
+      parseMemoryAutomationPolicySettingValue({
+        mode: "suggest_only",
+        maxRiskLevel: "low",
+        allowSkippedVerification: false,
+        allowedCategories: ["workflow_rule"],
+        maxAutoApprovalsPerRun: 11
+      })
+    ).toThrow("memoryAutomationPolicy.maxAutoApprovalsPerRun must be 10 or less");
+    expect(() =>
+      parseMemoryAutomationPolicySettingValue({
+        mode: "suggest_only",
+        unknown: true
+      })
+    ).toThrow("memoryAutomationPolicy contains unsupported field unknown");
+
+    expect(
+      validateMemoryAutomationPolicy({
+        mode: "auto_safe_on_success",
+        maxRiskLevel: "low",
+        allowSkippedVerification: false,
+        allowedCategories: ["workflow_rule"],
+        maxAutoApprovalsPerRun: 1
+      })
+    ).toMatchObject({ mode: "auto_safe_on_success" });
+    expect(
+      validateMemoryAutomationDecision({
+        memoryId: "memory_1",
+        status: "eligible",
+        reasonCodes: ["within_policy"]
+      })
+    ).toMatchObject({ status: "eligible" });
+    expect(
+      validateMemoryAutomationEvaluation({
+        runId: "run_1",
+        policy: createDefaultMemoryAutomationPolicy(),
+        decisions: [
+          {
+            memoryId: "memory_1",
+            status: "blocked",
+            reasonCodes: ["policy_disabled"]
+          }
+        ],
+        createdAt: now
+      })
+    ).toMatchObject({ runId: "run_1" });
   });
 
   it("validates local evidence, agent, skill, and context models", () => {

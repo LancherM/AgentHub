@@ -84,7 +84,9 @@ core sequence:
 11. Generate and persist a safety/risk report.
 12. Persist run artifacts, run metadata, status transitions, and warnings.
 13. Generate conservative proposed memory from durable evidence for successful
-    runs.
+    runs. Proposed memory rows may carry local audit metadata and typed
+    automation policy contracts, but no policy automatically promotes memory
+    yet.
 14. Apply cleanup policy without accepting, merging, pushing, or deleting
     branches automatically.
 

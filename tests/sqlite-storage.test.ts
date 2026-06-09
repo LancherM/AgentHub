@@ -47,7 +47,7 @@ describe("SQLite storage", () => {
 
     await database.ensureInitialized();
 
-    expect(SQLITE_MIGRATIONS.at(-1)?.version).toBe(15);
+    expect(SQLITE_MIGRATIONS.at(-1)?.version).toBe(16);
     await expect(
       database.query<{ version: number }>(
         "SELECT version FROM schema_migrations ORDER BY version ASC;"
@@ -67,7 +67,8 @@ describe("SQLite storage", () => {
       { version: 12 },
       { version: 13 },
       { version: 14 },
-      { version: 15 }
+      { version: 15 },
+      { version: 16 }
     ]);
     await expect(
       database.query<{ name: string }>(
@@ -768,6 +769,10 @@ INSERT INTO context_eval_events (
       category: "project_fact",
       status: "proposed",
       content: "Use fake agent in tests.",
+      metadata: {
+        sourceRunId: "run_1",
+        generatedBy: "task_runner"
+      },
       createdAt,
       updatedAt: createdAt
     });
@@ -962,7 +967,14 @@ INSERT INTO context_eval_events (
       expect.objectContaining({ level: "low", changedFiles: ["fake-agent-output.md"] })
     );
     await expect(second.memoryItemRepository.listByProjectId("project_1")).resolves.toEqual([
-      expect.objectContaining({ id: "memory_1", status: "proposed" })
+      expect.objectContaining({
+        id: "memory_1",
+        status: "proposed",
+        metadata: {
+          sourceRunId: "run_1",
+          generatedBy: "task_runner"
+        }
+      })
     ]);
     await expect(second.comparisonReportRepository.listByTaskId("task_1")).resolves.toEqual([
       expect.objectContaining({
@@ -1639,7 +1651,8 @@ VALUES (
       { version: 12 },
       { version: 13 },
       { version: 14 },
-      { version: 15 }
+      { version: 15 },
+      { version: 16 }
     ]);
   });
 
@@ -1694,7 +1707,8 @@ VALUES (
       { version: 12 },
       { version: 13 },
       { version: 14 },
-      { version: 15 }
+      { version: 15 },
+      { version: 16 }
     ]);
     await expect(repositories.database.execute(`
 INSERT INTO tasks (id, project_id, title, status, created_at, updated_at)
@@ -1771,7 +1785,8 @@ VALUES ('message_summary_legacy', 'thread_summary_legacy', 0, 'user', 'text', 'P
       { version: 12 },
       { version: 13 },
       { version: 14 },
-      { version: 15 }
+      { version: 15 },
+      { version: 16 }
     ]);
   });
 
@@ -1808,7 +1823,8 @@ ALTER TABLE task_runs
       { version: 12 },
       { version: 13 },
       { version: 14 },
-      { version: 15 }
+      { version: 15 },
+      { version: 16 }
     ]);
     await expect(
       repositories.database.query<{ name: string }>(

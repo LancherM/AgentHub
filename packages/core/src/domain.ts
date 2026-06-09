@@ -14,6 +14,9 @@ import {
   contextScopes,
   compressionModes,
   memoryCategories,
+  memoryAutomationDecisionStatuses,
+  memoryAutomationPolicyModes,
+  memoryAutomationReasonCodes,
   memoryStatuses,
   normalizeWorkgroupRoleHandle,
   retrievalRoutes,
@@ -50,6 +53,9 @@ import {
   type ContextRetrievalResult,
   type RuntimeContextPack,
   type MemoryItem,
+  type MemoryAutomationDecision,
+  type MemoryAutomationEvaluation,
+  type MemoryAutomationPolicy,
   type MemoryStatus,
   type Project,
   type RiskReport,
@@ -306,8 +312,153 @@ export function validateMemoryItem(input: MemoryItem): MemoryItem {
   enumValue(input.category, memoryCategories, "memoryItem.category", issues);
   enumValue(input.status, memoryStatuses, "memoryItem.status", issues);
   required(input.content, "memoryItem.content", issues);
+  optionalObject(input.metadata, "memoryItem.metadata", issues);
   timestamp(input.createdAt, "memoryItem.createdAt", issues);
   timestamp(input.updatedAt, "memoryItem.updatedAt", issues);
+  return finish(input, issues);
+}
+
+export function createDefaultMemoryAutomationPolicy(): MemoryAutomationPolicy {
+  return {
+    mode: "suggest_only",
+    maxRiskLevel: "low",
+    allowSkippedVerification: false,
+    allowedCategories: ["workflow_rule"],
+    maxAutoApprovalsPerRun: 2
+  };
+}
+
+export function parseMemoryAutomationPolicySettingValue(
+  value: unknown
+): MemoryAutomationPolicy {
+  if (value === undefined || value === null) {
+    return createDefaultMemoryAutomationPolicy();
+  }
+  const issues: string[] = [];
+  objectValue(value, "memoryAutomationPolicy", issues);
+  if (issues.length > 0) {
+    return finish(value as MemoryAutomationPolicy, issues);
+  }
+
+  const input = value as Record<string, unknown>;
+  unknownObjectKeys(
+    input,
+    memoryAutomationPolicyKeys,
+    "memoryAutomationPolicy",
+    issues
+  );
+  const policy: MemoryAutomationPolicy = {
+    ...createDefaultMemoryAutomationPolicy()
+  };
+
+  if (input.mode !== undefined) {
+    policy.mode = input.mode as MemoryAutomationPolicy["mode"];
+  }
+  if (input.maxRiskLevel !== undefined) {
+    policy.maxRiskLevel = input.maxRiskLevel as MemoryAutomationPolicy["maxRiskLevel"];
+  }
+  if (input.allowSkippedVerification !== undefined) {
+    policy.allowSkippedVerification = input.allowSkippedVerification as boolean;
+  }
+  if (input.allowedCategories !== undefined) {
+    policy.allowedCategories = input.allowedCategories as MemoryAutomationPolicy["allowedCategories"];
+  }
+  if (input.maxAutoApprovalsPerRun !== undefined) {
+    policy.maxAutoApprovalsPerRun = input.maxAutoApprovalsPerRun as number;
+  }
+
+  if (issues.length > 0) {
+    return finish(policy, issues);
+  }
+  return validateMemoryAutomationPolicy(policy);
+}
+
+export function validateMemoryAutomationPolicy(
+  input: MemoryAutomationPolicy
+): MemoryAutomationPolicy {
+  const issues: string[] = [];
+  objectValue(input, "memoryAutomationPolicy", issues);
+  if (issues.length > 0) {
+    return finish(input, issues);
+  }
+  enumValue(input.mode, memoryAutomationPolicyModes, "memoryAutomationPolicy.mode", issues);
+  enumValue(input.maxRiskLevel, riskLevels, "memoryAutomationPolicy.maxRiskLevel", issues);
+  if (typeof input.allowSkippedVerification !== "boolean") {
+    issues.push("memoryAutomationPolicy.allowSkippedVerification must be a boolean");
+  }
+  memoryCategoryArray(
+    input.allowedCategories,
+    "memoryAutomationPolicy.allowedCategories",
+    issues
+  );
+  nonNegativeInteger(
+    input.maxAutoApprovalsPerRun,
+    "memoryAutomationPolicy.maxAutoApprovalsPerRun",
+    issues
+  );
+  if (
+    Number.isInteger(input.maxAutoApprovalsPerRun) &&
+    input.maxAutoApprovalsPerRun > 10
+  ) {
+    issues.push("memoryAutomationPolicy.maxAutoApprovalsPerRun must be 10 or less");
+  }
+  return finish(input, issues);
+}
+
+export function validateMemoryAutomationDecision(
+  input: MemoryAutomationDecision
+): MemoryAutomationDecision {
+  const issues: string[] = [];
+  required(input.memoryId, "memoryAutomationDecision.memoryId", issues);
+  enumValue(
+    input.status,
+    memoryAutomationDecisionStatuses,
+    "memoryAutomationDecision.status",
+    issues
+  );
+  reasonCodeArray(
+    input.reasonCodes,
+    "memoryAutomationDecision.reasonCodes",
+    issues
+  );
+  optionalString(input.message, "memoryAutomationDecision.message", issues);
+  return finish(input, issues);
+}
+
+export function validateMemoryAutomationEvaluation(
+  input: MemoryAutomationEvaluation
+): MemoryAutomationEvaluation {
+  const issues: string[] = [];
+  required(input.runId, "memoryAutomationEvaluation.runId", issues);
+  try {
+    validateMemoryAutomationPolicy(input.policy);
+  } catch (error) {
+    if (error instanceof DomainValidationError) {
+      issues.push(...error.issues);
+    } else {
+      throw error;
+    }
+  }
+  if (!Array.isArray(input.decisions)) {
+    issues.push("memoryAutomationEvaluation.decisions must be an array");
+  } else {
+    input.decisions.forEach((decision, index) => {
+      try {
+        validateMemoryAutomationDecision(decision);
+      } catch (error) {
+        if (error instanceof DomainValidationError) {
+          issues.push(
+            ...error.issues.map((issue) =>
+              issue.replace("memoryAutomationDecision", `memoryAutomationEvaluation.decisions.${index}`)
+            )
+          );
+        } else {
+          throw error;
+        }
+      }
+    });
+  }
+  optionalTimestamp(input.createdAt, "memoryAutomationEvaluation.createdAt", issues);
   return finish(input, issues);
 }
 
@@ -1112,6 +1263,57 @@ function stringArray(value: unknown, field: string, issues: string[]): void {
   }
 }
 
+function memoryCategoryArray(
+  value: unknown,
+  field: string,
+  issues: string[]
+): void {
+  if (!Array.isArray(value)) {
+    issues.push(`${field} must be an array of memory categories`);
+    return;
+  }
+  const seen = new Set<string>();
+  for (const entry of value) {
+    if (!(memoryCategories as readonly string[]).includes(String(entry))) {
+      issues.push(`${field} contains unsupported memory category ${String(entry)}`);
+      continue;
+    }
+    if (seen.has(String(entry))) {
+      issues.push(`${field} must not contain duplicate category ${String(entry)}`);
+    }
+    seen.add(String(entry));
+  }
+}
+
+function reasonCodeArray(
+  value: unknown,
+  field: string,
+  issues: string[]
+): void {
+  if (!Array.isArray(value) || value.length === 0) {
+    issues.push(`${field} must be a non-empty array of reason codes`);
+    return;
+  }
+  for (const entry of value) {
+    if (!(memoryAutomationReasonCodes as readonly string[]).includes(String(entry))) {
+      issues.push(`${field} contains unsupported reason code ${String(entry)}`);
+    }
+  }
+}
+
+function unknownObjectKeys(
+  value: Record<string, unknown>,
+  allowedKeys: Set<string>,
+  field: string,
+  issues: string[]
+): void {
+  for (const key of Object.keys(value)) {
+    if (!allowedKeys.has(key)) {
+      issues.push(`${field} contains unsupported field ${key}`);
+    }
+  }
+}
+
 function optionalStringArray(
   value: unknown,
   field: string,
@@ -1705,6 +1907,14 @@ const memoryStatusTransitions: Record<MemoryStatus, readonly MemoryStatus[]> = {
   approved: [],
   rejected: []
 };
+
+const memoryAutomationPolicyKeys = new Set([
+  "mode",
+  "maxRiskLevel",
+  "allowSkippedVerification",
+  "allowedCategories",
+  "maxAutoApprovalsPerRun"
+]);
 
 const roleCallStatusTransitions: Record<RoleCallStatus, readonly RoleCallStatus[]> = {
   proposed: ["assessing", "waiting_approval", "rejected", "cancelled"],

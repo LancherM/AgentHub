@@ -1102,6 +1102,15 @@ CREATE INDEX IF NOT EXISTS idx_code_graph_entries_project_package
 CREATE INDEX IF NOT EXISTS idx_code_graph_entries_hash
   ON code_graph_entries(project_id, content_hash);
 `
+  },
+  {
+    version: 16,
+    sql: `
+ALTER TABLE memory_items
+  ADD COLUMN metadata_json TEXT CHECK (
+    metadata_json IS NULL OR (json_valid(metadata_json) AND json_type(metadata_json) = 'object')
+  );
+`
   }
 ];
 
@@ -2366,7 +2375,7 @@ export class SQLiteMemoryItemRepository implements MemoryItemRepository {
     }
     await this.database.execute(`
 INSERT INTO memory_items (
-  id, project_id, task_id, category, status, content, created_at, updated_at
+  id, project_id, task_id, category, status, content, metadata_json, created_at, updated_at
 ) VALUES (
   ${sqlString(validItem.id)},
   ${sqlString(validItem.projectId)},
@@ -2374,6 +2383,7 @@ INSERT INTO memory_items (
   ${sqlString(validItem.category)},
   ${sqlString(validItem.status)},
   ${sqlString(validItem.content)},
+  ${sqlJson(validItem.metadata)},
   ${sqlString(validItem.createdAt)},
   ${sqlString(validItem.updatedAt)}
 )
@@ -2383,6 +2393,7 @@ ON CONFLICT(id) DO UPDATE SET
   category = excluded.category,
   status = excluded.status,
   content = excluded.content,
+  metadata_json = excluded.metadata_json,
   created_at = excluded.created_at,
   updated_at = excluded.updated_at;
 `);
@@ -2420,6 +2431,7 @@ SELECT
   category,
   status,
   content,
+  metadata_json AS metadataJson,
   created_at AS createdAt,
   updated_at AS updatedAt
 FROM memory_items
@@ -2439,6 +2451,7 @@ SELECT
   category,
   status,
   content,
+  metadata_json AS metadataJson,
   created_at AS createdAt,
   updated_at AS updatedAt
 FROM memory_items
@@ -3408,6 +3421,7 @@ interface MemoryItemRow extends Record<string, unknown> {
   category: string;
   status: string;
   content: string;
+  metadataJson: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -3726,6 +3740,7 @@ function memoryItemFromRow(row: MemoryItemRow): MemoryItem {
     category: row.category as MemoryItem["category"],
     status: row.status as MemoryItem["status"],
     content: row.content,
+    metadata: parseJson<Record<string, unknown>>(row.metadataJson),
     createdAt: row.createdAt,
     updatedAt: row.updatedAt
   });

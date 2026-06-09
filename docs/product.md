@@ -500,8 +500,10 @@ targets. Runtime task runs reject `repo_export` as a delivery mode.
 
 Approved memory is read from the Agent Hub context store at
 `memory/approved.md`. Proposed and rejected memory rows stay in SQLite and are
-not injected into future runs. Approving memory is always explicit from CLI or
-desktop review and writes only to the Agent Hub-owned context store by default.
+not injected into future runs. Memory rows now carry optional local audit
+metadata so future automation can explain source run, policy, and writeback
+decisions, but approving memory is still explicit from CLI or desktop review
+and writes only to the Agent Hub-owned context store by default.
 
 ## Desktop Experience
 
