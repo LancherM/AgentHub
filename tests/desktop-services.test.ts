@@ -60,6 +60,7 @@ import type {
 } from "../apps/desktop/src/lib/types";
 import { MockProcessRunner, MockShellExecutor } from "./helpers";
 import {
+  saveProjectMemoryAutomationPolicy,
   VerificationRunner,
   type TaskRunnerDependencies
 } from "@agent-hub/task-runner";
@@ -1090,6 +1091,62 @@ describe("desktop services", () => {
     });
     expect(rejected.rejectedAt).toBeDefined();
     await expect(fs.readdir(fixture.projectRoot)).resolves.toEqual(before);
+  });
+
+  it("auto-approves eligible memory after accepted review when policy opts in", async () => {
+    const fixture = await createFixture();
+    const context = createDesktopServiceContext(fixture.repositories, {
+      agentHubHome: fixture.agentHubHome
+    });
+    const projects = createProjectService(context);
+    const memory = createMemoryService(context);
+    const review = createReviewService(context, { memoryService: memory });
+    const runs = createTestRunService(context, review, memory, fixture);
+    const project = await projects.open(fixture.projectRoot);
+    await saveProjectMemoryAutomationPolicy(
+      { settingsRepository: fixture.repositories.settingsRepository },
+      {
+        projectId: project.id,
+        policy: {
+          mode: "auto_after_review_accept",
+          maxRiskLevel: "medium",
+          allowSkippedVerification: true,
+          allowedCategories: ["workflow_rule"],
+          maxAutoApprovalsPerRun: 2
+        },
+        updatedAt: context.now()
+      }
+    );
+    const run = await runs.createRun({
+      projectId: project.id,
+      prompt: "Review desktop memory automation.",
+      agentId: "fake",
+      contextMode: "auto"
+    });
+    await waitForRun(runs, run.id, "completed");
+
+    const accepted = await review.acceptRun(run.id);
+    const proposals = await memory.listProposals(run.id);
+    const approvedPath = path.join(
+      fixture.agentHubHome,
+      "context-stores",
+      project.id,
+      "memory",
+      "approved.md"
+    );
+    const approvedMemory = await fs.readFile(approvedPath, "utf8");
+
+    expect(accepted.message).toContain("Memory automation: auto-approved 1");
+    expect(proposals).toContainEqual(
+      expect.objectContaining({
+        status: "approved",
+        content: "Desktop renderer must not access Node APIs directly.",
+        approvedMemoryPath: approvedPath
+      })
+    );
+    expect(approvedMemory).toContain(
+      "Desktop renderer must not access Node APIs directly."
+    );
   });
 
   it("exposes retained worktree handoff evidence and copy/open actions", async () => {

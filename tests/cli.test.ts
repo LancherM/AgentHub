@@ -2732,6 +2732,104 @@ describe("CLI", () => {
     );
   });
 
+  it("auto-approves eligible memory after accepted review when policy opts in", async () => {
+    const projectRoot = await createTestDirectory("cli-auto-memory-project");
+    const runRoot = path.join(
+      await createTestDirectory("cli-auto-memory-runs"),
+      "runs"
+    );
+    const databasePath = path.join(
+      await createTestDirectory("cli-auto-memory-db"),
+      "agent-hub.sqlite"
+    );
+    const agentHubHome = await createTestDirectory("cli-auto-memory-home");
+    const runtime = createCliRuntime({
+      sqliteDatabasePath: databasePath,
+      defaultRunRoot: runRoot,
+      workspaceManager: new TestWorkspaceManager(runRoot),
+      diffCollector: new StaticDiffCollector(),
+      verificationRunner: new VerificationRunner(
+        new MockShellExecutor([{ exitCode: 0, stdout: "ok\n" }])
+      ),
+      idGenerator: new SequenceIdGenerator(),
+      clock: new FixedClock("2026-01-01T00:00:00.000Z")
+    });
+    const output: string[] = [];
+    const errors: string[] = [];
+    const io = {
+      stdout: { write: (chunk: string) => { output.push(chunk); return true; } },
+      stderr: { write: (chunk: string) => { errors.push(chunk); return true; } }
+    };
+
+    await expect(
+      main([
+        "run",
+        "--verify",
+        "pnpm test",
+        "@fake",
+        "capture auto memory"
+      ], io, projectRoot, runtime)
+    ).resolves.toBe(0);
+    await expect(
+      main([
+        "memory",
+        "policy",
+        "show",
+        "--project-id",
+        "adhoc_project"
+      ], io, projectRoot, runtime)
+    ).resolves.toBe(0);
+    await expect(
+      main([
+        "memory",
+        "policy",
+        "set",
+        "--project-id",
+        "adhoc_project",
+        "--mode",
+        "auto_after_review_accept",
+        "--max-risk",
+        "medium",
+        "--max-auto-approvals-per-run",
+        "2"
+      ], io, projectRoot, runtime)
+    ).resolves.toBe(0);
+    await expect(
+      main([
+        "reviews",
+        "accept",
+        "run_0002",
+        "--agent-hub-home",
+        agentHubHome
+      ], io, projectRoot, runtime)
+    ).resolves.toBe(0);
+    await expect(
+      main(["memory", "list", "--project-id", "adhoc_project"], io, projectRoot, runtime)
+    ).resolves.toBe(0);
+
+    const renderedOutput = output.join("");
+    const approvedPath = path.join(
+      agentHubHome,
+      "context-stores",
+      "adhoc_project",
+      "memory",
+      "approved.md"
+    );
+    const approvedMemory = await fs.readFile(approvedPath, "utf8");
+
+    expect(errors.join("")).toBe("");
+    expect(renderedOutput).toContain("mode: suggest_only");
+    expect(renderedOutput).toContain("mode: auto_after_review_accept");
+    expect(renderedOutput).toContain("Memory automation");
+    expect(renderedOutput).toContain("auto_approved: 1");
+    expect(renderedOutput).toContain(
+      "approved\tworkflow_rule\tVerification command for this project is pnpm test."
+    );
+    expect(approvedMemory).toContain(
+      "Verification command for this project is pnpm test."
+    );
+  });
+
   it("creates and persists comparison reports from SQLite run records", async () => {
     const projectRoot = await createTestDirectory("cli-compare-project");
     const databasePath = path.join(

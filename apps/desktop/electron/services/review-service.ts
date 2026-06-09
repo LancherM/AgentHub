@@ -18,7 +18,10 @@ import {
   type VerificationResultRepository
 } from "@agent-hub/core";
 import type { JsonObject, TaskRunStatus } from "@agent-hub/shared";
-import { isWorkspacePathInside } from "@agent-hub/task-runner";
+import {
+  applyMemoryAutomationForRun,
+  isWorkspacePathInside
+} from "@agent-hub/task-runner";
 import type {
   AgentId,
   DiffSummary,
@@ -374,15 +377,44 @@ class RepositoryReviewService implements ReviewService {
   async acceptRun(runId: string): Promise<ReviewSummary> {
     await this.requireRunAndTask(runId);
     const acceptedAt = this.context.now();
+    const automation = await applyMemoryAutomationForRun(
+      {
+        taskRunRepository: this.runs,
+        taskRepository: this.tasks,
+        projectRepository: this.context.repositories.projectRepository,
+        settingsRepository: this.context.repositories.settingsRepository,
+        memoryItemRepository: this.memory,
+        verificationResultRepository: this.verification,
+        riskReportRepository: this.risks
+      },
+      {
+        runId,
+        trigger: "review_accepted",
+        now: () => acceptedAt,
+        agentHubHome: this.context.agentHubHome
+      }
+    );
+    const automationEnabled = automation.policy.mode === "auto_after_review_accept";
     await this.artifacts.create(
       validateRunArtifact({
         id: this.context.nextId("review"),
         taskRunId: runId,
         kind: REVIEW_DECISION_ARTIFACT_KIND,
-        content: "Accepted for record. No merge was performed.",
+        content: automationEnabled
+          ? `Accepted for record. No merge was performed.\nMemory automation: auto-approved ${automation.autoApproved.length}; skipped ${automation.skipped.length}.`
+          : "Accepted for record. No merge was performed.",
         metadata: {
           reviewStatus: "accepted",
-          acceptedAt
+          acceptedAt,
+          ...(automationEnabled
+            ? {
+                memoryAutomation: {
+                  policyMode: automation.policy.mode,
+                  autoApproved: automation.autoApproved.length,
+                  skipped: automation.skipped.length
+                }
+              }
+            : {})
         },
         createdAt: acceptedAt
       })

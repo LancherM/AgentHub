@@ -513,6 +513,12 @@ proposals against the default local policy, verification, risk, duplicate, and
 category gates, then prints allow/block reasons without approving or writing
 memory.
 
+Projects can opt into `auto_after_review_accept` with
+`agent-hub memory policy set --project-id <project-id> --mode auto_after_review_accept`.
+When enabled, an explicit CLI or desktop review acceptance auto-approves only
+eligible proposed memory and writes it through the Agent Hub-owned approved
+memory path. The default remains `suggest_only`.
+
 ## Desktop Experience
 
 The desktop app is a local conversation console. It opens registered projects,

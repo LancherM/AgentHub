@@ -93,7 +93,10 @@ core sequence:
     that reads run status, verification results, risk reports, duplicate
     memory, and policy gates. Evaluation is read-only and does not write
     approved memory.
-15. Apply cleanup policy without accepting, merging, pushing, or deleting
+15. On explicit review acceptance, apply the project memory policy. Only
+    opt-in `auto_after_review_accept` projects can promote eligible proposals,
+    and writeback still uses the Agent Hub-owned approved-memory store.
+16. Apply cleanup policy without accepting, merging, pushing, or deleting
     branches automatically.
 
 After a task-run row exists, finalization is defensive. Diff, verification,
