@@ -1695,9 +1695,12 @@ describe("desktop services", () => {
     const projects = createProjectService(context);
     const memory = createMemoryService(context);
     const review = createReviewService(context, { memoryService: memory });
+    const getDiff = vi.spyOn(review, "getDiff");
+    const getVerification = vi.spyOn(review, "getVerification");
+    const getRisk = vi.spyOn(review, "getRisk");
     const runs = createTestRunService(context, review, memory, fixture, {
       agentRegistry: new DefaultAgentRegistry([
-        new FakeAgentAdapter({ stepDelayMs: 100 })
+        new FakeAgentAdapter({ stepDelayMs: 500 })
       ])
     });
     const project = await projects.open(fixture.projectRoot);
@@ -1716,6 +1719,9 @@ describe("desktop services", () => {
 
     expect(inProgress.status).toBe("running");
     expect(inProgress.events.map((event) => event.type)).toContain("run_started");
+    expect(getDiff).not.toHaveBeenCalled();
+    expect(getVerification).not.toHaveBeenCalled();
+    expect(getRisk).not.toHaveBeenCalled();
     await waitForRun(runs, run.id, "completed");
   });
 
