@@ -5,6 +5,11 @@ import path from "node:path";
 import { createInterface } from "node:readline/promises";
 import { dump as dumpYaml, load as loadYaml } from "js-yaml";
 import { z } from "zod";
+import {
+  matchCliCommand,
+  routeUsageLines,
+  type CliCommandRoute
+} from "./cli-command-registry";
 import { parseAgentPrompt } from "@agent-hub/agent-adapters";
 import {
   appendApprovedMemory,
@@ -376,6 +381,14 @@ function getDefaultRuntime(): CliRuntime {
   return defaultRuntime;
 }
 
+interface CliCommandContext {
+  io: CliIO;
+  cwd: string;
+  runtime: CliRuntime;
+  global: ParsedGlobalArgs;
+  debug: boolean;
+}
+
 export async function main(
   argv = process.argv.slice(2),
   io: CliIO = { stdin: process.stdin, stdout: process.stdout, stderr: process.stderr },
@@ -421,319 +434,326 @@ export async function main(
     return 0;
   }
 
-  if (command === "project" && rest[0] === "add") {
-    return addProject(rest.slice(1), io, cwd, activeRuntime);
-  }
-
-  if (command === "project" && rest[0] === "list") {
-    return listProjects(io, activeRuntime);
-  }
-
-  if (command === "task" && rest[0] === "create") {
-    return createTask(rest.slice(1), io, activeRuntime);
-  }
-
-  if (command === "task" && rest[0] === "list") {
-    return listTasks(rest.slice(1), io, activeRuntime);
-  }
-
-  if (command === "task" && rest[0] === "history") {
-    return taskHistory(rest.slice(1), io, activeRuntime);
-  }
-
-  if (command === "context" && rest[0] === "init") {
-    return contextInit(rest.slice(1), io, cwd);
-  }
-
-  if (command === "context" && rest[0] === "show") {
-    return contextShow(rest.slice(1), io, cwd);
-  }
-
-  if (command === "context" && rest[0] === "build") {
-    return contextBuild(rest.slice(1), io, cwd, debug);
-  }
-
-  if (command === "context" && rest[0] === "export") {
-    return contextExport(rest.slice(1), io, cwd);
-  }
-
-  if (command === "context" && rest[0] === "plan") {
-    return contextPlanInspect(rest.slice(1), io, activeRuntime);
-  }
-
-  if (command === "context" && rest[0] === "selected") {
-    return contextSelectedInspect(rest.slice(1), io, activeRuntime);
-  }
-
-  if (command === "context" && rest[0] === "omissions") {
-    return contextOmissionsInspect(rest.slice(1), io, activeRuntime);
-  }
-
-  if (command === "context" && rest[0] === "eval") {
-    return contextEvalInspect(rest.slice(1), io, activeRuntime);
-  }
-
-  if (command === "skills" && rest[0] === "global" && rest[1] === "create") {
-    return createGlobalSkillCommand(rest.slice(2), io, cwd);
-  }
-
-  if (command === "skills" && rest[0] === "global" && rest[1] === "list") {
-    return listGlobalSkillsCommand(rest.slice(2), io, cwd);
-  }
-
-  if (command === "run" && rest[0] === "event" && rest[1] === "add") {
-    return addRunEvent(rest.slice(2), io, activeRuntime);
-  }
-
-  if (command === "run") {
-    return runCommand(rest, io, cwd, activeRuntime, debug);
-  }
-
-  if (command === "threads" && rest[0] === "list") {
-    return listThreads(io, activeRuntime);
-  }
-
-  if (command === "threads" && rest[0] === "show") {
-    return showThread(rest.slice(1), io, activeRuntime);
-  }
-
-  if (command === "rooms" && rest[0] === "list") {
-    return listRooms(rest.slice(1), io, activeRuntime);
-  }
-
-  if (command === "rooms" && rest[0] === "create") {
-    return createRoom(rest.slice(1), io, activeRuntime);
-  }
-
-  if (command === "rooms" && rest[0] === "use") {
-    return useRoom(rest.slice(1), io, activeRuntime);
-  }
-
-  if (command === "rooms" && rest[0] === "send") {
-    return sendRoomMessage(rest.slice(1), io, cwd, activeRuntime, debug);
-  }
-
-  if (command === "rooms" && rest[0] === "timeline") {
-    return showRoomTimeline(rest.slice(1), io, activeRuntime);
-  }
-
-  if (command === "chat") {
-    return runChat({
+  const matchedCommand = matchCliCommand(cliCommandRoutes(debug), [command, ...rest]);
+  if (matchedCommand) {
+    return matchedCommand.route.run(matchedCommand.args, {
       io,
       cwd,
       runtime: activeRuntime,
-      projectRoot: global.projectRoot ?? cwd,
-      selectedAgent: global.agentKind ?? defaultCliAgent(debug),
-      debug,
-      args: rest
+      global,
+      debug
     });
-  }
-
-  if (command === "tui") {
-    return runTuiCommand({
-      args: rest,
-      io,
-      cwd,
-      runtime: activeRuntime,
-      projectRoot: global.projectRoot ?? cwd,
-      selectedAgent: global.agentKind ?? defaultCliAgent(debug),
-      debug,
-      submitPrompt: (input) => submitTuiPrompt(input, io, cwd, activeRuntime),
-      recordReviewDecision: (input) => recordTuiReviewDecision(input, activeRuntime)
-    });
-  }
-
-  if (
-    (command === "team" && rest[0] === "roles" && rest[1] === "list") ||
-    (command === "roles" && rest[0] === "list")
-  ) {
-    return listTeamRoles(command === "roles" ? rest.slice(1) : rest.slice(2), io, activeRuntime);
-  }
-
-  if (
-    (command === "team" && rest[0] === "roles" && rest[1] === "show") ||
-    (command === "roles" && rest[0] === "show")
-  ) {
-    return showTeamRole(command === "roles" ? rest.slice(1) : rest.slice(2), io, activeRuntime);
-  }
-
-  if (
-    (command === "team" && rest[0] === "roles" && rest[1] === "save") ||
-    (command === "roles" && rest[0] === "save")
-  ) {
-    return saveTeamRole(command === "roles" ? rest.slice(1) : rest.slice(2), io, activeRuntime);
-  }
-
-  if (
-    (command === "team" && rest[0] === "roles" && rest[1] === "import") ||
-    (command === "roles" && rest[0] === "import")
-  ) {
-    return importTeamRoles(
-      command === "roles" ? rest.slice(1) : rest.slice(2),
-      io,
-      activeRuntime
-    );
-  }
-
-  if (
-    (command === "team" && rest[0] === "roles" && rest[1] === "export") ||
-    (command === "roles" && rest[0] === "export")
-  ) {
-    return exportTeamRoles(
-      command === "roles" ? rest.slice(1) : rest.slice(2),
-      io,
-      activeRuntime
-    );
-  }
-
-  if (
-    (command === "team" && rest[0] === "roles" && rest[1] === "executor") ||
-    (command === "roles" && rest[0] === "executor")
-  ) {
-    return showTeamRoleExecutor(
-      command === "roles" ? rest.slice(1) : rest.slice(2),
-      io,
-      activeRuntime
-    );
-  }
-
-  if (command === "tasks" && rest[0] === "list") {
-    return listTasks(rest.slice(1), io, activeRuntime);
-  }
-
-  if (command === "runs" && rest[0] === "list") {
-    return listRuns(io, activeRuntime);
-  }
-
-  if (command === "runs" && rest[0] === "events") {
-    return showRunEvents(rest.slice(1), io, activeRuntime);
-  }
-
-  if (command === "runs" && rest[0] === "diff") {
-    return showRunDiff(rest.slice(1), io, activeRuntime);
-  }
-
-  if (command === "runs" && rest[0] === "show") {
-    return showRun(rest.slice(1), io, activeRuntime);
-  }
-
-  if (command === "risks" && rest[0] === "show") {
-    return showRisk(rest.slice(1), io, activeRuntime);
-  }
-
-  if (command === "reviews" && rest[0] === "show") {
-    return showReviewDecision(rest.slice(1), io, activeRuntime);
-  }
-
-  if (command === "reviews" && rest[0] === "accept") {
-    return recordReviewDecisionCommand("accepted", rest.slice(1), io, activeRuntime);
-  }
-
-  if (command === "reviews" && rest[0] === "reject") {
-    return recordReviewDecisionCommand("rejected", rest.slice(1), io, activeRuntime);
-  }
-
-  if (command === "role-calls" && rest[0] === "list") {
-    return listRoleCalls(rest.slice(1), io, activeRuntime);
-  }
-
-  if (command === "role-calls" && rest[0] === "show") {
-    return showRoleCall(rest.slice(1), io, activeRuntime);
-  }
-
-  if (command === "role-todos" && rest[0] === "list") {
-    return listRoleTodos(rest.slice(1), io, activeRuntime);
-  }
-
-  if (command === "role-events" && rest[0] === "list") {
-    return listRoleEvents(rest.slice(1), io, activeRuntime);
-  }
-
-  if (command === "memory" && rest[0] === "list") {
-    return listMemory(rest.slice(1), io, activeRuntime);
-  }
-
-  if (command === "memory" && rest[0] === "propose") {
-    return proposeMemory(rest.slice(1), io, activeRuntime);
-  }
-
-  if (command === "memory" && rest[0] === "approve") {
-    return approveMemory(rest.slice(1), io, cwd, activeRuntime);
-  }
-
-  if (command === "memory" && rest[0] === "reject") {
-    return rejectMemory(rest.slice(1), io, activeRuntime);
-  }
-
-  if (command === "compare") {
-    return compareRuns(rest, io, activeRuntime);
   }
 
   io.stderr.write(`error: unknown command ${[command, ...rest].join(" ")}\n`);
   return 1;
 }
 
-export function helpText(debug = isEnvironmentDebugEnabled()): string {
+function cliCommandRoutes(debug: boolean): CliCommandRoute<CliCommandContext>[] {
   const agentChoices = availableCliAgents(debug).join("|");
   const promptAgentChoices = availableCliAgents(debug)
     .map((agent) => `@${agent}`)
     .join("|");
+
+  return [
+    {
+      patterns: [["project", "add"]],
+      usage: ["  agent-hub [--db <path>] project add --name <name> --root <path>"],
+      run: (args, context) => addProject(args, context.io, context.cwd, context.runtime)
+    },
+    {
+      patterns: [["project", "list"]],
+      usage: ["  agent-hub [--db <path>] project list"],
+      run: (_args, context) => listProjects(context.io, context.runtime)
+    },
+    {
+      patterns: [["task", "create"]],
+      usage: [
+        "  agent-hub [--db <path>] task create --project-id <project-id> --title <title> [--description <text>]"
+      ],
+      run: (args, context) => createTask(args, context.io, context.runtime)
+    },
+    {
+      patterns: [["task", "list"], ["tasks", "list"]],
+      usage: [
+        "  agent-hub [--db <path>] task list [--project-id <project-id>]",
+        "  agent-hub tasks list"
+      ],
+      run: (args, context) => listTasks(args, context.io, context.runtime)
+    },
+    {
+      patterns: [["task", "history"]],
+      usage: ["  agent-hub [--db <path>] task history --task-id <task-id>"],
+      run: (args, context) => taskHistory(args, context.io, context.runtime)
+    },
+    {
+      patterns: [["context", "init"]],
+      usage: ["  agent-hub context init --project-root <path> --project-id <project-id>"],
+      run: (args, context) => contextInit(args, context.io, context.cwd)
+    },
+    {
+      patterns: [["context", "show"]],
+      usage: ["  agent-hub context show --project-root <path> --project-id <project-id>"],
+      run: (args, context) => contextShow(args, context.io, context.cwd)
+    },
+    {
+      patterns: [["context", "build"]],
+      usage: [
+        "  agent-hub context build --project-root <path> --project-id <project-id> --task-id <task-id> --title <title> --prompt <prompt>"
+      ],
+      run: (args, context) => contextBuild(args, context.io, context.cwd, context.debug)
+    },
+    {
+      patterns: [["context", "export"]],
+      usage: [
+        "  agent-hub context export --project-root <path> --project-id <project-id> [--target repo] --dry-run|--write"
+      ],
+      run: (args, context) => contextExport(args, context.io, context.cwd)
+    },
+    {
+      patterns: [["context", "plan"]],
+      usage: ["  agent-hub [--db <path>] context plan <run-id>"],
+      run: (args, context) => contextPlanInspect(args, context.io, context.runtime)
+    },
+    {
+      patterns: [["context", "selected"]],
+      usage: ["  agent-hub [--db <path>] context selected <run-id>"],
+      run: (args, context) => contextSelectedInspect(args, context.io, context.runtime)
+    },
+    {
+      patterns: [["context", "omissions"]],
+      usage: ["  agent-hub [--db <path>] context omissions <run-id>"],
+      run: (args, context) => contextOmissionsInspect(args, context.io, context.runtime)
+    },
+    {
+      patterns: [["context", "eval"]],
+      usage: ["  agent-hub [--db <path>] context eval <run-id>"],
+      run: (args, context) => contextEvalInspect(args, context.io, context.runtime)
+    },
+    {
+      patterns: [["skills", "global", "create"]],
+      usage: [
+        "  agent-hub skills global create --id <id> --name <name> --description <text> [--body <markdown>] [--agent-hub-home <path>]"
+      ],
+      run: (args, context) => createGlobalSkillCommand(args, context.io, context.cwd)
+    },
+    {
+      patterns: [["skills", "global", "list"]],
+      usage: ["  agent-hub skills global list [--agent-hub-home <path>]"],
+      run: (args, context) => listGlobalSkillsCommand(args, context.io, context.cwd)
+    },
+    {
+      patterns: [["run", "event", "add"]],
+      usage: ["  agent-hub [--db <path>] run event add --run-id <run-id> --type <type> --message <message>"],
+      run: (args, context) => addRunEvent(args, context.io, context.runtime)
+    },
+    {
+      patterns: [["run"]],
+      usage: [
+        `  agent-hub [--db <path>] run --task <task-id> --agent ${agentChoices} [--workspace-base <path>] [--skill [scope:]id]`,
+        `  agent-hub [--db <path>] run [--repo <path>] [--workspace-base <path>] [--retain-on-failure] [--continue-from-run <run-id>|--continue-from-message <message-id>] [--skill [scope:]id] "${promptAgentChoices} <task>"`
+      ],
+      run: (args, context) =>
+        runCommand(args, context.io, context.cwd, context.runtime, context.debug)
+    },
+    {
+      patterns: [["threads", "list"]],
+      usage: ["  agent-hub [--db <path>] threads list"],
+      run: (_args, context) => listThreads(context.io, context.runtime)
+    },
+    {
+      patterns: [["threads", "show"]],
+      usage: ["  agent-hub [--db <path>] threads show <thread-id>"],
+      run: (args, context) => showThread(args, context.io, context.runtime)
+    },
+    {
+      patterns: [["rooms", "list"]],
+      usage: ["  agent-hub [--db <path>] rooms list --project-id <project-id>"],
+      run: (args, context) => listRooms(args, context.io, context.runtime)
+    },
+    {
+      patterns: [["rooms", "create"]],
+      usage: ["  agent-hub [--db <path>] rooms create --project-id <project-id> --handle <handle> --title <title> [--description <text>]"],
+      run: (args, context) => createRoom(args, context.io, context.runtime)
+    },
+    {
+      patterns: [["rooms", "use"]],
+      usage: ["  agent-hub [--db <path>] rooms use --project-id <project-id> --room <handle-or-thread-id>"],
+      run: (args, context) => useRoom(args, context.io, context.runtime)
+    },
+    {
+      patterns: [["rooms", "send"]],
+      usage: ["  agent-hub [--db <path>] rooms send --project-id <project-id> --room <handle-or-thread-id> --message <text>"],
+      run: (args, context) =>
+        sendRoomMessage(args, context.io, context.cwd, context.runtime, context.debug)
+    },
+    {
+      patterns: [["rooms", "timeline"]],
+      usage: ["  agent-hub [--db <path>] rooms timeline --project-id <project-id> --room <handle-or-thread-id>"],
+      run: (args, context) => showRoomTimeline(args, context.io, context.runtime)
+    },
+    {
+      patterns: [["chat"]],
+      usage: ["  agent-hub [--db <path>] chat [--thread <thread-id>|--room <handle-or-thread-id>]"],
+      run: (args, context) =>
+        runChat({
+          io: context.io,
+          cwd: context.cwd,
+          runtime: context.runtime,
+          projectRoot: context.global.projectRoot ?? context.cwd,
+          selectedAgent: context.global.agentKind ?? defaultCliAgent(context.debug),
+          debug: context.debug,
+          args
+        })
+    },
+    {
+      patterns: [["tui"]],
+      usage: [
+        "  agent-hub [--db <path>] tui [--thread <thread-id>|--room <handle-or-thread-id>] [--agent codex|claude-code] [--max-iterations <n>]"
+      ],
+      run: (args, context) =>
+        runTuiCommand({
+          args,
+          io: context.io,
+          cwd: context.cwd,
+          runtime: context.runtime,
+          projectRoot: context.global.projectRoot ?? context.cwd,
+          selectedAgent: context.global.agentKind ?? defaultCliAgent(context.debug),
+          debug: context.debug,
+          submitPrompt: (input) => submitTuiPrompt(input, context.io, context.cwd, context.runtime),
+          recordReviewDecision: (input) => recordTuiReviewDecision(input, context.runtime)
+        })
+    },
+    {
+      patterns: [["team", "roles", "list"], ["roles", "list"]],
+      usage: ["  agent-hub [--db <path>] team roles list --project-id <project-id>"],
+      run: (args, context) => listTeamRoles(args, context.io, context.runtime)
+    },
+    {
+      patterns: [["team", "roles", "show"], ["roles", "show"]],
+      usage: ["  agent-hub [--db <path>] team roles show --project-id <project-id> --role <handle>"],
+      run: (args, context) => showTeamRole(args, context.io, context.runtime)
+    },
+    {
+      patterns: [["team", "roles", "save"], ["roles", "save"]],
+      usage: [
+        `  agent-hub [--db <path>] team roles save --project-id <project-id> --handle <handle> [--display-name <name>] [--executor ${agentChoices}|human|llm_api|workflow] [--skill [scope:]id] [--can-call-role --role-call-target <role>]`
+      ],
+      run: (args, context) => saveTeamRole(args, context.io, context.runtime)
+    },
+    {
+      patterns: [["team", "roles", "import"], ["roles", "import"]],
+      usage: ["  agent-hub [--db <path>] team roles import --project-id <project-id> [--path .agent-hub/team.yaml] [--preview|--write]"],
+      run: (args, context) => importTeamRoles(args, context.io, context.runtime)
+    },
+    {
+      patterns: [["team", "roles", "export"], ["roles", "export"]],
+      usage: ["  agent-hub [--db <path>] team roles export --project-id <project-id> [--path .agent-hub/team.yaml] [--preview|--write]"],
+      run: (args, context) => exportTeamRoles(args, context.io, context.runtime)
+    },
+    {
+      patterns: [["team", "roles", "executor"], ["roles", "executor"]],
+      usage: ["  agent-hub [--db <path>] team roles executor --project-id <project-id> --role <handle>"],
+      run: (args, context) => showTeamRoleExecutor(args, context.io, context.runtime)
+    },
+    {
+      patterns: [["runs", "list"]],
+      usage: ["  agent-hub runs list"],
+      run: (_args, context) => listRuns(context.io, context.runtime)
+    },
+    {
+      patterns: [["runs", "events"]],
+      usage: ["  agent-hub runs events <run-id>"],
+      run: (args, context) => showRunEvents(args, context.io, context.runtime)
+    },
+    {
+      patterns: [["runs", "diff"]],
+      usage: ["  agent-hub runs diff <run-id> [--stat|--patch] [--full]"],
+      run: (args, context) => showRunDiff(args, context.io, context.runtime)
+    },
+    {
+      patterns: [["runs", "show"]],
+      usage: ["  agent-hub runs show <run-id>"],
+      run: (args, context) => showRun(args, context.io, context.runtime)
+    },
+    {
+      patterns: [["risks", "show"]],
+      usage: ["  agent-hub risks show <run-id>"],
+      run: (args, context) => showRisk(args, context.io, context.runtime)
+    },
+    {
+      patterns: [["reviews", "show"]],
+      usage: ["  agent-hub reviews show <run-id>"],
+      run: (args, context) => showReviewDecision(args, context.io, context.runtime)
+    },
+    {
+      patterns: [["reviews", "accept"]],
+      usage: ["  agent-hub reviews accept <run-id>"],
+      run: (args, context) =>
+        recordReviewDecisionCommand("accepted", args, context.io, context.runtime)
+    },
+    {
+      patterns: [["reviews", "reject"]],
+      usage: ["  agent-hub reviews reject <run-id> [--reason <text>]"],
+      run: (args, context) =>
+        recordReviewDecisionCommand("rejected", args, context.io, context.runtime)
+    },
+    {
+      patterns: [["role-calls", "list"]],
+      usage: ["  agent-hub role-calls list [--thread-id <thread-id>] [--role <role>] [--status <status>] [--json]"],
+      run: (args, context) => listRoleCalls(args, context.io, context.runtime)
+    },
+    {
+      patterns: [["role-calls", "show"]],
+      usage: ["  agent-hub role-calls show <role-call-id> [--json]"],
+      run: (args, context) => showRoleCall(args, context.io, context.runtime)
+    },
+    {
+      patterns: [["role-todos", "list"]],
+      usage: ["  agent-hub role-todos list [--thread-id <thread-id>] [--role <role>] [--status <status>] [--json]"],
+      run: (args, context) => listRoleTodos(args, context.io, context.runtime)
+    },
+    {
+      patterns: [["role-events", "list"]],
+      usage: ["  agent-hub role-events list --role-call-id <role-call-id>|--thread-id <thread-id> [--json]"],
+      run: (args, context) => listRoleEvents(args, context.io, context.runtime)
+    },
+    {
+      patterns: [["memory", "list"]],
+      usage: ["  agent-hub memory list --project-id <project-id>"],
+      run: (args, context) => listMemory(args, context.io, context.runtime)
+    },
+    {
+      patterns: [["memory", "propose"]],
+      usage: ["  agent-hub memory propose --project-id <project-id> --category <category> --content <text>"],
+      run: (args, context) => proposeMemory(args, context.io, context.runtime)
+    },
+    {
+      patterns: [["memory", "approve"]],
+      usage: ["  agent-hub memory approve --memory-id <memory-id>"],
+      run: (args, context) => approveMemory(args, context.io, context.cwd, context.runtime)
+    },
+    {
+      patterns: [["memory", "reject"]],
+      usage: ["  agent-hub memory reject --memory-id <memory-id>"],
+      run: (args, context) => rejectMemory(args, context.io, context.runtime)
+    },
+    {
+      patterns: [["compare"]],
+      usage: ["  agent-hub compare --task-id <task-id> --baseline <run-id> --candidate <run-id>"],
+      run: (args, context) => compareRuns(args, context.io, context.runtime)
+    }
+  ];
+}
+
+export function helpText(debug = isEnvironmentDebugEnabled()): string {
   return [
     "agent-hub",
     "",
     "Usage:",
-    `  agent-hub [--project <path>] [--agent ${agentChoices}]`,
+    `  agent-hub [--project <path>] [--agent ${availableCliAgents(debug).join("|")}]`,
     "  agent-hub [--debug] run ...",
-    "  agent-hub [--db <path>] project add --name <name> --root <path>",
-    "  agent-hub [--db <path>] project list",
-    "  agent-hub [--db <path>] task create --project-id <project-id> --title <title> [--description <text>]",
-    "  agent-hub [--db <path>] task list [--project-id <project-id>]",
-    "  agent-hub [--db <path>] task history --task-id <task-id>",
-    "  agent-hub context init --project-root <path> --project-id <project-id>",
-    "  agent-hub context show --project-root <path> --project-id <project-id>",
-    "  agent-hub context build --project-root <path> --project-id <project-id> --task-id <task-id> --title <title> --prompt <prompt>",
-    "  agent-hub context export --project-root <path> --project-id <project-id> [--target repo] --dry-run|--write",
-    "  agent-hub [--db <path>] context plan <run-id>",
-    "  agent-hub [--db <path>] context selected <run-id>",
-    "  agent-hub [--db <path>] context omissions <run-id>",
-    "  agent-hub [--db <path>] context eval <run-id>",
-    "  agent-hub skills global create --id <id> --name <name> --description <text> [--body <markdown>] [--agent-hub-home <path>]",
-    "  agent-hub skills global list [--agent-hub-home <path>]",
-    `  agent-hub [--db <path>] run --task <task-id> --agent ${agentChoices} [--workspace-base <path>] [--skill [scope:]id]`,
-    `  agent-hub [--db <path>] run [--repo <path>] [--workspace-base <path>] [--retain-on-failure] [--continue-from-run <run-id>|--continue-from-message <message-id>] [--skill [scope:]id] "${promptAgentChoices} <task>"`,
-    "  agent-hub [--db <path>] run event add --run-id <run-id> --type <type> --message <message>",
-    "  agent-hub [--db <path>] threads list",
-    "  agent-hub [--db <path>] threads show <thread-id>",
-    "  agent-hub [--db <path>] rooms list --project-id <project-id>",
-    "  agent-hub [--db <path>] rooms create --project-id <project-id> --handle <handle> --title <title> [--description <text>]",
-    "  agent-hub [--db <path>] rooms use --project-id <project-id> --room <handle-or-thread-id>",
-    "  agent-hub [--db <path>] rooms send --project-id <project-id> --room <handle-or-thread-id> --message <text>",
-    "  agent-hub [--db <path>] rooms timeline --project-id <project-id> --room <handle-or-thread-id>",
-    "  agent-hub [--db <path>] chat [--thread <thread-id>|--room <handle-or-thread-id>]",
-    "  agent-hub [--db <path>] tui [--thread <thread-id>|--room <handle-or-thread-id>] [--agent codex|claude-code] [--max-iterations <n>]",
-    "  agent-hub [--db <path>] team roles list --project-id <project-id>",
-    "  agent-hub [--db <path>] team roles show --project-id <project-id> --role <handle>",
-    `  agent-hub [--db <path>] team roles save --project-id <project-id> --handle <handle> [--display-name <name>] [--executor ${agentChoices}|human|llm_api|workflow] [--skill [scope:]id] [--can-call-role --role-call-target <role>]`,
-    "  agent-hub [--db <path>] team roles import --project-id <project-id> [--path .agent-hub/team.yaml] [--preview|--write]",
-    "  agent-hub [--db <path>] team roles export --project-id <project-id> [--path .agent-hub/team.yaml] [--preview|--write]",
-    "  agent-hub [--db <path>] team roles executor --project-id <project-id> --role <handle>",
-    "  agent-hub runs list",
-    "  agent-hub runs events <run-id>",
-    "  agent-hub runs diff <run-id> [--stat|--patch] [--full]",
-    "  agent-hub runs show <run-id>",
-    "  agent-hub risks show <run-id>",
-    "  agent-hub reviews show <run-id>",
-    "  agent-hub reviews accept <run-id>",
-    "  agent-hub reviews reject <run-id> [--reason <text>]",
-    "  agent-hub role-calls list [--thread-id <thread-id>] [--role <role>] [--status <status>] [--json]",
-    "  agent-hub role-calls show <role-call-id> [--json]",
-    "  agent-hub role-todos list [--thread-id <thread-id>] [--role <role>] [--status <status>] [--json]",
-    "  agent-hub role-events list --role-call-id <role-call-id>|--thread-id <thread-id> [--json]",
-    "  agent-hub memory list --project-id <project-id>",
-    "  agent-hub memory propose --project-id <project-id> --category <category> --content <text>",
-    "  agent-hub memory approve --memory-id <memory-id>",
-    "  agent-hub memory reject --memory-id <memory-id>",
-    "  agent-hub compare --task-id <task-id> --baseline <run-id> --candidate <run-id>",
+    ...routeUsageLines(cliCommandRoutes(debug)),
     ""
   ].join("\n");
 }

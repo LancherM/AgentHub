@@ -1,5 +1,3 @@
-import { spawn } from "node:child_process";
-import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
@@ -98,6 +96,29 @@ import {
   type TaskRunRepository,
   type VerificationResultRepository
 } from "@agent-hub/core";
+
+type SqlitePrimitive = string | number | bigint | Buffer | null;
+type SqliteParameterValue = SqlitePrimitive | boolean | undefined;
+type SqliteParameterMap = Record<string, SqliteParameterValue>;
+type SqliteParameters = SqliteParameterValue[] | SqliteParameterMap;
+
+interface NativeSqliteStatement {
+  all(parameters?: SqliteParameters): Record<string, unknown>[];
+  run(parameters?: SqliteParameters): unknown;
+}
+
+interface NativeSqliteConnection {
+  exec(sql: string): void;
+  prepare(sql: string): NativeSqliteStatement;
+  pragma(sql: string): unknown;
+  close(): void;
+}
+
+interface NativeSqliteConstructor {
+  new(databasePath: string, options?: { timeout?: number }): NativeSqliteConnection;
+}
+
+const BetterSqlite3 = require("better-sqlite3") as NativeSqliteConstructor;
 
 export interface SqliteStorageOptions {
   databasePath?: string;
@@ -1149,10 +1170,10 @@ function defaultAppDataDirectory(): string {
 export class SqliteDatabase {
   private initializePromise: Promise<void> | undefined;
   private closed = false;
-  private readonly driver: SqliteCliDriver;
+  private readonly driver: NativeSqliteDriver;
 
   constructor(readonly databasePath: string) {
-    this.driver = new SqliteCliDriver(databasePath);
+    this.driver = new NativeSqliteDriver(databasePath);
   }
 
   async open(): Promise<void> {
@@ -1164,19 +1185,17 @@ export class SqliteDatabase {
     await this.driver.close();
   }
 
-  async execute(sql: string): Promise<void> {
+  async execute(sql: string, parameters?: SqliteParameters): Promise<void> {
     await this.ensureInitialized();
-    await this.executeWithoutInitialization(sql);
+    await this.executeWithoutInitialization(sql, parameters);
   }
 
-  async query<T extends Record<string, unknown>>(sql: string): Promise<T[]> {
+  async query<T extends Record<string, unknown>>(
+    sql: string,
+    parameters?: SqliteParameters
+  ): Promise<T[]> {
     await this.ensureInitialized();
-    const output = await this.queryScript(sql);
-    const trimmed = output.trim();
-    if (trimmed.length === 0) {
-      return [];
-    }
-    return JSON.parse(trimmed) as T[];
+    return this.queryWithoutInitialization<T>(sql, parameters);
   }
 
   async ensureInitialized(): Promise<void> {
@@ -1263,19 +1282,17 @@ VALUES (9, ${sqlString(new Date().toISOString())});
   }
 
   private async queryWithoutInitialization<T extends Record<string, unknown>>(
-    sql: string
+    sql: string,
+    parameters?: SqliteParameters
   ): Promise<T[]> {
-    const output = await this.queryScript(sql);
-    const trimmed = output.trim();
-    return trimmed.length === 0 ? [] : JSON.parse(trimmed) as T[];
+    return this.driver.query<T>(sql, parameters);
   }
 
-  private async executeWithoutInitialization(sql: string): Promise<void> {
-    await this.driver.run(sqlScript(sql));
-  }
-
-  private async queryScript(sql: string): Promise<string> {
-    return this.driver.run(sqlScript([".mode json", sql].join("\n")));
+  private async executeWithoutInitialization(
+    sql: string,
+    parameters?: SqliteParameters
+  ): Promise<void> {
+    this.driver.execute(sql, parameters);
   }
 }
 
@@ -4614,16 +4631,6 @@ function nullToUndefined<T>(value: T | null): T | undefined {
   return value === null ? undefined : value;
 }
 
-function sqlScript(sql: string): string {
-  return [
-    ".bail on",
-    ".timeout 5000",
-    "PRAGMA foreign_keys = ON;",
-    sql.trim(),
-    ""
-  ].join("\n");
-}
-
 function sqlString(value: string): string {
   return `'${value.replaceAll("'", "''")}'`;
 }
@@ -4666,154 +4673,72 @@ function isTerminalRoleTodoStatus(status: RoleTodoStatus): boolean {
   return status === "done" || status === "cancelled" || status === "rejected";
 }
 
-class SqliteCliDriver {
-  private child: ChildProcessWithoutNullStreams | undefined;
-  private childClosed = true;
-  private active:
-    | {
-      sentinel: string;
-      stdout: string;
-      stderr: Buffer[];
-      resolve(output: string): void;
-      reject(error: Error): void;
-    }
-    | undefined;
-  private queue: Promise<void> = Promise.resolve();
-  private requestCounter = 0;
+class NativeSqliteDriver {
+  private connection: NativeSqliteConnection | undefined;
 
   constructor(private readonly databasePath: string) {}
 
-  async run(script: string): Promise<string> {
-    const operation = this.queue.then(
-      () => this.runUnlocked(script),
-      () => this.runUnlocked(script)
-    );
-    this.queue = operation.then(
-      () => undefined,
-      () => undefined
-    );
-    return operation;
+  execute(sql: string, parameters?: SqliteParameters): void {
+    const connection = this.ensureConnection();
+    if (parameters === undefined) {
+      connection.exec(sql.trim());
+      return;
+    }
+    connection.prepare(singleStatementSql(sql)).run(normalizeSqliteParameters(parameters));
+  }
+
+  query<T extends Record<string, unknown>>(
+    sql: string,
+    parameters?: SqliteParameters
+  ): T[] {
+    const statement = this.ensureConnection().prepare(singleStatementSql(sql));
+    const rows = parameters === undefined
+      ? statement.all()
+      : statement.all(normalizeSqliteParameters(parameters));
+    return rows as T[];
   }
 
   async close(): Promise<void> {
-    await this.queue.catch(() => undefined);
-    if (!this.child || this.childClosed) {
-      return;
-    }
-    const child = this.child;
-    await new Promise<void>((resolve) => {
-      child.once("close", () => resolve());
-      child.stdin.end(".quit\n");
-    });
+    this.connection?.close();
+    this.connection = undefined;
   }
 
-  private async runUnlocked(script: string): Promise<string> {
-    const child = this.ensureChild();
-    const sentinel = this.nextSentinel();
-    return new Promise<string>((resolve, reject) => {
-      this.active = {
-        sentinel,
-        stdout: "",
-        stderr: [],
-        resolve: (output) => {
-          this.active = undefined;
-          resolve(output);
-        },
-        reject: (error) => {
-          this.active = undefined;
-          reject(error);
-        }
-      };
-      try {
-        child.stdin.write(`${script.trim()}\n.print ${sentinel}\n`);
-      } catch (error) {
-        this.rejectActive(sqliteExecutionError(error));
-      }
-    });
+  private ensureConnection(): NativeSqliteConnection {
+    this.connection ??= this.openConnection();
+    return this.connection;
   }
 
-  private ensureChild(): ChildProcessWithoutNullStreams {
-    if (this.child && !this.childClosed) {
-      return this.child;
-    }
-    const child = spawn("sqlite3", [this.databasePath], {
-      stdio: ["pipe", "pipe", "pipe"]
-    });
-    this.child = child;
-    this.childClosed = false;
-    child.stdout.on("data", (chunk: Buffer) => {
-      this.handleStdout(chunk);
-    });
-    child.stderr.on("data", (chunk: Buffer) => {
-      this.active?.stderr.push(chunk);
-    });
-    child.on("error", (error) => {
-      this.childClosed = true;
-      this.child = undefined;
-      this.rejectActive(sqliteExecutionError(error));
-    });
-    child.on("close", (code) => {
-      this.childClosed = true;
-      this.child = undefined;
-      if (this.active) {
-        const stderrText = Buffer.concat(this.active.stderr).toString("utf8");
-        this.rejectActive(
-          new Error(
-            `sqlite3 exited with code ${code}: ${
-              stderrText.trim() || this.active.stdout.trim()
-            }`
-          )
-        );
-      }
-    });
-    child.stdin.write(".bail on\n.timeout 5000\n");
-    return child;
-  }
-
-  private handleStdout(chunk: Buffer): void {
-    if (!this.active) {
-      return;
-    }
-    this.active.stdout += chunk.toString("utf8");
-    const consumed = consumeSqliteSentinel(
-      this.active.stdout,
-      this.active.sentinel
-    );
-    if (consumed === undefined) {
-      return;
-    }
-    this.active.resolve(consumed);
-  }
-
-  private rejectActive(error: Error): void {
-    this.active?.reject(error);
-  }
-
-  private nextSentinel(): string {
-    this.requestCounter += 1;
-    return `__agent_hub_sqlite_done_${process.pid}_${this.requestCounter}__`;
+  private openConnection(): NativeSqliteConnection {
+    const connection = new BetterSqlite3(this.databasePath, { timeout: 5000 });
+    connection.pragma("busy_timeout = 5000");
+    connection.pragma("foreign_keys = ON");
+    return connection;
   }
 }
 
-function consumeSqliteSentinel(
-  output: string,
-  sentinel: string
-): string | undefined {
-  const startMarker = `${sentinel}\n`;
-  if (output.startsWith(startMarker)) {
-    return "";
-  }
-  const marker = `\n${sentinel}\n`;
-  const index = output.indexOf(marker);
-  if (index === -1) {
-    return undefined;
-  }
-  return output.slice(0, index + 1);
+function singleStatementSql(sql: string): string {
+  return sql.trim().replace(/;\s*$/, "");
 }
 
-function sqliteExecutionError(error: unknown): Error {
-  const message = error instanceof Error ? error.message : String(error);
-  return new Error(
-    `sqlite3 execution failed. Ensure the sqlite3 CLI is installed: ${message}`
+function normalizeSqliteParameters(parameters: SqliteParameters): SqliteParameters {
+  if (Array.isArray(parameters)) {
+    return parameters.map(normalizeSqliteParameter);
+  }
+
+  return Object.fromEntries(
+    Object.entries(parameters).map(([key, value]) => [
+      key,
+      normalizeSqliteParameter(value)
+    ])
   );
+}
+
+function normalizeSqliteParameter(value: SqliteParameterValue): SqlitePrimitive {
+  if (value === undefined) {
+    return null;
+  }
+  if (typeof value === "boolean") {
+    return value ? 1 : 0;
+  }
+  return value;
 }

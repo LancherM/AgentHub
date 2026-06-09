@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { createRequire } from "node:module";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -21,6 +21,21 @@ import { createTestDirectory } from "./helpers";
 
 const createdAt = "2026-01-01T00:00:00.000Z";
 const updatedAt = "2026-01-01T00:00:01.000Z";
+
+interface TestSqliteConnection {
+  exec(sql: string): void;
+  pragma(sql: string): unknown;
+  close(): void;
+}
+
+interface TestSqliteConstructor {
+  new(databasePath: string, options?: { timeout?: number }): TestSqliteConnection;
+}
+
+const requireFromDbPackage = createRequire(
+  path.join(process.cwd(), "packages/db/package.json")
+);
+const TestSqlite = requireFromDbPackage("better-sqlite3") as TestSqliteConstructor;
 
 describe("SQLite storage", () => {
   it("initializes migrations in a temporary database", async () => {
@@ -561,7 +576,7 @@ INSERT INTO context_eval_events (
     await repositories.database.close();
   });
 
-  it("keeps SQLite storage usable after a failed statement closes the CLI session", async () => {
+  it("keeps SQLite storage usable after a failed statement", async () => {
     const databasePath = path.join(
       await createTestDirectory("sqlite-session-restart"),
       "agent-hub.sqlite"
@@ -570,7 +585,7 @@ INSERT INTO context_eval_events (
 
     await database.execute("CREATE TABLE sample (id TEXT PRIMARY KEY);");
     await expect(database.query("SELECT missing_column FROM sample;"))
-      .rejects.toThrow(/sqlite3 exited with code/);
+      .rejects.toThrow(/missing_column|no such column/);
 
     await database.execute("INSERT INTO sample (id) VALUES ('ok');");
     await expect(database.query<{ id: string }>("SELECT id FROM sample;"))
@@ -2051,7 +2066,6 @@ async function initializeSqliteThroughVersion(
     ];
   });
   const script = [
-    ".bail on",
     "PRAGMA foreign_keys = ON;",
     "CREATE TABLE IF NOT EXISTS schema_migrations (",
     "  version INTEGER PRIMARY KEY,",
@@ -2063,33 +2077,12 @@ async function initializeSqliteThroughVersion(
 }
 
 async function runSqlite(databasePath: string, script: string): Promise<void> {
-  await new Promise<void>((resolve, reject) => {
-    const child = spawn("sqlite3", [databasePath], {
-      stdio: ["pipe", "pipe", "pipe"]
-    });
-    const stdout: Buffer[] = [];
-    const stderr: Buffer[] = [];
-    child.stdout.on("data", (chunk: Buffer) => {
-      stdout.push(chunk);
-    });
-    child.stderr.on("data", (chunk: Buffer) => {
-      stderr.push(chunk);
-    });
-    child.on("error", reject);
-    child.on("close", (code) => {
-      if (code === 0) {
-        resolve();
-        return;
-      }
-      reject(
-        new Error(
-          `sqlite3 exited with code ${code}: ${
-            Buffer.concat(stderr).toString("utf8").trim() ||
-            Buffer.concat(stdout).toString("utf8").trim()
-          }`
-        )
-      );
-    });
-    child.stdin.end(script);
-  });
+  const database = new TestSqlite(databasePath, { timeout: 5000 });
+  try {
+    database.pragma("busy_timeout = 5000");
+    database.pragma("foreign_keys = ON");
+    database.exec(script);
+  } finally {
+    database.close();
+  }
 }
