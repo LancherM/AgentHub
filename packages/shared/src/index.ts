@@ -298,7 +298,8 @@ export const memoryAutomationReasonCodes = [
   "unsupported_category",
   "duplicate_content",
   "manual_only_category",
-  "already_approved"
+  "already_approved",
+  "per_run_limit_exceeded"
 ] as const;
 export type MemoryAutomationReasonCode =
   (typeof memoryAutomationReasonCodes)[number];

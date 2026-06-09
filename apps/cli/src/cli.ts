@@ -89,6 +89,7 @@ import {
 } from "@agent-hub/core";
 import {
   buildComparisonReport,
+  evaluateMemoryAutomationForRun,
   formatShellCommand,
   getRunReviewDecision,
   loadRunDiffReview,
@@ -717,6 +718,12 @@ function cliCommandRoutes(debug: boolean): CliCommandRoute<CliCommandContext>[] 
       patterns: [["role-events", "list"]],
       usage: ["  agent-hub role-events list --role-call-id <role-call-id>|--thread-id <thread-id> [--json]"],
       run: (args, context) => listRoleEvents(args, context.io, context.runtime)
+    },
+    {
+      patterns: [["memory", "automation", "evaluate"]],
+      usage: ["  agent-hub memory automation evaluate --run-id <run-id>"],
+      run: (args, context) =>
+        evaluateMemoryAutomation(args, context.io, context.runtime)
     },
     {
       patterns: [["memory", "list"]],
@@ -5418,6 +5425,60 @@ async function listMemory(
     for (const item of items) {
       io.stdout.write(
         `${item.id}\t${item.status}\t${item.category}\t${firstLine(item.content)}\n`
+      );
+    }
+    return 0;
+  } catch (error) {
+    io.stderr.write(`error: ${error instanceof Error ? error.message : String(error)}\n`);
+    return 1;
+  }
+}
+
+async function evaluateMemoryAutomation(
+  args: string[],
+  io: CliIO,
+  runtime: CliRuntime
+): Promise<number> {
+  try {
+    const runId = requiredFlag(args, "--run-id");
+    const evaluation = await evaluateMemoryAutomationForRun(
+      {
+        taskRunRepository: runtime.taskRunRepository,
+        taskRepository: runtime.taskRepository,
+        memoryItemRepository: runtime.memoryItemRepository,
+        verificationResultRepository: runtime.verificationResultRepository,
+        riskReportRepository: runtime.riskReportRepository
+      },
+      {
+        runId,
+        createdAt: nowIso()
+      }
+    );
+    io.stdout.write(
+      [
+        "Memory automation evaluation",
+        `run_id: ${evaluation.runId}`,
+        `policy_mode: ${evaluation.policy.mode}`,
+        `max_risk: ${evaluation.policy.maxRiskLevel}`,
+        `allow_skipped_verification: ${evaluation.policy.allowSkippedVerification}`,
+        `allowed_categories: ${evaluation.policy.allowedCategories.join(", ")}`,
+        `max_auto_approvals_per_run: ${evaluation.policy.maxAutoApprovalsPerRun}`,
+        `decisions: ${evaluation.decisions.length}`
+      ].join("\n") + "\n"
+    );
+    if (evaluation.decisions.length === 0) {
+      io.stdout.write("No memory proposals found for this run.\n");
+      return 0;
+    }
+    io.stdout.write("memory_id\tstatus\treasons\tmessage\n");
+    for (const decision of evaluation.decisions) {
+      io.stdout.write(
+        [
+          decision.memoryId,
+          decision.status,
+          decision.reasonCodes.join(","),
+          decision.message ?? ""
+        ].join("\t") + "\n"
       );
     }
     return 0;

@@ -89,7 +89,11 @@ core sequence:
     read-only. Proposed memory rows may carry local audit metadata and typed
     automation policy contracts, but no policy automatically promotes memory
     yet.
-14. Apply cleanup policy without accepting, merging, pushing, or deleting
+14. Evaluate memory automation dry-runs through a deterministic local evaluator
+    that reads run status, verification results, risk reports, duplicate
+    memory, and policy gates. Evaluation is read-only and does not write
+    approved memory.
+15. Apply cleanup policy without accepting, merging, pushing, or deleting
     branches automatically.
 
 After a task-run row exists, finalization is defensive. Diff, verification,

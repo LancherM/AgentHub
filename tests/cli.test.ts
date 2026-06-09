@@ -2676,6 +2676,15 @@ describe("CLI", () => {
     ).resolves.toBe(0);
     await expect(
       main([
+        "memory",
+        "automation",
+        "evaluate",
+        "--run-id",
+        "run_0002"
+      ], io, projectRoot, runtime)
+    ).resolves.toBe(0);
+    await expect(
+      main([
         "context",
         "init",
         "--project-root",
@@ -2715,6 +2724,9 @@ describe("CLI", () => {
     expect(renderedOutput).toContain(
       "proposed\tworkflow_rule\tVerification command for this project is pnpm test."
     );
+    expect(renderedOutput).toContain("Memory automation evaluation");
+    expect(renderedOutput).toContain("policy_mode: suggest_only");
+    expect(renderedOutput).toContain("policy_disabled");
     expect(contextPack.approvedMemorySections.join("\n")).not.toContain(
       "Verification command for this project is pnpm test."
     );

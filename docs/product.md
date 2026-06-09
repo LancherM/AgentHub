@@ -507,6 +507,12 @@ and writes only to the Agent Hub-owned context store by default. TaskRunner
 finalization and desktop explicit generation use the same deterministic
 proposal generator, while listing proposals remains read-only.
 
+The CLI includes a read-only memory automation dry run:
+`agent-hub memory automation evaluate --run-id <run-id>`. It evaluates stored
+proposals against the default local policy, verification, risk, duplicate, and
+category gates, then prints allow/block reasons without approving or writing
+memory.
+
 ## Desktop Experience
 
 The desktop app is a local conversation console. It opens registered projects,
