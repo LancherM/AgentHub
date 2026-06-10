@@ -30,6 +30,7 @@ export interface MemoryAutomationEvaluatorRepositories {
 export interface MemoryAutomationEvaluationInput {
   runId: string;
   policy?: MemoryAutomationPolicy;
+  reviewAccepted?: boolean;
   createdAt?: string;
 }
 
@@ -88,7 +89,11 @@ export class MemoryAutomationEvaluator {
       this.repositories.riskReportRepository.getLatestByRunId(run.id)
     ]);
     const evaluatedItems = projectItems
-      .filter((item) => item.taskId === task.id && item.status !== "rejected")
+      .filter((item) =>
+        item.taskId === task.id &&
+        item.status !== "rejected" &&
+        item.metadata?.sourceRunId === run.id
+      )
       .sort(compareMemoryItems);
     const canonicalByContent = canonicalMemoryByContent(projectItems);
     const runReasonCodes = runEvidenceReasonCodes({
@@ -102,7 +107,8 @@ export class MemoryAutomationEvaluator {
         item,
         policy,
         canonicalByContent,
-        runReasonCodes
+        runReasonCodes,
+        reviewAccepted: input.reviewAccepted ?? false
       })
     );
 
@@ -129,6 +135,7 @@ export class MemoryAutomationEvaluator {
     policy: MemoryAutomationPolicy;
     canonicalByContent: Map<string, MemoryItem>;
     runReasonCodes: Set<MemoryAutomationReasonCode>;
+    reviewAccepted: boolean;
   }): DecisionDraft {
     const reasonCodes = new Set(input.runReasonCodes);
     const normalizedContent = normalizeMemoryContent(input.item.content);
@@ -151,6 +158,11 @@ export class MemoryAutomationEvaluator {
 
     if (input.policy.mode === "suggest_only") {
       reasonCodes.add("policy_disabled");
+    } else if (
+      input.policy.mode === "auto_after_review_accept" &&
+      !input.reviewAccepted
+    ) {
+      reasonCodes.add("review_not_accepted");
     }
 
     if (hasSecretLikeText(input.item.content)) {
@@ -304,6 +316,7 @@ const blockingReasonCodes = new Set<MemoryAutomationReasonCode>([
   "unsafe_command",
   "secret_like_content",
   "unsupported_category",
+  "review_not_accepted",
   "per_run_limit_exceeded"
 ]);
 

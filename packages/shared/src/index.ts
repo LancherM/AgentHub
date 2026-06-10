@@ -299,6 +299,7 @@ export const memoryAutomationReasonCodes = [
   "duplicate_content",
   "manual_only_category",
   "already_approved",
+  "review_not_accepted",
   "per_run_limit_exceeded"
 ] as const;
 export type MemoryAutomationReasonCode =

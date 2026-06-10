@@ -1276,6 +1276,7 @@ describe("task runner", () => {
         ...item,
         projectId: "project_memory_eval",
         taskId: "task_memory_eval",
+        metadata: { sourceRunId: "run_memory_eval" },
         createdAt:
           item.id === "memory_eval_duplicate"
             ? "2026-01-01T00:00:01.000Z"
@@ -1339,6 +1340,216 @@ describe("task runner", () => {
     await expect(memoryItemRepository.get("memory_eval_eligible")).resolves.toMatchObject({
       status: "proposed"
     });
+  });
+
+  it("scopes memory automation evaluation to proposals from the requested run", async () => {
+    const taskRepository = new InMemoryTaskRepository();
+    const taskRunRepository = new InMemoryTaskRunRepository();
+    const verificationResultRepository = new InMemoryVerificationResultRepository();
+    const riskReportRepository = new InMemoryRiskReportRepository();
+    const memoryItemRepository = new InMemoryMemoryItemRepository();
+    const now = "2026-01-01T00:00:00.000Z";
+    await taskRepository.create({
+      id: "task_memory_scope",
+      projectId: "project_memory_scope",
+      title: "Evaluate scoped memory automation",
+      status: "open",
+      createdAt: now,
+      updatedAt: now
+    });
+    for (const runId of ["run_memory_scope_old", "run_memory_scope_new"]) {
+      await taskRunRepository.create({
+        id: runId,
+        taskId: "task_memory_scope",
+        agentKind: "fake",
+        status: "succeeded",
+        createdAt: now,
+        updatedAt: now
+      });
+      await verificationResultRepository.createMany([
+        {
+          id: `verification_${runId}`,
+          taskRunId: runId,
+          command: "pnpm test",
+          status: "passed",
+          exitCode: 0,
+          createdAt: now
+        }
+      ]);
+      await riskReportRepository.create({
+        id: `risk_${runId}`,
+        taskRunId: runId,
+        level: "low",
+        summary: "low risk",
+        changedFiles: [],
+        verificationSummary: "passed",
+        failedChecks: [],
+        riskFactors: [],
+        manualReviewChecklist: [],
+        acceptanceRecommendation: "Accept if expected.",
+        findings: [],
+        createdAt: now
+      });
+    }
+    await memoryItemRepository.create({
+      id: "memory_scope_old",
+      projectId: "project_memory_scope",
+      taskId: "task_memory_scope",
+      category: "workflow_rule",
+      status: "proposed",
+      content: "Old run memory.",
+      metadata: { sourceRunId: "run_memory_scope_old" },
+      createdAt: now,
+      updatedAt: now
+    });
+    await memoryItemRepository.create({
+      id: "memory_scope_new",
+      projectId: "project_memory_scope",
+      taskId: "task_memory_scope",
+      category: "workflow_rule",
+      status: "proposed",
+      content: "New run memory.",
+      metadata: { sourceRunId: "run_memory_scope_new" },
+      createdAt: "2026-01-01T00:00:01.000Z",
+      updatedAt: "2026-01-01T00:00:01.000Z"
+    });
+
+    const evaluation = await evaluateMemoryAutomationForRun(
+      {
+        taskRunRepository,
+        taskRepository,
+        memoryItemRepository,
+        verificationResultRepository,
+        riskReportRepository
+      },
+      {
+        runId: "run_memory_scope_old",
+        policy: {
+          mode: "auto_safe_on_success",
+          maxRiskLevel: "low",
+          allowSkippedVerification: false,
+          allowedCategories: ["workflow_rule"],
+          maxAutoApprovalsPerRun: 2
+        },
+        createdAt: now
+      }
+    );
+
+    expect(evaluation.decisions.map((decision) => decision.memoryId)).toEqual([
+      "memory_scope_old"
+    ]);
+  });
+
+  it("requires accepted review context for auto-after-review memory evaluation", async () => {
+    const taskRepository = new InMemoryTaskRepository();
+    const taskRunRepository = new InMemoryTaskRunRepository();
+    const verificationResultRepository = new InMemoryVerificationResultRepository();
+    const riskReportRepository = new InMemoryRiskReportRepository();
+    const memoryItemRepository = new InMemoryMemoryItemRepository();
+    const now = "2026-01-01T00:00:00.000Z";
+    await taskRepository.create({
+      id: "task_memory_review_gate",
+      projectId: "project_memory_review_gate",
+      title: "Evaluate review-gated memory automation",
+      status: "open",
+      createdAt: now,
+      updatedAt: now
+    });
+    await taskRunRepository.create({
+      id: "run_memory_review_gate",
+      taskId: "task_memory_review_gate",
+      agentKind: "fake",
+      status: "succeeded",
+      createdAt: now,
+      updatedAt: now
+    });
+    await verificationResultRepository.createMany([
+      {
+        id: "verification_memory_review_gate",
+        taskRunId: "run_memory_review_gate",
+        command: "pnpm test",
+        status: "passed",
+        exitCode: 0,
+        createdAt: now
+      }
+    ]);
+    await riskReportRepository.create({
+      id: "risk_memory_review_gate",
+      taskRunId: "run_memory_review_gate",
+      level: "low",
+      summary: "low risk",
+      changedFiles: [],
+      verificationSummary: "passed",
+      failedChecks: [],
+      riskFactors: [],
+      manualReviewChecklist: [],
+      acceptanceRecommendation: "Accept if expected.",
+      findings: [],
+      createdAt: now
+    });
+    await memoryItemRepository.create({
+      id: "memory_review_gate",
+      projectId: "project_memory_review_gate",
+      taskId: "task_memory_review_gate",
+      category: "workflow_rule",
+      status: "proposed",
+      content: "Review-gated memory.",
+      metadata: { sourceRunId: "run_memory_review_gate" },
+      createdAt: now,
+      updatedAt: now
+    });
+    const policy = {
+      mode: "auto_after_review_accept" as const,
+      maxRiskLevel: "low" as const,
+      allowSkippedVerification: false,
+      allowedCategories: ["workflow_rule" as const],
+      maxAutoApprovalsPerRun: 2
+    };
+
+    const beforeReview = await evaluateMemoryAutomationForRun(
+      {
+        taskRunRepository,
+        taskRepository,
+        memoryItemRepository,
+        verificationResultRepository,
+        riskReportRepository
+      },
+      {
+        runId: "run_memory_review_gate",
+        policy,
+        createdAt: now
+      }
+    );
+    const afterReview = await evaluateMemoryAutomationForRun(
+      {
+        taskRunRepository,
+        taskRepository,
+        memoryItemRepository,
+        verificationResultRepository,
+        riskReportRepository
+      },
+      {
+        runId: "run_memory_review_gate",
+        policy,
+        reviewAccepted: true,
+        createdAt: now
+      }
+    );
+
+    expect(beforeReview.decisions).toEqual([
+      expect.objectContaining({
+        memoryId: "memory_review_gate",
+        status: "blocked",
+        reasonCodes: ["review_not_accepted"]
+      })
+    ]);
+    expect(afterReview.decisions).toEqual([
+      expect.objectContaining({
+        memoryId: "memory_review_gate",
+        status: "eligible",
+        reasonCodes: ["within_policy"]
+      })
+    ]);
   });
 
   it("blocks unsafe memory automation evidence", async () => {
@@ -1409,6 +1620,7 @@ describe("task runner", () => {
       category: "workflow_rule",
       status: "proposed",
       content: "Remember the bearer token from the run.",
+      metadata: { sourceRunId: "run_memory_blocked" },
       createdAt: now,
       updatedAt: now
     });
