@@ -17,6 +17,7 @@ import {
   normalizeMemoryContent
 } from "@agent-hub/task-runner";
 import type {
+  MemoryAutoApprovalAudit,
   MemoryApprovalResult,
   MemoryProposal,
   MemoryProposalSource
@@ -214,7 +215,9 @@ function toMemoryProposal(
       ? "approved"
       : item.status === "rejected"
         ? "ignored"
-        : "pending";
+        : item.status === "retired"
+          ? "retired"
+          : "pending";
   return {
     id: item.id,
     runId,
@@ -225,7 +228,8 @@ function toMemoryProposal(
     createdAt: item.createdAt,
     decidedAt: status === "pending" ? undefined : item.updatedAt,
     approvedMemoryPath:
-      status === "approved" ? approvedMemoryPath : undefined
+      status === "approved" ? approvedMemoryPath : undefined,
+    autoApproval: parseAutoApproval(item.metadata?.autoApproval)
   };
 }
 
@@ -302,4 +306,34 @@ function sourceFor(content: string): MemoryProposalSource {
     return "verification";
   }
   return "run";
+}
+
+function parseAutoApproval(value: unknown): MemoryAutoApprovalAudit | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  const record = value as Record<string, unknown>;
+  const policyMode = record.policyMode;
+  const approvedAt = record.approvedAt;
+  if (
+    policyMode !== "auto_after_review_accept" &&
+    policyMode !== "auto_safe_on_success"
+  ) {
+    return undefined;
+  }
+  if (typeof approvedAt !== "string") {
+    return undefined;
+  }
+  return {
+    policyMode,
+    approvedAt,
+    reason: typeof record.reason === "string" ? record.reason : undefined,
+    riskLevel: typeof record.riskLevel === "string" ? record.riskLevel : undefined,
+    verificationStatus:
+      typeof record.verificationStatus === "string"
+        ? record.verificationStatus
+        : undefined,
+    writebackPath:
+      typeof record.writebackPath === "string" ? record.writebackPath : undefined
+  };
 }

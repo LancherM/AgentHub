@@ -130,7 +130,12 @@ const api: AgentHubApi = {
     getVerification: (projectId: string) =>
       ipcRenderer.invoke(IPC_CHANNELS.settingsGetVerification, projectId),
     saveVerification: (input: VerificationSettings) =>
-      ipcRenderer.invoke(IPC_CHANNELS.settingsSaveVerification, input)
+      ipcRenderer.invoke(IPC_CHANNELS.settingsSaveVerification, input),
+    getMemoryPolicy: (projectId: string) =>
+      ipcRenderer.invoke(IPC_CHANNELS.settingsGetMemoryPolicy, projectId),
+    saveMemoryPolicy: (
+      input: Parameters<AgentHubApi["settings"]["saveMemoryPolicy"]>[0]
+    ) => ipcRenderer.invoke(IPC_CHANNELS.settingsSaveMemoryPolicy, input)
   }
 };
 

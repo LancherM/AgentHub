@@ -33,6 +33,8 @@ import {
   InMemoryRunArtifactRepository,
   InMemoryRunEventRepository,
   InMemoryRunMetadataRepository,
+  InMemoryProjectRepository,
+  InMemorySettingsRepository,
   InMemoryTaskRepository,
   InMemoryTaskRunRepository,
   InMemoryVerificationResultRepository,
@@ -50,8 +52,10 @@ import {
 } from "@agent-hub/core";
 import {
   FixedClock,
+  applyMemoryAutomationForRun,
   evaluateMemoryAutomationForRun,
   generateMemoryProposalsFromCompletedRun,
+  saveProjectMemoryAutomationPolicy,
   SequenceIdGenerator,
   TaskRunner,
   TaskRunnerError
@@ -1550,6 +1554,221 @@ describe("task runner", () => {
         reasonCodes: ["within_policy"]
       })
     ]);
+  });
+
+  it("auto-approves only memory generated from the accepted run", async () => {
+    const projectRoot = await createTestDirectory("agent-hub-memory-apply-project");
+    const agentHubHome = await createTestDirectory("agent-hub-memory-apply-home");
+    const projectRepository = new InMemoryProjectRepository();
+    const settingsRepository = new InMemorySettingsRepository();
+    const taskRepository = new InMemoryTaskRepository();
+    const taskRunRepository = new InMemoryTaskRunRepository();
+    const verificationResultRepository = new InMemoryVerificationResultRepository();
+    const riskReportRepository = new InMemoryRiskReportRepository();
+    const memoryItemRepository = new InMemoryMemoryItemRepository();
+    const now = "2026-01-01T00:00:00.000Z";
+    await projectRepository.create({
+      id: "project_memory_apply",
+      name: "Memory Apply",
+      rootPath: projectRoot,
+      createdAt: now,
+      updatedAt: now
+    });
+    await taskRepository.create({
+      id: "task_memory_apply",
+      projectId: "project_memory_apply",
+      title: "Apply scoped memory automation",
+      status: "open",
+      createdAt: now,
+      updatedAt: now
+    });
+    for (const runId of ["run_memory_apply_old", "run_memory_apply_new"]) {
+      await taskRunRepository.create({
+        id: runId,
+        taskId: "task_memory_apply",
+        agentKind: "fake",
+        status: "succeeded",
+        createdAt: now,
+        updatedAt: now
+      });
+      await verificationResultRepository.createMany([
+        {
+          id: `verification_${runId}`,
+          taskRunId: runId,
+          command: "pnpm test",
+          status: "passed",
+          exitCode: 0,
+          createdAt: now
+        }
+      ]);
+      await riskReportRepository.create({
+        id: `risk_${runId}`,
+        taskRunId: runId,
+        level: "low",
+        summary: "low risk",
+        changedFiles: [],
+        verificationSummary: "passed",
+        failedChecks: [],
+        riskFactors: [],
+        manualReviewChecklist: [],
+        acceptanceRecommendation: "Accept if expected.",
+        findings: [],
+        createdAt: now
+      });
+    }
+    await memoryItemRepository.create({
+      id: "memory_apply_old",
+      projectId: "project_memory_apply",
+      taskId: "task_memory_apply",
+      category: "workflow_rule",
+      status: "proposed",
+      content: "Old run approved memory.",
+      metadata: { sourceRunId: "run_memory_apply_old" },
+      createdAt: now,
+      updatedAt: now
+    });
+    await memoryItemRepository.create({
+      id: "memory_apply_new",
+      projectId: "project_memory_apply",
+      taskId: "task_memory_apply",
+      category: "workflow_rule",
+      status: "proposed",
+      content: "New run proposed memory.",
+      metadata: { sourceRunId: "run_memory_apply_new" },
+      createdAt: "2026-01-01T00:00:01.000Z",
+      updatedAt: "2026-01-01T00:00:01.000Z"
+    });
+    await saveProjectMemoryAutomationPolicy(
+      { settingsRepository },
+      {
+        projectId: "project_memory_apply",
+        policy: {
+          mode: "auto_after_review_accept",
+          maxRiskLevel: "low",
+          allowSkippedVerification: false,
+          allowedCategories: ["workflow_rule"],
+          maxAutoApprovalsPerRun: 2
+        },
+        updatedAt: now
+      }
+    );
+
+    const result = await applyMemoryAutomationForRun(
+      {
+        taskRunRepository,
+        taskRepository,
+        projectRepository,
+        settingsRepository,
+        memoryItemRepository,
+        verificationResultRepository,
+        riskReportRepository
+      },
+      {
+        runId: "run_memory_apply_old",
+        trigger: "review_accepted",
+        now: () => now,
+        agentHubHome
+      }
+    );
+
+    expect(result.autoApproved.map((item) => item.memoryId)).toEqual([
+      "memory_apply_old"
+    ]);
+    await expect(memoryItemRepository.get("memory_apply_old")).resolves.toMatchObject({
+      status: "approved"
+    });
+    await expect(memoryItemRepository.get("memory_apply_new")).resolves.toMatchObject({
+      status: "proposed"
+    });
+    await expect(
+      fs.readFile(
+        path.join(agentHubHome, "context-stores", "project_memory_apply", "memory", "approved.md"),
+        "utf8"
+      )
+    ).resolves.toContain("Old run approved memory.");
+  });
+
+  it("auto-approves safe memory after successful run finalization when policy opts in", async () => {
+    const projectRoot = await createTestDirectory("agent-hub-auto-safe-project");
+    const runRoot = await createTestDirectory("agent-hub-auto-safe-runs");
+    const agentHubHome = await createTestDirectory("agent-hub-auto-safe-home");
+    await fs.writeFile(path.join(projectRoot, "README.md"), "fixture\n", "utf8");
+    const projectRepository = new InMemoryProjectRepository();
+    const settingsRepository = new InMemorySettingsRepository();
+    const memoryItemRepository = new InMemoryMemoryItemRepository();
+    await projectRepository.create({
+      id: "project_auto_safe",
+      name: "Auto Safe",
+      rootPath: projectRoot,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z"
+    });
+    await saveProjectMemoryAutomationPolicy(
+      { settingsRepository },
+      {
+        projectId: "project_auto_safe",
+        policy: {
+          mode: "auto_safe_on_success",
+          maxRiskLevel: "medium",
+          allowSkippedVerification: false,
+          allowedCategories: ["workflow_rule"],
+          maxAutoApprovalsPerRun: 2
+        },
+        updatedAt: "2026-01-01T00:00:00.000Z"
+      }
+    );
+    const runner = new TaskRunner({
+      defaultRunRoot: runRoot,
+      projectRepository,
+      settingsRepository,
+      memoryItemRepository,
+      workspaceManager: new TestWorkspaceManager(runRoot),
+      diffCollector: new StaticDiffCollector(),
+      verificationRunner: new VerificationRunner(new MockShellExecutor()),
+      idGenerator: new SequenceIdGenerator(),
+      clock: new FixedClock("2026-01-01T00:00:00.000Z")
+    });
+
+    const result = await runner.run({
+      projectRoot,
+      projectId: "project_auto_safe",
+      taskPrompt: "Capture a safe verification memory.",
+      agentKind: "fake",
+      agentHubHome,
+      verificationCommands: [
+        {
+          id: "test",
+          command: "pnpm",
+          args: ["test"]
+        }
+      ]
+    });
+    const items = await memoryItemRepository.listByProjectId("project_auto_safe");
+    const approvedMemory = await fs.readFile(
+      path.join(agentHubHome, "context-stores", "project_auto_safe", "memory", "approved.md"),
+      "utf8"
+    );
+
+    expect(result.status).toBe("succeeded");
+    expect(result.warnings).not.toContainEqual(
+      expect.stringContaining("memory automation finalization failed")
+    );
+    expect(items).toContainEqual(
+      expect.objectContaining({
+        status: "approved",
+        content: "Verification command for this project is pnpm test.",
+        metadata: expect.objectContaining({
+          autoApproval: expect.objectContaining({
+            policyMode: "auto_safe_on_success",
+            verificationStatus: "passed",
+            riskLevel: "low"
+          })
+        })
+      })
+    );
+    expect(approvedMemory).toContain(
+      "Verification command for this project is pnpm test."
+    );
   });
 
   it("blocks unsafe memory automation evidence", async () => {

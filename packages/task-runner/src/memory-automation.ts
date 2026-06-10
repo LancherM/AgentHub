@@ -1,6 +1,8 @@
 import {
+  parseMemoryAutomationPolicySettingValue,
   createDefaultMemoryAutomationPolicy,
   validateMemoryAutomationEvaluation,
+  validateMemoryItem,
   validateMemoryAutomationPolicy,
   type MemoryAutomationDecision,
   type MemoryAutomationEvaluation,
@@ -8,14 +10,17 @@ import {
   type MemoryAutomationReasonCode,
   type MemoryItem,
   type MemoryItemRepository,
+  type ProjectRepository,
   type RiskReport,
   type RiskReportRepository,
+  type SettingsRepository,
   type TaskRepository,
   type TaskRun,
   type TaskRunRepository,
   type VerificationResult,
   type VerificationResultRepository
 } from "@agent-hub/core";
+import { appendApprovedMemory } from "@agent-hub/context-compiler";
 import { hasDangerousCommandText } from "@agent-hub/safety";
 import { normalizeMemoryContent } from "./memory-proposals";
 
@@ -32,6 +37,44 @@ export interface MemoryAutomationEvaluationInput {
   policy?: MemoryAutomationPolicy;
   reviewAccepted?: boolean;
   createdAt?: string;
+}
+
+export interface MemoryAutomationPolicyRepositories {
+  settingsRepository: SettingsRepository;
+}
+
+export interface MemoryAutomationApplyRepositories
+  extends MemoryAutomationEvaluatorRepositories,
+    MemoryAutomationPolicyRepositories {
+  projectRepository: ProjectRepository;
+}
+
+export type MemoryAutomationApplyTrigger =
+  | "review_accepted"
+  | "run_finalized";
+
+export interface MemoryAutomationApplyInput {
+  runId: string;
+  trigger: MemoryAutomationApplyTrigger;
+  now: () => string;
+  agentHubHome?: string;
+}
+
+export interface MemoryAutomationApprovedItem {
+  memoryId: string;
+  content: string;
+  approvedMemoryPath: string;
+  writeback: "written" | "already_present";
+}
+
+export interface MemoryAutomationApplyResult {
+  runId: string;
+  trigger: MemoryAutomationApplyTrigger;
+  policy: MemoryAutomationPolicy;
+  evaluation: MemoryAutomationEvaluation;
+  autoApproved: MemoryAutomationApprovedItem[];
+  skipped: MemoryAutomationDecision[];
+  message: string;
 }
 
 interface DecisionDraft {
@@ -92,6 +135,7 @@ export class MemoryAutomationEvaluator {
       .filter((item) =>
         item.taskId === task.id &&
         item.status !== "rejected" &&
+        item.status !== "retired" &&
         item.metadata?.sourceRunId === run.id
       )
       .sort(compareMemoryItems);
@@ -181,6 +225,158 @@ export async function evaluateMemoryAutomationForRun(
   input: MemoryAutomationEvaluationInput
 ): Promise<MemoryAutomationEvaluation> {
   return new MemoryAutomationEvaluator(repositories).evaluateRun(input);
+}
+
+export function memoryAutomationPolicySettingKey(projectId: string): string {
+  return `project.${projectId}.memoryAutomationPolicy`;
+}
+
+export async function loadProjectMemoryAutomationPolicy(
+  repositories: MemoryAutomationPolicyRepositories,
+  projectId: string
+): Promise<MemoryAutomationPolicy> {
+  const setting = await repositories.settingsRepository.get(
+    memoryAutomationPolicySettingKey(projectId)
+  );
+  return parseMemoryAutomationPolicySettingValue(setting?.value);
+}
+
+export async function saveProjectMemoryAutomationPolicy(
+  repositories: MemoryAutomationPolicyRepositories,
+  input: {
+    projectId: string;
+    policy: MemoryAutomationPolicy;
+    updatedAt: string;
+  }
+): Promise<MemoryAutomationPolicy> {
+  const policy = validateMemoryAutomationPolicy(input.policy);
+  await repositories.settingsRepository.set({
+    key: memoryAutomationPolicySettingKey(input.projectId),
+    value: policy,
+    updatedAt: input.updatedAt
+  });
+  return policy;
+}
+
+export async function applyMemoryAutomationForRun(
+  repositories: MemoryAutomationApplyRepositories,
+  input: MemoryAutomationApplyInput
+): Promise<MemoryAutomationApplyResult> {
+  const run = await repositories.taskRunRepository.get(input.runId);
+  if (!run) {
+    throw new Error(`run ${input.runId} not found`);
+  }
+  const task = await repositories.taskRepository.get(run.taskId);
+  if (!task) {
+    throw new Error(`task ${run.taskId} not found`);
+  }
+  const project = await repositories.projectRepository.get(task.projectId);
+  if (!project) {
+    throw new Error(`project ${task.projectId} not found`);
+  }
+  const policy = await loadProjectMemoryAutomationPolicy(
+    repositories,
+    project.id
+  );
+  const evaluation = await evaluateMemoryAutomationForRun(repositories, {
+    runId: run.id,
+    policy,
+    reviewAccepted: input.trigger === "review_accepted",
+    createdAt: input.now()
+  });
+  const triggerMatchesPolicy =
+    (input.trigger === "review_accepted" &&
+      policy.mode === "auto_after_review_accept") ||
+    (input.trigger === "run_finalized" &&
+      policy.mode === "auto_safe_on_success");
+  if (!triggerMatchesPolicy) {
+    return {
+      runId: run.id,
+      trigger: input.trigger,
+      policy,
+      evaluation,
+      autoApproved: [],
+      skipped: evaluation.decisions,
+      message: `Memory automation skipped for policy mode ${policy.mode}.`
+    };
+  }
+
+  const autoApproved: MemoryAutomationApprovedItem[] = [];
+  const skipped: MemoryAutomationDecision[] = [];
+  for (const decision of evaluation.decisions) {
+    if (decision.status !== "eligible") {
+      skipped.push(decision);
+      continue;
+    }
+    const item = await repositories.memoryItemRepository.get(decision.memoryId);
+    if (!item || item.status !== "proposed") {
+      skipped.push({
+        ...decision,
+        status: item?.status === "approved" ? "already_approved" : "blocked",
+        reasonCodes:
+          item?.status === "approved"
+            ? ["already_approved"]
+            : ["run_not_succeeded"],
+        message: item
+          ? "Memory item is no longer proposed."
+          : `Memory item ${decision.memoryId} was not found.`
+      });
+      continue;
+    }
+    if (item.metadata?.sourceRunId !== run.id) {
+      skipped.push({
+        ...decision,
+        status: "blocked",
+        reasonCodes: ["run_not_succeeded"],
+        message: "Memory item was not generated from this run."
+      });
+      continue;
+    }
+    const approvedAt = input.now();
+    const writeback = await appendApprovedMemory({
+      projectRoot: project.rootPath,
+      projectId: project.id,
+      memoryId: item.id,
+      content: item.content,
+      approvedAt,
+      agentHubHome: input.agentHubHome
+    });
+    const metadata = {
+      ...(item.metadata ?? {}),
+      autoApproval: {
+        policyMode: policy.mode,
+        approvedAt,
+        reason: decision.reasonCodes.join(","),
+        riskLevel: await latestRiskLevel(repositories, run.id),
+        verificationStatus: await verificationStatus(repositories, run.id),
+        writebackPath: writeback.path
+      }
+    };
+    await repositories.memoryItemRepository.create(
+      validateMemoryItem({
+        ...item,
+        status: "approved",
+        metadata,
+        updatedAt: approvedAt
+      })
+    );
+    autoApproved.push({
+      memoryId: item.id,
+      content: item.content,
+      approvedMemoryPath: writeback.path,
+      writeback: writeback.written ? "written" : "already_present"
+    });
+  }
+
+  return {
+    runId: run.id,
+    trigger: input.trigger,
+    policy,
+    evaluation,
+    autoApproved,
+    skipped,
+    message: `Memory automation auto-approved ${autoApproved.length} item(s); skipped ${skipped.length}.`
+  };
 }
 
 function runEvidenceReasonCodes(input: {
@@ -337,6 +533,25 @@ function summarizeVerification(
   return "skipped";
 }
 
+async function latestRiskLevel(
+  repositories: Pick<MemoryAutomationApplyRepositories, "riskReportRepository">,
+  runId: string
+): Promise<string | undefined> {
+  return (await repositories.riskReportRepository.getLatestByRunId(runId))?.level;
+}
+
+async function verificationStatus(
+  repositories: Pick<
+    MemoryAutomationApplyRepositories,
+    "verificationResultRepository"
+  >,
+  runId: string
+): Promise<string> {
+  return summarizeVerification(
+    await repositories.verificationResultRepository.listByRunId(runId)
+  );
+}
+
 function hasSensitivePathRisk(riskReport: RiskReport): boolean {
   return (
     riskReport.changedFiles.some((filePath) =>
@@ -399,6 +614,9 @@ function compareMemoryItems(left: MemoryItem, right: MemoryItem): number {
 
 function memoryStatusRank(status: MemoryItem["status"]): number {
   if (status === "approved") {
+    return 4;
+  }
+  if (status === "retired") {
     return 3;
   }
   if (status === "proposed") {

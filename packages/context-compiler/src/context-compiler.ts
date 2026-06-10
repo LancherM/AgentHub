@@ -126,10 +126,22 @@ export interface ApprovedMemoryWriteInput extends ContextStoreInitInput {
   approvedAt?: string;
 }
 
+export interface ApprovedMemoryRetireInput extends ContextStoreInitInput {
+  memoryId: string;
+  retiredAt: string;
+  reason?: string;
+}
+
 export interface ApprovedMemoryWriteResult {
   config: ContextStoreConfig;
   path: string;
   written: boolean;
+}
+
+export interface ApprovedMemoryRetireResult {
+  config: ContextStoreConfig;
+  path: string;
+  retired: boolean;
 }
 
 export interface ApprovedMemoryPathResult {
@@ -673,6 +685,38 @@ export async function appendApprovedMemory(
   return { config, path: approvedPath, written: true };
 }
 
+export async function retireApprovedMemory(
+  input: ApprovedMemoryRetireInput
+): Promise<ApprovedMemoryRetireResult> {
+  const { config, path: approvedPath } = resolveApprovedMemoryPath(input);
+  await ensureFile(approvedPath, defaultContextFileContent("memory/approved.md"));
+  const existing = await readFileIfExists(approvedPath) ?? "";
+  const marker = `<!-- agent-hub:memory ${input.memoryId} -->`;
+  const chunks = approvedMemoryChunks(existing);
+  let retired = false;
+  const nextChunks = chunks.map((chunk) => {
+    if (!chunk.trimStart().startsWith(marker) || hasRetiredMetadata(chunk)) {
+      return chunk;
+    }
+    retired = true;
+    const lines = chunk.replace(/\r\n/g, "\n").split("\n");
+    const insertAt = approvedMemoryMetadataInsertIndex(lines);
+    lines.splice(
+      insertAt,
+      0,
+      `retired_at: ${input.retiredAt}`,
+      ...(input.reason ? [`retired_reason: ${input.reason}`] : [])
+    );
+    return lines.join("\n");
+  });
+  if (!retired) {
+    return { config, path: approvedPath, retired: false };
+  }
+  const next = nextChunks.join("\n\n").trimStart();
+  await safeWriteFile(approvedPath, `${next.trimEnd()}\n`, config.storeRoot);
+  return { config, path: approvedPath, retired: true };
+}
+
 export function resolveApprovedMemoryPath(
   input: ContextStoreInitInput
 ): ApprovedMemoryPathResult {
@@ -1127,7 +1171,31 @@ function approvedMemoryContent(content: string): string {
   if (normalized === "# Approved Memory") {
     return "";
   }
-  return normalized.replace(/^# Approved Memory[ \t]*\n+/, "").trim();
+  const body = normalized.replace(/^# Approved Memory[ \t]*\n+/, "").trim();
+  if (!body.includes("<!-- agent-hub:memory ")) {
+    return body;
+  }
+  return approvedMemoryChunks(body)
+    .filter((chunk) => !hasRetiredMetadata(chunk))
+    .join("\n\n")
+    .trim();
+}
+
+function approvedMemoryChunks(content: string): string[] {
+  return content
+    .replace(/\r\n/g, "\n")
+    .split(/\n{2,}(?=<!-- agent-hub:memory [^>]+ -->)/)
+    .map((chunk) => chunk.trim())
+    .filter((chunk) => chunk.length > 0);
+}
+
+function hasRetiredMetadata(chunk: string): boolean {
+  return /^retired_at:/m.test(chunk);
+}
+
+function approvedMemoryMetadataInsertIndex(lines: string[]): number {
+  const firstBlank = lines.findIndex((line, index) => index > 0 && line.trim() === "");
+  return firstBlank === -1 ? lines.length : firstBlank;
 }
 
 function hasApprovedMemoryContent(existing: string, content: string): boolean {

@@ -8,6 +8,7 @@ import type {
   DesktopRuntimeConfig,
   HandoffCopyKind,
   LifecycleActionInput,
+  MemoryAutomationPolicySettings,
   RunEvent,
   SaveTeamRoleInput,
   SendThreadMessageInput,
@@ -273,7 +274,11 @@ export function createIpcHandlers(
     [IPC_CHANNELS.settingsGetVerification]: async (_event, input) =>
       services.settings.getVerification(parseId(input, "projectId")),
     [IPC_CHANNELS.settingsSaveVerification]: async (_event, input) =>
-      services.settings.saveVerification(input as VerificationSettings)
+      services.settings.saveVerification(input as VerificationSettings),
+    [IPC_CHANNELS.settingsGetMemoryPolicy]: async (_event, input) =>
+      services.settings.getMemoryPolicy(parseId(input, "projectId")),
+    [IPC_CHANNELS.settingsSaveMemoryPolicy]: async (_event, input) =>
+      services.settings.saveMemoryPolicy(input as MemoryAutomationPolicySettings)
   });
 }
 

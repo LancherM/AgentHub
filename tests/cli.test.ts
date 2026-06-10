@@ -2732,6 +2732,193 @@ describe("CLI", () => {
     );
   });
 
+  it("auto-approves eligible memory after accepted review when policy opts in", async () => {
+    const projectRoot = await createTestDirectory("cli-auto-memory-project");
+    const runRoot = path.join(
+      await createTestDirectory("cli-auto-memory-runs"),
+      "runs"
+    );
+    const databasePath = path.join(
+      await createTestDirectory("cli-auto-memory-db"),
+      "agent-hub.sqlite"
+    );
+    const agentHubHome = await createTestDirectory("cli-auto-memory-home");
+    const runtime = createCliRuntime({
+      sqliteDatabasePath: databasePath,
+      defaultRunRoot: runRoot,
+      workspaceManager: new TestWorkspaceManager(runRoot),
+      diffCollector: new StaticDiffCollector(),
+      verificationRunner: new VerificationRunner(
+        new MockShellExecutor([{ exitCode: 0, stdout: "ok\n" }])
+      ),
+      idGenerator: new SequenceIdGenerator(),
+      clock: new FixedClock("2026-01-01T00:00:00.000Z")
+    });
+    const output: string[] = [];
+    const errors: string[] = [];
+    const io = {
+      stdout: { write: (chunk: string) => { output.push(chunk); return true; } },
+      stderr: { write: (chunk: string) => { errors.push(chunk); return true; } }
+    };
+
+    await expect(
+      main([
+        "run",
+        "--verify",
+        "pnpm test",
+        "@fake",
+        "capture auto memory"
+      ], io, projectRoot, runtime)
+    ).resolves.toBe(0);
+    await expect(
+      main([
+        "memory",
+        "policy",
+        "show",
+        "--project-id",
+        "adhoc_project"
+      ], io, projectRoot, runtime)
+    ).resolves.toBe(0);
+    await expect(
+      main([
+        "memory",
+        "policy",
+        "set",
+        "--project-id",
+        "adhoc_project",
+        "--mode",
+        "auto_after_review_accept",
+        "--max-risk",
+        "medium",
+        "--max-auto-approvals-per-run",
+        "2"
+      ], io, projectRoot, runtime)
+    ).resolves.toBe(0);
+    await expect(
+      main([
+        "reviews",
+        "accept",
+        "run_0002",
+        "--agent-hub-home",
+        agentHubHome
+      ], io, projectRoot, runtime)
+    ).resolves.toBe(0);
+    await expect(
+      main(["memory", "list", "--project-id", "adhoc_project"], io, projectRoot, runtime)
+    ).resolves.toBe(0);
+    await expect(
+      main([
+        "memory",
+        "policy",
+        "set",
+        "--project-id",
+        "adhoc_project",
+        "--mode",
+        "auto_safe_on_success",
+        "--max-risk",
+        "low"
+      ], io, projectRoot, runtime)
+    ).resolves.toBe(0);
+    const approvedItems = await runtime.memoryItemRepository.listByProjectId(
+      "adhoc_project"
+    );
+    const approvedItem = approvedItems.find((item) => item.status === "approved");
+    expect(approvedItem).toBeDefined();
+    await expect(
+      main([
+        "memory",
+        "retire",
+        "--memory-id",
+        approvedItem!.id,
+        "--reason",
+        "obsolete workflow",
+        "--agent-hub-home",
+        agentHubHome
+      ], io, projectRoot, runtime)
+    ).resolves.toBe(0);
+    await expect(
+      main(["memory", "list", "--project-id", "adhoc_project"], io, projectRoot, runtime)
+    ).resolves.toBe(0);
+
+    const renderedOutput = output.join("");
+    const approvedPath = path.join(
+      agentHubHome,
+      "context-stores",
+      "adhoc_project",
+      "memory",
+      "approved.md"
+    );
+    const approvedMemory = await fs.readFile(approvedPath, "utf8");
+
+    expect(errors.join("")).toBe("");
+    expect(renderedOutput).toContain("mode: suggest_only");
+    expect(renderedOutput).toContain("mode: auto_after_review_accept");
+    expect(renderedOutput).toContain("mode: auto_safe_on_success");
+    expect(renderedOutput).toContain("Memory automation");
+    expect(renderedOutput).toContain("auto_approved: 1");
+    expect(renderedOutput).toContain("Retired memory");
+    expect(renderedOutput).toContain(`${approvedItem!.id}\tretired`);
+    expect(renderedOutput).toContain(
+      "approved\tworkflow_rule\tVerification command for this project is pnpm test."
+    );
+    expect(approvedMemory).toContain(
+      "Verification command for this project is pnpm test."
+    );
+    expect(approvedMemory).toContain("retired_at:");
+    expect(approvedMemory).toContain("retired_reason: obsolete workflow");
+  });
+
+  it("does not retire memory row when approved-memory writeback is missing", async () => {
+    const projectRoot = await createTestDirectory("cli-retire-missing-project");
+    const agentHubHome = await createTestDirectory("cli-retire-missing-home");
+    const runtime = createCliRuntime({
+      storageMode: "memory",
+      clock: new FixedClock("2026-01-01T00:00:00.000Z")
+    });
+    await runtime.projectRepository.create({
+      id: "project_retire_missing",
+      name: "Retire Missing",
+      rootPath: projectRoot,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z"
+    });
+    await runtime.memoryItemRepository.create({
+      id: "memory_missing_marker",
+      projectId: "project_retire_missing",
+      category: "workflow_rule",
+      status: "approved",
+      content: "Approved row without file marker.",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z"
+    });
+    const output: string[] = [];
+    const errors: string[] = [];
+    const io = {
+      stdout: { write: (chunk: string) => { output.push(chunk); return true; } },
+      stderr: { write: (chunk: string) => { errors.push(chunk); return true; } }
+    };
+
+    await expect(
+      main([
+        "memory",
+        "retire",
+        "--memory-id",
+        "memory_missing_marker",
+        "--reason",
+        "obsolete",
+        "--agent-hub-home",
+        agentHubHome
+      ], io, projectRoot, runtime)
+    ).resolves.toBe(1);
+
+    expect(output.join("")).toBe("");
+    expect(errors.join("")).toContain(
+      "approved memory block for memory_missing_marker was not found"
+    );
+    await expect(runtime.memoryItemRepository.get("memory_missing_marker"))
+      .resolves.toMatchObject({ status: "approved" });
+  });
+
   it("creates and persists comparison reports from SQLite run records", async () => {
     const projectRoot = await createTestDirectory("cli-compare-project");
     const databasePath = path.join(
