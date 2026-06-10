@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   cleanSettingsError,
+  validateDraftMemoryAutomationPolicy,
   validateDraftVerificationCommands,
+  type DraftMemoryAutomationPolicy,
   type DraftVerificationCommand
 } from "../apps/desktop/src/components/settings/verification-settings-validation";
 
@@ -44,6 +46,29 @@ describe("verification settings renderer validation", () => {
       )
     ).toBe("verification command 1 executable is required");
   });
+
+  it("validates memory automation policy drafts before save reaches IPC", () => {
+    expect(validateDraftMemoryAutomationPolicy(draftMemoryPolicy())).toEqual({});
+    expect(
+      validateDraftMemoryAutomationPolicy(
+        draftMemoryPolicy({ mode: "auto_safe_on_success" })
+      )
+    ).toEqual({});
+    expect(
+      validateDraftMemoryAutomationPolicy(
+        draftMemoryPolicy({ allowedCategories: [] })
+      )
+    ).toEqual({
+      message: "Select at least one memory category."
+    });
+    expect(
+      validateDraftMemoryAutomationPolicy(
+        draftMemoryPolicy({ maxAutoApprovalsPerRun: "11" })
+      )
+    ).toEqual({
+      message: "Use an auto-approval limit from 0 to 10."
+    });
+  });
 });
 
 function draftCommand(
@@ -56,6 +81,19 @@ function draftCommand(
     argsText: "test",
     timeoutMs: "",
     continueOnFailure: false,
+    ...patch
+  };
+}
+
+function draftMemoryPolicy(
+  patch: Partial<DraftMemoryAutomationPolicy> = {}
+): DraftMemoryAutomationPolicy {
+  return {
+    mode: "auto_after_review_accept",
+    maxRiskLevel: "medium",
+    allowSkippedVerification: true,
+    allowedCategories: ["workflow_rule"],
+    maxAutoApprovalsPerRun: "2",
     ...patch
   };
 }

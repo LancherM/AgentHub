@@ -432,7 +432,7 @@ CREATE TABLE IF NOT EXISTS memory_items (
   project_id TEXT NOT NULL,
   task_id TEXT,
   category TEXT NOT NULL CHECK (category IN ('project_fact', 'workflow_rule', 'user_preference', 'temporary_note')),
-  status TEXT NOT NULL CHECK (status IN ('proposed', 'approved', 'rejected')),
+  status TEXT NOT NULL CHECK (status IN ('proposed', 'approved', 'rejected', 'retired')),
   content TEXT NOT NULL,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
@@ -1101,6 +1101,67 @@ CREATE INDEX IF NOT EXISTS idx_code_graph_entries_project_package
   ON code_graph_entries(project_id, package_name);
 CREATE INDEX IF NOT EXISTS idx_code_graph_entries_hash
   ON code_graph_entries(project_id, content_hash);
+`
+  },
+  {
+    version: 16,
+    sql: `
+ALTER TABLE memory_items
+  ADD COLUMN metadata_json TEXT CHECK (
+    metadata_json IS NULL OR (json_valid(metadata_json) AND json_type(metadata_json) = 'object')
+  );
+`
+  },
+  {
+    version: 17,
+    sql: `
+ALTER TABLE memory_items RENAME TO memory_items_old;
+
+CREATE TABLE memory_items (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL,
+  task_id TEXT,
+  category TEXT NOT NULL CHECK (category IN ('project_fact', 'workflow_rule', 'user_preference', 'temporary_note')),
+  status TEXT NOT NULL CHECK (status IN ('proposed', 'approved', 'rejected', 'retired')),
+  content TEXT NOT NULL,
+  metadata_json TEXT CHECK (
+    metadata_json IS NULL OR (json_valid(metadata_json) AND json_type(metadata_json) = 'object')
+  ),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+  FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE SET NULL
+);
+
+INSERT INTO memory_items (
+  id,
+  project_id,
+  task_id,
+  category,
+  status,
+  content,
+  metadata_json,
+  created_at,
+  updated_at
+)
+SELECT
+  id,
+  project_id,
+  task_id,
+  category,
+  status,
+  content,
+  metadata_json,
+  created_at,
+  updated_at
+FROM memory_items_old;
+
+DROP TABLE memory_items_old;
+
+CREATE INDEX IF NOT EXISTS idx_memory_items_project ON memory_items(project_id);
+CREATE INDEX IF NOT EXISTS idx_memory_items_status ON memory_items(status);
+CREATE INDEX IF NOT EXISTS idx_memory_items_project_status
+  ON memory_items(project_id, status);
 `
   }
 ];
@@ -2366,7 +2427,7 @@ export class SQLiteMemoryItemRepository implements MemoryItemRepository {
     }
     await this.database.execute(`
 INSERT INTO memory_items (
-  id, project_id, task_id, category, status, content, created_at, updated_at
+  id, project_id, task_id, category, status, content, metadata_json, created_at, updated_at
 ) VALUES (
   ${sqlString(validItem.id)},
   ${sqlString(validItem.projectId)},
@@ -2374,6 +2435,7 @@ INSERT INTO memory_items (
   ${sqlString(validItem.category)},
   ${sqlString(validItem.status)},
   ${sqlString(validItem.content)},
+  ${sqlJson(validItem.metadata)},
   ${sqlString(validItem.createdAt)},
   ${sqlString(validItem.updatedAt)}
 )
@@ -2383,6 +2445,7 @@ ON CONFLICT(id) DO UPDATE SET
   category = excluded.category,
   status = excluded.status,
   content = excluded.content,
+  metadata_json = excluded.metadata_json,
   created_at = excluded.created_at,
   updated_at = excluded.updated_at;
 `);
@@ -2420,6 +2483,7 @@ SELECT
   category,
   status,
   content,
+  metadata_json AS metadataJson,
   created_at AS createdAt,
   updated_at AS updatedAt
 FROM memory_items
@@ -2439,6 +2503,7 @@ SELECT
   category,
   status,
   content,
+  metadata_json AS metadataJson,
   created_at AS createdAt,
   updated_at AS updatedAt
 FROM memory_items
@@ -3408,6 +3473,7 @@ interface MemoryItemRow extends Record<string, unknown> {
   category: string;
   status: string;
   content: string;
+  metadataJson: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -3726,6 +3792,7 @@ function memoryItemFromRow(row: MemoryItemRow): MemoryItem {
     category: row.category as MemoryItem["category"],
     status: row.status as MemoryItem["status"],
     content: row.content,
+    metadata: parseJson<Record<string, unknown>>(row.metadataJson),
     createdAt: row.createdAt,
     updatedAt: row.updatedAt
   });
@@ -4355,7 +4422,16 @@ function approvedMemoryContent(content: string): string {
   if (normalized === "# Approved Memory") {
     return "";
   }
-  return normalized.replace(/^# Approved Memory[ \t]*\n+/, "").trim();
+  const body = normalized.replace(/^# Approved Memory[ \t]*\n+/, "").trim();
+  if (!body.includes("<!-- agent-hub:memory ")) {
+    return body;
+  }
+  return body
+    .split(/\n{2,}(?=<!-- agent-hub:memory [^>]+ -->)/)
+    .map((chunk) => chunk.trim())
+    .filter((chunk) => chunk.length > 0 && !/^retired_at:/m.test(chunk))
+    .join("\n\n")
+    .trim();
 }
 
 function isPlaceholderContextFile(relativePath: string, content: string): boolean {

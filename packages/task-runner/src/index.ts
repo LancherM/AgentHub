@@ -7,6 +7,7 @@ export * from "./context-selection";
 export * from "./context-fusion";
 export * from "./code-graph";
 export * from "./memory-proposals";
+export * from "./memory-automation";
 export * from "./run-review";
 export * from "./review-decisions";
 export * from "./role-call-executor";

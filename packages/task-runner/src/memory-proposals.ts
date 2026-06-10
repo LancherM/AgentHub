@@ -40,6 +40,8 @@ export interface MemoryProposalGenerationInput {
 interface ProposalCandidate {
   category: MemoryItem["category"];
   content: string;
+  sourceKind: "run" | "verification" | "diff" | "risk";
+  confidence: "low" | "medium" | "high";
 }
 
 const DEFAULT_MAX_PROPOSALS_PER_TASK = 2;
@@ -119,6 +121,13 @@ export async function generateMemoryProposalsFromCompletedRun(
         category: candidate.category,
         status: "proposed",
         content: candidate.content,
+        metadata: {
+          sourceRunId: run.id,
+          sourceTaskId: task.id,
+          sourceKind: candidate.sourceKind,
+          generatedBy: "task_runner",
+          confidence: candidate.confidence
+        },
         createdAt: now,
         updatedAt: now
       })
@@ -143,7 +152,9 @@ function buildCandidates(input: {
   if (verificationCommand) {
     candidates.push({
       category: "workflow_rule",
-      content: `Verification command for this project is ${verificationCommand}.`
+      content: `Verification command for this project is ${verificationCommand}.`,
+      sourceKind: "verification",
+      confidence: "high"
     });
   }
 
@@ -155,14 +166,18 @@ function buildCandidates(input: {
     candidates.push({
       category: "workflow_rule",
       content:
-        "Agent Hub behavior changes should update docs/product.md and docs/architecture.md together."
+        "Agent Hub behavior changes should update docs/product.md and docs/architecture.md together.",
+      sourceKind: "diff",
+      confidence: "medium"
     });
   }
 
   if (touchesDesktopBoundary(input.task, changedPaths)) {
     candidates.push({
       category: "workflow_rule",
-      content: "Desktop renderer must not access Node APIs directly."
+      content: "Desktop renderer must not access Node APIs directly.",
+      sourceKind: "run",
+      confidence: "medium"
     });
   }
 
@@ -262,6 +277,7 @@ function uniqueTaskMemoryCount(items: MemoryItem[], taskId: string): number {
   return new Set(
     items
       .filter((item) => item.taskId === taskId)
+      .filter((item) => item.status !== "retired")
       .map((item) => normalizeMemoryContent(item.content))
   ).size;
 }
@@ -271,10 +287,11 @@ function hasProjectMemoryContent(
   normalizedContent: string
 ): boolean {
   return items.some(
-    (item) => normalizeMemoryContent(item.content) === normalizedContent
+    (item) => item.status !== "rejected" &&
+      normalizeMemoryContent(item.content) === normalizedContent
   );
 }
 
-function normalizeMemoryContent(content: string): string {
+export function normalizeMemoryContent(content: string): string {
   return content.trim().replace(/\s+/g, " ").toLowerCase();
 }
