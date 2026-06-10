@@ -260,7 +260,12 @@ export const memoryCategories = [
 ] as const;
 export type MemoryCategory = (typeof memoryCategories)[number];
 
-export const memoryStatuses = ["proposed", "approved", "rejected"] as const;
+export const memoryStatuses = [
+  "proposed",
+  "approved",
+  "rejected",
+  "retired"
+] as const;
 export type MemoryStatus = (typeof memoryStatuses)[number];
 
 export const riskLevels = ["low", "medium", "high", "blocking"] as const;
@@ -298,7 +303,9 @@ export const memoryAutomationReasonCodes = [
   "unsupported_category",
   "duplicate_content",
   "manual_only_category",
-  "already_approved"
+  "already_approved",
+  "review_not_accepted",
+  "per_run_limit_exceeded"
 ] as const;
 export type MemoryAutomationReasonCode =
   (typeof memoryAutomationReasonCodes)[number];

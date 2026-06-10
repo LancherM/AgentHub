@@ -84,10 +84,23 @@ core sequence:
 11. Generate and persist a safety/risk report.
 12. Persist run artifacts, run metadata, status transitions, and warnings.
 13. Generate conservative proposed memory from durable evidence for successful
-    runs. Proposed memory rows may carry local audit metadata and typed
-    automation policy contracts, but no policy automatically promotes memory
-    yet.
-14. Apply cleanup policy without accepting, merging, pushing, or deleting
+    runs through the shared proposal generator used by TaskRunner and desktop
+    explicit generation. Proposal listing and review summary reads stay
+    read-only. Proposed memory rows may carry local audit metadata and typed
+    automation policy contracts.
+14. Evaluate memory automation dry-runs through a deterministic local evaluator
+    that reads run status, verification results, risk reports, duplicate
+    memory, and policy gates. Evaluation is scoped to proposals whose
+    `metadata.sourceRunId` matches the requested run; review-accept automation
+    is eligible only when the accepted-review path supplies that gate.
+    Evaluation is read-only and does not write approved memory.
+15. Apply the project memory policy only at bounded local gates:
+    `auto_after_review_accept` runs after explicit review acceptance, while
+    `auto_safe_on_success` runs after successful TaskRunner finalization has
+    persisted verification, risk, artifact, metadata, and proposed-memory
+    evidence. Both modes write back only through the Agent Hub-owned
+    approved-memory store and are off by default.
+16. Apply cleanup policy without accepting, merging, pushing, or deleting
     branches automatically.
 
 After a task-run row exists, finalization is defensive. Diff, verification,
@@ -329,6 +342,9 @@ same state transitions for tests and injected runtimes.
 Settings reject secret-like keys and values at the domain/repository boundary.
 Desktop verification command settings also reject secret-like option names in
 args before storage.
+Desktop memory automation policy settings are validated in the main-process
+`SettingsService` before storage. The renderer can save only bounded project
+policy fields, including the opt-in `auto_safe_on_success` mode.
 
 ## Conversations, Rooms, And Roles
 
@@ -430,7 +446,8 @@ Electron main-process services own privileged operations:
 - `ComparisonService`: same-task or same-turn local run comparison.
 - `KnowledgeService`: project-scoped memory, summary, and decision read model.
 - `TeamService`: preset overrides and custom role settings.
-- `SettingsService`: validated per-project verification command settings.
+- `SettingsService`: validated per-project verification command settings and
+  memory automation policy settings.
 
 Renderer state is presentation-only: navigation, sidebar density, scroll
 behavior, target chips, autocomplete, command palette, inspector tab selection,
@@ -449,7 +466,11 @@ Run review is read-only by default. `runs events`, `runs diff`, `runs show`,
 evidence. They do not rerun agents or mutate worktrees.
 
 Accept/reject decisions are `review_decision` artifacts. They do not alter run
-status, branches, files, memory, or cleanup state.
+status, branches, files, or cleanup state. Review acceptance can trigger memory
+automation only for projects whose stored policy explicitly selects
+`auto_after_review_accept`. Successful TaskRunner finalization can trigger
+memory automation only for projects whose stored policy explicitly selects
+`auto_safe_on_success`.
 
 Lifecycle actions are separate audited operations. Cleanup validates retained
 worktree ownership and exact confirmation before removing an Agent Hub-owned
@@ -458,9 +479,18 @@ raw persisted patch to an Agent Hub temp path, runs `git apply --check`, and
 then runs `git apply` only after human confirmation. It does not commit, merge,
 push, create pull requests, delete branches, export context, or approve memory.
 
-Memory approval is explicit. Approved items are appended idempotently to the
-Agent Hub-owned context store; proposed and rejected SQLite rows are never
-injected.
+Memory approval is explicit unless a project has opted into
+`auto_after_review_accept` and a human records review acceptance, or a project
+has opted into `auto_safe_on_success` and a run finishes through the successful
+TaskRunner finalization path. Approved items are appended idempotently to the
+Agent Hub-owned context store; proposed, rejected, and retired SQLite rows are
+never injected. Retiring approved memory marks the managed
+`memory/approved.md` block with local retirement metadata so FileMemoryProvider
+and stable context indexing skip it while retaining the audit trail. The CLI
+marks the approved-memory file first and only moves the SQLite row to
+`retired` after the managed block was found and updated. Auto-approved rows
+carry policy, risk, verification, and writeback metadata that desktop memory
+and Knowledge read models expose as local audit evidence.
 
 Comparison reports are generated from persisted run evidence: statuses, changed
 files, diff stats, verification results, risk levels, risk factors, and
