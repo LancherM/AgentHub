@@ -251,9 +251,7 @@ export function VerificationSettingsPanel({
                   <div>
                     <div className="panel-label">Memory Automation</div>
                     <p className="muted-copy">
-                      {memoryPolicy.mode === "suggest_only"
-                        ? "Proposals stay queued for manual approval."
-                        : "Accepted reviews can approve eligible memory."}
+                      {memoryPolicyModeSummary(memoryPolicy.mode)}
                     </p>
                   </div>
                   <button
@@ -568,6 +566,18 @@ function errorMessage(error: unknown): string {
   return cleanSettingsError(error);
 }
 
+function memoryPolicyModeSummary(
+  mode: DraftMemoryAutomationPolicy["mode"]
+): string {
+  if (mode === "auto_after_review_accept") {
+    return "Accepted reviews can approve eligible memory.";
+  }
+  if (mode === "auto_safe_on_success") {
+    return "Successful runs can approve eligible memory after finalization.";
+  }
+  return "Proposals stay queued for manual approval.";
+}
+
 const memoryModeOptions = [
   {
     id: "suggest_only",
@@ -578,6 +588,11 @@ const memoryModeOptions = [
     id: "auto_after_review_accept",
     label: "Auto after review",
     detail: "Approve eligible memory when a run is accepted."
+  },
+  {
+    id: "auto_safe_on_success",
+    label: "Auto safe on success",
+    detail: "Approve eligible memory after a successful run."
   }
 ] as const;
 

@@ -1904,8 +1904,9 @@ const taskRunStatusTransitions: Record<TaskRunStatus, readonly TaskRunStatus[]> 
 
 const memoryStatusTransitions: Record<MemoryStatus, readonly MemoryStatus[]> = {
   proposed: ["approved", "rejected"],
-  approved: [],
-  rejected: []
+  approved: ["retired"],
+  rejected: [],
+  retired: []
 };
 
 const memoryAutomationPolicyKeys = new Set([

@@ -215,7 +215,9 @@ function toMemoryProposal(
       ? "approved"
       : item.status === "rejected"
         ? "ignored"
-        : "pending";
+        : item.status === "retired"
+          ? "retired"
+          : "pending";
   return {
     id: item.id,
     runId,

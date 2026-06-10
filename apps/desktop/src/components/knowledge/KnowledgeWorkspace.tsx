@@ -16,7 +16,8 @@ type KnowledgeFilter =
   | "summaries"
   | "proposed"
   | "approved"
-  | "rejected";
+  | "rejected"
+  | "retired";
 
 interface KnowledgeWorkspaceProps {
   project?: ProjectSummary;
@@ -289,6 +290,7 @@ function KnowledgeMetrics({
       <Metric label="Proposed" value={metrics.proposed} />
       <Metric label="Approved" value={metrics.approved} />
       <Metric label="Rejected" value={metrics.rejected} />
+      <Metric label="Retired" value={metrics.retired} />
       <Metric label="Summaries" value={metrics.summaries} />
       <Metric label="Decisions" value={metrics.decisions} />
     </div>
@@ -458,7 +460,8 @@ const filterOptions: Array<{ id: KnowledgeFilter; label: string }> = [
   { id: "summaries", label: "Summaries" },
   { id: "proposed", label: "Proposed" },
   { id: "approved", label: "Approved" },
-  { id: "rejected", label: "Rejected" }
+  { id: "rejected", label: "Rejected" },
+  { id: "retired", label: "Retired" }
 ];
 
 function filterKnowledgeItems(
@@ -482,7 +485,11 @@ function filterKnowledgeItems(
 function knowledgeInitial(item: KnowledgeItem): string {
   switch (item.kind) {
     case "memory":
-      return item.status === "approved" ? "A" : item.status === "rejected" ? "R" : "P";
+      return item.status === "approved"
+        ? "A"
+        : item.status === "rejected" || item.status === "retired"
+          ? "R"
+          : "P";
     case "thread_summary":
       return "S";
     case "thread_decision":
@@ -514,7 +521,7 @@ function statusTone(status: KnowledgeItemStatus): string {
   if (status === "approved" || status === "accepted") {
     return "success";
   }
-  if (status === "rejected") {
+  if (status === "rejected" || status === "retired") {
     return "danger";
   }
   if (status === "summary") {

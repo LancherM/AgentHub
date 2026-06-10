@@ -277,6 +277,7 @@ function uniqueTaskMemoryCount(items: MemoryItem[], taskId: string): number {
   return new Set(
     items
       .filter((item) => item.taskId === taskId)
+      .filter((item) => item.status !== "retired")
       .map((item) => normalizeMemoryContent(item.content))
   ).size;
 }
@@ -286,7 +287,8 @@ function hasProjectMemoryContent(
   normalizedContent: string
 ): boolean {
   return items.some(
-    (item) => normalizeMemoryContent(item.content) === normalizedContent
+    (item) => item.status !== "rejected" &&
+      normalizeMemoryContent(item.content) === normalizedContent
   );
 }
 

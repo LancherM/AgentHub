@@ -82,7 +82,7 @@ export function MemoryProposals({
           ))}
         </div>
       ) : null}
-      {(["pending", "approved", "ignored"] as const).map((status) => {
+      {(["pending", "approved", "ignored", "retired"] as const).map((status) => {
         const items = grouped[status];
         if (items.length === 0) {
           return null;
@@ -156,6 +156,7 @@ function groupProposals(proposals: MemoryProposal[]): Record<
   return {
     pending: proposals.filter((item) => item.status === "pending"),
     approved: proposals.filter((item) => item.status === "approved"),
-    ignored: proposals.filter((item) => item.status === "ignored")
+    ignored: proposals.filter((item) => item.status === "ignored"),
+    retired: proposals.filter((item) => item.status === "retired")
   };
 }
