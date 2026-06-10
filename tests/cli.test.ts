@@ -2868,6 +2868,57 @@ describe("CLI", () => {
     expect(approvedMemory).toContain("retired_reason: obsolete workflow");
   });
 
+  it("does not retire memory row when approved-memory writeback is missing", async () => {
+    const projectRoot = await createTestDirectory("cli-retire-missing-project");
+    const agentHubHome = await createTestDirectory("cli-retire-missing-home");
+    const runtime = createCliRuntime({
+      storageMode: "memory",
+      clock: new FixedClock("2026-01-01T00:00:00.000Z")
+    });
+    await runtime.projectRepository.create({
+      id: "project_retire_missing",
+      name: "Retire Missing",
+      rootPath: projectRoot,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z"
+    });
+    await runtime.memoryItemRepository.create({
+      id: "memory_missing_marker",
+      projectId: "project_retire_missing",
+      category: "workflow_rule",
+      status: "approved",
+      content: "Approved row without file marker.",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z"
+    });
+    const output: string[] = [];
+    const errors: string[] = [];
+    const io = {
+      stdout: { write: (chunk: string) => { output.push(chunk); return true; } },
+      stderr: { write: (chunk: string) => { errors.push(chunk); return true; } }
+    };
+
+    await expect(
+      main([
+        "memory",
+        "retire",
+        "--memory-id",
+        "memory_missing_marker",
+        "--reason",
+        "obsolete",
+        "--agent-hub-home",
+        agentHubHome
+      ], io, projectRoot, runtime)
+    ).resolves.toBe(1);
+
+    expect(output.join("")).toBe("");
+    expect(errors.join("")).toContain(
+      "approved memory block for memory_missing_marker was not found"
+    );
+    await expect(runtime.memoryItemRepository.get("memory_missing_marker"))
+      .resolves.toMatchObject({ status: "approved" });
+  });
+
   it("creates and persists comparison reports from SQLite run records", async () => {
     const projectRoot = await createTestDirectory("cli-compare-project");
     const databasePath = path.join(

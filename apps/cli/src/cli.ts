@@ -5830,6 +5830,19 @@ async function retireMemory(
     if (!reason) {
       throw new Error("--reason must not be empty");
     }
+    const retired = await retireApprovedMemory({
+      projectRoot: project.rootPath,
+      projectId: project.id,
+      memoryId: existing.id,
+      retiredAt,
+      reason,
+      agentHubHome: optionalFlag(args, "--agent-hub-home")
+        ? path.resolve(cwd, requiredFlag(args, "--agent-hub-home"))
+        : undefined
+    });
+    if (!retired.retired) {
+      throw new Error(`approved memory block for ${existing.id} was not found`);
+    }
     const item = await runtime.memoryItemRepository.create(
       validateMemoryItem({
         ...existing,
@@ -5844,16 +5857,6 @@ async function retireMemory(
         updatedAt: retiredAt
       })
     );
-    const retired = await retireApprovedMemory({
-      projectRoot: project.rootPath,
-      projectId: project.id,
-      memoryId: item.id,
-      retiredAt,
-      reason,
-      agentHubHome: optionalFlag(args, "--agent-hub-home")
-        ? path.resolve(cwd, requiredFlag(args, "--agent-hub-home"))
-        : undefined
-    });
     io.stdout.write(
       [
         "Retired memory",

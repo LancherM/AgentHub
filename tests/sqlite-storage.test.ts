@@ -157,7 +157,22 @@ describe("SQLite storage", () => {
     );
     await writeText(
       path.join(projectStoreRoot, "memory", "approved.md"),
-      "# Approved Memory\n\nUse runtime injection by default.\n"
+      [
+        "# Approved Memory",
+        "",
+        "<!-- agent-hub:memory memory_active -->",
+        "approved_at: 2026-01-01T00:00:00.000Z",
+        "",
+        "Use runtime injection by default.",
+        "",
+        "<!-- agent-hub:memory memory_retired -->",
+        "approved_at: 2026-01-01T00:00:00.000Z",
+        "retired_at: 2026-01-01T00:00:01.000Z",
+        "retired_reason: obsolete",
+        "",
+        "Retired memory must not be indexed.",
+        ""
+      ].join("\n")
     );
     await writeSkill(
       path.join(projectStoreRoot, "skills", "lint", "SKILL.md"),
@@ -204,7 +219,7 @@ describe("SQLite storage", () => {
       expect.objectContaining({
         sourceKind: "approved_memory",
         layer: "approved_memory",
-        content: "Use runtime injection by default.",
+        content: expect.stringContaining("Use runtime injection by default."),
         indexedAt: createdAt
       }),
       expect.objectContaining({
@@ -267,13 +282,16 @@ ORDER BY id ASC;
       expect.objectContaining({
         entry: expect.objectContaining({
           sourceKind: "approved_memory",
-          content: "Use runtime injection by default."
+          content: expect.stringContaining("Use runtime injection by default.")
         })
       })
     ]);
     expect(
       JSON.stringify(await repositories.contextIndexRepository.listByProjectId("project_index"))
     ).not.toContain("Proposed memory must not be indexed");
+    expect(
+      JSON.stringify(await repositories.contextIndexRepository.listByProjectId("project_index"))
+    ).not.toContain("Retired memory must not be indexed");
 
     const second = await rebuildStableContextIndex({
       projectId: "project_index",

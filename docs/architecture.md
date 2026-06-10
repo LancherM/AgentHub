@@ -90,8 +90,10 @@ core sequence:
     automation policy contracts.
 14. Evaluate memory automation dry-runs through a deterministic local evaluator
     that reads run status, verification results, risk reports, duplicate
-    memory, and policy gates. Evaluation is read-only and does not write
-    approved memory.
+    memory, and policy gates. Evaluation is scoped to proposals whose
+    `metadata.sourceRunId` matches the requested run; review-accept automation
+    is eligible only when the accepted-review path supplies that gate.
+    Evaluation is read-only and does not write approved memory.
 15. Apply the project memory policy only at bounded local gates:
     `auto_after_review_accept` runs after explicit review acceptance, while
     `auto_safe_on_success` runs after successful TaskRunner finalization has
@@ -484,9 +486,11 @@ TaskRunner finalization path. Approved items are appended idempotently to the
 Agent Hub-owned context store; proposed, rejected, and retired SQLite rows are
 never injected. Retiring approved memory marks the managed
 `memory/approved.md` block with local retirement metadata so FileMemoryProvider
-skips it while retaining the audit trail. Auto-approved rows carry policy, risk,
-verification, and writeback metadata that desktop memory and Knowledge read
-models expose as local audit evidence.
+and stable context indexing skip it while retaining the audit trail. The CLI
+marks the approved-memory file first and only moves the SQLite row to
+`retired` after the managed block was found and updated. Auto-approved rows
+carry policy, risk, verification, and writeback metadata that desktop memory
+and Knowledge read models expose as local audit evidence.
 
 Comparison reports are generated from persisted run evidence: statuses, changed
 files, diff stats, verification results, risk levels, risk factors, and

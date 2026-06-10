@@ -4422,7 +4422,16 @@ function approvedMemoryContent(content: string): string {
   if (normalized === "# Approved Memory") {
     return "";
   }
-  return normalized.replace(/^# Approved Memory[ \t]*\n+/, "").trim();
+  const body = normalized.replace(/^# Approved Memory[ \t]*\n+/, "").trim();
+  if (!body.includes("<!-- agent-hub:memory ")) {
+    return body;
+  }
+  return body
+    .split(/\n{2,}(?=<!-- agent-hub:memory [^>]+ -->)/)
+    .map((chunk) => chunk.trim())
+    .filter((chunk) => chunk.length > 0 && !/^retired_at:/m.test(chunk))
+    .join("\n\n")
+    .trim();
 }
 
 function isPlaceholderContextFile(relativePath: string, content: string): boolean {
