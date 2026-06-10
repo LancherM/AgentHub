@@ -280,6 +280,7 @@ export async function applyMemoryAutomationForRun(
   const evaluation = await evaluateMemoryAutomationForRun(repositories, {
     runId: run.id,
     policy,
+    reviewAccepted: input.trigger === "review_accepted",
     createdAt: input.now()
   });
   if (
@@ -316,6 +317,15 @@ export async function applyMemoryAutomationForRun(
         message: item
           ? "Memory item is no longer proposed."
           : `Memory item ${decision.memoryId} was not found.`
+      });
+      continue;
+    }
+    if (item.metadata?.sourceRunId !== run.id) {
+      skipped.push({
+        ...decision,
+        status: "blocked",
+        reasonCodes: ["run_not_succeeded"],
+        message: "Memory item was not generated from this run."
       });
       continue;
     }
