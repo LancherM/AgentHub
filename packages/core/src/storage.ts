@@ -750,8 +750,9 @@ export class InMemoryMemoryItemRepository implements MemoryItemRepository {
     if (existing) {
       validateMemoryStatusTransition(existing.status, validItem.status);
     }
-    this.items.set(validItem.id, { ...validItem });
-    return { ...validItem };
+    const cloned = cloneMemoryItem(validItem);
+    this.items.set(validItem.id, cloned);
+    return cloneMemoryItem(cloned);
   }
 
   async updateStatus(
@@ -765,20 +766,21 @@ export class InMemoryMemoryItemRepository implements MemoryItemRepository {
     }
     validateMemoryStatusTransition(item.status, status);
     const updated = validateMemoryItem({ ...item, status, updatedAt });
-    this.items.set(memoryId, updated);
-    return { ...updated };
+    const cloned = cloneMemoryItem(updated);
+    this.items.set(memoryId, cloned);
+    return cloneMemoryItem(cloned);
   }
 
   async get(memoryId: string): Promise<MemoryItem | undefined> {
     const item = this.items.get(memoryId);
-    return item ? { ...item } : undefined;
+    return item ? cloneMemoryItem(item) : undefined;
   }
 
   async listByProjectId(projectId: string): Promise<MemoryItem[]> {
     return [...this.items.values()]
       .filter((item) => item.projectId === projectId)
       .sort((left, right) => left.createdAt.localeCompare(right.createdAt))
-      .map((item) => ({ ...item }));
+      .map(cloneMemoryItem);
   }
 }
 
@@ -1548,6 +1550,13 @@ function cloneRiskReport(report: RiskReport): RiskReport {
     riskFactors: [...report.riskFactors],
     manualReviewChecklist: [...report.manualReviewChecklist],
     findings: report.findings.map((finding) => ({ ...finding }))
+  };
+}
+
+function cloneMemoryItem(item: MemoryItem): MemoryItem {
+  return {
+    ...item,
+    metadata: item.metadata ? cloneJsonObject(item.metadata) : undefined
   };
 }
 

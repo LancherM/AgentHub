@@ -3341,6 +3341,60 @@ select:focus-visible {
   margin: 0;
 }
 
+.settings-section {
+  display: grid;
+  gap: 14px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--line);
+}
+
+.memory-policy-section {
+  margin-bottom: 2px;
+}
+
+.settings-segmented {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.settings-segmented button {
+  display: grid;
+  gap: 4px;
+  min-height: 74px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.026);
+  color: var(--text);
+  text-align: left;
+  padding: 10px;
+}
+
+.settings-segmented button.active {
+  border-color: rgba(216, 255, 87, 0.58);
+  background: rgba(216, 255, 87, 0.08);
+}
+
+.settings-segmented strong {
+  font-size: 13px;
+}
+
+.settings-segmented span {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.memory-policy-grid {
+  grid-template-columns: minmax(0, 1fr) 150px;
+}
+
+.settings-category-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 12px;
+}
+
 .settings-empty {
   display: grid;
   gap: 8px;
@@ -3419,6 +3473,7 @@ select:focus-visible {
 }
 
 .settings-grid input,
+.settings-grid select,
 .settings-args-field textarea {
   width: 100%;
   min-width: 0;
@@ -3439,6 +3494,7 @@ select:focus-visible {
 }
 
 .settings-grid input:focus,
+.settings-grid select:focus,
 .settings-args-field textarea:focus {
   border-color: rgba(216, 255, 87, 0.62);
 }
@@ -4309,6 +4365,13 @@ select:focus-visible {
 
 .memory-item p {
   margin: 8px 0 0;
+}
+
+.memory-automation-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
 }
 
 .memory-item small {

@@ -16,7 +16,8 @@ type KnowledgeFilter =
   | "summaries"
   | "proposed"
   | "approved"
-  | "rejected";
+  | "rejected"
+  | "retired";
 
 interface KnowledgeWorkspaceProps {
   project?: ProjectSummary;
@@ -213,6 +214,11 @@ export function KnowledgeWorkspace({
                           <span className={`knowledge-tag ${kindTone(item.kind)}`}>
                             {kindLabel(item.kind)}
                           </span>
+                          {item.autoApproval ? (
+                            <span className="knowledge-tag accent">
+                              auto memory
+                            </span>
+                          ) : null}
                         </span>
                         <span className="knowledge-preview">{item.preview}</span>
                         <span className="knowledge-chips">
@@ -284,6 +290,7 @@ function KnowledgeMetrics({
       <Metric label="Proposed" value={metrics.proposed} />
       <Metric label="Approved" value={metrics.approved} />
       <Metric label="Rejected" value={metrics.rejected} />
+      <Metric label="Retired" value={metrics.retired} />
       <Metric label="Summaries" value={metrics.summaries} />
       <Metric label="Decisions" value={metrics.decisions} />
     </div>
@@ -321,6 +328,11 @@ function KnowledgeDetail({
             <span className={`knowledge-tag ${kindTone(item.kind)}`}>
               {kindLabel(item.kind)}
             </span>
+            {item.autoApproval ? (
+              <span className="knowledge-tag accent">
+                {item.autoApproval.policyMode}
+              </span>
+            ) : null}
           </div>
         </div>
         <div className="knowledge-detail-actions">
@@ -363,6 +375,32 @@ function KnowledgeDetail({
             ) : null}
           </div>
         </section>
+
+        {item.autoApproval ? (
+          <section className="knowledge-panel">
+            <div className="panel-label">Automation</div>
+            <div className="knowledge-source-chips">
+              <span className="timeline-chip accent">
+                {item.autoApproval.policyMode}
+              </span>
+              {item.autoApproval.riskLevel ? (
+                <span className="timeline-chip neutral">
+                  risk: {item.autoApproval.riskLevel}
+                </span>
+              ) : null}
+              {item.autoApproval.verificationStatus ? (
+                <span className="timeline-chip neutral">
+                  checks: {item.autoApproval.verificationStatus}
+                </span>
+              ) : null}
+            </div>
+            {item.autoApproval.writebackPath ? (
+              <p className="muted-copy">
+                Approved memory file: <code>{item.autoApproval.writebackPath}</code>
+              </p>
+            ) : null}
+          </section>
+        ) : null}
 
         <section className="knowledge-panel">
           <div className="panel-label">Source Links</div>
@@ -422,7 +460,8 @@ const filterOptions: Array<{ id: KnowledgeFilter; label: string }> = [
   { id: "summaries", label: "Summaries" },
   { id: "proposed", label: "Proposed" },
   { id: "approved", label: "Approved" },
-  { id: "rejected", label: "Rejected" }
+  { id: "rejected", label: "Rejected" },
+  { id: "retired", label: "Retired" }
 ];
 
 function filterKnowledgeItems(
@@ -446,7 +485,11 @@ function filterKnowledgeItems(
 function knowledgeInitial(item: KnowledgeItem): string {
   switch (item.kind) {
     case "memory":
-      return item.status === "approved" ? "A" : item.status === "rejected" ? "R" : "P";
+      return item.status === "approved"
+        ? "A"
+        : item.status === "rejected" || item.status === "retired"
+          ? "R"
+          : "P";
     case "thread_summary":
       return "S";
     case "thread_decision":
@@ -478,7 +521,7 @@ function statusTone(status: KnowledgeItemStatus): string {
   if (status === "approved" || status === "accepted") {
     return "success";
   }
-  if (status === "rejected") {
+  if (status === "rejected" || status === "retired") {
     return "danger";
   }
   if (status === "summary") {

@@ -12,6 +12,18 @@ export interface DraftCommandValidationResult {
   commandIssues: Record<number, string>;
 }
 
+export interface DraftMemoryAutomationPolicy {
+  mode: string;
+  maxRiskLevel: string;
+  allowSkippedVerification: boolean;
+  allowedCategories: string[];
+  maxAutoApprovalsPerRun: string;
+}
+
+export interface DraftMemoryPolicyValidationResult {
+  message?: string;
+}
+
 export function validateDraftVerificationCommands(
   commands: DraftVerificationCommand[]
 ): DraftCommandValidationResult {
@@ -64,4 +76,32 @@ export function cleanSettingsError(error: unknown): string {
     .replace(/^Error invoking remote method '[^']+':\s*/u, "")
     .replace(/^Error:\s*/u, "")
     .trim();
+}
+
+export function validateDraftMemoryAutomationPolicy(
+  policy: DraftMemoryAutomationPolicy
+): DraftMemoryPolicyValidationResult {
+  if (
+    policy.mode !== "suggest_only" &&
+    policy.mode !== "auto_after_review_accept" &&
+    policy.mode !== "auto_safe_on_success"
+  ) {
+    return { message: "Choose a valid memory automation mode." };
+  }
+  if (
+    policy.maxRiskLevel !== "low" &&
+    policy.maxRiskLevel !== "medium" &&
+    policy.maxRiskLevel !== "high" &&
+    policy.maxRiskLevel !== "blocking"
+  ) {
+    return { message: "Choose a valid risk threshold." };
+  }
+  if (policy.allowedCategories.length === 0) {
+    return { message: "Select at least one memory category." };
+  }
+  const limit = policy.maxAutoApprovalsPerRun.trim();
+  if (!/^\d+$/.test(limit) || Number(limit) > 10) {
+    return { message: "Use an auto-approval limit from 0 to 10." };
+  }
+  return {};
 }

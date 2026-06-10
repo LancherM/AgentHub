@@ -169,7 +169,7 @@ export type RiskCategory =
   | "large_change"
   | "unknown";
 export type MemoryProposalSource = "run" | "diff" | "verification" | "manual";
-export type MemoryProposalStatus = "pending" | "approved" | "ignored";
+export type MemoryProposalStatus = "pending" | "approved" | "ignored" | "retired";
 export type RunLogLevel = "info" | "stdout" | "stderr" | "error" | "debug";
 export type KnowledgeItemKind =
   | "memory"
@@ -180,6 +180,7 @@ export type KnowledgeItemStatus =
   | "proposed"
   | "approved"
   | "rejected"
+  | "retired"
   | "summary"
   | "accepted"
   | "decision";
@@ -766,6 +767,27 @@ export interface VerificationSettings {
   updatedAt?: string;
 }
 
+export type MemoryAutomationPolicyMode =
+  | "suggest_only"
+  | "auto_after_review_accept"
+  | "auto_safe_on_success";
+
+export type MemoryAutomationRiskLevel =
+  | "low"
+  | "medium"
+  | "high"
+  | "blocking";
+
+export interface MemoryAutomationPolicySettings {
+  projectId: string;
+  mode: MemoryAutomationPolicyMode;
+  maxRiskLevel: MemoryAutomationRiskLevel;
+  allowSkippedVerification: boolean;
+  allowedCategories: MemoryCategory[];
+  maxAutoApprovalsPerRun: number;
+  updatedAt?: string;
+}
+
 export interface RiskReport {
   runId: string;
   level: ReviewRiskLevel;
@@ -794,6 +816,16 @@ export interface MemoryProposal {
   createdAt: string;
   decidedAt?: string;
   approvedMemoryPath?: string;
+  autoApproval?: MemoryAutoApprovalAudit;
+}
+
+export interface MemoryAutoApprovalAudit {
+  policyMode: Exclude<MemoryAutomationPolicyMode, "suggest_only">;
+  approvedAt: string;
+  reason?: string;
+  riskLevel?: string;
+  verificationStatus?: string;
+  writebackPath?: string;
 }
 
 export interface KnowledgeSourceLink {
@@ -834,6 +866,7 @@ export interface KnowledgeItem {
   sourceLinks: KnowledgeSourceLink[];
   audit: KnowledgeAuditEvent[];
   bounded: boolean;
+  autoApproval?: MemoryAutoApprovalAudit;
 }
 
 export interface KnowledgeWorkspaceMetrics {
@@ -841,6 +874,7 @@ export interface KnowledgeWorkspaceMetrics {
   proposed: number;
   approved: number;
   rejected: number;
+  retired: number;
   summaries: number;
   decisions: number;
 }
@@ -862,7 +896,7 @@ export interface TeamRoleActivity {
 
 export interface TeamRoleLinkedMemory {
   id: string;
-  status: "proposed" | "approved" | "rejected";
+  status: "proposed" | "approved" | "rejected" | "retired";
   content: string;
   updatedAt: string;
 }
@@ -990,5 +1024,9 @@ export interface AgentHubApi {
   settings: {
     getVerification(projectId: string): Promise<VerificationSettings>;
     saveVerification(input: VerificationSettings): Promise<VerificationSettings>;
+    getMemoryPolicy(projectId: string): Promise<MemoryAutomationPolicySettings>;
+    saveMemoryPolicy(
+      input: MemoryAutomationPolicySettings
+    ): Promise<MemoryAutomationPolicySettings>;
   };
 }
