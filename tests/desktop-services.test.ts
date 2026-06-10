@@ -60,6 +60,7 @@ import type {
 } from "../apps/desktop/src/lib/types";
 import { MockProcessRunner, MockShellExecutor } from "./helpers";
 import {
+  saveProjectMemoryAutomationPolicy,
   VerificationRunner,
   type TaskRunnerDependencies
 } from "@agent-hub/task-runner";
@@ -333,6 +334,59 @@ describe("desktop services", () => {
         ]
       })
     ).rejects.toThrow(/secret-like option name/);
+    await expect(
+      handlers[IPC_CHANNELS.settingsGetMemoryPolicy](
+        { sender } as never,
+        project.id
+      )
+    ).resolves.toMatchObject({
+      projectId: project.id,
+      mode: "suggest_only",
+      maxRiskLevel: "low"
+    });
+    await expect(
+      handlers[IPC_CHANNELS.settingsSaveMemoryPolicy]({ sender } as never, {
+        projectId: project.id,
+        mode: "auto_after_review_accept",
+        maxRiskLevel: "medium",
+        allowSkippedVerification: true,
+        allowedCategories: ["workflow_rule", "project_fact"],
+        maxAutoApprovalsPerRun: 3
+      })
+    ).resolves.toMatchObject({
+      projectId: project.id,
+      mode: "auto_after_review_accept",
+      maxRiskLevel: "medium",
+      allowedCategories: ["workflow_rule", "project_fact"]
+    });
+    await expect(settings.getMemoryPolicy(project.id)).resolves.toMatchObject({
+      mode: "auto_after_review_accept",
+      allowSkippedVerification: true,
+      maxAutoApprovalsPerRun: 3
+    });
+    const safeSuccessMemoryPolicy = {
+      projectId: project.id,
+      mode: "auto_safe_on_success" as const,
+      maxRiskLevel: "low" as const,
+      allowSkippedVerification: false,
+      allowedCategories: ["workflow_rule" as const],
+      maxAutoApprovalsPerRun: 1
+    };
+    await expect(
+      settings.saveMemoryPolicy(safeSuccessMemoryPolicy)
+    ).resolves.toMatchObject({
+      mode: "auto_safe_on_success",
+      maxRiskLevel: "low"
+    });
+    await expect(
+      handlers[IPC_CHANNELS.settingsSaveMemoryPolicy](
+        { sender } as never,
+        safeSuccessMemoryPolicy
+      )
+    ).resolves.toMatchObject({
+      mode: "auto_safe_on_success",
+      maxRiskLevel: "low"
+    });
   });
 
   it("keeps fake agent out of normal desktop runtime config", async () => {
@@ -874,6 +928,17 @@ describe("desktop services", () => {
         updatedAt: now
       })
     );
+    await fixture.repositories.memoryItemRepository.create(
+      validateMemoryItem({
+        id: "memory_knowledge_retired",
+        projectId: project.id,
+        category: "workflow_rule",
+        status: "retired",
+        content: "Retired memory remains visible for audit only.",
+        createdAt: now,
+        updatedAt: now
+      })
+    );
     const thread = await fixture.repositories.conversationThreadRepository.create(
       validateConversationThread({
         id: "thread_knowledge_review",
@@ -935,6 +1000,7 @@ describe("desktop services", () => {
       proposed: 1,
       approved: 1,
       rejected: 1,
+      retired: 1,
       summaries: 1,
       decisions: 2
     });
@@ -945,6 +1011,14 @@ describe("desktop services", () => {
           kind: "memory",
           status: "proposed",
           taskId: task.id
+        }),
+        expect.objectContaining({
+          id: "memory_knowledge_retired",
+          kind: "memory",
+          status: "retired",
+          audit: expect.arrayContaining([
+            expect.objectContaining({ label: "Memory retired" })
+          ])
         }),
         expect.objectContaining({
           id: "summary_knowledge_review",
@@ -1065,6 +1139,7 @@ describe("desktop services", () => {
     const projects = createProjectService(context);
     const memory = createMemoryService(context);
     const review = createReviewService(context, { memoryService: memory });
+    const knowledge = createKnowledgeService(context);
     const runs = createTestRunService(context, review, memory, fixture);
     const before = await fs.readdir(fixture.projectRoot);
     const project = await projects.open(fixture.projectRoot);
@@ -1090,6 +1165,80 @@ describe("desktop services", () => {
     });
     expect(rejected.rejectedAt).toBeDefined();
     await expect(fs.readdir(fixture.projectRoot)).resolves.toEqual(before);
+  });
+
+  it("auto-approves eligible memory after accepted review when policy opts in", async () => {
+    const fixture = await createFixture();
+    const context = createDesktopServiceContext(fixture.repositories, {
+      agentHubHome: fixture.agentHubHome
+    });
+    const projects = createProjectService(context);
+    const memory = createMemoryService(context);
+    const review = createReviewService(context, { memoryService: memory });
+    const knowledge = createKnowledgeService(context);
+    const runs = createTestRunService(context, review, memory, fixture);
+    const project = await projects.open(fixture.projectRoot);
+    await saveProjectMemoryAutomationPolicy(
+      { settingsRepository: fixture.repositories.settingsRepository },
+      {
+        projectId: project.id,
+        policy: {
+          mode: "auto_after_review_accept",
+          maxRiskLevel: "medium",
+          allowSkippedVerification: true,
+          allowedCategories: ["workflow_rule"],
+          maxAutoApprovalsPerRun: 2
+        },
+        updatedAt: context.now()
+      }
+    );
+    const run = await runs.createRun({
+      projectId: project.id,
+      prompt: "Review desktop memory automation.",
+      agentId: "fake",
+      contextMode: "auto"
+    });
+    await waitForRun(runs, run.id, "completed");
+
+    const accepted = await review.acceptRun(run.id);
+    const proposals = await memory.listProposals(run.id);
+    const workspace = await knowledge.getWorkspace(project.id);
+    const approvedPath = path.join(
+      fixture.agentHubHome,
+      "context-stores",
+      project.id,
+      "memory",
+      "approved.md"
+    );
+    const approvedMemory = await fs.readFile(approvedPath, "utf8");
+
+    expect(accepted.message).toContain("Memory automation: auto-approved 1");
+    expect(proposals).toContainEqual(
+      expect.objectContaining({
+        status: "approved",
+        content: "Desktop renderer must not access Node APIs directly.",
+        approvedMemoryPath: approvedPath,
+        autoApproval: expect.objectContaining({
+          policyMode: "auto_after_review_accept",
+          writebackPath: approvedPath
+        })
+      })
+    );
+    expect(workspace.items).toContainEqual(
+      expect.objectContaining({
+        kind: "memory",
+        status: "approved",
+        autoApproval: expect.objectContaining({
+          policyMode: "auto_after_review_accept"
+        }),
+        audit: expect.arrayContaining([
+          expect.objectContaining({ label: "Auto-approved memory" })
+        ])
+      })
+    );
+    expect(approvedMemory).toContain(
+      "Desktop renderer must not access Node APIs directly."
+    );
   });
 
   it("exposes retained worktree handoff evidence and copy/open actions", async () => {

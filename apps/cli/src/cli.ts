@@ -20,6 +20,7 @@ import {
   exportContextToRepository,
   initContextStore,
   listGlobalSkills,
+  retireApprovedMemory,
   showContextStore,
   type ContextBuildResult,
   type ConversationContextMessage
@@ -33,7 +34,9 @@ import {
   defaultAgentKind,
   isAgentKindEnabled,
   memoryCategories,
+  memoryAutomationPolicyModes,
   runEventTypes,
+  riskLevels,
   roleCallStatuses,
   roleIntentTypes,
   roleTodoStatuses,
@@ -51,6 +54,7 @@ import {
   validateConversationThread,
   validateConversationThreadSummary,
   validateMemoryItem,
+  validateMemoryAutomationPolicy,
   validateProject,
   validateRunEvent,
   validateTask,
@@ -68,6 +72,7 @@ import {
   type ContextIndexRepository,
   type JsonObject,
   type MemoryCategory,
+  type MemoryAutomationPolicy,
   type Project,
   type RunContextDeliveryMode,
   type RuntimeContextPack,
@@ -88,12 +93,16 @@ import {
   type WorkgroupTaskAssignmentMetadata
 } from "@agent-hub/core";
 import {
+  applyMemoryAutomationForRun,
   buildComparisonReport,
+  evaluateMemoryAutomationForRun,
   formatShellCommand,
   getRunReviewDecision,
   loadRunDiffReview,
   loadRunEventsReview,
+  loadProjectMemoryAutomationPolicy,
   recordRunReviewDecision,
+  saveProjectMemoryAutomationPolicy,
   RoleCallTaskRunnerExecutor,
   TaskRunner,
   type RunDiffReview,
@@ -337,6 +346,8 @@ export function createCliRuntime(
     verificationResultRepository,
     riskReportRepository,
     memoryItemRepository,
+    projectRepository,
+    settingsRepository,
     runMetadataRepository,
     conversationThreadSummaryRepository,
     contextEvalEventRepository,
@@ -688,15 +699,27 @@ function cliCommandRoutes(debug: boolean): CliCommandRoute<CliCommandContext>[] 
     },
     {
       patterns: [["reviews", "accept"]],
-      usage: ["  agent-hub reviews accept <run-id>"],
+      usage: ["  agent-hub reviews accept <run-id> [--agent-hub-home <path>]"],
       run: (args, context) =>
-        recordReviewDecisionCommand("accepted", args, context.io, context.runtime)
+        recordReviewDecisionCommand(
+          "accepted",
+          args,
+          context.io,
+          context.cwd,
+          context.runtime
+        )
     },
     {
       patterns: [["reviews", "reject"]],
       usage: ["  agent-hub reviews reject <run-id> [--reason <text>]"],
       run: (args, context) =>
-        recordReviewDecisionCommand("rejected", args, context.io, context.runtime)
+        recordReviewDecisionCommand(
+          "rejected",
+          args,
+          context.io,
+          context.cwd,
+          context.runtime
+        )
     },
     {
       patterns: [["role-calls", "list"]],
@@ -719,6 +742,22 @@ function cliCommandRoutes(debug: boolean): CliCommandRoute<CliCommandContext>[] 
       run: (args, context) => listRoleEvents(args, context.io, context.runtime)
     },
     {
+      patterns: [["memory", "automation", "evaluate"]],
+      usage: ["  agent-hub memory automation evaluate --run-id <run-id>"],
+      run: (args, context) =>
+        evaluateMemoryAutomation(args, context.io, context.runtime)
+    },
+    {
+      patterns: [["memory", "policy", "show"]],
+      usage: ["  agent-hub memory policy show --project-id <project-id>"],
+      run: (args, context) => showMemoryPolicy(args, context.io, context.runtime)
+    },
+    {
+      patterns: [["memory", "policy", "set"]],
+      usage: ["  agent-hub memory policy set --project-id <project-id> --mode suggest_only|auto_after_review_accept|auto_safe_on_success [--max-risk low|medium|high|blocking] [--allow-skipped-verification true|false] [--category <category>] [--max-auto-approvals-per-run <n>]"],
+      run: (args, context) => setMemoryPolicy(args, context.io, context.runtime)
+    },
+    {
       patterns: [["memory", "list"]],
       usage: ["  agent-hub memory list --project-id <project-id>"],
       run: (args, context) => listMemory(args, context.io, context.runtime)
@@ -737,6 +776,11 @@ function cliCommandRoutes(debug: boolean): CliCommandRoute<CliCommandContext>[] 
       patterns: [["memory", "reject"]],
       usage: ["  agent-hub memory reject --memory-id <memory-id>"],
       run: (args, context) => rejectMemory(args, context.io, context.runtime)
+    },
+    {
+      patterns: [["memory", "retire"]],
+      usage: ["  agent-hub memory retire --memory-id <memory-id> --reason <text>"],
+      run: (args, context) => retireMemory(args, context.io, context.cwd, context.runtime)
     },
     {
       patterns: [["compare"]],
@@ -4839,6 +4883,7 @@ async function recordReviewDecisionCommand(
   status: "accepted" | "rejected",
   args: string[],
   io: CliIO,
+  cwd: string,
   runtime: CliRuntime
 ): Promise<number> {
   const runId = args[0];
@@ -4862,6 +4907,28 @@ async function recordReviewDecisionCommand(
     );
     await recordContextReviewDecisionEvalEvent(runtime, decision);
     io.stdout.write(renderReviewDecision(decision));
+    if (status === "accepted") {
+      const automation = await applyMemoryAutomationForRun(
+        {
+          taskRunRepository: runtime.taskRunRepository,
+          taskRepository: runtime.taskRepository,
+          projectRepository: runtime.projectRepository,
+          settingsRepository: runtime.settingsRepository,
+          memoryItemRepository: runtime.memoryItemRepository,
+          verificationResultRepository: runtime.verificationResultRepository,
+          riskReportRepository: runtime.riskReportRepository
+        },
+        {
+          runId,
+          trigger: "review_accepted",
+          now: nowIso,
+          agentHubHome: optionalFlag(args.slice(1), "--agent-hub-home")
+            ? path.resolve(cwd, requiredFlag(args.slice(1), "--agent-hub-home"))
+            : undefined
+        }
+      );
+      io.stdout.write(renderMemoryAutomationApplyResult(automation));
+    }
     return 0;
   } catch (error) {
     io.stderr.write(`error: ${errorMessage(error)}\n`);
@@ -4937,6 +5004,36 @@ function renderReviewDecision(decision: {
     `rejected_at: ${decision.rejectedAt ?? "none"}`,
     `reason: ${decision.reason ?? "none"}`,
     `message: ${decision.message ?? "none"}`,
+    ""
+  ].join("\n");
+}
+
+function renderMemoryAutomationApplyResult(result: {
+  policy: MemoryAutomationPolicy;
+  autoApproved: Array<{
+    memoryId: string;
+    approvedMemoryPath: string;
+    writeback: "written" | "already_present";
+  }>;
+  skipped: Array<{
+    memoryId: string;
+    status: string;
+    reasonCodes: string[];
+  }>;
+  message: string;
+}): string {
+  return [
+    "Memory automation",
+    `policy_mode: ${result.policy.mode}`,
+    `auto_approved: ${result.autoApproved.length}`,
+    `skipped: ${result.skipped.length}`,
+    `message: ${result.message}`,
+    ...result.autoApproved.map((item) =>
+      `approved\t${item.memoryId}\t${item.writeback}\t${item.approvedMemoryPath}`
+    ),
+    ...result.skipped.map((item) =>
+      `skipped\t${item.memoryId}\t${item.status}\t${item.reasonCodes.join(",")}`
+    ),
     ""
   ].join("\n");
 }
@@ -5427,6 +5524,169 @@ async function listMemory(
   }
 }
 
+async function evaluateMemoryAutomation(
+  args: string[],
+  io: CliIO,
+  runtime: CliRuntime
+): Promise<number> {
+  try {
+    const runId = requiredFlag(args, "--run-id");
+    const evaluation = await evaluateMemoryAutomationForRun(
+      {
+        taskRunRepository: runtime.taskRunRepository,
+        taskRepository: runtime.taskRepository,
+        memoryItemRepository: runtime.memoryItemRepository,
+        verificationResultRepository: runtime.verificationResultRepository,
+        riskReportRepository: runtime.riskReportRepository
+      },
+      {
+        runId,
+        createdAt: nowIso()
+      }
+    );
+    io.stdout.write(
+      [
+        "Memory automation evaluation",
+        `run_id: ${evaluation.runId}`,
+        `policy_mode: ${evaluation.policy.mode}`,
+        `max_risk: ${evaluation.policy.maxRiskLevel}`,
+        `allow_skipped_verification: ${evaluation.policy.allowSkippedVerification}`,
+        `allowed_categories: ${evaluation.policy.allowedCategories.join(", ")}`,
+        `max_auto_approvals_per_run: ${evaluation.policy.maxAutoApprovalsPerRun}`,
+        `decisions: ${evaluation.decisions.length}`
+      ].join("\n") + "\n"
+    );
+    if (evaluation.decisions.length === 0) {
+      io.stdout.write("No memory proposals found for this run.\n");
+      return 0;
+    }
+    io.stdout.write("memory_id\tstatus\treasons\tmessage\n");
+    for (const decision of evaluation.decisions) {
+      io.stdout.write(
+        [
+          decision.memoryId,
+          decision.status,
+          decision.reasonCodes.join(","),
+          decision.message ?? ""
+        ].join("\t") + "\n"
+      );
+    }
+    return 0;
+  } catch (error) {
+    io.stderr.write(`error: ${error instanceof Error ? error.message : String(error)}\n`);
+    return 1;
+  }
+}
+
+async function showMemoryPolicy(
+  args: string[],
+  io: CliIO,
+  runtime: CliRuntime
+): Promise<number> {
+  try {
+    const projectId = requiredFlag(args, "--project-id");
+    await requireProject(runtime, projectId);
+    const policy = await loadProjectMemoryAutomationPolicy(
+      { settingsRepository: runtime.settingsRepository },
+      projectId
+    );
+    io.stdout.write(renderMemoryPolicy(projectId, policy));
+    return 0;
+  } catch (error) {
+    io.stderr.write(`error: ${error instanceof Error ? error.message : String(error)}\n`);
+    return 1;
+  }
+}
+
+async function setMemoryPolicy(
+  args: string[],
+  io: CliIO,
+  runtime: CliRuntime
+): Promise<number> {
+  try {
+    const projectId = requiredFlag(args, "--project-id");
+    await requireProject(runtime, projectId);
+    const current = await loadProjectMemoryAutomationPolicy(
+      { settingsRepository: runtime.settingsRepository },
+      projectId
+    );
+    const mode = optionalFlag(args, "--mode") ?? current.mode;
+    if (!(memoryAutomationPolicyModes as readonly string[]).includes(mode)) {
+      throw new Error(`--mode must be one of ${memoryAutomationPolicyModes.join(", ")}`);
+    }
+    const maxRiskLevel = optionalFlag(args, "--max-risk") ?? current.maxRiskLevel;
+    if (!(riskLevels as readonly string[]).includes(maxRiskLevel)) {
+      throw new Error(`--max-risk must be one of ${riskLevels.join(", ")}`);
+    }
+    const categories = repeatedFlag(args, "--category");
+    const maxAutoApprovals = optionalFlag(args, "--max-auto-approvals-per-run");
+    const policy = validateMemoryAutomationPolicy({
+      ...current,
+      mode: mode as MemoryAutomationPolicy["mode"],
+      maxRiskLevel: maxRiskLevel as MemoryAutomationPolicy["maxRiskLevel"],
+      allowSkippedVerification: optionalFlag(args, "--allow-skipped-verification") === undefined
+        ? current.allowSkippedVerification
+        : parsePolicyBoolean(
+            requiredFlag(args, "--allow-skipped-verification"),
+            "--allow-skipped-verification"
+          ),
+      allowedCategories: categories.length === 0
+        ? current.allowedCategories
+        : categories.map(parseMemoryCategory),
+      maxAutoApprovalsPerRun: maxAutoApprovals === undefined
+        ? current.maxAutoApprovalsPerRun
+        : parsePolicyInteger(maxAutoApprovals, "--max-auto-approvals-per-run")
+    });
+    const saved = await saveProjectMemoryAutomationPolicy(
+      { settingsRepository: runtime.settingsRepository },
+      {
+        projectId,
+        policy,
+        updatedAt: nowIso()
+      }
+    );
+    io.stdout.write(renderMemoryPolicy(projectId, saved));
+    return 0;
+  } catch (error) {
+    io.stderr.write(`error: ${error instanceof Error ? error.message : String(error)}\n`);
+    return 1;
+  }
+}
+
+function renderMemoryPolicy(
+  projectId: string,
+  policy: MemoryAutomationPolicy
+): string {
+  return [
+    "Memory automation policy",
+    `project_id: ${projectId}`,
+    `mode: ${policy.mode}`,
+    `max_risk: ${policy.maxRiskLevel}`,
+    `allow_skipped_verification: ${policy.allowSkippedVerification}`,
+    `allowed_categories: ${policy.allowedCategories.join(", ")}`,
+    `max_auto_approvals_per_run: ${policy.maxAutoApprovalsPerRun}`,
+    ""
+  ].join("\n");
+}
+
+function parsePolicyBoolean(value: string, flag: string): boolean {
+  if (value === "true") {
+    return true;
+  }
+  if (value === "false") {
+    return false;
+  }
+  throw new Error(`${flag} must be true or false`);
+}
+
+function parsePolicyInteger(value: string, flag: string): number {
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < 0) {
+    throw new Error(`${flag} must be a non-negative integer`);
+  }
+  return parsed;
+}
+
 async function proposeMemory(
   args: string[],
   io: CliIO,
@@ -5539,6 +5799,71 @@ async function rejectMemory(
         "Rejected memory",
         `id: ${item.id}`,
         `status: ${item.status}`,
+        ""
+      ].join("\n")
+    );
+    return 0;
+  } catch (error) {
+    io.stderr.write(`error: ${error instanceof Error ? error.message : String(error)}\n`);
+    return 1;
+  }
+}
+
+async function retireMemory(
+  args: string[],
+  io: CliIO,
+  cwd: string,
+  runtime: CliRuntime
+): Promise<number> {
+  try {
+    const memoryId = requiredFlag(args, "--memory-id");
+    const existing = await runtime.memoryItemRepository.get(memoryId);
+    if (!existing) {
+      throw new Error(`memory item ${memoryId} not found`);
+    }
+    const project = await runtime.projectRepository.get(existing.projectId);
+    if (!project) {
+      throw new Error(`project ${existing.projectId} not found`);
+    }
+    const retiredAt = nowIso();
+    const reason = requiredFlag(args, "--reason").trim();
+    if (!reason) {
+      throw new Error("--reason must not be empty");
+    }
+    const retired = await retireApprovedMemory({
+      projectRoot: project.rootPath,
+      projectId: project.id,
+      memoryId: existing.id,
+      retiredAt,
+      reason,
+      agentHubHome: optionalFlag(args, "--agent-hub-home")
+        ? path.resolve(cwd, requiredFlag(args, "--agent-hub-home"))
+        : undefined
+    });
+    if (!retired.retired) {
+      throw new Error(`approved memory block for ${existing.id} was not found`);
+    }
+    const item = await runtime.memoryItemRepository.create(
+      validateMemoryItem({
+        ...existing,
+        status: "retired",
+        metadata: {
+          ...(existing.metadata ?? {}),
+          retirement: {
+            retiredAt,
+            ...(reason ? { reason } : {})
+          }
+        },
+        updatedAt: retiredAt
+      })
+    );
+    io.stdout.write(
+      [
+        "Retired memory",
+        `id: ${item.id}`,
+        `status: ${item.status}`,
+        `approved_memory_path: ${retired.path}`,
+        `approved_memory_updated: ${retired.retired}`,
         ""
       ].join("\n")
     );

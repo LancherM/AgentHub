@@ -95,6 +95,10 @@ import {
   type SkillReference
 } from "@agent-hub/core";
 import { RiskReportGenerator } from "@agent-hub/safety";
+import {
+  applyMemoryAutomationForRun,
+  loadProjectMemoryAutomationPolicy
+} from "./memory-automation";
 import { generateMemoryProposalsFromCompletedRun } from "./memory-proposals";
 import { formatShellCommand, NodeShellExecutor, type ShellExecutor } from "./shell-executor";
 import {
@@ -102,6 +106,8 @@ import {
   InMemoryRunArtifactRepository,
   InMemoryRunEventRepository,
   InMemoryRunMetadataRepository,
+  InMemoryProjectRepository,
+  InMemorySettingsRepository,
   InMemoryTaskRepository,
   InMemoryTaskRunRepository,
   InMemoryVerificationResultRepository,
@@ -111,12 +117,14 @@ import {
   type ContextEvalEventRepository,
   type ConversationThreadSummaryRepository,
   type MemoryItemRepository,
+  type ProjectRepository,
   type RiskReportRepository,
   type RunArtifactRepository,
   type RunEventRepository,
   type RunMetadataRepository,
   type RunStatus,
   type RunStatusTransition,
+  type SettingsRepository,
   type TaskRepository,
   type TaskRunRepository,
   type VerificationResultRepository
@@ -246,6 +254,8 @@ export interface TaskRunnerDependencies {
   verificationResultRepository?: VerificationResultRepository;
   riskReportRepository?: RiskReportRepository;
   memoryItemRepository?: MemoryItemRepository;
+  projectRepository?: ProjectRepository;
+  settingsRepository?: SettingsRepository;
   runMetadataRepository?: RunMetadataRepository;
   conversationThreadSummaryRepository?: ConversationThreadSummaryRepository;
   contextEvalEventRepository?: ContextEvalEventRepository;
@@ -324,6 +334,8 @@ export class TaskRunner {
   readonly verificationResultRepository: VerificationResultRepository;
   readonly riskReportRepository: RiskReportRepository;
   readonly memoryItemRepository: MemoryItemRepository;
+  readonly projectRepository: ProjectRepository;
+  readonly settingsRepository: SettingsRepository;
   readonly runMetadataRepository: RunMetadataRepository;
   readonly conversationThreadSummaryRepository: ConversationThreadSummaryRepository;
   readonly contextEvalEventRepository: ContextEvalEventRepository;
@@ -365,6 +377,10 @@ export class TaskRunner {
       dependencies.riskReportRepository ?? new InMemoryRiskReportRepository();
     this.memoryItemRepository =
       dependencies.memoryItemRepository ?? new InMemoryMemoryItemRepository();
+    this.projectRepository =
+      dependencies.projectRepository ?? new InMemoryProjectRepository();
+    this.settingsRepository =
+      dependencies.settingsRepository ?? new InMemorySettingsRepository();
     this.runMetadataRepository =
       dependencies.runMetadataRepository ?? new InMemoryRunMetadataRepository();
     this.conversationThreadSummaryRepository =
@@ -1330,6 +1346,33 @@ export class TaskRunner {
         );
       } catch (error) {
         warnings.push(`memory proposal generation failed: ${errorMessage(error)}`);
+      }
+      try {
+        const policy = await loadProjectMemoryAutomationPolicy(
+          { settingsRepository: this.settingsRepository },
+          currentTask.projectId
+        );
+        if (policy.mode === "auto_safe_on_success") {
+          await applyMemoryAutomationForRun(
+            {
+              taskRunRepository: this.taskRunRepository,
+              taskRepository: this.taskRepository,
+              projectRepository: this.projectRepository,
+              settingsRepository: this.settingsRepository,
+              verificationResultRepository: this.verificationResultRepository,
+              riskReportRepository: this.riskReportRepository,
+              memoryItemRepository: this.memoryItemRepository
+            },
+            {
+              runId: updatedRun.id,
+              trigger: "run_finalized",
+              now: () => this.clock.now(),
+              agentHubHome: input.agentHubHome
+            }
+          );
+        }
+      } catch (error) {
+        warnings.push(`memory automation finalization failed: ${errorMessage(error)}`);
       }
     }
 
