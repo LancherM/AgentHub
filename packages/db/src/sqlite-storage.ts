@@ -432,7 +432,7 @@ CREATE TABLE IF NOT EXISTS memory_items (
   project_id TEXT NOT NULL,
   task_id TEXT,
   category TEXT NOT NULL CHECK (category IN ('project_fact', 'workflow_rule', 'user_preference', 'temporary_note')),
-  status TEXT NOT NULL CHECK (status IN ('proposed', 'approved', 'rejected')),
+  status TEXT NOT NULL CHECK (status IN ('proposed', 'approved', 'rejected', 'retired')),
   content TEXT NOT NULL,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
@@ -1110,6 +1110,58 @@ ALTER TABLE memory_items
   ADD COLUMN metadata_json TEXT CHECK (
     metadata_json IS NULL OR (json_valid(metadata_json) AND json_type(metadata_json) = 'object')
   );
+`
+  },
+  {
+    version: 17,
+    sql: `
+ALTER TABLE memory_items RENAME TO memory_items_old;
+
+CREATE TABLE memory_items (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL,
+  task_id TEXT,
+  category TEXT NOT NULL CHECK (category IN ('project_fact', 'workflow_rule', 'user_preference', 'temporary_note')),
+  status TEXT NOT NULL CHECK (status IN ('proposed', 'approved', 'rejected', 'retired')),
+  content TEXT NOT NULL,
+  metadata_json TEXT CHECK (
+    metadata_json IS NULL OR (json_valid(metadata_json) AND json_type(metadata_json) = 'object')
+  ),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+  FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE SET NULL
+);
+
+INSERT INTO memory_items (
+  id,
+  project_id,
+  task_id,
+  category,
+  status,
+  content,
+  metadata_json,
+  created_at,
+  updated_at
+)
+SELECT
+  id,
+  project_id,
+  task_id,
+  category,
+  status,
+  content,
+  metadata_json,
+  created_at,
+  updated_at
+FROM memory_items_old;
+
+DROP TABLE memory_items_old;
+
+CREATE INDEX IF NOT EXISTS idx_memory_items_project ON memory_items(project_id);
+CREATE INDEX IF NOT EXISTS idx_memory_items_status ON memory_items(status);
+CREATE INDEX IF NOT EXISTS idx_memory_items_project_status
+  ON memory_items(project_id, status);
 `
   }
 ];
@@ -4370,7 +4422,16 @@ function approvedMemoryContent(content: string): string {
   if (normalized === "# Approved Memory") {
     return "";
   }
-  return normalized.replace(/^# Approved Memory[ \t]*\n+/, "").trim();
+  const body = normalized.replace(/^# Approved Memory[ \t]*\n+/, "").trim();
+  if (!body.includes("<!-- agent-hub:memory ")) {
+    return body;
+  }
+  return body
+    .split(/\n{2,}(?=<!-- agent-hub:memory [^>]+ -->)/)
+    .map((chunk) => chunk.trim())
+    .filter((chunk) => chunk.length > 0 && !/^retired_at:/m.test(chunk))
+    .join("\n\n")
+    .trim();
 }
 
 function isPlaceholderContextFile(relativePath: string, content: string): boolean {

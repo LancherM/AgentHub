@@ -502,22 +502,41 @@ Approved memory is read from the Agent Hub context store at
 `memory/approved.md`. Proposed and rejected memory rows stay in SQLite and are
 not injected into future runs. Memory rows now carry optional local audit
 metadata so future automation can explain source run, policy, and writeback
-decisions, but approving memory is still explicit from CLI or desktop review
-and writes only to the Agent Hub-owned context store by default. TaskRunner
-finalization and desktop explicit generation use the same deterministic
+decisions. Approving memory is still explicit by default and writes only to the
+Agent Hub-owned context store unless the project opts into a local automation
+policy. TaskRunner finalization and desktop explicit generation use the same deterministic
 proposal generator, while listing proposals remains read-only.
 
 The CLI includes a read-only memory automation dry run:
 `agent-hub memory automation evaluate --run-id <run-id>`. It evaluates stored
-proposals against the default local policy, verification, risk, duplicate, and
-category gates, then prints allow/block reasons without approving or writing
-memory.
+proposals generated from that run against the default local policy,
+verification, risk, duplicate, and category gates, then prints allow/block
+reasons without approving or writing memory. Review-gated policies remain
+blocked in dry-run output unless the run is being evaluated from an accepted
+review path.
 
 Projects can opt into `auto_after_review_accept` with
 `agent-hub memory policy set --project-id <project-id> --mode auto_after_review_accept`.
 When enabled, an explicit CLI or desktop review acceptance auto-approves only
 eligible proposed memory and writes it through the Agent Hub-owned approved
 memory path. The default remains `suggest_only`.
+Projects can also explicitly opt into `auto_safe_on_success`. In that mode,
+TaskRunner waits until successful run finalization has persisted verification,
+risk, artifact, metadata, and proposed-memory evidence, then approves only
+eligible proposals within the configured risk, verification, category, and
+per-run limits. This mode is never enabled by default.
+Approved memory can be retired with
+`agent-hub memory retire --memory-id <memory-id> --reason <text>`. Retirement
+keeps the SQLite row and approved-memory file audit trail, marks the managed
+approved-memory block as retired, and prevents retired memory from entering
+future runtime context or stable context indexes. The CLI only updates the
+SQLite row after the approved-memory file block has been successfully marked
+retired.
+The desktop Project Settings panel exposes the same project policy for local
+operators: users can keep proposals queued, opt into auto-after-review or
+auto-safe-on-success, choose the risk threshold, per-run limit,
+skipped-verification behavior, and allowed memory categories without giving the
+renderer direct SQLite or filesystem access.
 
 ## Desktop Experience
 
@@ -555,7 +574,8 @@ artifact previews out of the normal transcript.
 
 Desktop lifecycle actions are explicit and audited:
 
-- accept/reject records review decisions only;
+- accept/reject records review decisions and, when the project explicitly opts
+  into memory automation, review acceptance may approve eligible memory;
 - memory approval writes approved memory to Agent Hub's context store;
 - retained-worktree handoff exposes local review evidence and review-only
   commands;
@@ -566,6 +586,13 @@ Desktop lifecycle actions are explicit and audited:
 
 Desktop apply does not commit, merge, push, create pull requests, delete
 branches, export repository context, or approve memory.
+
+The Knowledge workspace surfaces memory governance evidence. Auto-approved
+memory is tagged in the memory list, its detail pane shows the applied policy,
+risk level, verification status, and approved-memory path, and the audit trail
+records the local auto-approval event alongside normal memory lifecycle events.
+Retired memory remains visible for audit but is not injected into future task
+briefs.
 
 ## Safety And Review
 

@@ -1697,7 +1697,8 @@ function summarizeMemory(
   const counts: Record<MemoryStatus, number> = {
     proposed: 0,
     approved: 0,
-    rejected: 0
+    rejected: 0,
+    retired: 0
   };
   for (const item of items) {
     counts[item.status] += 1;

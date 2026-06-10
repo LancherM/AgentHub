@@ -135,6 +135,7 @@ export class MemoryAutomationEvaluator {
       .filter((item) =>
         item.taskId === task.id &&
         item.status !== "rejected" &&
+        item.status !== "retired" &&
         item.metadata?.sourceRunId === run.id
       )
       .sort(compareMemoryItems);
@@ -283,10 +284,12 @@ export async function applyMemoryAutomationForRun(
     reviewAccepted: input.trigger === "review_accepted",
     createdAt: input.now()
   });
-  if (
-    input.trigger !== "review_accepted" ||
-    policy.mode !== "auto_after_review_accept"
-  ) {
+  const triggerMatchesPolicy =
+    (input.trigger === "review_accepted" &&
+      policy.mode === "auto_after_review_accept") ||
+    (input.trigger === "run_finalized" &&
+      policy.mode === "auto_safe_on_success");
+  if (!triggerMatchesPolicy) {
     return {
       runId: run.id,
       trigger: input.trigger,
@@ -611,6 +614,9 @@ function compareMemoryItems(left: MemoryItem, right: MemoryItem): number {
 
 function memoryStatusRank(status: MemoryItem["status"]): number {
   if (status === "approved") {
+    return 4;
+  }
+  if (status === "retired") {
     return 3;
   }
   if (status === "proposed") {

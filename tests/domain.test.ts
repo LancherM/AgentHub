@@ -656,6 +656,17 @@ describe("domain model validation", () => {
         sourceRunId: "run_1"
       }
     });
+    expect(
+      validateMemoryItem({
+        id: "memory_retired",
+        projectId: "project_1",
+        category: "workflow_rule",
+        status: "retired",
+        content: "Retired memory is retained for audit only.",
+        createdAt: now,
+        updatedAt: now
+      })
+    ).toMatchObject({ status: "retired" });
 
     expect(() =>
       validateMemoryItem({
@@ -1067,7 +1078,10 @@ describe("domain model validation", () => {
       .toThrow(DomainStateTransitionError);
 
     expect(() => validateMemoryStatusTransition("proposed", "approved")).not.toThrow();
+    expect(() => validateMemoryStatusTransition("approved", "retired")).not.toThrow();
     expect(() => validateMemoryStatusTransition("rejected", "approved"))
+      .toThrow(DomainStateTransitionError);
+    expect(() => validateMemoryStatusTransition("retired", "approved"))
       .toThrow(DomainStateTransitionError);
   });
 

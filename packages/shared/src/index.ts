@@ -260,7 +260,12 @@ export const memoryCategories = [
 ] as const;
 export type MemoryCategory = (typeof memoryCategories)[number];
 
-export const memoryStatuses = ["proposed", "approved", "rejected"] as const;
+export const memoryStatuses = [
+  "proposed",
+  "approved",
+  "rejected",
+  "retired"
+] as const;
 export type MemoryStatus = (typeof memoryStatuses)[number];
 
 export const riskLevels = ["low", "medium", "high", "blocking"] as const;

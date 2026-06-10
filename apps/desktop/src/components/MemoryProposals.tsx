@@ -82,7 +82,7 @@ export function MemoryProposals({
           ))}
         </div>
       ) : null}
-      {(["pending", "approved", "ignored"] as const).map((status) => {
+      {(["pending", "approved", "ignored", "retired"] as const).map((status) => {
         const items = grouped[status];
         if (items.length === 0) {
           return null;
@@ -112,6 +112,26 @@ export function MemoryProposals({
                   <span>{item.source}</span>
                 </label>
                 <p>{item.content}</p>
+                {item.autoApproval ? (
+                  <div className="memory-automation-badges">
+                    <span className="timeline-chip accent">
+                      auto approved
+                    </span>
+                    <span className="timeline-chip neutral">
+                      {item.autoApproval.policyMode}
+                    </span>
+                    {item.autoApproval.riskLevel ? (
+                      <span className="timeline-chip neutral">
+                        risk {item.autoApproval.riskLevel}
+                      </span>
+                    ) : null}
+                    {item.autoApproval.verificationStatus ? (
+                      <span className="timeline-chip neutral">
+                        checks {item.autoApproval.verificationStatus}
+                      </span>
+                    ) : null}
+                  </div>
+                ) : null}
                 {item.rationale ? (
                   <small>{item.rationale}</small>
                 ) : null}
@@ -136,6 +156,7 @@ function groupProposals(proposals: MemoryProposal[]): Record<
   return {
     pending: proposals.filter((item) => item.status === "pending"),
     approved: proposals.filter((item) => item.status === "approved"),
-    ignored: proposals.filter((item) => item.status === "ignored")
+    ignored: proposals.filter((item) => item.status === "ignored"),
+    retired: proposals.filter((item) => item.status === "retired")
   };
 }
