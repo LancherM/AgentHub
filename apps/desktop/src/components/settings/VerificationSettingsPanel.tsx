@@ -1,12 +1,15 @@
 import { useEffect, useMemo, useState } from "react";
 import { agentHubApi } from "../../lib/agentHubApi";
 import type {
+  MemoryAutomationPolicySettings,
   ProjectSummary,
   VerificationCommandConfig
 } from "../../lib/types";
 import {
   cleanSettingsError,
+  validateDraftMemoryAutomationPolicy,
   validateDraftVerificationCommands,
+  type DraftMemoryAutomationPolicy,
   type DraftVerificationCommand
 } from "./verification-settings-validation";
 
@@ -23,8 +26,13 @@ export function VerificationSettingsPanel({
 }: VerificationSettingsPanelProps): JSX.Element {
   const [commands, setCommands] = useState<DraftCommand[]>([]);
   const [savedCommands, setSavedCommands] = useState<DraftCommand[]>([]);
+  const [memoryPolicy, setMemoryPolicy] =
+    useState<DraftMemoryAutomationPolicy>(defaultDraftMemoryPolicy());
+  const [savedMemoryPolicy, setSavedMemoryPolicy] =
+    useState<DraftMemoryAutomationPolicy>(defaultDraftMemoryPolicy());
   const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [isSavingMemory, setIsSavingMemory] = useState(false);
   const [message, setMessage] = useState<string | undefined>();
   const [error, setError] = useState<string | undefined>();
 
@@ -34,15 +42,22 @@ export function VerificationSettingsPanel({
     if (!project) {
       setCommands([]);
       setSavedCommands([]);
+      setMemoryPolicy(defaultDraftMemoryPolicy());
+      setSavedMemoryPolicy(defaultDraftMemoryPolicy());
       return;
     }
     setIsLoading(true);
-    agentHubApi.settings
-      .getVerification(project.id)
-      .then((settings) => {
+    Promise.all([
+      agentHubApi.settings.getVerification(project.id),
+      agentHubApi.settings.getMemoryPolicy(project.id)
+    ])
+      .then(([settings, policy]) => {
         const drafts = settings.commands.map(toDraftCommand);
+        const policyDraft = toDraftMemoryPolicy(policy);
         setCommands(drafts);
         setSavedCommands(drafts);
+        setMemoryPolicy(policyDraft);
+        setSavedMemoryPolicy(policyDraft);
       })
       .catch((err: unknown) => {
         setError(errorMessage(err));
@@ -87,6 +102,27 @@ export function VerificationSettingsPanel({
     );
   }
 
+  function updateMemoryPolicy(patch: Partial<DraftMemoryAutomationPolicy>): void {
+    clearFeedback();
+    setMemoryPolicy((current) => ({ ...current, ...patch }));
+  }
+
+  function toggleMemoryCategory(category: string): void {
+    clearFeedback();
+    setMemoryPolicy((current) => {
+      const selected = new Set(current.allowedCategories);
+      if (selected.has(category)) {
+        selected.delete(category);
+      } else {
+        selected.add(category);
+      }
+      return {
+        ...current,
+        allowedCategories: [...selected]
+      };
+    });
+  }
+
   function clearFeedback(): void {
     setMessage(undefined);
     setError(undefined);
@@ -123,6 +159,32 @@ export function VerificationSettingsPanel({
     }
   }
 
+  async function saveMemoryPolicy(): Promise<void> {
+    if (!project) {
+      return;
+    }
+    setMessage(undefined);
+    setError(undefined);
+    if (policyValidation.message) {
+      setError(policyValidation.message);
+      return;
+    }
+    setIsSavingMemory(true);
+    try {
+      const saved = await agentHubApi.settings.saveMemoryPolicy(
+        fromDraftMemoryPolicy(project.id, memoryPolicy)
+      );
+      const draft = toDraftMemoryPolicy(saved);
+      setMemoryPolicy(draft);
+      setSavedMemoryPolicy(draft);
+      setMessage("Memory automation policy saved.");
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setIsSavingMemory(false);
+    }
+  }
+
   const hasChanges = useMemo(
     () => serializeCommands(commands) !== serializeCommands(savedCommands),
     [commands, savedCommands]
@@ -131,7 +193,17 @@ export function VerificationSettingsPanel({
     () => validateDraftVerificationCommands(commands),
     [commands]
   );
-  const activeError = error ?? (hasChanges ? validation.message : undefined);
+  const hasMemoryPolicyChanges = useMemo(
+    () => serializeMemoryPolicy(memoryPolicy) !== serializeMemoryPolicy(savedMemoryPolicy),
+    [memoryPolicy, savedMemoryPolicy]
+  );
+  const policyValidation = useMemo(
+    () => validateDraftMemoryAutomationPolicy(memoryPolicy),
+    [memoryPolicy]
+  );
+  const activeError = error ??
+    (hasChanges ? validation.message : undefined) ??
+    (hasMemoryPolicyChanges ? policyValidation.message : undefined);
 
   return (
     <div className="inspector-backdrop" role="presentation" onMouseDown={onClose}>
@@ -139,13 +211,13 @@ export function VerificationSettingsPanel({
         className="settings-panel"
         role="dialog"
         aria-modal="true"
-        aria-label="Verification settings"
+        aria-label="Project settings"
         onMouseDown={(event) => event.stopPropagation()}
       >
         <header className="settings-header">
           <div>
             <div className="eyebrow">Settings</div>
-            <h2>Verification</h2>
+            <h2>Project Settings</h2>
             <p>{project ? project.name : "No project selected"}</p>
           </div>
           <div className="inspector-actions">
@@ -174,6 +246,98 @@ export function VerificationSettingsPanel({
             </p>
           ) : (
             <>
+              <section className="settings-section memory-policy-section">
+                <div className="settings-toolbar">
+                  <div>
+                    <div className="panel-label">Memory Automation</div>
+                    <p className="muted-copy">
+                      {memoryPolicyModeSummary(memoryPolicy.mode)}
+                    </p>
+                  </div>
+                  <button
+                    className="primary-button compact"
+                    onClick={() => void saveMemoryPolicy()}
+                    disabled={
+                      !hasMemoryPolicyChanges ||
+                      Boolean(policyValidation.message) ||
+                      isLoading ||
+                      isSavingMemory
+                    }
+                  >
+                    {isSavingMemory ? "Saving..." : "Save Policy"}
+                  </button>
+                </div>
+
+                <div className="settings-segmented" role="group" aria-label="Memory policy mode">
+                  {memoryModeOptions.map((option) => (
+                    <button
+                      key={option.id}
+                      className={memoryPolicy.mode === option.id ? "active" : ""}
+                      onClick={() => updateMemoryPolicy({ mode: option.id })}
+                    >
+                      <strong>{option.label}</strong>
+                      <span>{option.detail}</span>
+                    </button>
+                  ))}
+                </div>
+
+                <div className="settings-grid memory-policy-grid">
+                  <label>
+                    <span>Risk threshold</span>
+                    <select
+                      value={memoryPolicy.maxRiskLevel}
+                      onChange={(event) =>
+                        updateMemoryPolicy({ maxRiskLevel: event.target.value })
+                      }
+                    >
+                      {riskOptions.map((risk) => (
+                        <option key={risk} value={risk}>
+                          {risk}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    <span>Per-run limit</span>
+                    <input
+                      inputMode="numeric"
+                      value={memoryPolicy.maxAutoApprovalsPerRun}
+                      onChange={(event) =>
+                        updateMemoryPolicy({
+                          maxAutoApprovalsPerRun: event.target.value
+                        })
+                      }
+                    />
+                  </label>
+                </div>
+
+                <label className="settings-check">
+                  <input
+                    type="checkbox"
+                    checked={memoryPolicy.allowSkippedVerification}
+                    onChange={(event) =>
+                      updateMemoryPolicy({
+                        allowSkippedVerification: event.target.checked
+                      })
+                    }
+                  />
+                  <span>Allow skipped verification for eligible memory</span>
+                </label>
+
+                <div className="settings-category-grid">
+                  {memoryCategoryOptions.map((category) => (
+                    <label key={category.id} className="settings-check">
+                      <input
+                        type="checkbox"
+                        checked={memoryPolicy.allowedCategories.includes(category.id)}
+                        onChange={() => toggleMemoryCategory(category.id)}
+                      />
+                      <span>{category.label}</span>
+                    </label>
+                  ))}
+                </div>
+              </section>
+
               <div className="settings-toolbar">
                 <div>
                   <div className="panel-label">Project Commands</div>
@@ -355,6 +519,88 @@ function serializeCommands(commands: DraftCommand[]): string {
   return JSON.stringify(commands);
 }
 
+function defaultDraftMemoryPolicy(): DraftMemoryAutomationPolicy {
+  return {
+    mode: "suggest_only",
+    maxRiskLevel: "low",
+    allowSkippedVerification: false,
+    allowedCategories: ["workflow_rule"],
+    maxAutoApprovalsPerRun: "2"
+  };
+}
+
+function toDraftMemoryPolicy(
+  policy: MemoryAutomationPolicySettings
+): DraftMemoryAutomationPolicy {
+  return {
+    mode: policy.mode,
+    maxRiskLevel: policy.maxRiskLevel,
+    allowSkippedVerification: policy.allowSkippedVerification,
+    allowedCategories: [...policy.allowedCategories],
+    maxAutoApprovalsPerRun: String(policy.maxAutoApprovalsPerRun)
+  };
+}
+
+function fromDraftMemoryPolicy(
+  projectId: string,
+  policy: DraftMemoryAutomationPolicy
+): MemoryAutomationPolicySettings {
+  return {
+    projectId,
+    mode: policy.mode as MemoryAutomationPolicySettings["mode"],
+    maxRiskLevel: policy.maxRiskLevel as MemoryAutomationPolicySettings["maxRiskLevel"],
+    allowSkippedVerification: policy.allowSkippedVerification,
+    allowedCategories: policy.allowedCategories as MemoryAutomationPolicySettings["allowedCategories"],
+    maxAutoApprovalsPerRun: Number(policy.maxAutoApprovalsPerRun)
+  };
+}
+
+function serializeMemoryPolicy(policy: DraftMemoryAutomationPolicy): string {
+  return JSON.stringify({
+    ...policy,
+    allowedCategories: [...policy.allowedCategories].sort()
+  });
+}
+
 function errorMessage(error: unknown): string {
   return cleanSettingsError(error);
 }
+
+function memoryPolicyModeSummary(
+  mode: DraftMemoryAutomationPolicy["mode"]
+): string {
+  if (mode === "auto_after_review_accept") {
+    return "Accepted reviews can approve eligible memory.";
+  }
+  if (mode === "auto_safe_on_success") {
+    return "Successful runs can approve eligible memory after finalization.";
+  }
+  return "Proposals stay queued for manual approval.";
+}
+
+const memoryModeOptions = [
+  {
+    id: "suggest_only",
+    label: "Suggest only",
+    detail: "Queue proposals for manual approval."
+  },
+  {
+    id: "auto_after_review_accept",
+    label: "Auto after review",
+    detail: "Approve eligible memory when a run is accepted."
+  },
+  {
+    id: "auto_safe_on_success",
+    label: "Auto safe on success",
+    detail: "Approve eligible memory after a successful run."
+  }
+] as const;
+
+const riskOptions = ["low", "medium", "high", "blocking"] as const;
+
+const memoryCategoryOptions = [
+  { id: "workflow_rule", label: "Workflow rules" },
+  { id: "project_fact", label: "Project facts" },
+  { id: "user_preference", label: "User preferences" },
+  { id: "temporary_note", label: "Temporary notes" }
+] as const;

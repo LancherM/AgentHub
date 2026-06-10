@@ -691,6 +691,8 @@ class RepositoryRunService implements RunService {
         this.context.repositories.verificationResultRepository,
       riskReportRepository: this.context.repositories.riskReportRepository,
       memoryItemRepository: this.context.repositories.memoryItemRepository,
+      projectRepository: this.context.repositories.projectRepository,
+      settingsRepository: this.context.repositories.settingsRepository,
       runMetadataRepository: this.metadata,
       conversationThreadSummaryRepository:
         this.context.repositories.conversationThreadSummaryRepository,

@@ -260,11 +260,55 @@ export const memoryCategories = [
 ] as const;
 export type MemoryCategory = (typeof memoryCategories)[number];
 
-export const memoryStatuses = ["proposed", "approved", "rejected"] as const;
+export const memoryStatuses = [
+  "proposed",
+  "approved",
+  "rejected",
+  "retired"
+] as const;
 export type MemoryStatus = (typeof memoryStatuses)[number];
 
 export const riskLevels = ["low", "medium", "high", "blocking"] as const;
 export type RiskLevel = (typeof riskLevels)[number];
+
+export const memoryAutomationPolicyModes = [
+  "suggest_only",
+  "auto_after_review_accept",
+  "auto_safe_on_success"
+] as const;
+export type MemoryAutomationPolicyMode =
+  (typeof memoryAutomationPolicyModes)[number];
+
+export const memoryAutomationDecisionStatuses = [
+  "eligible",
+  "blocked",
+  "duplicate",
+  "manual_only",
+  "already_approved"
+] as const;
+export type MemoryAutomationDecisionStatus =
+  (typeof memoryAutomationDecisionStatuses)[number];
+
+export const memoryAutomationReasonCodes = [
+  "within_policy",
+  "policy_disabled",
+  "run_not_succeeded",
+  "verification_failed",
+  "verification_skipped_not_allowed",
+  "risk_too_high",
+  "blocking_risk",
+  "sensitive_path",
+  "unsafe_command",
+  "secret_like_content",
+  "unsupported_category",
+  "duplicate_content",
+  "manual_only_category",
+  "already_approved",
+  "review_not_accepted",
+  "per_run_limit_exceeded"
+] as const;
+export type MemoryAutomationReasonCode =
+  (typeof memoryAutomationReasonCodes)[number];
 
 export type JsonObject = Record<string, unknown>;
 
@@ -401,8 +445,31 @@ export interface MemoryItem {
   category: MemoryCategory;
   status: MemoryStatus;
   content: string;
+  metadata?: JsonObject;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface MemoryAutomationPolicy {
+  mode: MemoryAutomationPolicyMode;
+  maxRiskLevel: RiskLevel;
+  allowSkippedVerification: boolean;
+  allowedCategories: MemoryCategory[];
+  maxAutoApprovalsPerRun: number;
+}
+
+export interface MemoryAutomationDecision {
+  memoryId: string;
+  status: MemoryAutomationDecisionStatus;
+  reasonCodes: MemoryAutomationReasonCode[];
+  message?: string;
+}
+
+export interface MemoryAutomationEvaluation {
+  runId: string;
+  policy: MemoryAutomationPolicy;
+  decisions: MemoryAutomationDecision[];
+  createdAt?: string;
 }
 
 export interface RiskFinding {

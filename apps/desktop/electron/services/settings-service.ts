@@ -1,9 +1,15 @@
 import {
+  validateMemoryAutomationPolicy,
   type ProjectRepository,
   type SettingsRepository
 } from "@agent-hub/core";
-import type { VerificationCommand } from "@agent-hub/task-runner";
+import {
+  loadProjectMemoryAutomationPolicy,
+  saveProjectMemoryAutomationPolicy,
+  type VerificationCommand
+} from "@agent-hub/task-runner";
 import type {
+  MemoryAutomationPolicySettings,
   VerificationCommandConfig,
   VerificationSettings
 } from "../../src/lib/types";
@@ -12,6 +18,10 @@ import type { DesktopServiceContext } from "./project-service";
 export interface SettingsService {
   getVerification(projectId: string): Promise<VerificationSettings>;
   saveVerification(input: VerificationSettings): Promise<VerificationSettings>;
+  getMemoryPolicy(projectId: string): Promise<MemoryAutomationPolicySettings>;
+  saveMemoryPolicy(
+    input: MemoryAutomationPolicySettings
+  ): Promise<MemoryAutomationPolicySettings>;
   verificationCommandsForProject(
     projectId: string
   ): Promise<VerificationCommand[] | undefined>;
@@ -43,6 +53,15 @@ const commandKeys = new Set([
   "continueOnFailure"
 ]);
 const settingsKeys = new Set(["projectId", "commands", "updatedAt"]);
+const memoryPolicyKeys = new Set([
+  "projectId",
+  "mode",
+  "maxRiskLevel",
+  "allowSkippedVerification",
+  "allowedCategories",
+  "maxAutoApprovalsPerRun",
+  "updatedAt"
+]);
 
 export function createSettingsService(
   context: DesktopServiceContext
@@ -90,6 +109,43 @@ class RepositorySettingsService implements SettingsService {
     };
   }
 
+  async getMemoryPolicy(projectId: string): Promise<MemoryAutomationPolicySettings> {
+    const parsedProjectId = parseNonEmptyString(projectId, "projectId");
+    await this.requireProject(parsedProjectId);
+    const setting = await this.settings.get(memoryPolicySettingsKey(parsedProjectId));
+    const policy = await loadProjectMemoryAutomationPolicy(
+      { settingsRepository: this.settings },
+      parsedProjectId
+    );
+    return {
+      projectId: parsedProjectId,
+      ...policy,
+      updatedAt: setting?.updatedAt
+    };
+  }
+
+  async saveMemoryPolicy(
+    input: MemoryAutomationPolicySettings
+  ): Promise<MemoryAutomationPolicySettings> {
+    const parsed = parseMemoryPolicySettings(input);
+    const { projectId, ...policyInput } = parsed;
+    await this.requireProject(projectId);
+    const updatedAt = this.context.now();
+    const policy = await saveProjectMemoryAutomationPolicy(
+      { settingsRepository: this.settings },
+      {
+        projectId,
+        policy: policyInput,
+        updatedAt
+      }
+    );
+    return {
+      projectId,
+      ...policy,
+      updatedAt
+    };
+  }
+
   async verificationCommandsForProject(
     projectId: string
   ): Promise<VerificationCommand[] | undefined> {
@@ -119,6 +175,10 @@ function verificationSettingsKey(projectId: string): string {
   return `${verificationSettingsPrefix}${projectId}${verificationSettingsSuffix}`;
 }
 
+function memoryPolicySettingsKey(projectId: string): string {
+  return `project.${projectId}.memoryAutomationPolicy`;
+}
+
 function parseVerificationSettings(input: VerificationSettings): VerificationSettings {
   if (!input || typeof input !== "object" || Array.isArray(input)) {
     throw new Error("verification settings input is required");
@@ -139,6 +199,63 @@ function settingValueCommands(value: unknown): unknown {
     throw new Error("stored verification settings must be an object");
   }
   return (value as { commands?: unknown }).commands;
+}
+
+function parseMemoryPolicySettings(
+  input: MemoryAutomationPolicySettings
+): MemoryAutomationPolicySettings {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    throw new Error("memory automation policy input is required");
+  }
+  const value = input as unknown as Record<string, unknown>;
+  rejectUnknownKeys(value, memoryPolicyKeys, "memory automation policy");
+  const projectId = parseNonEmptyString(value.projectId, "projectId");
+  const policy = validateMemoryAutomationPolicy({
+    mode: parseMemoryPolicyMode(value.mode),
+    maxRiskLevel: parseMemoryRiskLevel(value.maxRiskLevel),
+    allowSkippedVerification: parseBoolean(
+      value.allowSkippedVerification,
+      "memory automation allow skipped verification"
+    ),
+    allowedCategories: parseMemoryCategories(value.allowedCategories),
+    maxAutoApprovalsPerRun: parseNonNegativeInteger(
+      value.maxAutoApprovalsPerRun,
+      "memory automation per-run limit"
+    )
+  });
+  return {
+    projectId,
+    ...policy
+  };
+}
+
+function parseMemoryPolicyMode(
+  input: unknown
+): MemoryAutomationPolicySettings["mode"] {
+  const mode = parseNonEmptyString(input, "memory automation policy mode");
+  if (
+    mode === "suggest_only" ||
+    mode === "auto_after_review_accept" ||
+    mode === "auto_safe_on_success"
+  ) {
+    return mode;
+  }
+  throw new Error("memory automation policy mode is unsupported");
+}
+
+function parseMemoryRiskLevel(
+  input: unknown
+): MemoryAutomationPolicySettings["maxRiskLevel"] {
+  const risk = parseNonEmptyString(input, "memory automation max risk");
+  if (
+    risk === "low" ||
+    risk === "medium" ||
+    risk === "high" ||
+    risk === "blocking"
+  ) {
+    return risk;
+  }
+  throw new Error("memory automation max risk is unsupported");
 }
 
 function parseVerificationCommands(
@@ -290,6 +407,30 @@ function parseTimeoutMs(input: unknown, commandIndex: number): number {
 function parseBoolean(input: unknown, label: string): boolean {
   if (typeof input !== "boolean") {
     throw new Error(`${label} must be a boolean`);
+  }
+  return input;
+}
+
+function parseMemoryCategories(input: unknown): MemoryAutomationPolicySettings["allowedCategories"] {
+  if (!Array.isArray(input) || input.length === 0) {
+    throw new Error("memory automation allowedCategories must be a non-empty array");
+  }
+  return input.map((entry) => {
+    if (
+      entry !== "project_fact" &&
+      entry !== "workflow_rule" &&
+      entry !== "user_preference" &&
+      entry !== "temporary_note"
+    ) {
+      throw new Error("memory automation allowedCategories contains an unsupported category");
+    }
+    return entry;
+  });
+}
+
+function parseNonNegativeInteger(input: unknown, label: string): number {
+  if (typeof input !== "number" || !Number.isInteger(input) || input < 0) {
+    throw new Error(`${label} must be a non-negative integer`);
   }
   return input;
 }

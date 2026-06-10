@@ -17,6 +17,7 @@ import {
   listGlobalSkills,
   materializeWorktreeOverlay,
   replaceManagedBlock,
+  retireApprovedMemory,
   safeWriteFile,
   type MemoryProvider
 } from "@agent-hub/context-compiler";
@@ -359,6 +360,11 @@ describe("ContextCompiler", () => {
           status: "rejected"
         },
         {
+          id: "memory_retired",
+          content: "Retired memory should stay out.",
+          status: "retired"
+        },
+        {
           id: "memory_approved",
           content: "Approved memory can be used.",
           status: "approved"
@@ -375,6 +381,9 @@ describe("ContextCompiler", () => {
     expect(bundle.sections.map((section) => section.id)).not.toContain(
       "memory:memory_rejected"
     );
+    expect(bundle.sections.map((section) => section.id)).not.toContain(
+      "memory:memory_retired"
+    );
     expect(bundle.filteredItems).toEqual([
       {
         itemId: "memory:memory_proposed",
@@ -385,6 +394,11 @@ describe("ContextCompiler", () => {
         itemId: "memory:memory_rejected",
         layer: "approved_memory",
         reason: "memory status rejected is not approved"
+      },
+      {
+        itemId: "memory:memory_retired",
+        layer: "approved_memory",
+        reason: "memory status retired is not approved"
       }
     ]);
     expect(bundle.warnings.join("\n")).toContain(
@@ -857,6 +871,60 @@ describe("ContextCompiler", () => {
     );
     expect(built.taskBrief.renderedContent).toContain(
       "Approved memory is available to future task briefs."
+    );
+  });
+
+  it("excludes retired approved-memory blocks from future context packs", async () => {
+    const projectRoot = await createTestDirectory("context-retired-memory-project");
+    const agentHubHome = await createTestDirectory("context-retired-memory-home");
+    await initContextStore({
+      projectRoot,
+      projectId: "project_retired_memory",
+      agentHubHome
+    });
+    await appendApprovedMemory({
+      projectRoot,
+      projectId: "project_retired_memory",
+      memoryId: "memory_active",
+      content: "Active memory remains available.",
+      approvedAt: "2026-01-01T00:00:00.000Z",
+      agentHubHome
+    });
+    await appendApprovedMemory({
+      projectRoot,
+      projectId: "project_retired_memory",
+      memoryId: "memory_retired",
+      content: "Retired memory must not be injected.",
+      approvedAt: "2026-01-01T00:00:00.000Z",
+      agentHubHome
+    });
+    const retired = await retireApprovedMemory({
+      projectRoot,
+      projectId: "project_retired_memory",
+      memoryId: "memory_retired",
+      retiredAt: "2026-01-02T00:00:00.000Z",
+      reason: "obsolete workflow",
+      agentHubHome
+    });
+
+    const built = await buildContextArtifacts({
+      projectRoot,
+      projectId: "project_retired_memory",
+      taskId: "task_retired_memory",
+      title: "Use active memory",
+      prompt: "Build context without retired memory",
+      selectedAgentId: "fake",
+      agentHubHome
+    });
+    const approvedFile = await fs.readFile(retired.path, "utf8");
+
+    expect(retired.retired).toBe(true);
+    expect(approvedFile).toContain("retired_at: 2026-01-02T00:00:00.000Z");
+    expect(built.taskBrief.renderedContent).toContain(
+      "Active memory remains available."
+    );
+    expect(built.taskBrief.renderedContent).not.toContain(
+      "Retired memory must not be injected."
     );
   });
 
