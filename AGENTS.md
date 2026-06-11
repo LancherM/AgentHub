@@ -172,9 +172,11 @@ Implemented:
   artifacts.
 - Safety scanning and risk report persistence for sensitive paths, dangerous
   commands, risky diffs, large deletions, and binary file changes.
-- Memory proposal, listing, approval, rejection, approved-memory writeback to
-  the Agent Hub-owned context store, and conservative automatic proposed-memory
-  generation from completed task-runner evidence.
+- Memory proposal, listing, approval, rejection, retirement, approved-memory
+  writeback to the Agent Hub-owned context store, conservative automatic
+  proposed-memory generation from completed task-runner evidence, read-only
+  memory automation evaluation, and opt-in project memory automation policies
+  for review-accepted or safe successful runs.
 - Persisted comparison report generation for two runs of a task, including
   structured comparison details and deterministic review scoring.
 - Local AI workgroup metadata for preset/custom roles, built-in workgroup
@@ -307,10 +309,14 @@ Implemented commands:
 - `agent-hub reviews accept`
 - `agent-hub reviews reject`
 - `agent-hub compare`
+- `agent-hub memory automation evaluate`
+- `agent-hub memory policy show`
+- `agent-hub memory policy set`
 - `agent-hub memory list`
 - `agent-hub memory propose`
 - `agent-hub memory approve`
 - `agent-hub memory reject`
+- `agent-hub memory retire`
 
 ### apps/desktop
 
@@ -348,10 +354,11 @@ policy enables it, `@fake` uses `FakeAgentAdapter` in an isolated worktree.
 `@codex` and `@claude` use process-backed adapter preflight and fail
 inspectably when the local CLI is unavailable or unauthenticated. Desktop runs
 must not write Agent Hub context files to target repository roots, export
-context, merge, push, create pull requests, approve memory, or apply code
-automatically. Explicit desktop memory approval writes to the Agent Hub-owned
-context store, comparison review remains read-only, and retained-worktree
-handoff only exposes local review evidence behind the same IPC boundary.
+context, merge, push, create pull requests, or apply code automatically.
+Explicit desktop memory approval and opt-in project memory automation write only
+to the Agent Hub-owned context store; comparison review remains read-only, and
+retained-worktree handoff only exposes local review evidence behind the same IPC
+boundary.
 Worktree lifecycle cleanup and local apply are explicit, audited,
 confirmation-gated IPC workflows; merge, push, pull request creation, branch
 deletion, repository context export, and automatic acceptance remain outside
