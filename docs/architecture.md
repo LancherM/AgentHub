@@ -486,11 +486,13 @@ TaskRunner finalization path. Approved items are appended idempotently to the
 Agent Hub-owned context store; proposed, rejected, and retired SQLite rows are
 never injected. Retiring approved memory marks the managed
 `memory/approved.md` block with local retirement metadata so FileMemoryProvider
-and stable context indexing skip it while retaining the audit trail. The CLI
-marks the approved-memory file first and only moves the SQLite row to
-`retired` after the managed block was found and updated. Auto-approved rows
-carry policy, risk, verification, and writeback metadata that desktop memory
-and Knowledge read models expose as local audit evidence.
+and stable context indexing skip it while retaining the audit trail. Retired
+rows are also excluded from proposal and automation duplicate checks so fresh
+run evidence can re-propose the same content. The CLI marks the approved-memory
+file first and only moves the SQLite row to `retired` after the managed block
+was found and updated. Auto-approved rows carry policy, risk, verification, and
+writeback metadata that desktop memory and Knowledge read models expose as
+local audit evidence.
 
 Comparison reports are generated from persisted run evidence: statuses, changed
 files, diff stats, verification results, risk levels, risk factors, and

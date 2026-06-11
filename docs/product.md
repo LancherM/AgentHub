@@ -529,9 +529,10 @@ Approved memory can be retired with
 `agent-hub memory retire --memory-id <memory-id> --reason <text>`. Retirement
 keeps the SQLite row and approved-memory file audit trail, marks the managed
 approved-memory block as retired, and prevents retired memory from entering
-future runtime context or stable context indexes. The CLI only updates the
-SQLite row after the approved-memory file block has been successfully marked
-retired.
+future runtime context or stable context indexes. Retired rows also do not
+suppress fresh evidence-backed proposals or automation eligibility for the same
+content. The CLI only updates the SQLite row after the approved-memory file block
+has been successfully marked retired.
 The desktop Project Settings panel exposes the same project policy for local
 operators: users can keep proposals queued, opt into auto-after-review or
 auto-safe-on-success, choose the risk threshold, per-run limit,
