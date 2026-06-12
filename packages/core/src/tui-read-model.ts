@@ -2894,7 +2894,6 @@ function memorySelectionDetail(
     ],
     commands,
     actions: [
-      ...detailActions(commands),
       {
         key: "a",
         label: "Approve",
@@ -2902,8 +2901,20 @@ function memorySelectionDetail(
         disabledReason: "not available in TUI; use the listed CLI command"
       },
       {
-        key: "r",
+        key: "R",
         label: "Reject",
+        kind: "callback",
+        disabledReason: "not available in TUI; use the listed CLI command"
+      },
+      {
+        key: "e",
+        label: "Edit",
+        kind: "callback",
+        disabledReason: "not available in TUI; editing requires a separate audited callback"
+      },
+      {
+        key: "o",
+        label: "Open Source",
         kind: "callback",
         disabledReason: "not available in TUI; use the listed CLI command"
       }
@@ -2961,12 +2972,11 @@ function memoryRowSelectionDetail(row: TuiMemoryRow): TuiSelectionDetail {
         id: "source-commands",
         title: "Source Commands",
         lines: row.sourceCommands.length > 0 ? row.sourceCommands : ["not available in current read model"],
-        collapsedByDefault: row.sourceCommands.length === 0
+        collapsedByDefault: true
       }
     ],
     commands,
     actions: [
-      ...detailActions(commands),
       {
         key: "a",
         label: "Approve",
@@ -2974,7 +2984,7 @@ function memoryRowSelectionDetail(row: TuiMemoryRow): TuiSelectionDetail {
         disabledReason: "not available in TUI; use the listed CLI command"
       },
       {
-        key: "r",
+        key: "R",
         label: "Reject",
         kind: "callback",
         disabledReason: "not available in TUI; use the listed CLI command"
@@ -2984,6 +2994,12 @@ function memoryRowSelectionDetail(row: TuiMemoryRow): TuiSelectionDetail {
         label: "Edit",
         kind: "callback",
         disabledReason: "not available in TUI; editing requires a separate audited callback"
+      },
+      {
+        key: "o",
+        label: "Open Source",
+        kind: "callback",
+        disabledReason: "not available in TUI; use the listed CLI command"
       }
     ]
   };

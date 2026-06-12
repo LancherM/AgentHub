@@ -413,7 +413,8 @@ const baseModel = {
             lines: [
               "agent-hub runs show run_27984312-fc9a-46bf-9ccf-c06997187091",
               "agent-hub task history --task-id task_1"
-            ]
+            ],
+            collapsedByDefault: true
           }
         ],
         commands: [
@@ -424,10 +425,10 @@ const baseModel = {
           "agent-hub task history --task-id task_1"
         ],
         actions: [
-          { key: "p", label: "Prepare Command", kind: "prepare_command" },
           { key: "a", label: "Approve", kind: "callback", disabledReason: "not available in TUI; use the listed CLI command" },
-          { key: "r", label: "Reject", kind: "callback", disabledReason: "not available in TUI; use the listed CLI command" },
-          { key: "e", label: "Edit", kind: "callback", disabledReason: "not available in TUI; editing requires a separate audited callback" }
+          { key: "R", label: "Reject", kind: "callback", disabledReason: "not available in TUI; use the listed CLI command" },
+          { key: "e", label: "Edit", kind: "callback", disabledReason: "not available in TUI; editing requires a separate audited callback" },
+          { key: "o", label: "Open Source", kind: "callback", disabledReason: "not available in TUI; use the listed CLI command" }
         ]
       },
       {
@@ -450,7 +451,8 @@ const baseModel = {
           {
             id: "source-commands",
             title: "Source Commands",
-            lines: ["agent-hub task history --task-id task_1"]
+            lines: ["agent-hub task history --task-id task_1"],
+            collapsedByDefault: true
           }
         ],
         commands: [
@@ -459,7 +461,12 @@ const baseModel = {
           "agent-hub memory reject --memory-id memory_approved",
           "agent-hub task history --task-id task_1"
         ],
-        actions: [{ key: "p", label: "Prepare Command", kind: "prepare_command" }]
+        actions: [
+          { key: "a", label: "Approve", kind: "callback", disabledReason: "not available in TUI; use the listed CLI command" },
+          { key: "R", label: "Reject", kind: "callback", disabledReason: "not available in TUI; use the listed CLI command" },
+          { key: "e", label: "Edit", kind: "callback", disabledReason: "not available in TUI; editing requires a separate audited callback" },
+          { key: "o", label: "Open Source", kind: "callback", disabledReason: "not available in TUI; use the listed CLI command" }
+        ]
       }
     ],
     teamRoles: [
@@ -725,15 +732,23 @@ describe("Ink TUI renderer", () => {
     );
 
     expect(memoryState.selectedMemoryItemId).toBe("memory_approved");
+    expect(output).toContain("Memory Inbox");
     expect(output).toContain("Memory Governance");
-    expect(output).toContain("status   category");
-    expect(output).toContain("proposed workflow_rule");
-    expect(output).toContain("approved project_fact");
-    expect(output).toContain("▌ approved");
+    expect(output).toContain("view all   status all   confidence all   search /");
+    expect(output).toContain("ID                  Category");
+    expect(output).toContain("memory_proposed");
+    expect(output).toContain("workflow_rule");
+    expect(output).toContain("memory_approved");
+    expect(output).toContain("project_fact");
+    expect(output).toContain("Evidence Excerpts (selected: memory_approved)");
+    expect(output).toContain("Approved Memory Index");
     expect(output).toContain("Runtime injection is the");
     expect(output).toContain("default context mode.");
     expect(output).toContain("recommended action injected");
     expect(output).toContain("agent-hub memory approve...");
+    expect(output).toContain("[a] Approve");
+    expect(output).toContain("[R] Reject");
+    expect(output).toContain("[o] Open Source");
     expect(output.split("\n").every((value) => value.length <= 120)).toBe(true);
   });
 
@@ -1888,6 +1903,16 @@ describe("Ink TUI renderer", () => {
   it("toggles selected detail folds without writing hotkeys into the composer", async () => {
     const foldModel = {
       ...baseModel,
+      memory: {
+        ...baseModel.memory,
+        rows: [
+          {
+            ...baseModel.memory.rows[0],
+            evidenceExcerptLines: []
+          },
+          ...baseModel.memory.rows.slice(1)
+        ]
+      },
       selectionDetails: {
         ...baseModel.selectionDetails,
         memoryRows: [

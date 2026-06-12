@@ -336,8 +336,9 @@ describe("TUI current-context read model", () => {
       ]),
       actions: expect.arrayContaining([
         expect.objectContaining({ key: "a", disabledReason: expect.any(String) }),
-        expect.objectContaining({ key: "r", disabledReason: expect.any(String) }),
-        expect.objectContaining({ key: "e", disabledReason: expect.any(String) })
+        expect.objectContaining({ key: "R", disabledReason: expect.any(String) }),
+        expect.objectContaining({ key: "e", disabledReason: expect.any(String) }),
+        expect.objectContaining({ key: "o", disabledReason: expect.any(String) })
       ])
     });
     expect(model.skills.selected.map((skill) => `${skill.scope}:${skill.id}`)).toEqual([

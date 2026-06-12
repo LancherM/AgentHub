@@ -54,13 +54,14 @@ TUI review shortcuts. These decisions create local `review_decision` artifacts
 only; they do not apply files, alter run status, merge, push, approve memory,
 clean worktrees, or delete branches.
 The Memory focus mode is a governance indicator, not a browser: it shows
-proposed/approved/rejected/retired counts, a bounded proposal table with
-category, status, confidence, source run/task, update time, and recommended
-action, selected-row evidence/writeback/source-command detail, the
-approved-memory source, explicit approval/rejection command hints, selected
-skills, available skill identifiers, and the current context delivery mode.
-Approve/reject/edit actions are shown as disabled governed controls until
-audited local callbacks exist; the TUI renders equivalent CLI commands instead.
+proposed/approved/rejected/retired counts, a `Memory Inbox` table with `ID`,
+`Category`, `Status`, `Conf`, `Source Run`, `Summary`, and `Action` columns,
+static local controls for view/status/confidence/search, selected-row
+`Evidence Excerpts`, an `Approved Memory Index`, the approved-memory source,
+explicit approval/rejection command hints, selected skills, available skill
+identifiers, and the current context delivery mode. Approve/reject/edit/open
+source actions are shown as disabled governed controls until audited local
+callbacks exist; the TUI renders equivalent CLI commands instead.
 The Team read-model pane is available from the default tab cycle, the `Team`
 tab label, the uppercase `E` focus shortcut, typing `/team` in the composer,
 or the command palette. It is a role operations view over the current project's
@@ -217,9 +218,9 @@ Reference fidelity follow-up work is tracked in
 `docs/tui-v3-reference-gap-roadmap.md`. That plan treats the current
 `codex/tui-v3-roadmap` branch as the baseline and focuses on matching the
 supplied terminal mockups more closely. The framed shell chrome and branded
-header metadata, dedicated Work block renderer, and view-specific scrollable
-detail panel are implemented; remaining slices focus on Memory inbox bands,
-Team roles/matrix/profile layout, and deterministic visual
+header metadata, dedicated Work block renderer, view-specific scrollable
+detail panel, and Memory reference inbox are implemented; remaining slices
+focus on Team roles/matrix/profile layout and deterministic visual
 fixtures. It does not
 relax the local read-model boundary or permit fabricated evidence.
 Selected active-run Work blocks expose a live detail view over the same polling

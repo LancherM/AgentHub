@@ -3171,20 +3171,31 @@ function MemoryPane({
       : model.skills.available.map((skill) => `${skill.scope}:${skill.id}`).join(", ");
   const selectedIndex = selectedMemoryItemIndex(model, state);
   const rows = model.memory.rows.slice(0, 8);
+  const selectedRow = model.memory.rows[selectedIndex];
+  const approvedRows = model.memory.rows.filter((row) => row.status === "approved").slice(0, 6);
   return h(
     Pane,
-    { title: "Memory Governance" },
+    { title: "Memory Inbox" },
+    line("Memory Governance", { dimColor: true }),
+    line("view all   status all   confidence all   search /", { dimColor: true }),
     line(`proposed ${model.memory.counts.proposed} approved ${model.memory.counts.approved} rejected ${model.memory.counts.rejected} retired ${model.memory.counts.retired}`),
-    line("filter all   sort status, updated desc", { dimColor: true }),
-    line("status   category        conf   source        updated              action"),
+    line("ID                  Category        Status    Conf   Source Run    Summary                         Action"),
     ...(rows.length > 0
-      ? rows.map((row, index) => memoryRowLine(row, index === selectedIndex))
+      ? rows.map((row, index) => memoryInboxRowLine(row, index === selectedIndex))
       : [line("no memory proposals in current context", { dimColor: true })]),
     ...(model.memory.rows.length > rows.length
       ? [line(`${model.memory.rows.length - rows.length} more memory rows hidden`, { dimColor: true })]
       : []),
     line(""),
-    line(`approved source ${model.memory.approvedSource}`),
+    line(`Evidence Excerpts (selected: ${selectedRow?.id ?? "none"})`, { color: "cyan" }),
+    line("#   Evidence"),
+    ...memoryEvidenceExcerptLines(selectedRow),
+    line(""),
+    line("Approved Memory Index", { color: "cyan" }),
+    ...(approvedRows.length > 0
+      ? approvedRows.map((row) => approvedMemoryIndexLine(row))
+      : [line("empty slot - no approved memory rows in current read model", { dimColor: true })]),
+    line(`source ${model.memory.approvedSource}`),
     line(`reminder ${model.memory.approvalReminder}`),
     line(`command ${model.memory.command ?? "register a project before listing memory"}`),
     ...model.memory.approvalCommands.map((command) => line(command, { dimColor: true })),
@@ -3196,25 +3207,44 @@ function MemoryPane({
   );
 }
 
-function memoryRowLine(row: TuiMemoryRow, selected: boolean): React.ReactElement {
+function memoryInboxRowLine(row: TuiMemoryRow, selected: boolean): React.ReactElement {
   const marker = selected ? "▌" : " ";
   const confidence = row.confidence ?? "-";
-  const source = row.sourceRunId ? compactId(row.sourceRunId) : row.sourceTaskId ? compactId(row.sourceTaskId) : "-";
-  const updated = row.updatedAt.replace("T", " ").replace(/\.\d{3}Z$/, "Z");
+  const sourceRun = row.sourceRunId ? compactId(row.sourceRunId) : "-";
   const text = [
     marker,
-    row.status.padEnd(8),
+    compactId(row.id).padEnd(18),
     row.category.padEnd(15),
+    row.status.padEnd(9),
     confidence.padEnd(6),
-    source.padEnd(13),
-    updated.padEnd(20),
-    row.recommendedAction,
-    truncateText(row.summary, 48)
+    sourceRun.padEnd(13),
+    truncateText(row.summary, 30).padEnd(32),
+    truncateText(row.recommendedAction, 18)
   ].join(" ");
   return line(text, {
     color: memoryStatusColor(row.status),
     inverse: selected
   });
+}
+
+function memoryEvidenceExcerptLines(row: TuiMemoryRow | undefined): React.ReactElement[] {
+  if (!row) {
+    return [line("0   empty slot - no selected memory row", { dimColor: true })];
+  }
+  if (row.evidenceExcerptLines.length === 0) {
+    return [line("0   empty slot - proposal evidence rows not available in current read model", { dimColor: true })];
+  }
+  return row.evidenceExcerptLines.slice(0, 5).map((value, index) =>
+    line(`${String(index + 1).padEnd(3)} ${truncateText(value, 92)}`, { dimColor: true })
+  );
+}
+
+function approvedMemoryIndexLine(row: TuiMemoryRow): React.ReactElement {
+  const source = row.sourceRunId ? `run ${compactId(row.sourceRunId)}` : row.sourceTaskId ? `task ${compactId(row.sourceTaskId)}` : "source -";
+  return line(
+    `${compactId(row.id).padEnd(18)} ${row.category.padEnd(15)} ${source.padEnd(18)} ${truncateText(row.summary, 58)}`,
+    { color: "green" }
+  );
 }
 
 function memoryStatusColor(status: TuiMemoryRow["status"]): string | undefined {

@@ -609,8 +609,11 @@ Memory governance uses the same boundary: core projects `MemoryItem` records
 into bounded `TuiMemoryRow` DTOs with lifecycle status, category, confidence,
 source run/task ids, evidence excerpts from stored metadata, writeback target
 when present, and safe source/approval commands. Ink renders the table and
-selected-row detail only; approve/reject/edit controls stay disabled unless a
-future audited IPC or CLI callback is explicitly wired.
+selected-row detail only. The Memory focus renders its reference inbox,
+selected evidence excerpt table, approved-memory index, and static
+view/status/confidence/search control labels from those DTOs. Approve, reject,
+edit, and open-source controls stay disabled unless a future audited IPC or CLI
+callback is explicitly wired.
 Team operations also stay in the read-model layer. Core enriches resolved
 preset, overridden, and custom `WorkgroupRole` records with current RoleCall
 and run evidence, producing role rows, delegation matrix rows, recent RoleCall
@@ -648,7 +651,7 @@ The reference fidelity follow-up in `docs/tui-v3-reference-gap-roadmap.md`
 keeps the same architecture and narrows the remaining work to composition:
 framed shell chrome, a dedicated Work block list renderer, view-specific
 scrollable detail panels, Memory inbox bands, Team matrix/profile layout, and
-deterministic visual fixtures. The first three composition slices are
+deterministic visual fixtures. The first four composition slices are
 implemented inside `apps/cli/src/tui-ink` and local state; the follow-up should
 not add new persistence or renderer-side data access merely to satisfy the
 mockup.
