@@ -15,6 +15,7 @@ import type {
   ConversationMessage,
   ConversationThread,
   JsonObject,
+  MemoryItem,
   MemoryStatus,
   Project,
   RiskLevel,
@@ -97,6 +98,7 @@ export interface TuiCurrentContextModel {
   context: TuiContextSummary;
   conversation: TuiConversationEntry[];
   activeRuns: TuiActiveRunBox[];
+  workBlocks: TuiWorkBlock[];
   transcript: TuiTranscriptMessage[];
   runs: TuiRunSummary[];
   roleCalls: TuiRoleCallGraphSummary;
@@ -105,7 +107,69 @@ export interface TuiCurrentContextModel {
   team: TuiTeamSummary;
   memory: TuiMemorySummary;
   skills: TuiSkillsSummary;
+  selectionDetails: TuiSelectionDetails;
   warnings: string[];
+}
+
+export interface TuiSelectionDetails {
+  workBlocks: TuiSelectionDetail[];
+  runs: TuiSelectionDetail[];
+  roleCalls: TuiSelectionDetail[];
+  tasks: TuiSelectionDetail[];
+  teamRoles: TuiSelectionDetail[];
+  memoryRows: TuiSelectionDetail[];
+  memory: TuiSelectionDetail;
+}
+
+export interface TuiSelectionDetail {
+  id: string;
+  kind: "work_block" | "run" | "role_call" | "memory" | "team_role" | "task";
+  title: string;
+  subtitle?: string;
+  sections: TuiDetailSection[];
+  commands: string[];
+  actions: TuiDetailAction[];
+}
+
+export interface TuiDetailSection {
+  id: string;
+  title: string;
+  tone?: "normal" | "success" | "warning" | "danger" | "info";
+  lines: string[];
+  collapsedByDefault?: boolean;
+}
+
+export interface TuiDetailAction {
+  key: string;
+  label: string;
+  kind: "focus" | "prepare_command" | "callback";
+  disabledReason?: string;
+}
+
+export function emptyTuiSelectionDetails(): TuiSelectionDetails {
+  return {
+    workBlocks: [],
+    runs: [],
+    roleCalls: [],
+    tasks: [],
+    teamRoles: [],
+    memoryRows: [],
+    memory: {
+      id: "memory:none",
+      kind: "memory",
+      title: "Memory Governance",
+      sections: [
+        {
+          id: "unavailable",
+          title: "Unavailable",
+          tone: "warning",
+          lines: ["not available in current read model"]
+        }
+      ],
+      commands: [],
+      actions: []
+    }
+  };
 }
 
 export type TuiConversationEntryType =
@@ -134,13 +198,6 @@ export interface TuiConversationEntry {
   inlineDiff?: TuiInlineDiffSummary;
   delegatedTo?: string;
   delegationTask?: string;
-  suggestions?: TuiConversationSuggestion[];
-}
-
-export interface TuiConversationSuggestion {
-  key: "1" | "2" | "3";
-  label: string;
-  prompt: string;
 }
 
 export interface TuiActiveRunBox {
@@ -153,6 +210,32 @@ export interface TuiActiveRunBox {
   usageLabel?: string;
   usage?: TuiRunUsageSummary;
   outputLines: string[];
+}
+
+export type TuiWorkBlockType = TuiConversationEntryType | "active_run";
+
+export interface TuiWorkBlock {
+  id: string;
+  sourceId: string;
+  sourceKind: "conversation" | "active_run";
+  type: TuiWorkBlockType;
+  runId?: string;
+  roleCallId?: string;
+  timestamp?: string;
+  elapsedLabel?: string;
+  usageLabel?: string;
+  speaker: string;
+  title: string;
+  statusIcon: string;
+  statusLabel?: string;
+  statusTone: "normal" | "success" | "warning" | "danger" | "info";
+  messageLines: string[];
+  toolSummaryLines: string[];
+  fileRefs: string[];
+  commandLines: string[];
+  artifactLines: string[];
+  evidenceLines: string[];
+  inlineDiff?: TuiInlineDiffSummary;
 }
 
 export interface TuiContextSummary {
@@ -329,6 +412,8 @@ export type TuiTeamRoleSource = "preset" | "preset_override" | "custom";
 export interface TuiTeamSummary {
   projectId?: string;
   roles: TuiTeamRoleSummary[];
+  delegationMatrixRows: TuiTeamDelegationMatrixRow[];
+  recentRoleCalls: TuiTeamRecentRoleCall[];
   counts: {
     total: number;
     enabled: number;
@@ -350,18 +435,91 @@ export interface TuiTeamRoleSummary {
   executorLabel: string;
   executorRunnable: boolean;
   defaultRoom?: string;
+  purpose: string;
   capabilitySummary: string;
+  persona: string;
+  defaultInstructions: string;
+  permissions: string[];
+  contextPolicy: TuiTeamContextPolicySummary;
+  approvalPolicy: TuiTeamApprovalPolicySummary;
+  delegation: TuiTeamDelegationSummary;
   defaultSkillReferences: NonNullable<WorkgroupRole["defaultSkillReferences"]>;
+  verificationCommands: string[];
+  limits: string[];
+  tags: string[];
+  activeCallCount: number;
+  recentCallCount: number;
+  recentFailures: string[];
+  nextAction: string;
   unavailableReason?: string;
+}
+
+export interface TuiTeamContextPolicySummary {
+  scope: string;
+  includeApprovedMemory: boolean;
+  includeThreadSummary: boolean;
+  instructions: string[];
+}
+
+export interface TuiTeamApprovalPolicySummary {
+  requiredFor: string[];
+  summary: string;
+}
+
+export interface TuiTeamDelegationSummary {
+  canInitiate: boolean;
+  allowedIntentTypes: string[];
+  allowedTargets: string[];
+  requiresApprovalForTargets: string[];
+  summary: string;
+  unavailableReason?: string;
+}
+
+export interface TuiTeamDelegationMatrixRow {
+  id: string;
+  callerRole: string;
+  status: "enabled" | "unavailable";
+  allowedTargets: string[];
+  requiresApprovalForTargets: string[];
+  allowedIntentTypes: string[];
+  summary: string;
+}
+
+export interface TuiTeamRecentRoleCall {
+  id: string;
+  callerRole: string;
+  calleeRole: string;
+  status: RoleCallStatus;
+  statusLabel: string;
+  task: string;
+  updatedAt: string;
+  linkedRunId?: string;
 }
 
 export interface TuiMemorySummary {
   projectId?: string;
   counts: Record<MemoryStatus, number>;
+  rows: TuiMemoryRow[];
   command?: string;
   approvalCommands: string[];
   approvedSource: string;
   approvalReminder: string;
+}
+
+export interface TuiMemoryRow {
+  id: string;
+  projectId: string;
+  category: MemoryItem["category"];
+  status: MemoryStatus;
+  confidence?: string;
+  sourceRunId?: string;
+  sourceTaskId?: string;
+  summary: string;
+  updatedAt: string;
+  recommendedAction: string;
+  evidenceExcerptLines: string[];
+  writebackTarget?: string;
+  sourceCommands: string[];
 }
 
 export interface TuiSkillsSummary {
@@ -489,11 +647,6 @@ export async function buildTuiCurrentContextModel(
         : Promise.resolve([]),
       repositories.skillRepository.list()
     ]);
-  const teamResult = await summarizeTeam(repositories, projectId);
-  if (teamResult.warning) {
-    warnings.push(teamResult.warning);
-  }
-
   const contextTasks = filterTasksForThread(tasks, thread?.id);
   const runs = await runsForTasks(repositories, contextTasks);
   const runSummaries = await Promise.all(
@@ -515,6 +668,13 @@ export async function buildTuiCurrentContextModel(
   const visibleRoleCallNodes = roleCallNodes
     .filter((node) => !node.hidden)
     .slice(0, input.maxRoleCalls ?? defaultLimits.roleCalls);
+  const teamResult = await summarizeTeam(repositories, projectId, {
+    roleCallNodes,
+    runSummaries: boundedRuns
+  });
+  if (teamResult.warning) {
+    warnings.push(teamResult.warning);
+  }
 
   const conversation = await summarizeConversation(repositories, {
     messages,
@@ -523,6 +683,37 @@ export async function buildTuiCurrentContextModel(
     activeRuns,
     runDisplayHandles,
     limit: Math.max(input.maxMessages ?? defaultLimits.messages, defaultLimits.messages)
+  });
+  const workBlocks = buildWorkBlocks(conversation, activeRuns);
+  const roleCallSummary: TuiRoleCallGraphSummary = {
+    nodes: visibleRoleCallNodes,
+    todos: summarizeTodos(roleTodos, input.maxTodos ?? defaultLimits.todos),
+    counts: countRoleCalls(roleCallNodes, visibleRoleCallNodes.length),
+    loop: summarizeLoop(roleCalls, boundedRuns, {
+      iteration: input.iteration ?? 0,
+      maxIterations: input.maxIterations
+    })
+  };
+  const review = selectReviewSummary(
+    input,
+    boundedRuns,
+    visibleRoleCallNodes,
+    input.selectedRoleCallId,
+    input.selectedRunId
+  );
+  const taskSummaries = summarizeTasks(
+    contextTasks,
+    roleTodos,
+    roleCalls,
+    input.maxTasks ?? defaultLimits.tasks
+  );
+  const memorySummary = summarizeMemory(projectId, memory);
+  const skillsSummary = summarizeSkills({
+    skills,
+    projectId,
+    selectedSkillReferences: input.selectedSkillReferences ?? [],
+    maxSkills: input.maxSkills ?? defaultLimits.skills,
+    contextMode: input.contextMode ?? "runtime_injection"
   });
 
   return {
@@ -538,38 +729,23 @@ export async function buildTuiCurrentContextModel(
     },
     conversation,
     activeRuns,
+    workBlocks,
     transcript: summarizeTranscript(messages, input.maxMessages ?? defaultLimits.messages),
     runs: boundedRuns,
-    roleCalls: {
-      nodes: visibleRoleCallNodes,
-      todos: summarizeTodos(roleTodos, input.maxTodos ?? defaultLimits.todos),
-      counts: countRoleCalls(roleCallNodes, visibleRoleCallNodes.length),
-      loop: summarizeLoop(roleCalls, boundedRuns, {
-        iteration: input.iteration ?? 0,
-        maxIterations: input.maxIterations
-      })
-    },
-    review: selectReviewSummary(
-      input,
-      boundedRuns,
-      visibleRoleCallNodes,
-      input.selectedRoleCallId,
-      input.selectedRunId
-    ),
-    tasks: summarizeTasks(
-      contextTasks,
-      roleTodos,
-      roleCalls,
-      input.maxTasks ?? defaultLimits.tasks
-    ),
+    roleCalls: roleCallSummary,
+    review,
+    tasks: taskSummaries,
     team: teamResult.summary,
-    memory: summarizeMemory(projectId, memory),
-    skills: summarizeSkills({
-      skills,
-      projectId,
-      selectedSkillReferences: input.selectedSkillReferences ?? [],
-      maxSkills: input.maxSkills ?? defaultLimits.skills,
-      contextMode: input.contextMode ?? "runtime_injection"
+    memory: memorySummary,
+    skills: skillsSummary,
+    selectionDetails: buildSelectionDetails({
+      workBlocks,
+      runs: boundedRuns,
+      roleCalls: visibleRoleCallNodes,
+      tasks: taskSummaries,
+      team: teamResult.summary,
+      memory: memorySummary,
+      skills: skillsSummary
     }),
     warnings
   };
@@ -763,7 +939,7 @@ async function summarizeConversation(
     .sort(compareConversationEntries)
     .slice(-input.limit)
     .map(({ sortRank: _sortRank, ...entry }) => entry);
-  return withLatestConversationSuggestions(visibleEntries);
+  return visibleEntries;
 }
 
 async function summarizeRun(
@@ -1027,96 +1203,175 @@ function activeRunCreatedAt(run: TuiRunSummary): string {
   return run.startedAt ?? run.completedAt ?? run.updatedAt;
 }
 
-function withLatestConversationSuggestions(
-  entries: TuiConversationEntry[]
-): TuiConversationEntry[] {
-  const suggestionIndex = findLastIndex(entries, isSuggestibleConversationEntry);
-  if (suggestionIndex < 0) {
-    return entries;
-  }
-  return entries.map((entry, index) =>
-    index === suggestionIndex
-      ? { ...entry, suggestions: suggestionsForConversationEntry(entry) }
-      : entry
-  );
+function buildWorkBlocks(
+  conversation: TuiConversationEntry[],
+  activeRuns: TuiActiveRunBox[]
+): TuiWorkBlock[] {
+  return [
+    ...conversation.map(conversationWorkBlock),
+    ...activeRuns.map(activeRunWorkBlock)
+  ];
 }
 
-function findLastIndex<T>(values: T[], predicate: (value: T) => boolean): number {
-  for (let index = values.length - 1; index >= 0; index -= 1) {
-    if (predicate(values[index])) {
-      return index;
-    }
-  }
-  return -1;
-}
-
-function isSuggestibleConversationEntry(entry: TuiConversationEntry): boolean {
-  return (
-    entry.type === "agent_completed" ||
-    entry.type === "agent_failed" ||
-    entry.type === "review_pending"
-  );
-}
-
-function suggestionsForConversationEntry(
-  entry: TuiConversationEntry
-): TuiConversationSuggestion[] {
-  const runLabel = entry.runId ? `run ${entry.runId}` : "the latest result";
-  if (entry.verificationLine && !/verification passed/i.test(entry.verificationLine)) {
-    return keyedSuggestions([
-      {
-        label: "Run more tests",
-        prompt: `Run more targeted tests for ${runLabel} and summarize the failures.`
-      },
-      {
-        label: "Fix verification",
-        prompt: `Fix the verification issues from ${runLabel}, then report what changed.`
-      },
-      {
-        label: "Review changes",
-        prompt: `Review the changes from ${runLabel} before continuing.`
-      }
-    ]);
-  }
-  if (entry.riskLine && /\brisk (medium|high|blocking)\b/i.test(entry.riskLine)) {
-    return keyedSuggestions([
-      {
-        label: "Review changes",
-        prompt: `Review the risk findings for ${runLabel} and identify the safest next step.`
-      },
-      {
-        label: "Run more tests",
-        prompt: `Run additional verification for ${runLabel} before accepting the result.`
-      },
-      {
-        label: "Continue",
-        prompt: `Continue from ${runLabel} with the selected agent.`
-      }
-    ]);
-  }
-  return keyedSuggestions([
-    {
-      label: "Continue",
-      prompt: `Continue from ${runLabel} with the selected agent.`
-    },
-    {
-      label: "Run tests",
-      prompt: `Run the relevant tests for ${runLabel} and summarize the result.`
-    },
-    {
-      label: "Fix similar",
-      prompt: `Look for similar issues related to ${runLabel} and fix the smallest safe set.`
-    }
+function conversationWorkBlock(entry: TuiConversationEntry): TuiWorkBlock {
+  const messageLines = detailLines(entry.outputLines ?? entry.content);
+  const fileRefs = extractFileRefs([
+    ...messageLines,
+    ...(entry.inlineDiff?.lines.map((line) => line.text) ?? [])
   ]);
+  const commandLines = inferCommandLines(messageLines);
+  const toolSummaryLines = inferToolSummaryLines(messageLines);
+  const evidenceLines = [
+    entry.verificationLine,
+    entry.riskLine,
+    entry.inlineDiff ? `diff ${entry.inlineDiff.summary}` : undefined
+  ].filter((value): value is string => Boolean(value));
+  const status = conversationWorkBlockStatus(entry);
+  return {
+    id: entry.id,
+    sourceId: entry.id,
+    sourceKind: "conversation",
+    type: entry.type,
+    runId: entry.runId,
+    roleCallId: entry.roleCallId,
+    timestamp: entry.timestamp,
+    elapsedLabel: entry.elapsedLabel,
+    usageLabel: entry.usageLabel,
+    speaker: conversationEntrySpeaker(entry),
+    title: conversationDetailTitle(entry),
+    statusIcon: status.icon,
+    statusLabel: entry.statusLabel,
+    statusTone: status.tone,
+    messageLines,
+    toolSummaryLines,
+    fileRefs,
+    commandLines,
+    artifactLines: [],
+    evidenceLines,
+    inlineDiff: entry.inlineDiff
+  };
 }
 
-function keyedSuggestions(
-  suggestions: Array<Omit<TuiConversationSuggestion, "key">>
-): TuiConversationSuggestion[] {
-  return suggestions.slice(0, 3).map((suggestion, index) => ({
-    key: String(index + 1) as TuiConversationSuggestion["key"],
-    ...suggestion
-  }));
+function activeRunWorkBlock(run: TuiActiveRunBox): TuiWorkBlock {
+  const messageLines = detailLines(run.outputLines);
+  return {
+    id: `active-run:${run.runId}`,
+    sourceId: run.runId,
+    sourceKind: "active_run",
+    type: "active_run",
+    runId: run.runId,
+    timestamp: run.startedAt,
+    elapsedLabel: run.elapsedLabel,
+    usageLabel: run.usageLabel,
+    speaker: run.displayHandle ? `@${run.displayHandle}` : `@${run.agent}`,
+    title: run.title,
+    statusIcon: "●",
+    statusLabel: "running",
+    statusTone: "info",
+    messageLines,
+    toolSummaryLines: inferToolSummaryLines(messageLines),
+    fileRefs: extractFileRefs(messageLines),
+    commandLines: inferCommandLines(messageLines),
+    artifactLines: [],
+    evidenceLines: [
+      run.elapsedLabel ? `elapsed ${run.elapsedLabel}` : undefined,
+      run.usageLabel ? `usage ${run.usageLabel}` : undefined
+    ].filter((value): value is string => Boolean(value))
+  };
+}
+
+function conversationEntrySpeaker(entry: TuiConversationEntry): string {
+  if (entry.displayHandle) {
+    return `@${entry.displayHandle}`;
+  }
+  if (entry.agent) {
+    return `@${entry.agent}`;
+  }
+  return entry.author;
+}
+
+function conversationWorkBlockStatus(entry: TuiConversationEntry): {
+  icon: string;
+  tone: TuiWorkBlock["statusTone"];
+} {
+  if (entry.type === "agent_completed") {
+    return { icon: "✓", tone: "success" };
+  }
+  if (entry.type === "agent_failed") {
+    return { icon: "✗", tone: "danger" };
+  }
+  if (entry.type === "review_pending") {
+    return { icon: "△", tone: "warning" };
+  }
+  if (entry.type === "delegation") {
+    return { icon: "→", tone: "info" };
+  }
+  return { icon: "●", tone: "normal" };
+}
+
+function extractFileRefs(lines: string[]): string[] {
+  const refs = new Set<string>();
+  const pathPattern = /((?:\.{1,2}\/|\/)?(?:[\w.-]+\/)+[\w.-]+\.[A-Za-z0-9_-]+(?::\d+(?::\d+)?)?|[\w.-]+\.(?:[cm]?[tj]sx?|json|md|css|scss|html|py|rs|go|ya?ml|toml)(?::\d+(?::\d+)?)?)/g;
+  for (const line of lines) {
+    let match: RegExpExecArray | null;
+    while ((match = pathPattern.exec(line)) !== null) {
+      refs.add(normalizeFileRef(match[0]));
+      if (refs.size >= 8) {
+        return [...refs];
+      }
+    }
+  }
+  return [...refs];
+}
+
+function normalizeFileRef(value: string): string {
+  return value.replace(/^[ab]\//, "");
+}
+
+function inferCommandLines(lines: string[]): string[] {
+  return dedupeStrings(
+    lines
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0 && isCommandLikeLine(line))
+      .slice(0, 8)
+  );
+}
+
+function inferToolSummaryLines(lines: string[]): string[] {
+  return dedupeStrings(
+    lines
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0 && isInferredToolLine(line))
+      .map((line) => `inferred: ${truncate(line, defaultLimits.contentChars)}`)
+      .slice(0, 8)
+  );
+}
+
+function isCommandLikeLine(value: string): boolean {
+  const trimmed = value.replace(/^[>$]\s*/, "");
+  return /^(?:agent-hub|codex|claude|git|node|npm|npx|pnpm|tsx|tsc|vitest|rg|sed|cat)\b/.test(trimmed);
+}
+
+function isInferredToolLine(value: string): boolean {
+  const normalized = value.replace(/^[>$]\s*/, "");
+  return (
+    isCommandLikeLine(normalized) ||
+    /^(?:reading|read|editing|edited|writing|wrote|running|searching|inspecting|opened|applying|applied)\b/i.test(normalized) ||
+    /^(?:read_file|write_file|grep|rg|sed|cat|apply_patch)\b/i.test(normalized)
+  );
+}
+
+function dedupeStrings(values: string[]): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const value of values) {
+    if (seen.has(value)) {
+      continue;
+    }
+    seen.add(value);
+    result.push(value);
+  }
+  return result;
 }
 
 function elapsedRunLabel(run: TaskRun): string | undefined {
@@ -1439,7 +1694,11 @@ function summarizeTodos(todos: RoleTodo[], limit: number): TuiRoleTodoSummary[] 
 
 async function summarizeTeam(
   repositories: TuiReadModelRepositories,
-  projectId: string | undefined
+  projectId: string | undefined,
+  evidence: {
+    roleCallNodes: TuiRoleCallNodeSummary[];
+    runSummaries: TuiRunSummary[];
+  }
 ): Promise<{ summary: TuiTeamSummary; warning?: string }> {
   if (!projectId) {
     return { summary: emptyTeamSummary(undefined) };
@@ -1447,13 +1706,13 @@ async function summarizeTeam(
   try {
     const roles = await resolvedTeamRoles(repositories, projectId);
     const summaries = roles.map((entry) => toTuiTeamRoleSummary(entry.role, entry.source));
-    return { summary: teamSummaryFromRoles(projectId, summaries) };
+    return { summary: teamSummaryWithEvidence(teamSummaryFromRoles(projectId, summaries), evidence) };
   } catch (error) {
     const summaries = presetWorkgroupRoles.map((role) =>
       toTuiTeamRoleSummary(role, "preset")
     );
     return {
-      summary: teamSummaryFromRoles(projectId, summaries),
+      summary: teamSummaryWithEvidence(teamSummaryFromRoles(projectId, summaries), evidence),
       warning: `team roles unavailable: ${errorMessage(error)}`
     };
   }
@@ -1521,8 +1780,32 @@ function toTuiTeamRoleSummary(
     executorLabel: executorLabel(role.executor, executorRunnable),
     executorRunnable,
     defaultRoom: role.defaultRoom,
+    purpose: truncate(role.purpose, defaultLimits.contentChars),
     capabilitySummary: truncate(role.capabilitySummary, defaultLimits.contentChars),
+    persona: truncate(role.persona, defaultLimits.contentChars),
+    defaultInstructions: truncate(role.defaultInstructions, defaultLimits.contentChars),
+    permissions: [...role.permissions],
+    contextPolicy: {
+      scope: role.contextPolicy.scope,
+      includeApprovedMemory: role.contextPolicy.includeApprovedMemory,
+      includeThreadSummary: role.contextPolicy.includeThreadSummary,
+      instructions: role.contextPolicy.instructions.map((line) =>
+        truncate(line, defaultLimits.contentChars)
+      )
+    },
+    approvalPolicy: {
+      requiredFor: [...role.approvalPolicy.requiredFor],
+      summary: truncate(role.approvalPolicy.summary, defaultLimits.contentChars)
+    },
+    delegation: roleDelegationSummary(role),
     defaultSkillReferences: role.defaultSkillReferences ?? [],
+    verificationCommands: metadataStringArray(role.metadata, "verificationCommands"),
+    limits: metadataStringArray(role.metadata, "limits"),
+    tags: role.tags ?? [],
+    activeCallCount: 0,
+    recentCallCount: 0,
+    recentFailures: [],
+    nextAction: "ready for assignment",
     unavailableReason:
       role.executor.kind === "agent_adapter"
         ? undefined
@@ -1537,6 +1820,8 @@ function teamSummaryFromRoles(
   return {
     projectId,
     roles,
+    delegationMatrixRows: roles.map(roleDelegationMatrixRow),
+    recentRoleCalls: [],
     counts: {
       total: roles.length,
       enabled: roles.filter((role) => role.enabled).length,
@@ -1553,6 +1838,8 @@ function emptyTeamSummary(projectId: string | undefined): TuiTeamSummary {
   return {
     projectId,
     roles: [],
+    delegationMatrixRows: [],
+    recentRoleCalls: [],
     counts: {
       total: 0,
       enabled: 0,
@@ -1563,6 +1850,174 @@ function emptyTeamSummary(projectId: string | undefined): TuiTeamSummary {
     },
     command: projectId ? `agent-hub team roles list --project-id ${projectId}` : undefined
   };
+}
+
+function teamSummaryWithEvidence(
+  summary: TuiTeamSummary,
+  evidence: {
+    roleCallNodes: TuiRoleCallNodeSummary[];
+    runSummaries: TuiRunSummary[];
+  }
+): TuiTeamSummary {
+  const callsByRole = new Map<string, TuiRoleCallNodeSummary[]>();
+  for (const call of evidence.roleCallNodes) {
+    appendRoleCall(callsByRole, call.callerRole, call);
+    appendRoleCall(callsByRole, call.calleeRole, call);
+  }
+  const runsById = new Map(evidence.runSummaries.map((run) => [run.id, run]));
+  const roles = summary.roles.map((role) => {
+    const calls = callsByRole.get(role.handle) ?? [];
+    const activeCallCount = calls.filter((call) => activeRoleCallStatuses.has(call.status)).length;
+    const recentFailures = teamRecentFailures(calls, runsById);
+    return {
+      ...role,
+      activeCallCount,
+      recentCallCount: calls.length,
+      recentFailures,
+      nextAction: teamRoleNextAction(role, activeCallCount, recentFailures)
+    };
+  });
+  return {
+    ...summary,
+    roles,
+    delegationMatrixRows: roles.map(roleDelegationMatrixRow),
+    recentRoleCalls: summarizeTeamRecentRoleCalls(evidence.roleCallNodes, 8)
+  };
+}
+
+function appendRoleCall(
+  callsByRole: Map<string, TuiRoleCallNodeSummary[]>,
+  role: string,
+  call: TuiRoleCallNodeSummary
+): void {
+  const existing = callsByRole.get(role) ?? [];
+  existing.push(call);
+  callsByRole.set(role, existing);
+}
+
+function summarizeTeamRecentRoleCalls(
+  roleCallNodes: TuiRoleCallNodeSummary[],
+  limit: number
+): TuiTeamRecentRoleCall[] {
+  return [...roleCallNodes]
+    .sort((left, right) => roleCallUpdatedAt(right).localeCompare(roleCallUpdatedAt(left)))
+    .slice(0, limit)
+    .map((call) => ({
+      id: call.id,
+      callerRole: call.callerRole,
+      calleeRole: call.calleeRole,
+      status: call.status,
+      statusLabel: call.statusLabel,
+      task: call.task,
+      updatedAt: roleCallUpdatedAt(call),
+      linkedRunId: call.linkedRunId
+    }));
+}
+
+function teamRecentFailures(
+  calls: TuiRoleCallNodeSummary[],
+  runsById: Map<string, TuiRunSummary>
+): string[] {
+  return [...calls]
+    .filter((call) => {
+      const linkedRun = call.linkedRunId ? runsById.get(call.linkedRunId) : undefined;
+      return call.status === "failed" ||
+        (call.evidence.checks?.failed ?? 0) > 0 ||
+        call.evidence.risk?.level === "high" ||
+        call.evidence.risk?.level === "blocking" ||
+        linkedRun?.status === "failed";
+    })
+    .sort((left, right) => roleCallUpdatedAt(right).localeCompare(roleCallUpdatedAt(left)))
+    .slice(0, 4)
+    .map((call) => {
+      const reason =
+        call.evidence.resultSummary ??
+        call.evidence.waitingReason ??
+        call.evidence.risk?.primaryReason ??
+        "failure evidence available";
+      return `${call.id} ${call.statusLabel}: ${truncate(reason, 96)}`;
+    });
+}
+
+function teamRoleNextAction(
+  role: TuiTeamRoleSummary,
+  activeCallCount: number,
+  recentFailures: string[]
+): string {
+  if (!role.enabled) {
+    return "enable or leave disabled";
+  }
+  if (activeCallCount > 0) {
+    return `monitor ${activeCallCount} active call${activeCallCount === 1 ? "" : "s"}`;
+  }
+  if (!role.executorRunnable) {
+    return role.executorKind === "agent_adapter"
+      ? "configure local adapter"
+      : "reserved/manual executor";
+  }
+  if (recentFailures.length > 0) {
+    return "inspect recent failure";
+  }
+  if (role.delegation.canInitiate) {
+    return "ready to delegate";
+  }
+  return "ready for assignment";
+}
+
+function roleDelegationMatrixRow(role: TuiTeamRoleSummary): TuiTeamDelegationMatrixRow {
+  return {
+    id: role.id,
+    callerRole: role.handle,
+    status: role.delegation.canInitiate ? "enabled" : "unavailable",
+    allowedTargets: role.delegation.allowedTargets,
+    requiresApprovalForTargets: role.delegation.requiresApprovalForTargets,
+    allowedIntentTypes: role.delegation.allowedIntentTypes,
+    summary: role.delegation.summary
+  };
+}
+
+function roleDelegationSummary(role: WorkgroupRole): TuiTeamDelegationSummary {
+  const policy = role.delegationPolicy;
+  if (!policy?.canInitiateRoleCalls) {
+    return {
+      canInitiate: false,
+      allowedIntentTypes: [],
+      allowedTargets: [],
+      requiresApprovalForTargets: [],
+      summary: "role-call initiation policy not configured",
+      unavailableReason: "role-call initiation policy not configured"
+    };
+  }
+  const allowedTargets = [
+    ...(policy.allowedTargetRoles?.map(formatDelegationTargetRole) ?? []),
+    ...(policy.allowedTargetCapabilities?.map((capability) => `capability:${capability}`) ?? [])
+  ];
+  const approvalTargets = policy.requiresApprovalForTargets?.map(formatDelegationTargetRole) ?? [];
+  return {
+    canInitiate: true,
+    allowedIntentTypes: [...policy.allowedIntentTypes],
+    allowedTargets,
+    requiresApprovalForTargets: approvalTargets,
+    summary: [
+      `enabled intents ${policy.allowedIntentTypes.join(",") || "none"}`,
+      `targets ${allowedTargets.join(",") || "none"}`,
+      approvalTargets.length > 0 ? `approval ${approvalTargets.join(",")}` : undefined
+    ].filter((value): value is string => Boolean(value)).join("; ")
+  };
+}
+
+function formatDelegationTargetRole(target: string): string {
+  return target === "*" ? "*" : `@${target}`;
+}
+
+function roleCallUpdatedAt(call: TuiRoleCallNodeSummary): string {
+  return call.completedAt ?? call.startedAt ?? call.createdAt;
+}
+
+function metadataStringArray(metadata: Record<string, unknown> | undefined, key: string): string[] {
+  return (arrayValue(metadata, key) ?? [])
+    .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+    .map((value) => truncate(value, defaultLimits.contentChars));
 }
 
 function roleSettingsKey(projectId: string): string {
@@ -1692,7 +2147,7 @@ function summarizeTasks(
 
 function summarizeMemory(
   projectId: string | undefined,
-  items: { status: MemoryStatus }[]
+  items: MemoryItem[]
 ): TuiMemorySummary {
   const counts: Record<MemoryStatus, number> = {
     proposed: 0,
@@ -1706,17 +2161,105 @@ function summarizeMemory(
   return {
     projectId,
     counts,
+    rows: summarizeMemoryRows(items, 12),
     command: projectId ? `agent-hub memory list --project-id ${projectId}` : undefined,
     approvalCommands: projectId
       ? [
           `agent-hub memory list --project-id ${projectId}`,
-          "agent-hub memory approve <memory-id>",
-          "agent-hub memory reject <memory-id>"
+          "agent-hub memory approve --memory-id <memory-id>",
+          "agent-hub memory reject --memory-id <memory-id>"
         ]
       : [],
     approvedSource: "Agent Hub context store; approved memory is injected at runtime.",
     approvalReminder: "Memory approval remains an explicit CLI action."
   };
+}
+
+function summarizeMemoryRows(items: MemoryItem[], limit: number): TuiMemoryRow[] {
+  return [...items]
+    .sort(compareMemoryItems)
+    .slice(0, limit)
+    .map(memoryRow);
+}
+
+function compareMemoryItems(left: MemoryItem, right: MemoryItem): number {
+  const statusDelta = memoryStatusRank(left.status) - memoryStatusRank(right.status);
+  if (statusDelta !== 0) {
+    return statusDelta;
+  }
+  return right.updatedAt.localeCompare(left.updatedAt);
+}
+
+function memoryStatusRank(status: MemoryStatus): number {
+  const order: MemoryStatus[] = ["proposed", "approved", "rejected", "retired"];
+  const index = order.indexOf(status);
+  return index === -1 ? order.length : index;
+}
+
+function memoryRow(item: MemoryItem): TuiMemoryRow {
+  const sourceRunId = metadataString(item.metadata, "sourceRunId");
+  const sourceTaskId = metadataString(item.metadata, "sourceTaskId") ?? item.taskId;
+  const sourceCommands = [
+    sourceRunId ? `agent-hub runs show ${sourceRunId}` : undefined,
+    sourceTaskId ? `agent-hub task history --task-id ${sourceTaskId}` : undefined
+  ].filter((value): value is string => Boolean(value));
+  return {
+    id: item.id,
+    projectId: item.projectId,
+    category: item.category,
+    status: item.status,
+    confidence: metadataString(item.metadata, "confidence"),
+    sourceRunId,
+    sourceTaskId,
+    summary: truncate(firstMeaningfulLine(item.content), defaultLimits.contentChars),
+    updatedAt: item.updatedAt,
+    recommendedAction: recommendedMemoryAction(item.status),
+    evidenceExcerptLines: memoryEvidenceExcerptLines(item.metadata),
+    writebackTarget:
+      metadataString(item.metadata, "writebackPath") ??
+      stringValue(objectValue(item.metadata, "autoApproval"), "writebackPath"),
+    sourceCommands
+  };
+}
+
+function firstMeaningfulLine(value: string): string {
+  return value
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .find((line) => line.length > 0) ?? "(empty memory)";
+}
+
+function recommendedMemoryAction(status: MemoryStatus): string {
+  if (status === "proposed") {
+    return "review explicitly";
+  }
+  if (status === "approved") {
+    return "injected at runtime";
+  }
+  if (status === "rejected") {
+    return "ignored";
+  }
+  return "retained for audit";
+}
+
+function memoryEvidenceExcerptLines(metadata: JsonObject | undefined): string[] {
+  const evidence = arrayValue(metadata, "evidence")
+    ?? arrayValue(metadata, "evidenceExcerpts")
+    ?? arrayValue(metadata, "evidenceLines");
+  const lines = evidence
+    ? evidence
+        .filter((value): value is string => typeof value === "string")
+        .map((line) => truncate(line.trim(), defaultLimits.contentChars))
+        .filter(Boolean)
+    : [];
+  const singleEvidence =
+    metadataString(metadata, "evidence") ??
+    metadataString(metadata, "why") ??
+    metadataString(metadata, "reason");
+  if (singleEvidence) {
+    lines.unshift(truncate(singleEvidence, defaultLimits.contentChars));
+  }
+  return dedupeStrings(lines).slice(0, 6);
 }
 
 function summarizeSkills(input: {
@@ -1749,6 +2292,747 @@ function summarizeSkills(input: {
     selected: summaries.filter((skill) => skill.selected).slice(0, input.maxSkills),
     available: summaries.slice(0, input.maxSkills)
   };
+}
+
+function buildSelectionDetails(input: {
+  workBlocks: TuiWorkBlock[];
+  runs: TuiRunSummary[];
+  roleCalls: TuiRoleCallNodeSummary[];
+  tasks: TuiTaskSummary[];
+  team: TuiTeamSummary;
+  memory: TuiMemorySummary;
+  skills: TuiSkillsSummary;
+}): TuiSelectionDetails {
+  return {
+    workBlocks: input.workBlocks.map((block) => workBlockDetail(block)),
+    runs: input.runs.map((run) => runSelectionDetail(run)),
+    roleCalls: input.roleCalls.map((call) => roleCallSelectionDetail(call)),
+    tasks: input.tasks.map((task) => taskSelectionDetail(input.team.projectId, task)),
+    teamRoles: input.team.roles.map((role) => teamRoleSelectionDetail(input.team, role)),
+    memoryRows: input.memory.rows.map((row) => memoryRowSelectionDetail(row)),
+    memory: memorySelectionDetail(input.memory, input.skills)
+  };
+}
+
+function workBlockDetail(block: TuiWorkBlock): TuiSelectionDetail {
+  const commands = [
+    ...(block.runId
+      ? [
+          `agent-hub runs show ${block.runId}`,
+          ...(block.sourceKind === "active_run"
+            ? []
+            : [`agent-hub runs diff ${block.runId} --stat`])
+        ]
+      : []),
+    ...(block.roleCallId ? [`agent-hub role-calls show ${block.roleCallId}`] : [])
+  ];
+  return {
+    id: block.id,
+    kind: "work_block",
+    title: block.title,
+    subtitle: block.statusLabel,
+    sections: [
+      ...(block.sourceKind === "active_run"
+        ? [liveRunDetailSection(block)]
+        : []),
+      {
+        id: block.sourceKind === "active_run" ? "streaming-output" : "message",
+        title: block.sourceKind === "active_run" ? "Streaming Output Tail" : "Message",
+        tone: block.sourceKind === "active_run" ? "info" as const : undefined,
+        lines: block.messageLines
+      },
+      ...(block.toolSummaryLines.length > 0
+        ? [
+            {
+              id: "tool-calls",
+              title: "Tool Calls",
+              tone: "info" as const,
+              lines: [
+                "structured durations/status are not available; these rows are inferred from visible output",
+                ...block.toolSummaryLines
+              ],
+              collapsedByDefault: true
+            }
+          ]
+        : [unavailableDetailSection("tool-calls", "Tool Calls", "structured tool-call rows")]),
+      ...(block.commandLines.length > 0
+        ? [
+            {
+              id: block.sourceKind === "active_run" ? "active-commands" : "commands",
+              title: block.sourceKind === "active_run" ? "Active Commands" : "Commands",
+              tone: "info" as const,
+              lines: block.sourceKind === "active_run"
+                ? [
+                    "queued/running command status is not available; commands are inferred from visible output",
+                    ...block.commandLines
+                  ]
+                : block.commandLines,
+              collapsedByDefault: true
+            }
+          ]
+        : block.sourceKind === "active_run"
+          ? [unavailableDetailSection("active-commands", "Active Commands", "queued/running command status")]
+          : []),
+      ...(block.fileRefs.length > 0
+        ? [
+            {
+              id: "file-refs",
+              title: "File Refs",
+              lines: block.fileRefs,
+              collapsedByDefault: true
+            }
+          ]
+        : []),
+      ...(block.evidenceLines.length > 0
+        ? [
+            {
+              id: "evidence",
+              title: "Evidence",
+              tone: block.statusTone === "danger" || block.statusTone === "warning"
+                ? block.statusTone
+                : "success" as const,
+              lines: block.evidenceLines
+            }
+          ]
+        : []),
+      ...(block.inlineDiff
+        ? [
+            {
+              id: "inline-diff",
+              title: "Inline Diff",
+              tone: "info" as const,
+              lines: inlineDiffDetailLines(block.inlineDiff),
+              collapsedByDefault: block.inlineDiff.mode === "summary"
+            },
+            ...(block.inlineDiff.mode === "inline"
+              ? [
+                  {
+                    id: "fix-snippet",
+                    title: "Fix Snippet",
+                    tone: "info" as const,
+                    lines: block.inlineDiff.lines
+                      .filter((line) => line.kind === "add" || line.kind === "delete")
+                      .map((line) => line.text),
+                    collapsedByDefault: true
+                  }
+                ]
+              : [])
+          ]
+        : []),
+      ...(block.artifactLines.length > 0
+        ? [
+            {
+              id: block.sourceKind === "active_run" ? "pending-artifacts" : "artifacts",
+              title: block.sourceKind === "active_run" ? "Pending Artifacts" : "Artifacts",
+              lines: block.artifactLines,
+              collapsedByDefault: true
+            }
+          ]
+        : [
+            unavailableDetailSection(
+              block.sourceKind === "active_run" ? "pending-artifacts" : "artifacts",
+              block.sourceKind === "active_run" ? "Pending Artifacts" : "Artifacts",
+              block.sourceKind === "active_run" ? "pending artifact rows" : "artifact rows"
+            )
+          ])
+    ],
+    commands,
+    actions: detailActions(commands)
+  };
+}
+
+function liveRunDetailSection(block: TuiWorkBlock): TuiDetailSection {
+  return {
+    id: "live-run",
+    title: "Live Run",
+    tone: "info",
+    lines: [
+      `speaker ${block.speaker}`,
+      `state ${block.statusLabel ?? "running"}`,
+      block.timestamp ? `started ${block.timestamp}` : "started not available in current read model",
+      block.elapsedLabel ? `elapsed ${block.elapsedLabel}` : "elapsed not available in current read model",
+      "spinner active",
+      block.usageLabel ? `usage ${block.usageLabel}` : undefined
+    ].filter((value): value is string => Boolean(value))
+  };
+}
+
+function runSelectionDetail(run: TuiRunSummary): TuiSelectionDetail {
+  return {
+    id: run.id,
+    kind: "run",
+    title: run.taskTitle ?? run.taskId,
+    subtitle: `@${run.roleHandle ?? run.agentKind} ${run.status}`,
+    sections: [
+      {
+        id: "run",
+        title: "Run",
+        tone: run.status === "failed" ? "danger" : run.status === "succeeded" ? "success" : "info",
+        lines: [
+          `id ${run.id}`,
+          `agent ${run.agentKind}`,
+          run.roleHandle ? `role @${run.roleHandle}` : undefined,
+          `status ${run.status}`,
+          `stage ${run.stage}`,
+          run.startedAt ? `started ${run.startedAt}` : undefined,
+          run.completedAt ? `completed ${run.completedAt}` : undefined,
+          `updated ${run.updatedAt}`,
+          `retained worktree ${run.retainedWorktree ? "yes" : "no"}`,
+          run.usageLabel ? `usage ${run.usageLabel}` : undefined
+        ].filter((value): value is string => Boolean(value))
+      },
+      evidenceDetailSection(run.evidence),
+      {
+        id: "review",
+        title: "Review",
+        tone: run.reviewDecision.status === "rejected"
+          ? "danger"
+          : run.reviewDecision.status === "accepted"
+            ? "success"
+            : "warning",
+        lines: [
+          `status ${run.reviewDecision.status}`,
+          run.reviewDecision.reason ? `reason ${run.reviewDecision.reason}` : undefined,
+          run.reviewDecision.acceptedAt ? `accepted ${run.reviewDecision.acceptedAt}` : undefined,
+          run.reviewDecision.rejectedAt ? `rejected ${run.reviewDecision.rejectedAt}` : undefined
+        ].filter((value): value is string => Boolean(value))
+      }
+    ],
+    commands: run.commands,
+    actions: [
+      { key: "V", label: "Open Review", kind: "focus" },
+      ...detailActions(run.commands)
+    ]
+  };
+}
+
+function roleCallSelectionDetail(call: TuiRoleCallNodeSummary): TuiSelectionDetail {
+  const commands = [
+    `agent-hub role-calls show ${call.id}`,
+    ...(call.linkedRunId ? [`agent-hub runs show ${call.linkedRunId}`] : [])
+  ];
+  return {
+    id: call.id,
+    kind: "role_call",
+    title: `@${call.callerRole} -> @${call.calleeRole}`,
+    subtitle: call.statusLabel,
+    sections: [
+      {
+        id: "role-call",
+        title: "RoleCall",
+        tone: call.status === "failed" ? "danger" : terminalRoleCallStatuses.has(call.status) ? "success" : "info",
+        lines: [
+          `id ${call.id}`,
+          `task ${call.task}`,
+          `status ${call.statusLabel}`,
+          `priority ${call.priority}`,
+          `depth ${call.depth}`,
+          call.parentRoleCallId ? `parent ${call.parentRoleCallId}` : undefined,
+          call.linkedRunId ? `linked run ${call.linkedRunId}` : undefined,
+          call.todoId ? `todo ${call.todoId}` : undefined
+        ].filter((value): value is string => Boolean(value))
+      },
+      evidenceDetailSection(call.evidence)
+    ],
+    commands,
+    actions: [
+      { key: "G", label: "Open Graph", kind: "focus" },
+      ...detailActions(commands)
+    ]
+  };
+}
+
+function taskSelectionDetail(
+  projectId: string | undefined,
+  task: TuiTaskSummary
+): TuiSelectionDetail {
+  const recoveryCommands = unavailableRoleExecutorCommandsForTask(projectId, task);
+  const commands = [
+    `agent-hub task history --task-id ${task.id}`,
+    ...recoveryCommands
+  ];
+  return {
+    id: task.id,
+    kind: "task",
+    title: task.title,
+    subtitle: task.status,
+    sections: [
+      {
+        id: "task",
+        title: "Task",
+        lines: [
+          `id ${task.id}`,
+          `status ${task.status}`,
+          `updated ${task.updatedAt}`,
+          `assignments ${task.executableAssignmentCount}/${task.assignmentCount} executable`,
+          task.nextAction ? `next ${task.nextAction}` : undefined
+        ].filter((value): value is string => Boolean(value))
+      },
+      {
+        id: "assignments",
+        title: "Assignments",
+        lines: task.assignments.length > 0
+          ? task.assignments.map((assignment) =>
+              `${assignment.label} ${assignment.status}${assignment.runId ? ` run ${assignment.runId}` : ""}`
+            )
+          : ["not available in current read model"]
+      },
+      {
+        id: "follow-ups",
+        title: "Follow-ups",
+        lines: task.followUps.length > 0 ? task.followUps : ["not available in current read model"],
+        collapsedByDefault: task.followUps.length === 0
+      }
+    ],
+    commands,
+    actions: detailActions(commands)
+  };
+}
+
+function teamRoleSelectionDetail(
+  team: TuiTeamSummary,
+  role: TuiTeamRoleSummary
+): TuiSelectionDetail {
+  const roleCalls = team.recentRoleCalls.filter((call) =>
+    call.callerRole === role.handle || call.calleeRole === role.handle
+  );
+  const commands = [
+    team.command,
+    team.projectId ? `agent-hub team roles executor --project-id ${team.projectId} --role ${role.handle}` : undefined
+  ].filter((value): value is string => Boolean(value));
+  return {
+    id: role.id,
+    kind: "team_role",
+    title: `@${role.handle}`,
+    subtitle: role.displayName,
+    sections: [
+      {
+        id: "role",
+        title: "Role",
+        tone: role.enabled ? "success" : "warning",
+        lines: [
+          `display ${role.displayName}`,
+          `source ${role.source}`,
+          `enabled ${role.enabled ? "yes" : "no"}`,
+          `mission ${role.purpose}`,
+          role.defaultRoom ? `default room ${role.defaultRoom}` : undefined,
+          `capabilities ${role.capabilitySummary}`,
+          `next action ${role.nextAction}`
+        ].filter((value): value is string => Boolean(value))
+      },
+      {
+        id: "executor",
+        title: "Executor",
+        tone: role.executorRunnable ? "success" : "warning",
+        lines: [
+          `kind ${role.executorKind}`,
+          `label ${role.executorLabel}`,
+          `runnable ${role.executorRunnable ? "yes" : "no"}`,
+          `active calls ${role.activeCallCount}`,
+          `recent calls ${role.recentCallCount}`,
+          role.unavailableReason ? `unavailable ${role.unavailableReason}` : undefined
+        ].filter((value): value is string => Boolean(value))
+      },
+      {
+        id: "mission-boundaries",
+        title: "Mission And Boundaries",
+        lines: [
+          `persona ${role.persona}`,
+          `instructions ${role.defaultInstructions}`,
+          `approval ${role.approvalPolicy.summary}`,
+          role.approvalPolicy.requiredFor.length > 0
+            ? `approval required for ${role.approvalPolicy.requiredFor.join(", ")}`
+            : undefined
+        ].filter((value): value is string => Boolean(value))
+      },
+      {
+        id: "allowed-tools",
+        title: "Allowed Tools And Permissions",
+        lines: role.permissions.length > 0
+          ? role.permissions
+          : ["not available in current read model"]
+      },
+      {
+        id: "context-policy",
+        title: "Context Policy",
+        lines: [
+          `scope ${role.contextPolicy.scope}`,
+          `approved memory ${role.contextPolicy.includeApprovedMemory ? "yes" : "no"}`,
+          `thread summary ${role.contextPolicy.includeThreadSummary ? "yes" : "no"}`,
+          ...role.contextPolicy.instructions.map((instruction) => `instruction ${instruction}`)
+        ]
+      },
+      {
+        id: "delegation",
+        title: "Delegation Matrix",
+        tone: role.delegation.canInitiate ? "success" : "warning",
+        lines: role.delegation.canInitiate
+          ? [
+              role.delegation.summary,
+              `intents ${role.delegation.allowedIntentTypes.join(",") || "none"}`,
+              `targets ${role.delegation.allowedTargets.join(",") || "none"}`,
+              `approval targets ${role.delegation.requiresApprovalForTargets.join(",") || "none"}`
+            ]
+          : [role.delegation.unavailableReason ?? "normalized policy matrix not available"],
+        collapsedByDefault: !role.delegation.canInitiate
+      },
+      {
+        id: "verification-profile",
+        title: "Verification Profile",
+        lines: role.verificationCommands.length > 0
+          ? role.verificationCommands
+          : ["role-specific verification commands not available in current read model"],
+        collapsedByDefault: role.verificationCommands.length === 0
+      },
+      {
+        id: "limits",
+        title: "Limits",
+        lines: role.limits.length > 0
+          ? role.limits
+          : ["role-specific limits not available in current read model"],
+        collapsedByDefault: role.limits.length === 0
+      },
+      {
+        id: "recent-failures",
+        title: "Recent Failures",
+        tone: role.recentFailures.length > 0 ? "danger" : "success",
+        lines: role.recentFailures.length > 0
+          ? role.recentFailures
+          : ["none in current read model"],
+        collapsedByDefault: role.recentFailures.length === 0
+      },
+      {
+        id: "recent-role-calls",
+        title: "Recent RoleCalls",
+        lines: roleCalls.length > 0
+          ? roleCalls.map((call) =>
+              `${call.id} @${call.callerRole}->@${call.calleeRole} ${call.statusLabel}: ${call.task}`
+            )
+          : ["not available in current read model"],
+        collapsedByDefault: roleCalls.length === 0
+      },
+      {
+        id: "skills",
+        title: "Default Skills",
+        lines: role.defaultSkillReferences.length > 0
+          ? role.defaultSkillReferences.map(formatSkillReference)
+          : ["not available in current read model"],
+        collapsedByDefault: role.defaultSkillReferences.length === 0
+      },
+    ],
+    commands,
+    actions: detailActions(commands)
+  };
+}
+
+function formatSkillReference(reference: TuiTeamRoleSummary["defaultSkillReferences"][number]): string {
+  return reference.scope ? `${reference.scope}:${reference.id}` : reference.id;
+}
+
+function memorySelectionDetail(
+  memory: TuiMemorySummary,
+  skills: TuiSkillsSummary
+): TuiSelectionDetail {
+  const commands = memory.approvalCommands.length > 0
+    ? memory.approvalCommands
+    : memory.command
+      ? [memory.command]
+      : [];
+  return {
+    id: memory.projectId ? `memory:${memory.projectId}` : "memory:none",
+    kind: "memory",
+    title: "Memory Governance",
+    subtitle: memory.projectId,
+    sections: [
+      {
+        id: "counts",
+        title: "Counts",
+        lines: [
+          `proposed ${memory.counts.proposed}`,
+          `approved ${memory.counts.approved}`,
+          `rejected ${memory.counts.rejected}`,
+          `retired ${memory.counts.retired}`
+        ]
+      },
+      {
+        id: "source",
+        title: "Approved Source",
+        lines: [
+          memory.approvedSource,
+          memory.approvalReminder,
+          `runtime ${skills.contextMode}`
+        ]
+      },
+      {
+        id: "proposal-rows",
+        title: "Proposal Rows",
+        lines: memory.rows.length > 0
+          ? memory.rows.map((row) => memoryRowLine(row))
+          : ["not available in current read model"]
+      },
+      {
+        id: "selected-proposal",
+        title: "Selected Proposal",
+        lines: memory.rows[0] ? memoryRowDetailLines(memory.rows[0]) : ["not available in current read model"]
+      },
+      {
+        id: "evidence",
+        title: "Evidence Excerpts",
+        lines: memory.rows[0]?.evidenceExcerptLines.length
+          ? memory.rows[0].evidenceExcerptLines
+          : ["proposal evidence rows not available in current read model"],
+        collapsedByDefault: memory.rows[0]?.evidenceExcerptLines.length === 0
+      },
+      {
+        id: "writeback",
+        title: "Writeback Target",
+        lines: memory.rows[0]?.writebackTarget
+          ? [memory.rows[0].writebackTarget]
+          : ["context-store target path not available in current read model"],
+        collapsedByDefault: !memory.rows[0]?.writebackTarget
+      },
+      unavailableDetailSection("related", "Related Skills And Memory", "related skills/memory joins")
+    ],
+    commands,
+    actions: [
+      {
+        key: "a",
+        label: "Approve",
+        kind: "callback",
+        disabledReason: "not available in TUI; use the listed CLI command"
+      },
+      {
+        key: "R",
+        label: "Reject",
+        kind: "callback",
+        disabledReason: "not available in TUI; use the listed CLI command"
+      },
+      {
+        key: "e",
+        label: "Edit",
+        kind: "callback",
+        disabledReason: "not available in TUI; editing requires a separate audited callback"
+      },
+      {
+        key: "o",
+        label: "Open Source",
+        kind: "callback",
+        disabledReason: "not available in TUI; use the listed CLI command"
+      }
+    ]
+  };
+}
+
+function memoryRowSelectionDetail(row: TuiMemoryRow): TuiSelectionDetail {
+  const commands = [
+    `agent-hub memory list --project-id ${row.projectId}`,
+    `agent-hub memory approve --memory-id ${row.id}`,
+    `agent-hub memory reject --memory-id ${row.id}`,
+    ...row.sourceCommands
+  ];
+  return {
+    id: row.id,
+    kind: "memory",
+    title: row.summary,
+    subtitle: `${row.status} ${row.category}`,
+    sections: [
+      {
+        id: "memory",
+        title: "Memory Text",
+        lines: [
+          row.summary,
+          `category ${row.category}`,
+          `status ${row.status}`,
+          row.confidence ? `confidence ${row.confidence}` : undefined,
+          `updated ${row.updatedAt}`
+        ].filter((value): value is string => Boolean(value))
+      },
+      {
+        id: "why",
+        title: "Why It Matters",
+        lines: [`recommended action ${row.recommendedAction}`]
+      },
+      {
+        id: "evidence",
+        title: "Evidence Excerpts",
+        lines: row.evidenceExcerptLines.length > 0
+          ? row.evidenceExcerptLines
+          : ["proposal evidence rows not available in current read model"],
+        collapsedByDefault: row.evidenceExcerptLines.length === 0
+      },
+      {
+        id: "writeback",
+        title: "Writeback Target",
+        lines: row.writebackTarget
+          ? [row.writebackTarget]
+          : ["context-store target path not available in current read model"],
+        collapsedByDefault: !row.writebackTarget
+      },
+      unavailableDetailSection("related", "Related Skills And Memory", "related skills/memory joins"),
+      {
+        id: "source-commands",
+        title: "Source Commands",
+        lines: row.sourceCommands.length > 0 ? row.sourceCommands : ["not available in current read model"],
+        collapsedByDefault: true
+      }
+    ],
+    commands,
+    actions: [
+      {
+        key: "a",
+        label: "Approve",
+        kind: "callback",
+        disabledReason: "not available in TUI; use the listed CLI command"
+      },
+      {
+        key: "R",
+        label: "Reject",
+        kind: "callback",
+        disabledReason: "not available in TUI; use the listed CLI command"
+      },
+      {
+        key: "e",
+        label: "Edit",
+        kind: "callback",
+        disabledReason: "not available in TUI; editing requires a separate audited callback"
+      },
+      {
+        key: "o",
+        label: "Open Source",
+        kind: "callback",
+        disabledReason: "not available in TUI; use the listed CLI command"
+      }
+    ]
+  };
+}
+
+function memoryRowLine(row: TuiMemoryRow): string {
+  const confidence = row.confidence ? ` conf ${row.confidence}` : "";
+  const source = row.sourceRunId ? ` run ${row.sourceRunId}` : row.sourceTaskId ? ` task ${row.sourceTaskId}` : "";
+  return `${row.status} ${row.category}${confidence}${source} ${row.summary}`;
+}
+
+function memoryRowDetailLines(row: TuiMemoryRow): string[] {
+  return [
+    `id ${row.id}`,
+    `category ${row.category}`,
+    `status ${row.status}`,
+    row.confidence ? `confidence ${row.confidence}` : undefined,
+    row.sourceRunId ? `source run ${row.sourceRunId}` : undefined,
+    row.sourceTaskId ? `source task ${row.sourceTaskId}` : undefined,
+    `updated ${row.updatedAt}`,
+    `recommended action ${row.recommendedAction}`,
+    `memory ${row.summary}`,
+    ...row.sourceCommands.map((command) => `command ${command}`)
+  ].filter((value): value is string => Boolean(value));
+}
+
+function conversationDetailTitle(entry: TuiConversationEntry): string {
+  if (entry.type === "user_message") {
+    return `${entry.author} message`;
+  }
+  if (entry.type === "delegation") {
+    return `Delegation to @${entry.delegatedTo ?? "role"}`;
+  }
+  return `${entry.author} ${entry.runId ?? entry.type}`;
+}
+
+function evidenceDetailSection(evidence: TuiEvidenceSummary): TuiDetailSection {
+  const lines = evidenceDetailLines(evidence);
+  return {
+    id: "evidence",
+    title: "Evidence",
+    tone: evidence.risk?.level === "blocking" || evidence.risk?.level === "high"
+      ? "danger"
+      : evidence.risk?.level === "medium"
+        ? "warning"
+        : "info",
+    lines: lines.length > 0 ? lines : ["not available in current read model"]
+  };
+}
+
+function evidenceDetailLines(evidence: TuiEvidenceSummary): string[] {
+  return [
+    evidence.linkedRunId ? `linked run ${evidence.linkedRunId}` : undefined,
+    evidence.latestEvent ? `latest ${evidence.latestEvent}` : undefined,
+    evidence.resultSummary ? `result ${evidence.resultSummary}` : undefined,
+    evidence.waitingReason ? `waiting ${evidence.waitingReason}` : undefined,
+    evidence.checks
+      ? `checks passed ${evidence.checks.passed} failed ${evidence.checks.failed} skipped ${evidence.checks.skipped}`
+      : undefined,
+    evidence.checks && evidence.checks.failedNames.length > 0
+      ? `failed checks ${evidence.checks.failedNames.join(", ")}`
+      : undefined,
+    evidence.risk
+      ? `risk ${evidence.risk.level}${evidence.risk.primaryReason ? `: ${evidence.risk.primaryReason}` : ""}`
+      : undefined,
+    evidence.diff
+      ? `diff files ${evidence.diff.changedFiles} +${evidence.diff.insertions ?? 0} -${evidence.diff.deletions ?? 0}`
+      : undefined
+  ].filter((value): value is string => Boolean(value));
+}
+
+function unavailableDetailSection(
+  id: string,
+  title: string,
+  missing: string
+): TuiDetailSection {
+  return {
+    id,
+    title,
+    tone: "warning",
+    lines: [`${missing} not available in current read model`],
+    collapsedByDefault: true
+  };
+}
+
+function detailActions(commands: string[]): TuiDetailAction[] {
+  if (commands.length === 0) {
+    return [];
+  }
+  return [
+    {
+      key: "p",
+      label: "Prepare Command",
+      kind: "prepare_command"
+    }
+  ];
+}
+
+function detailLines(value: string[] | string | undefined): string[] {
+  if (Array.isArray(value)) {
+    return value.length > 0 ? value.map((line) => truncate(line, defaultLimits.contentChars)) : ["(empty)"];
+  }
+  if (!value) {
+    return ["(empty)"];
+  }
+  const lines = value
+    .split(/\r?\n/)
+    .map((line) => truncate(line.trim(), defaultLimits.contentChars))
+    .filter(Boolean);
+  return lines.length > 0 ? lines : ["(empty)"];
+}
+
+function inlineDiffDetailLines(diff: TuiInlineDiffSummary): string[] {
+  if (diff.mode === "summary") {
+    return [diff.summary];
+  }
+  return [
+    diff.summary,
+    ...diff.lines.map((line) => line.text)
+  ];
+}
+
+function unavailableRoleExecutorCommandsForTask(
+  projectId: string | undefined,
+  task: TuiTaskSummary
+): string[] {
+  if (!projectId) {
+    return [];
+  }
+  return task.assignments
+    .filter((assignment) => !assignment.executable && assignment.role)
+    .map((assignment) => `agent-hub team roles executor --project-id ${projectId} --role ${assignment.role}`);
 }
 
 function summarizeLoop(

@@ -54,15 +54,28 @@ TUI review shortcuts. These decisions create local `review_decision` artifacts
 only; they do not apply files, alter run status, merge, push, approve memory,
 clean worktrees, or delete branches.
 The Memory focus mode is a governance indicator, not a browser: it shows
-proposed/approved/rejected counts, the approved-memory source, explicit
-approval/rejection command hints, selected skills, available skill identifiers,
-and the current context delivery mode.
+proposed/approved/rejected/retired counts, a `Memory Inbox` table with `ID`,
+`Category`, `Status`, `Conf`, `Source Run`, `Summary`, and `Action` columns,
+static local controls for view/status/confidence/search, selected-row
+`Evidence Excerpts`, an `Approved Memory Index`, the approved-memory source,
+explicit approval/rejection command hints, selected skills, available skill
+identifiers, and the current context delivery mode. Approve/reject/edit/open
+source actions are shown as disabled governed controls until audited local
+callbacks exist; the TUI renders equivalent CLI commands instead.
 The Team read-model pane is available from the default tab cycle, the `Team`
 tab label, the uppercase `E` focus shortcut, typing `/team` in the composer,
-or the command palette. It shows the current project's resolved preset,
-preset-overridden, and custom roles from the same role settings used by
-`team roles list`, including enabled/runnable counts, executor labels, default
-rooms, and the equivalent CLI list command.
+or the command palette. It is a role operations view over the current project's
+resolved preset, preset-overridden, and custom roles from the same role
+settings used by `team roles list`. It shows a visible `local-only` badge,
+enabled/runnable counts, a dense roles table with source, executor, state,
+call/failure counts, default room, skill count, and next action, a Recent
+RoleCalls table, and a delegation matrix grid when terminal width allows. The
+selected `Role Profile` detail shows mission/boundaries, context policy,
+permissions, approval policy, delegation, verification profile, limits, recent
+RoleCalls/failures, default skills, and safe CLI list/executor commands.
+Verification commands, max/limit-like data, allowed tools, and matrix values
+are shown only when role metadata or policy evidence provides them; missing
+role-policy data is marked unavailable rather than invented.
 The command palette (`:`) collects current-context CLI command hints for runs,
 RoleCalls, review, and memory. It is a terminal aid only; it does not add
 project or room browsing.
@@ -86,17 +99,20 @@ runtime warnings, Codex internal diagnostics, and skill activation noise. Runs a
 files leave the active box and render their completed output plus
 verification/risk summaries and a final `[V]iew` review hint. Runs with no
 changed files render as completed output without an awaiting-review prompt.
-The Work conversation uses a terminal-native visual grammar: the header is a
-reverse-color status bar with project, selected agent, iteration, risk, and the
-current clock; high/blocking risk turns the header red and medium risk turns it
-yellow. Idle sessions show a low-flicker `◈` indicator that does not drive a
-constant screen repaint, while active sessions use the running marker. Agent
+The Work conversation uses a terminal-native visual grammar inside the shared
+TUI shell frame: the branded header starts with `AGENT HUB`, then shows project,
+role, room, context mode, focused view, iteration/risk, and the current clock
+as width permits; high/blocking risk turns the header red and medium risk turns
+it yellow. Idle sessions show a low-flicker `◈` indicator that does not drive a
+constant screen repaint, while active sessions use the running marker. Normal
+and wide terminals frame the side navigation, main Work surface, and detail rail
+with visible borders; narrow terminals fall back to a single framed panel. Agent
 and role-backed run entries use a colored left `┃` bar, role/run/status
 metadata, elapsed time, optional token/cost usage, and a timestamp. User
 messages stay plain with a timestamp. The Work viewport budgets fixed chrome
-rows for the header, warnings/status/attention strip, composer, tabs, and
-status bar before slicing the visible conversation tail, so long agent output
-does not push earlier visible rows under the header. Conversation content
+rows for the header, attention strip, framed panel borders, composer, hotkey
+band, and status band before slicing the visible conversation tail, so long
+agent output does not push earlier visible rows under the header. Conversation content
 keeps file paths underlined and blue with safe OSC 8 file links when the
 terminal supports them, shell-command lines bold, and fenced code blocks lightly
 highlighted for keywords, strings, and comments. Agent output content is not
@@ -117,13 +133,9 @@ newest wrapped lines visible and adds an omitted-line marker when the full box
 would crowd out the Work conversation. Completion and failure state is shown
 through refreshed read-model rows rather than timed renderer flashes, so the
 terminal does not repaint only to clear decorative feedback.
-When the latest agent result is visible and the composer is empty, Work may show
-two or three dim quick replies such as running more tests, fixing verification,
-reviewing risk, continuing, or fixing similar issues. Pressing `1`, `2`, or `3`
-submits the selected suggestion through the same prompt callback as manual
-composer text; numeric keys remain normal text while the composer is non-empty.
-Typing hides suggestions, and `C` prepares a continuation prompt without
-submitting it.
+Work does not render numeric quick replies for agent results. `1`, `2`, and
+`3` remain normal composer input, while `C` still prepares a continuation
+prompt without submitting it.
 Small run diffs are projected directly into Work when the collected git diff
 has five or fewer changed lines; file/hunk headers are dim, additions are
 green, deletions are red, and context stays plain. The Ink renderer wraps these
@@ -138,9 +150,10 @@ summary only when the selected task has at least two runs.
 Search is local to the TUI renderer. `Ctrl+F` or `/search` opens a search
 overlay over rendered conversation text, shows match count/current match, and
 uses Up/Down to move between matches; `Esc` closes it without corrupting the
-composer. The command palette accepts input, fuzzy filters safe focus actions
-and existing local CLI command hints, highlights matches, and uses `Enter` to
-either switch focus or prepare the selected command in the composer.
+composer. The command palette opens with `:`, or by submitting a slash-only `/`
+composer command, accepts input, fuzzy filters safe focus actions and existing
+local CLI command hints, highlights matches, and uses `Enter` to either switch
+focus or prepare the selected command in the composer.
 The optional mini timeline is also local renderer state. `/timeline` or
 empty-composer `L` opens a compact chronological view over the current rendered
 conversation, active runs, and recent runs; `Esc` or `L` closes it. `/notify`
@@ -152,9 +165,16 @@ alter run behavior, or invoke external services. Startup splash is explicit:
 `--splash` prints a short prelude before the interactive Ink frame, so the live
 frame does not need a delayed splash-removal repaint; `--no-splash` suppresses
 it.
-The default tab bar matches the conversation-terminal scheme: Work, Runs, View,
-Graph, Tasks, Memory, Team, and Help stay one key away instead of being
-embedded into the first screen.
+The persistent side navigation keeps Work, Graph, Runs, Review, Tasks, Memory,
+Team, and Help one key away at normal and wide widths. Tab and Shift+Tab follow
+that same visible order, so keyboard focus matches the side navigation. The
+framed Workbench columns keep a terminal-derived height across focus switches.
+The bottom chrome is split into composer, hotkey, and status bands; narrow
+terminals keep compact focus keys in the side navigation instead of rendering a
+duplicate tab row. The empty-composer hotkey band uses one reference-aligned row:
+`up/down/j/k move | Enter/o detail | >/< fold | za all fold | O all open | ?
+help | / palette`. When a detail overlay is open, the right panel labels
+`[x] close`, and `x` closes detail before it can exit the TUI.
 One-shot TUI renders (`--once`) are intended for quick smoke checks and return
 to the shell after printing the current workbench. Normal `agent-hub tui`
 launches stay open when stdin/stdout are an interactive terminal with raw-mode
@@ -169,9 +189,54 @@ The current optimization plan is tracked in
 focuses on footer command hierarchy, narrow-terminal layout, attention/next
 action summaries, warning hygiene, stale active-run signals, and copy/help
 consistency.
+The next TUI refactor is tracked in `docs/tui-v3-roadmap.md`. Its first runtime
+slices keep the current Ink/read-model boundary while moving the TUI into a
+shared shell frame and selected-object detail contract. The shell now includes
+the branded metadata header, framed side navigation at normal and wide widths,
+framed main workflow surface, wide detail rail, medium/narrow detail overlay,
+composer, hotkey band, and bottom status band. The core read model now exposes presentation
+detail payloads for Work blocks, runs, RoleCalls, tasks, team roles, and memory
+governance; `Enter` or empty-composer `o` opens the selected detail without
+letting Ink read lower-level stores. Unsupported evidence such as structured
+tool-call lifecycle rows, memory proposal excerpts, writeback targets, role
+delegation matrices, and audited memory action callbacks is rendered as
+unavailable or disabled with equivalent CLI commands instead of being faked.
+The Work surface also has a typed V3 block projection over existing
+conversation and active-run evidence. Blocks carry stable ids, speaker/time,
+status, full message lines, conservative inferred tool summaries, file refs,
+command-like lines, evidence lines, and inline diff references. The main Work
+stream now uses a dedicated block-list renderer rather than the older
+ConversationFlow lines. It shows a `Work - Conversation` title row, time
+gutter, speaker column, block body, status token column, selected-block frame,
+inline folded affordances for metadata/tools/files/commands/evidence/diffs, and
+bounded active-run output tails while keeping completed agent output
+scrollable. Quick replies and dense pending-review collapse remain part of the
+Work surface. The detail pane shows message text, inferred tools, commands,
+file refs, evidence, inline diff summaries, and fix snippets only when those
+fields come from persisted read-model evidence. The right detail panel now uses
+view-specific titles (`Block Detail`, `Live Block Detail`, `Final Report
+Detail`, `Proposal Detail`, and `Role Profile`), section dividers, stable
+section ordering, a renderer-owned PageUp/PageDown scroll window, and a
+`Controls` section that marks disabled governed actions instead of hiding them.
+Unavailable read-model gaps render as deliberate empty slots.
+Reference fidelity follow-up work is tracked in
+`docs/tui-v3-reference-gap-roadmap.md`. That plan treats the current
+`codex/tui-v3-roadmap` branch as the baseline and focuses on matching the
+supplied terminal mockups more closely. The framed shell chrome and branded
+header metadata, dedicated Work block renderer, view-specific scrollable
+detail panel, Memory reference inbox, Team reference workbench, and
+deterministic reference fixture coverage are implemented; remaining slices
+focus on follow-up polish beyond the reference-gap implementation prompts. It does not
+relax the local read-model boundary or permit fabricated evidence.
+Selected active-run Work blocks expose a live detail view over the same polling
+read model: speaker, running state, started time, elapsed label, spinner state,
+streaming output tail, inferred tool text, inferred active commands, and
+pending-artifact placeholders. The TUI does not guess queued/running command
+status or structured tool durations; those remain unavailable until adapters
+persist them as structured evidence.
 The TUI composer is prompt-first while editing: printable lowercase keys append
 to the prompt from any focus, uppercase tab shortcuts switch
-Work/Runs/View/Graph/Tasks/Memory/Team, `/team` opens the Team roles view
+Work/Graph/Runs/Review/Tasks/Memory/Team, `/team` opens the Team roles view
 without submitting a prompt, `Enter` submits non-command prompts when a
 submission callback is available, `Esc` clears the in-progress prompt, and
 empty-composer `Enter` does not switch panes. `Tab` remains available for focus
@@ -183,9 +248,15 @@ agent, and enabled team-role completions while editing an `@` token. It also
 supports cursor movement plus Home/End, Backspace/Delete, and Ctrl+A/E/U/D
 editing controls. Empty-composer Work shortcuts that would steal normal prompt
 text use uppercase keys, including `C` for continue and `L` for the mini
-timeline. Runs, RoleCalls, and Tasks show selected rows with a visible `▌`
-marker plus inverse row styling, and the bottom shortcut hint changes by focus
-instead of showing one global command string. The permanent footer is
+timeline. Empty-composer `j/k` mirrors Up/Down movement, `Enter`/`o` opens
+selected-object detail, and detail sections can be expanded or collapsed with
+`Space`/`>`/`<`, `O`, or `za`. Runs, RoleCalls, Tasks, Memory, and Team show
+selected rows with a visible `▌` marker plus inverse row styling, and the
+bottom shortcut hint changes by focus instead of showing one global command
+string. Memory and Team tables include compact filter/sort labels. The
+selected-object detail pane wraps long value lines, including CJK text, IDs,
+paths, policy text, and unavailable-placeholder messages, using the same
+display-width-aware terminal rules as active output. The permanent footer is
 width-aware: narrow terminals keep only primary keys visible, while full
 current-context CLI commands remain in the command palette, focused detail
 panes, or explicit command-print status messages. The Work surface uses
@@ -231,11 +302,17 @@ state can appear without a manual keypress. Active-run refreshes stay
 responsive, idle refreshes use a slower cadence, and refreshes with no
 renderable read-model change are ignored to avoid unnecessary full-screen
 redraws. New conversation or active-run output anchors Work back to the bottom.
+Moving the selected Work block with Up/Down or `j`/`k` adjusts the Work scroll
+offset when the selection crosses the visible top or bottom edge, so the
+selected conversation stays visible without a separate manual scroll step. If
+the selected conversation is taller than the visible Work viewport, the TUI
+keeps the selected frame header visible instead of trying to fit the whole
+conversation in one screen.
 TaskRunner persists run events as they are produced, so running boxes can show
 live progress from the local evidence store instead of waiting for final run
 completion. The conversation can scroll back by
 rendered line from Work focus, Runs and Tasks panes expand on taller terminals,
-uppercase focus keys switch Work/Runs/View/Graph/Tasks/Memory/Team when the
+uppercase focus keys switch Work/Graph/Runs/Review/Tasks/Memory/Team when the
 composer is empty, and the Review reject shortcut is uppercase `R` so
 vim-style `j` remains navigation rather than an audit write.
 When the graph has no selected RoleCall, the TUI command hint and command
@@ -649,8 +726,9 @@ Not implemented as product behavior today:
 Roadmaps for future work live in `docs/local-ai-workgroup-roadmap.md`,
 `docs/interaction-optimization-roadmap.md`, `docs/tui-roadmap.md`,
 `docs/tui-conversation-terminal-roadmap.md`,
-`docs/tui-optimization-roadmap.md`, `docs/memory-automation-roadmap.md`, and
-the Adaptive Role Calls specification documents. Those files describe
+`docs/tui-optimization-roadmap.md`, `docs/tui-v3-roadmap.md`,
+`docs/tui-v3-reference-gap-roadmap.md`, `docs/memory-automation-roadmap.md`,
+and the Adaptive Role Calls specification documents. Those files describe
 direction; this document describes the current product state. The
 conversation-terminal TUI roadmap now records the
 implemented Work-view direction and remaining hardening guidance: the current

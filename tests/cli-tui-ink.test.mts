@@ -51,6 +51,44 @@ const baseModel = {
     }
   ],
   activeRuns: [],
+  workBlocks: [
+    {
+      id: "message:message_1",
+      sourceId: "message:message_1",
+      sourceKind: "conversation",
+      type: "user_message",
+      timestamp: "2026-05-29T12:00:00.000Z",
+      speaker: "user",
+      title: "user message",
+      statusIcon: "●",
+      statusLabel: undefined,
+      statusTone: "normal",
+      messageLines: ["Check the TUI shell."],
+      toolSummaryLines: [],
+      fileRefs: [],
+      commandLines: [],
+      artifactLines: [],
+      evidenceLines: []
+    },
+    {
+      id: "review-pending:run_27984312-fc9a-46bf-9ccf-c06997187091",
+      sourceId: "review-pending:run_27984312-fc9a-46bf-9ccf-c06997187091",
+      sourceKind: "conversation",
+      type: "review_pending",
+      timestamp: "2026-05-29T12:05:00.000Z",
+      speaker: "@codex",
+      title: "@codex run_27984312-fc9a-46bf-9ccf-c06997187091",
+      statusIcon: "△",
+      statusLabel: "awaiting review",
+      statusTone: "warning",
+      messageLines: ["awaiting review - open [V]iew for details"],
+      toolSummaryLines: [],
+      fileRefs: [],
+      commandLines: [],
+      artifactLines: [],
+      evidenceLines: []
+    }
+  ],
   runs: [
     {
       id: "run_27984312-fc9a-46bf-9ccf-c06997187091",
@@ -124,8 +162,36 @@ const baseModel = {
         executorLabel: "agent_adapter / codex",
         executorRunnable: true,
         defaultRoom: "planning",
+        purpose: "Implement local code changes through the coding agent path.",
         capabilitySummary: "Implementation, tests, refactoring within task scope.",
-        defaultSkillReferences: []
+        persona: "Careful engineer who keeps changes small, tested, and local-first.",
+        defaultInstructions: "Implement only the requested slice.",
+        permissions: ["read_project_context", "write_isolated_worktree"],
+        contextPolicy: {
+          scope: "current_thread_and_project_context",
+          includeApprovedMemory: true,
+          includeThreadSummary: true,
+          instructions: ["Use Agent Hub runtime-injected context only."]
+        },
+        approvalPolicy: {
+          requiredFor: ["memory_approval"],
+          summary: "User approval is required for memory approval."
+        },
+        delegation: {
+          canInitiate: true,
+          allowedIntentTypes: ["delegate", "request_review"],
+          allowedTargets: ["@reviewer"],
+          requiresApprovalForTargets: [],
+          summary: "enabled intents delegate,request_review; targets @reviewer"
+        },
+        defaultSkillReferences: [],
+        verificationCommands: ["pnpm test"],
+        limits: ["keep changes small"],
+        tags: ["engineering"],
+        activeCallCount: 1,
+        recentCallCount: 2,
+        recentFailures: ["call_failed failed: Executor failed."],
+        nextAction: "monitor 1 active call"
       },
       {
         id: "preset:reviewer",
@@ -137,9 +203,79 @@ const baseModel = {
         executorLabel: "human reserved",
         executorRunnable: false,
         defaultRoom: "review",
+        purpose: "Review outputs, checks, risks, and acceptance readiness.",
         capabilitySummary: "Review, risk assessment, verification planning.",
+        persona: "Strict reviewer who prioritizes evidence and missing tests.",
+        defaultInstructions: "Inspect claims against evidence.",
+        permissions: ["read_project_context", "read_run_evidence"],
+        contextPolicy: {
+          scope: "current_thread_and_project_context",
+          includeApprovedMemory: true,
+          includeThreadSummary: true,
+          instructions: ["Use Agent Hub runtime-injected context only."]
+        },
+        approvalPolicy: {
+          requiredFor: ["external_side_effects"],
+          summary: "User approval is required for external effects."
+        },
+        delegation: {
+          canInitiate: false,
+          allowedIntentTypes: [],
+          allowedTargets: [],
+          requiresApprovalForTargets: [],
+          summary: "role-call initiation policy not configured",
+          unavailableReason: "role-call initiation policy not configured"
+        },
         defaultSkillReferences: [],
+        verificationCommands: [],
+        limits: [],
+        tags: ["review"],
+        activeCallCount: 1,
+        recentCallCount: 2,
+        recentFailures: ["call_failed failed: Executor failed."],
+        nextAction: "reserved/manual executor",
         unavailableReason: "Reserved executor is not runnable in this phase."
+      }
+    ],
+    delegationMatrixRows: [
+      {
+        id: "preset:engineer",
+        callerRole: "engineer",
+        status: "enabled",
+        allowedTargets: ["@reviewer"],
+        requiresApprovalForTargets: [],
+        allowedIntentTypes: ["delegate", "request_review"],
+        summary: "enabled intents delegate,request_review; targets @reviewer"
+      },
+      {
+        id: "preset:reviewer",
+        callerRole: "reviewer",
+        status: "unavailable",
+        allowedTargets: [],
+        requiresApprovalForTargets: [],
+        allowedIntentTypes: [],
+        summary: "role-call initiation policy not configured"
+      }
+    ],
+    recentRoleCalls: [
+      {
+        id: "call_running",
+        callerRole: "engineer",
+        calleeRole: "reviewer",
+        status: "running",
+        statusLabel: "running",
+        task: "Review retained-run cleanup summary.",
+        updatedAt: "2026-05-29T12:05:00.000Z",
+        linkedRunId: "run_27984312-fc9a-46bf-9ccf-c06997187091"
+      },
+      {
+        id: "call_failed",
+        callerRole: "engineer",
+        calleeRole: "reviewer",
+        status: "failed",
+        statusLabel: "failed",
+        task: "Review failed output.",
+        updatedAt: "2026-05-29T12:04:00.000Z"
       }
     ],
     counts: {
@@ -154,9 +290,45 @@ const baseModel = {
   },
   memory: {
     projectId: "project_1",
-    counts: { proposed: 1, approved: 1, rejected: 0 },
+    counts: { proposed: 1, approved: 1, rejected: 0, retired: 0 },
+    rows: [
+      {
+        id: "memory_proposed",
+        projectId: "project_1",
+        category: "workflow_rule",
+        status: "proposed",
+        confidence: "high",
+        sourceRunId: "run_27984312-fc9a-46bf-9ccf-c06997187091",
+        sourceTaskId: "task_1",
+        summary: "Keep memory approval explicit.",
+        updatedAt: "2026-05-29T12:05:00.000Z",
+        recommendedAction: "review explicitly",
+        evidenceExcerptLines: ["manual review required", "approved memory is injected at runtime"],
+        writebackTarget: "memory/approved.md",
+        sourceCommands: [
+          "agent-hub runs show run_27984312-fc9a-46bf-9ccf-c06997187091",
+          "agent-hub task history --task-id task_1"
+        ]
+      },
+      {
+        id: "memory_approved",
+        projectId: "project_1",
+        category: "project_fact",
+        status: "approved",
+        sourceTaskId: "task_1",
+        summary: "Runtime injection is the default context mode.",
+        updatedAt: "2026-05-29T12:02:00.000Z",
+        recommendedAction: "injected at runtime",
+        evidenceExcerptLines: [],
+        sourceCommands: ["agent-hub task history --task-id task_1"]
+      }
+    ],
     command: "agent-hub memory list --project-id project_1",
-    approvalCommands: ["agent-hub memory list --project-id project_1"],
+    approvalCommands: [
+      "agent-hub memory list --project-id project_1",
+      "agent-hub memory approve --memory-id <memory-id>",
+      "agent-hub memory reject --memory-id <memory-id>"
+    ],
     approvedSource: "Agent Hub context store",
     approvalReminder: "Memory approval is explicit."
   },
@@ -165,6 +337,198 @@ const baseModel = {
     runtimeSource: "Agent Hub context store",
     selected: [{ id: "typescript-safety", name: "TypeScript Safety", scope: "global" }],
     available: []
+  },
+  selectionDetails: {
+    workBlocks: [
+      {
+        id: "message:message_1",
+        kind: "work_block",
+        title: "user message",
+        sections: [{ id: "message", title: "Message", lines: ["Check the TUI shell."] }],
+        commands: [],
+        actions: []
+      },
+      {
+        id: "review-pending:run_27984312-fc9a-46bf-9ccf-c06997187091",
+        kind: "work_block",
+        title: "@codex run_27984312",
+        subtitle: "awaiting review",
+        sections: [{ id: "message", title: "Message", lines: ["awaiting review - open [V]iew for details"] }],
+        commands: ["agent-hub runs show run_27984312-fc9a-46bf-9ccf-c06997187091"],
+        actions: [{ key: "p", label: "Prepare Command", kind: "prepare_command" }]
+      }
+    ],
+    runs: [
+      {
+        id: "run_27984312-fc9a-46bf-9ccf-c06997187091",
+        kind: "run",
+        title: "Check TUI shell",
+        subtitle: "@codex succeeded",
+        sections: [
+          { id: "run", title: "Run", lines: ["status succeeded", "stage succeeded"] },
+          { id: "evidence", title: "Evidence", tone: "danger", lines: ["risk blocking: No changed files were collected."] }
+        ],
+        commands: [
+          "agent-hub runs show run_27984312-fc9a-46bf-9ccf-c06997187091",
+          "agent-hub runs diff run_27984312-fc9a-46bf-9ccf-c06997187091 --stat"
+        ],
+        actions: [{ key: "V", label: "Open Review", kind: "focus" }]
+      }
+    ],
+    roleCalls: [],
+    tasks: [],
+    memoryRows: [
+      {
+        id: "memory_proposed",
+        kind: "memory",
+        title: "Keep memory approval explicit.",
+        subtitle: "proposed workflow_rule",
+        sections: [
+          {
+            id: "memory",
+            title: "Memory Text",
+            lines: [
+              "Keep memory approval explicit.",
+              "category workflow_rule",
+              "status proposed",
+              "confidence high",
+              "updated 2026-05-29T12:05:00.000Z"
+            ]
+          },
+          { id: "why", title: "Why It Matters", lines: ["recommended action review explicitly"] },
+          {
+            id: "evidence",
+            title: "Evidence Excerpts",
+            lines: ["manual review required", "approved memory is injected at runtime"]
+          },
+          { id: "writeback", title: "Writeback Target", lines: ["memory/approved.md"] },
+          {
+            id: "related",
+            title: "Related Skills And Memory",
+            lines: ["related skills/memory joins not available in current read model"]
+          },
+          {
+            id: "source-commands",
+            title: "Source Commands",
+            lines: [
+              "agent-hub runs show run_27984312-fc9a-46bf-9ccf-c06997187091",
+              "agent-hub task history --task-id task_1"
+            ],
+            collapsedByDefault: true
+          }
+        ],
+        commands: [
+          "agent-hub memory list --project-id project_1",
+          "agent-hub memory approve --memory-id memory_proposed",
+          "agent-hub memory reject --memory-id memory_proposed",
+          "agent-hub runs show run_27984312-fc9a-46bf-9ccf-c06997187091",
+          "agent-hub task history --task-id task_1"
+        ],
+        actions: [
+          { key: "a", label: "Approve", kind: "callback", disabledReason: "not available in TUI; use the listed CLI command" },
+          { key: "R", label: "Reject", kind: "callback", disabledReason: "not available in TUI; use the listed CLI command" },
+          { key: "e", label: "Edit", kind: "callback", disabledReason: "not available in TUI; editing requires a separate audited callback" },
+          { key: "o", label: "Open Source", kind: "callback", disabledReason: "not available in TUI; use the listed CLI command" }
+        ]
+      },
+      {
+        id: "memory_approved",
+        kind: "memory",
+        title: "Runtime injection is the default context mode.",
+        subtitle: "approved project_fact",
+        sections: [
+          {
+            id: "memory",
+            title: "Memory Text",
+            lines: [
+              "Runtime injection is the default context mode.",
+              "category project_fact",
+              "status approved",
+              "updated 2026-05-29T12:02:00.000Z"
+            ]
+          },
+          { id: "why", title: "Why It Matters", lines: ["recommended action injected at runtime"] },
+          {
+            id: "source-commands",
+            title: "Source Commands",
+            lines: ["agent-hub task history --task-id task_1"],
+            collapsedByDefault: true
+          }
+        ],
+        commands: [
+          "agent-hub memory list --project-id project_1",
+          "agent-hub memory approve --memory-id memory_approved",
+          "agent-hub memory reject --memory-id memory_approved",
+          "agent-hub task history --task-id task_1"
+        ],
+        actions: [
+          { key: "a", label: "Approve", kind: "callback", disabledReason: "not available in TUI; use the listed CLI command" },
+          { key: "R", label: "Reject", kind: "callback", disabledReason: "not available in TUI; use the listed CLI command" },
+          { key: "e", label: "Edit", kind: "callback", disabledReason: "not available in TUI; editing requires a separate audited callback" },
+          { key: "o", label: "Open Source", kind: "callback", disabledReason: "not available in TUI; use the listed CLI command" }
+        ]
+      }
+    ],
+    teamRoles: [
+      {
+        id: "preset:engineer",
+        kind: "team_role",
+        title: "@engineer",
+        subtitle: "Engineer",
+        sections: [
+          { id: "role", title: "Role", lines: ["enabled yes", "executor codex"] },
+          { id: "mission-boundaries", title: "Mission And Boundaries", lines: ["persona careful engineer"] },
+          { id: "allowed-tools", title: "Allowed Tools And Permissions", lines: ["write_isolated_worktree"] },
+          { id: "context-policy", title: "Context Policy", lines: ["scope current_thread_and_project_context"] },
+          { id: "delegation", title: "Delegation Matrix", lines: ["enabled intents delegate,request_review; targets @reviewer"] },
+          { id: "verification-profile", title: "Verification Profile", lines: ["pnpm test"] },
+          { id: "limits", title: "Limits", lines: ["keep changes small"] },
+          { id: "recent-failures", title: "Recent Failures", lines: ["call_failed failed: Executor failed."] }
+        ],
+        commands: [
+          "agent-hub team roles list --project-id project_1",
+          "agent-hub team roles executor --project-id project_1 --role engineer"
+        ],
+        actions: [{ key: "p", label: "Prepare Command", kind: "prepare_command" }]
+      },
+      {
+        id: "preset:reviewer",
+        kind: "team_role",
+        title: "@reviewer",
+        subtitle: "Reviewer",
+        sections: [
+          { id: "role", title: "Role", lines: ["enabled yes", "executor human reserved"] },
+          { id: "mission-boundaries", title: "Mission And Boundaries", lines: ["persona strict reviewer"] },
+          { id: "allowed-tools", title: "Allowed Tools And Permissions", lines: ["read_run_evidence"] },
+          { id: "context-policy", title: "Context Policy", lines: ["scope current_thread_and_project_context"] },
+          { id: "delegation", title: "Delegation Matrix", lines: ["role-call initiation policy not configured"] },
+          {
+            id: "verification-profile",
+            title: "Verification Profile",
+            lines: ["role-specific verification commands not available in current read model"]
+          },
+          {
+            id: "limits",
+            title: "Limits",
+            lines: ["role-specific limits not available in current read model"]
+          },
+          { id: "recent-failures", title: "Recent Failures", lines: ["call_failed failed: Executor failed."] }
+        ],
+        commands: [
+          "agent-hub team roles list --project-id project_1",
+          "agent-hub team roles executor --project-id project_1 --role reviewer"
+        ],
+        actions: [{ key: "p", label: "Prepare Command", kind: "prepare_command" }]
+      }
+    ],
+    memory: {
+      id: "memory:project_1",
+      kind: "memory",
+      title: "Memory Governance",
+      sections: [{ id: "counts", title: "Counts", lines: ["proposed 1", "approved 1"] }],
+      commands: ["agent-hub memory list --project-id project_1"],
+      actions: [{ key: "p", label: "Prepare Command", kind: "prepare_command" }]
+    }
   },
   warnings: []
 };
@@ -180,17 +544,20 @@ describe("Ink TUI renderer", () => {
       { columns: 78 }
     );
 
-    expect(output).toContain("TUI Project · @codex");
+    expect(output).toContain("AGENT HUB | TUI Project");
+    expect(output).toContain("role:@codex");
     expect(output).toContain("user");
     expect(output).toContain("Check the TUI shell.");
-    expect(output).toContain("@codex run_27984312 △ awaiting review");
+    expect(output).toContain("Work - Conversation | Normal | 2 blocks");
+    expect(output).toContain("@codex run_27984312");
+    expect(output).toContain("| △");
     expect(output).toContain("open [V]iew for details");
     expect(output).not.toContain("checks 0/0/1");
-    expect(output).toContain("C continue");
+    expect(output).toContain("up/down/j/k move");
     expect(output).toContain("send @codex  thread Review (#review)  context runtime");
     expect(output).toContain("> @codex prompt");
-    expect(output.indexOf("> @codex prompt")).toBeLessThan(output.indexOf("W Work"));
-    expect(output).toContain("Team");
+    expect(output.indexOf("> @codex prompt")).toBeLessThan(output.indexOf("keys:"));
+    expect(output).toContain("Enter/o detail");
     expect(output).not.toContain("[E]am");
     expect(output).not.toContain("Runs + Review");
     expect(output).not.toContain("-- more hidden --");
@@ -209,11 +576,229 @@ describe("Ink TUI renderer", () => {
       .split("\n")
       .find((value) => value.startsWith("keys:"));
 
-    expect(output).toContain("W R V G T M Team ?");
-    expect(output).toContain("keys: type | : cmd | ? | x");
+    expect(output).toContain("keys: up/down/j/k move");
+    expect(output).toContain("Work: 2 blocks");
     expect(output).not.toContain("[E]am");
     expect(output).not.toContain("agent-hub team roles list --project-id project_1");
     expect(footerLine?.length ?? 0).toBeLessThanOrEqual(48);
+  });
+
+  it("renders the V3 shell frame coherently at wide, normal, and narrow sizes", () => {
+    const cases = [
+      { columns: 120, rows: 36, nav: true, detail: true },
+      { columns: 80, rows: 24, nav: true, detail: false },
+      { columns: 48, rows: 20, nav: false, detail: false }
+    ];
+
+    for (const item of cases) {
+      const output = renderToString(
+        React.createElement(TuiInkFrame, {
+          model: baseModel,
+          state: createInitialInkState(),
+          terminal: { columns: item.columns, rows: item.rows }
+        }),
+        { columns: item.columns }
+      );
+      const lines = output.split("\n");
+
+      expect(output).toContain("AGENT HUB");
+      if (item.columns >= 80) {
+        expect(output).toContain("role:@codex");
+      }
+      expect(output).toContain("Check the TUI shell.");
+      expect(output).toContain("> @codex prompt");
+      expect(output).toContain("keys:");
+      expect(output).toContain("up/down/j/k move");
+      expect(lines.every((value) => value.length <= item.columns)).toBe(true);
+
+      if (item.nav) {
+        expect(output).toContain("> Work 2");
+        expect(output).toContain("  Runs 1");
+      } else {
+        expect(output).not.toContain("> Work 2");
+      }
+
+      if (item.detail) {
+        expect(output).toContain("Block Detail");
+        expect(output).toContain("user message");
+        expect(output).toContain("Check the TUI shell.");
+      } else {
+        expect(output).not.toContain("Block Detail");
+      }
+    }
+  });
+
+  it("keeps the workbench height stable across tab switches", () => {
+    const terminal = { columns: 120, rows: 28 };
+    const focuses = ["work", "graph", "runs", "review", "tasks", "memory", "team", "help"];
+    const lineCounts = focuses.map((focus) => {
+      const output = renderToString(
+        React.createElement(TuiInkFrame, {
+          model: baseModel,
+          state: { ...createInitialInkState(), focus },
+          terminal
+        }),
+        { columns: terminal.columns }
+      );
+      return output.split("\n").length;
+    });
+
+    expect(new Set(lineCounts).size).toBe(1);
+  });
+
+  it("tabs through panes in the same order as the visible navigation", () => {
+    let state = createInitialInkState();
+
+    state = reduceInkState(state, "tab", baseModel);
+    expect(state.focus).toBe("graph");
+    state = reduceInkState(state, "tab", baseModel);
+    expect(state.focus).toBe("runs");
+    state = reduceInkState(state, "shift_tab", baseModel);
+    expect(state.focus).toBe("graph");
+  });
+
+  it("opens selected-object detail in the medium shell without direct data access", () => {
+    const state = reduceInkState(
+      { ...createInitialInkState(), focus: "runs" },
+      "enter",
+      baseModel
+    );
+    const openedWithO = reduceInkState(createInitialInkState(), "open_detail", baseModel);
+    const output = renderToString(
+      React.createElement(TuiInkFrame, {
+        model: baseModel,
+        state,
+        terminal: { columns: 80, rows: 24 }
+      }),
+      { columns: 80 }
+    );
+
+    expect(state.detailVisible).toBe(true);
+    expect(openedWithO.detailVisible).toBe(true);
+    expect(output).toContain("Final Report Detail");
+    expect(output).toContain("[x] close");
+    expect(output).toContain("Check TUI shell");
+    expect(output).toContain("status succeeded");
+    expect(output).toContain("agent-hub runs show run_27984312");
+    expect(output).not.toContain("No detail selected");
+  });
+
+  it("pages long selected detail content without silently capping sections", () => {
+    const detailLines = Array.from({ length: 20 }, (_, index) =>
+      `detail line ${String(index).padStart(2, "0")}`
+    );
+    const model = {
+      ...baseModel,
+      selectionDetails: {
+        ...baseModel.selectionDetails,
+        workBlocks: [
+          {
+            ...baseModel.selectionDetails.workBlocks[0],
+            sections: [{ id: "long-detail", title: "Long Detail", lines: detailLines }]
+          },
+          ...baseModel.selectionDetails.workBlocks.slice(1)
+        ]
+      }
+    };
+    const state = reduceInkState(
+      { ...createInitialInkState(), detailVisible: true },
+      "page_down",
+      model
+    );
+    const output = renderToString(
+      React.createElement(TuiInkFrame, {
+        model,
+        state,
+        terminal: { columns: 80, rows: 16 }
+      }),
+      { columns: 80 }
+    );
+
+    expect(state.detailScrollOffset).toBeGreaterThan(0);
+    expect(output).toContain("detail line 08");
+    expect(output).toContain("scroll ");
+    expect(output).not.toContain("detail line 00");
+  });
+
+  it("closes open detail with x instead of exiting the interactive TUI", async () => {
+    const instance = render(
+      React.createElement(TuiInkApp, {
+        model: baseModel,
+        state: { ...createInitialInkState(), detailVisible: true },
+        terminal: { columns: 120, rows: 40 },
+        interactive: true
+      })
+    );
+
+    await waitForFrame(instance, "[x] close");
+    instance.stdin.write("x");
+    await waitForFrame(instance, "Detail closed.");
+
+    expect(instance.lastFrame()).toContain("> @codex prompt");
+    expect(instance.lastFrame()).not.toContain("[x] close");
+    instance.unmount();
+  });
+
+  it("keeps team detail selection stable by selected id", () => {
+    const teamState = reduceInkState(
+      { ...createInitialInkState(), focus: "team", detailVisible: true },
+      "down",
+      baseModel
+    );
+    const output = renderToString(
+      React.createElement(TuiInkFrame, {
+        model: baseModel,
+        state: teamState,
+        terminal: { columns: 120, rows: 40 }
+      }),
+      { columns: 120 }
+    );
+
+    expect(teamState.selectedTeamRoleId).toBe("preset:reviewer");
+    expect(output).toContain("@reviewer");
+    expect(output).toContain("executor human reserved");
+    expect(output).toContain("Mission And Boundaries");
+    expect(output).toContain("Context Policy");
+    expect(output).toContain("Delegation Matrix");
+    expect(output).toContain("empty slot - role-call");
+    expect(output).toContain("scroll ");
+    expect(output).toContain("agent-hub team roles exe...");
+  });
+
+  it("renders Memory governance rows with selected proposal detail", () => {
+    const memoryState = reduceInkState(
+      { ...createInitialInkState(), focus: "memory", detailVisible: true },
+      "down",
+      baseModel
+    );
+    const output = renderToString(
+      React.createElement(TuiInkFrame, {
+        model: baseModel,
+        state: memoryState,
+        terminal: { columns: 120, rows: 36 }
+      }),
+      { columns: 120 }
+    );
+
+    expect(memoryState.selectedMemoryItemId).toBe("memory_approved");
+    expect(output).toContain("Memory Inbox");
+    expect(output).toContain("Memory Governance");
+    expect(output).toContain("view all   status all   confidence all   search /");
+    expect(output).toContain("ID                  Category");
+    expect(output).toContain("memory_proposed");
+    expect(output).toContain("workflow_rule");
+    expect(output).toContain("memory_approved");
+    expect(output).toContain("project_fact");
+    expect(output).toContain("Evidence Excerpts (selected: memory_approved)");
+    expect(output).toContain("Approved Memory Index");
+    expect(output).toContain("Runtime injection is the");
+    expect(output).toContain("default context mode.");
+    expect(output).toContain("recommended action injected");
+    expect(output).toContain("agent-hub memory approve...");
+    expect(output).toContain("[a] Approve");
+    expect(output).toContain("[R] Reject");
+    expect(output).toContain("[o] Open Source");
+    expect(output.split("\n").every((value) => value.length <= 120)).toBe(true);
   });
 
   it("renders attention items in priority order and narrows to the highest item", () => {
@@ -292,7 +877,7 @@ describe("Ink TUI renderer", () => {
           },
           memory: {
             ...baseModel.memory,
-            counts: { proposed: 0, approved: 1, rejected: 0 }
+            counts: { proposed: 0, approved: 1, rejected: 0, retired: 0 }
           }
         },
         state: createInitialInkState(),
@@ -343,7 +928,7 @@ describe("Ink TUI renderer", () => {
           },
           memory: {
             ...baseModel.memory,
-            counts: { proposed: 0, approved: 1, rejected: 0 }
+            counts: { proposed: 0, approved: 1, rejected: 0, retired: 0 }
           }
         },
         state: createInitialInkState(),
@@ -356,7 +941,7 @@ describe("Ink TUI renderer", () => {
     expect(output).not.toContain("attn:");
   });
 
-  it("renders active run boxes inside Work", () => {
+  it("renders active run blocks inside Work", () => {
     const output = renderToString(
       React.createElement(TuiInkFrame, {
         model: modelWithActiveRun(),
@@ -366,10 +951,11 @@ describe("Ink TUI renderer", () => {
       { columns: 78 }
     );
 
-    expect(output).toContain("@codex run_active ⠋ running");
+    expect(output).toContain("Work - Conversation | Live | 3 blocks");
+    expect(output).toContain("@codex run_active");
+    expect(output).toContain("| ⠋");
     expect(output).toContain("Reading logout.ts");
     expect(output).not.toContain("checks 1/0/0");
-    expect(output).toContain("▍");
   });
 
   it("renders role display handles for active and review-pending runs", () => {
@@ -398,13 +984,14 @@ describe("Ink TUI renderer", () => {
       { columns: 100 }
     );
 
-    expect(output).toContain("@implementer run_27984312 △ awaiting review");
+    expect(output).toContain("@implementer run_27984312");
     expect(output).toContain("Patched auth.ts");
-    expect(output).toContain("△ awaiting review");
-    expect(output).toContain("@reviewer run_active ⠋ running");
+    expect(output).toContain("awaiting review △");
+    expect(output).toContain("@reviewer");
+    expect(output).toContain("run_active");
   });
 
-  it("renders active run liveliness with spinner, fixed rounded box, metadata, and progress", () => {
+  it("renders active run liveliness with spinner, metadata, and output tail", () => {
     const output = renderToString(
       React.createElement(TuiInkFrame, {
         model: {
@@ -434,15 +1021,135 @@ describe("Ink TUI renderer", () => {
       { columns: 78 }
     );
 
-    expect(output).toContain("╭─ @engineer run_live ⠼ running 12s 42k tok");
+    expect(output).toContain("@engineer run_live");
+    expect(output).toContain("⠼ running 12s 42k tok");
     expect(output).toContain("│ Reading src/auth.ts");
     expect(output).toContain("│ Running pnpm test");
     expect(output).toContain("2/5");
     expect(output).toContain("╰");
-    const boxLines = output
-      .split("\n")
-      .filter((value) => value.startsWith("╭") || value.startsWith("│") || value.startsWith("╰"));
-    expect(boxLines).toHaveLength(8);
+    const boxLines = activeRunFrameLines(output);
+    expect(boxLines).toHaveLength(7);
+  });
+
+  it("opens V3 live-run detail for the selected active Work block", () => {
+    const model = {
+      ...baseModel,
+      conversation: [],
+      activeRuns: [
+        {
+          runId: "run_live_detail",
+          agent: "codex",
+          displayHandle: "engineer",
+          title: "@engineer run_live_detail ● running",
+          startedAt: "2026-05-29T12:00:00.000Z",
+          elapsedLabel: "45s",
+          usageLabel: "12k tok",
+          outputLines: [
+            "Reading src/auth.ts",
+            "pnpm test tests/auth.test.ts"
+          ]
+        }
+      ],
+      workBlocks: [
+        {
+          id: "active-run:run_live_detail",
+          sourceId: "run_live_detail",
+          sourceKind: "active_run",
+          type: "active_run",
+          runId: "run_live_detail",
+          timestamp: "2026-05-29T12:00:00.000Z",
+          elapsedLabel: "45s",
+          usageLabel: "12k tok",
+          speaker: "@engineer",
+          title: "@engineer run_live_detail ● running",
+          statusIcon: "●",
+          statusLabel: "running",
+          statusTone: "info",
+          messageLines: [
+            "Reading src/auth.ts",
+            "pnpm test tests/auth.test.ts"
+          ],
+          toolSummaryLines: [
+            "inferred: Reading src/auth.ts",
+            "inferred: pnpm test tests/auth.test.ts"
+          ],
+          fileRefs: ["src/auth.ts"],
+          commandLines: ["pnpm test tests/auth.test.ts"],
+          artifactLines: [],
+          evidenceLines: ["elapsed 45s", "usage 12k tok"]
+        }
+      ],
+      selectionDetails: {
+        ...baseModel.selectionDetails,
+        workBlocks: [
+          {
+            id: "active-run:run_live_detail",
+            kind: "work_block",
+            title: "@engineer run_live_detail ● running",
+            subtitle: "running",
+            sections: [
+              {
+                id: "live-run",
+                title: "Live Run",
+                lines: [
+                  "speaker @engineer",
+                  "state running",
+                  "started 2026-05-29T12:00:00.000Z",
+                  "elapsed 45s",
+                  "spinner active",
+                  "usage 12k tok"
+                ]
+              },
+              {
+                id: "streaming-output",
+                title: "Streaming Output Tail",
+                lines: ["Reading src/auth.ts", "pnpm test tests/auth.test.ts"]
+              },
+              {
+                id: "tool-calls",
+                title: "Tool Calls",
+                lines: [
+                  "structured durations/status are not available; these rows are inferred from visible output",
+                  "inferred: Reading src/auth.ts"
+                ]
+              },
+              {
+                id: "active-commands",
+                title: "Active Commands",
+                lines: [
+                  "queued/running command status is not available; commands are inferred from visible output",
+                  "pnpm test tests/auth.test.ts"
+                ]
+              },
+              {
+                id: "pending-artifacts",
+                title: "Pending Artifacts",
+                lines: ["pending artifact rows not available in current read model"]
+              }
+            ],
+            commands: ["agent-hub runs show run_live_detail"],
+            actions: [{ key: "p", label: "Prepare Command", kind: "prepare_command" }]
+          }
+        ]
+      }
+    };
+    const output = renderToString(
+      React.createElement(TuiInkFrame, {
+        model,
+        state: { ...createInitialInkState(), detailVisible: true },
+        terminal: { columns: 80, rows: 40 }
+      }),
+      { columns: 80 }
+    );
+
+    expect(output).toContain("Live Block Detail");
+    expect(output).toContain("Live Run");
+    expect(output).toContain("speaker @engineer");
+    expect(output).toContain("spinner active");
+    expect(output).toContain("Streaming Output Tail");
+    expect(output).toContain("Active Commands");
+    expect(output).toContain("Pending Artifacts");
+    expect(output).toContain("agent-hub runs show run_live_detail");
   });
 
   it("marks old active runs as stale only when no useful output is visible", () => {
@@ -464,7 +1171,7 @@ describe("Ink TUI renderer", () => {
       },
       memory: {
         ...baseModel.memory,
-        counts: { proposed: 0, approved: 1, rejected: 0 }
+        counts: { proposed: 0, approved: 1, rejected: 0, retired: 0 }
       },
       activeRuns: [
         {
@@ -602,7 +1309,7 @@ describe("Ink TUI renderer", () => {
 
       expect(output).toContain("> @codex prompt");
       expect(output).toContain("keys:");
-      expect(output).toContain(columns < 56 ? "W R V G T M Team ?" : columns < 84 ? "W Work" : "[W]ork");
+      expect(output).toContain("up/down/j/k move");
       expect(lines.some((value) => value.startsWith(" this deliberately"))).toBe(false);
       expect(lines.every((value) => value.length <= columns)).toBe(true);
     }
@@ -615,12 +1322,8 @@ describe("Ink TUI renderer", () => {
       }),
       { columns: 48 }
     );
-    const narrowBoxLines = narrowOutput
-      .split("\n")
-      .filter((value) => value.startsWith("╭") || value.startsWith("│") || value.startsWith("╰"));
-
-    expect(narrowBoxLines).toHaveLength(4);
-    expect(narrowOutput).toContain("│ Step 2/5");
+    expect(narrowOutput).toContain("Work - Conversation | Live");
+    expect(narrowOutput).toContain("Step 2/5");
   });
 
   it("wraps display-wide completed agent lines without losing content", () => {
@@ -649,16 +1352,236 @@ describe("Ink TUI renderer", () => {
       }),
       { columns: 64 }
     );
-    const agentLines = output
-      .split("\n")
-      .filter((value) => value.startsWith("┃   "));
+    const agentLines = framedContentLines(output)
+      .filter((value) =>
+        value.includes("ContextBundle") ||
+        value.includes("approved memory") ||
+        value.includes("context-compiler.ts") ||
+        value.includes("自动换行")
+      );
 
     expect(output).toContain("目标仓库");
     expect(output).toContain("显式/角色技能");
     expect(output).toContain("context-compiler.ts");
     expect(output).toContain("需要实现自动换行");
     expect(agentLines.length).toBeGreaterThan(1);
-    expect(agentLines.every((value) => value.startsWith("┃   "))).toBe(true);
+    expect(agentLines.every((value) => !value.includes("…"))).toBe(true);
+  });
+
+  it("wraps CJK selected detail content across release smoke widths", () => {
+    const model = {
+      ...baseModel,
+      selectionDetails: {
+        ...baseModel.selectionDetails,
+        workBlocks: [
+          {
+            ...baseModel.selectionDetails.workBlocks[0],
+            sections: [
+              {
+                id: "cjk-detail",
+                title: "CJK Detail",
+                lines: [
+                  "默认上下文注入保持仓库根目录干净，审批记忆必须显式完成，长句在详情面板内需要稳定换行。"
+                ]
+              },
+              {
+                id: "unsupported",
+                title: "Evidence Gap",
+                lines: ["related skills/memory joins not available in current read model"],
+                collapsedByDefault: true
+              }
+            ]
+          },
+          ...baseModel.selectionDetails.workBlocks.slice(1)
+        ]
+      }
+    };
+
+    for (const columns of [120, 80, 48]) {
+      const output = renderToString(
+        React.createElement(TuiInkFrame, {
+          model,
+          state: { ...createInitialInkState(), detailVisible: true },
+          terminal: { columns, rows: 40 }
+        }),
+        { columns }
+      );
+      const lines = output.split("\n");
+
+      expect(output).toContain("Block Detail");
+      expect(output).toContain("默认上下文注入");
+      expect(output).toContain("审批记忆");
+      expect(output).toContain("Evidence Gap (collapsed)");
+      expect(lines.every((value) => value.length <= columns)).toBe(true);
+    }
+  });
+
+  it("renders V3 reference fixtures across visual QA sizes", () => {
+    const sizes = [
+      { columns: 154, rows: 42 },
+      { columns: 160, rows: 48 },
+      { columns: 120, rows: 36 },
+      { columns: 80, rows: 24 }
+    ];
+    const completedWorkModel = {
+      ...baseModel,
+      selectionDetails: {
+        ...baseModel.selectionDetails,
+        workBlocks: [
+          baseModel.selectionDetails.workBlocks[0],
+          {
+            ...baseModel.selectionDetails.workBlocks[1],
+            sections: [
+              {
+                id: "message",
+                title: "Message",
+                lines: [
+                  "awaiting review - open [V]iew for details",
+                  "审批记忆必须显式完成，长句在详情面板内需要稳定换行。"
+                ]
+              },
+              ...baseModel.selectionDetails.workBlocks[1].sections.slice(1)
+            ]
+          }
+        ]
+      }
+    };
+    const liveWorkModel = {
+      ...baseModel,
+      conversation: [],
+      activeRuns: [
+        {
+          runId: "run_reference_live",
+          agent: "codex",
+          displayHandle: "engineer",
+          title: "@engineer run_reference_live ● running",
+          startedAt: "2026-05-29T12:00:00.000Z",
+          elapsedLabel: "45s",
+          usageLabel: "12k tok",
+          outputLines: ["Reading src/auth.ts", "pnpm test tests/auth.test.ts"]
+        }
+      ],
+      workBlocks: [
+        {
+          id: "active-run:run_reference_live",
+          sourceId: "run_reference_live",
+          sourceKind: "active_run",
+          type: "active_run",
+          runId: "run_reference_live",
+          timestamp: "2026-05-29T12:00:00.000Z",
+          elapsedLabel: "45s",
+          usageLabel: "12k tok",
+          speaker: "@engineer",
+          title: "@engineer run_reference_live ● running",
+          statusIcon: "●",
+          statusLabel: "running",
+          statusTone: "info",
+          messageLines: ["Reading src/auth.ts", "pnpm test tests/auth.test.ts"],
+          toolSummaryLines: ["inferred: Reading src/auth.ts"],
+          fileRefs: ["src/auth.ts"],
+          commandLines: ["pnpm test tests/auth.test.ts"],
+          artifactLines: [],
+          evidenceLines: ["elapsed 45s", "usage 12k tok"]
+        }
+      ],
+      selectionDetails: {
+        ...baseModel.selectionDetails,
+        workBlocks: [
+          {
+            id: "active-run:run_reference_live",
+            kind: "work_block",
+            title: "@engineer run_reference_live ● running",
+            subtitle: "running",
+            sections: [
+              {
+                id: "live-run",
+                title: "Live Run",
+                lines: ["speaker @engineer", "state running", "elapsed 45s", "spinner active", "usage 12k tok"]
+              },
+              {
+                id: "streaming-output",
+                title: "Streaming Output Tail",
+                lines: ["Reading src/auth.ts", "pnpm test tests/auth.test.ts"]
+              },
+              {
+                id: "tool-calls",
+                title: "Tool Calls",
+                lines: ["inferred: Reading src/auth.ts"],
+                collapsedByDefault: true
+              }
+            ],
+            commands: ["agent-hub runs show run_reference_live"],
+            actions: [{ key: "p", label: "Prepare Command", kind: "prepare_command" }]
+          }
+        ]
+      }
+    };
+    const fixtures = [
+      {
+        name: "completed Work",
+        model: completedWorkModel,
+        state: {
+          ...createInitialInkState(),
+          selectedWorkBlockIndex: 1,
+          selectedWorkBlockId: "review-pending:run_27984312-fc9a-46bf-9ccf-c06997187091",
+          detailVisible: true
+        },
+        expected: ["Block Detail", "审批记忆", "Controls"]
+      },
+      {
+        name: "live Work",
+        model: liveWorkModel,
+        state: { ...createInitialInkState(), detailVisible: true },
+        expected: ["Live Block Detail", "Live Run", "Streaming Output Tail"]
+      },
+      {
+        name: "Memory",
+        model: baseModel,
+        state: { ...createInitialInkState(), focus: "memory" },
+        expected: ["Memory Inbox", "ID                  Category", "Evidence Excerpts", "Approved Memory Index"]
+      },
+      {
+        name: "Team",
+        model: baseModel,
+        state: { ...createInitialInkState(), focus: "team" },
+        expected: ["Team Workbench", "local-only", "Role          Source", "Recent RoleCalls", "Delegation Matrix"]
+      }
+    ];
+
+    for (const fixture of fixtures) {
+      for (const terminal of sizes) {
+        const output = renderToString(
+          React.createElement(TuiInkFrame, {
+            model: fixture.model,
+            state: fixture.state,
+            terminal
+          }),
+          { columns: terminal.columns }
+        );
+        const lines = output.split("\n");
+
+        expect(output, `${fixture.name} ${terminal.columns}x${terminal.rows}`).toContain("AGENT HUB");
+        expect(output).toContain("┌");
+        expect(output).toContain("└");
+        expect(output).toContain("> @codex prompt");
+        expect(output).toContain("keys:");
+        const expectedValues = fixture.expected.filter((value) =>
+          !(fixture.name === "live Work" && terminal.rows < 36 && value === "Streaming Output Tail") &&
+          !(fixture.name === "Team" && terminal.rows < 36 && value === "Delegation Matrix")
+        );
+        for (const value of expectedValues) {
+          expect(output, `${fixture.name} ${terminal.columns}x${terminal.rows}`).toContain(value);
+        }
+        if (fixture.name === "Memory" && terminal.columns >= 112) {
+          expect(output).toContain("Proposal Detail");
+        }
+        if (fixture.name === "Team" && terminal.columns >= 112) {
+          expect(output).toContain("Role Profile");
+          expect(output).toContain("Caller");
+        }
+        expect(lines.every((value) => value.length <= terminal.columns)).toBe(true);
+      }
+    }
   });
 
   it("caps chatty active run boxes to preserve terminal row budget", () => {
@@ -683,11 +1606,10 @@ describe("Ink TUI renderer", () => {
       { columns: 78 }
     );
 
-    const boxLines = output
-      .split("\n")
-      .filter((value) => value.startsWith("╭") || value.startsWith("│") || value.startsWith("╰"));
+    const boxLines = activeRunFrameLines(output);
     expect(output.split("\n").length).toBeLessThanOrEqual(20);
-    expect(boxLines).toHaveLength(8);
+    expect(boxLines.length).toBeGreaterThanOrEqual(4);
+    expect(boxLines.length).toBeLessThanOrEqual(8);
     expect(output).toContain("older lines hidden");
     expect(output).toContain("active output line 29");
     expect(output).not.toContain("active output line 0");
@@ -735,7 +1657,7 @@ describe("Ink TUI renderer", () => {
     expect(output).toContain("keys:");
   });
 
-  it("collapses older active runs and keeps at most three full boxes", () => {
+  it("renders active runs as Work blocks without legacy active boxes", () => {
     const output = renderToString(
       React.createElement(TuiInkFrame, {
         model: {
@@ -754,8 +1676,8 @@ describe("Ink TUI renderer", () => {
       { columns: 100 }
     );
 
-    expect(output.match(/\.\.\./g)?.length).toBe(2);
-    expect(output.match(/╭─ @codex run_active_/g)?.length).toBe(3);
+    expect(output).toContain("Work - Conversation | Live | 5 blocks");
+    expect(output.match(/run_active_/g)?.length).toBeGreaterThanOrEqual(5);
   });
 
   it("renders transient failure feedback when supplied by renderer state", () => {
@@ -783,7 +1705,7 @@ describe("Ink TUI renderer", () => {
       { columns: 100 }
     );
 
-    expect(output).toContain("┃ !! @codex run_fail ✗ failed");
+    expect(output).toContain("@codex run_fail failed ✗");
   });
 
   it("renders Phase 5A terminal visual grammar in the conversation flow", () => {
@@ -826,19 +1748,157 @@ describe("Ink TUI renderer", () => {
       { columns: 120 }
     );
 
-    expect(output).toContain("◈ TUI Project · @codex");
-    expect(output).toContain("user 12:00:00");
+    expect(output).toContain("◈ AGENT HUB | TUI Project");
+    expect(output).toContain("12:00:00 user user_message");
     expect(output).toContain("Inspect src/auth.ts:42 and run pnpm test.");
-    expect(output).toContain("┃ @reviewer run_abcdef12 ✓ completed  1m30s  92k tok / $0.03  12:06:00");
-    expect(output).toContain("┃   src/auth.ts:42 needs the guard.");
-    expect(output).toContain("┃   pnpm test tests/auth.test.ts");
-    expect(output).toContain("┃   const message = \"ok\"; // comment");
-    expect(output).toContain("── 6m later ──");
+    expect(output).toContain("@reviewer run_abcdef12");
+    expect(output).toContain("1m30s");
+    expect(output).toContain("92k tok / $0.03");
+    expect(output).toContain("src/auth.ts:42 needs the guard.");
+    expect(output).toContain("pnpm test tests/auth.test.ts");
+    expect(output).toContain("const message = \"ok\"; // comment");
+    expect(output).toContain("12:06:00 | @reviewer");
     expect(output).not.toContain("more lines");
   });
 
-  it("renders quick reply suggestions and hides them while typing", () => {
-    const model = modelWithSuggestions();
+  it("renders V3 Work blocks with selected metadata and detail evidence", () => {
+    const model = {
+      ...baseModel,
+      conversation: [
+        {
+          id: "message:v3-user",
+          type: "user_message",
+          timestamp: "2026-05-29T12:00:00.000Z",
+          author: "user",
+          content: "请检查 apps/cli/src/tui-ink/App.mts:1216 并保留完整输出。"
+        },
+        {
+          id: "run:v3-block",
+          type: "agent_completed",
+          timestamp: "2026-05-29T12:04:00.000Z",
+          author: "@implementer",
+          displayHandle: "implementer",
+          agent: "codex",
+          runId: "v3-block",
+          statusLabel: "completed",
+          outputLines: [
+            "read_file apps/cli/src/tui-ink/App.mts",
+            "rg \"ConversationFlow\" apps/cli/src/tui-ink/App.mts",
+            "```ts",
+            "const block = \"保持完整输出\";",
+            "```"
+          ],
+          verificationLine: "verification passed (2 checks)",
+          inlineDiff: inlineDiffFixture()
+        }
+      ],
+      activeRuns: [],
+      workBlocks: [
+        {
+          id: "message:v3-user",
+          sourceId: "message:v3-user",
+          sourceKind: "conversation",
+          type: "user_message",
+          timestamp: "2026-05-29T12:00:00.000Z",
+          speaker: "user",
+          title: "user message",
+          statusIcon: "●",
+          statusTone: "normal",
+          messageLines: ["请检查 apps/cli/src/tui-ink/App.mts:1216 并保留完整输出。"],
+          toolSummaryLines: [],
+          fileRefs: ["apps/cli/src/tui-ink/App.mts:1216"],
+          commandLines: [],
+          artifactLines: [],
+          evidenceLines: []
+        },
+        {
+          id: "run:v3-block",
+          sourceId: "run:v3-block",
+          sourceKind: "conversation",
+          type: "agent_completed",
+          timestamp: "2026-05-29T12:04:00.000Z",
+          speaker: "@implementer",
+          title: "@implementer v3-block",
+          statusIcon: "✓",
+          statusLabel: "completed",
+          statusTone: "success",
+          messageLines: [
+            "read_file apps/cli/src/tui-ink/App.mts",
+            "rg \"ConversationFlow\" apps/cli/src/tui-ink/App.mts",
+            "```ts",
+            "const block = \"保持完整输出\";",
+            "```"
+          ],
+          toolSummaryLines: [
+            "inferred: read_file apps/cli/src/tui-ink/App.mts",
+            "inferred: rg \"ConversationFlow\" apps/cli/src/tui-ink/App.mts"
+          ],
+          fileRefs: ["apps/cli/src/tui-ink/App.mts"],
+          commandLines: ["rg \"ConversationFlow\" apps/cli/src/tui-ink/App.mts"],
+          artifactLines: [],
+          evidenceLines: ["verification passed (2 checks)", "diff (+1/-1 in 1 files)"],
+          inlineDiff: inlineDiffFixture()
+        }
+      ],
+      selectionDetails: {
+        ...baseModel.selectionDetails,
+        workBlocks: [
+          {
+            id: "message:v3-user",
+            kind: "work_block",
+            title: "user message",
+            sections: [
+              { id: "message", title: "Message", lines: ["请检查 apps/cli/src/tui-ink/App.mts:1216 并保留完整输出。"] }
+            ],
+            commands: [],
+            actions: []
+          },
+          {
+            id: "run:v3-block",
+            kind: "work_block",
+            title: "@implementer v3-block",
+            subtitle: "completed",
+            sections: [
+              { id: "message", title: "Message", lines: ["read_file apps/cli/src/tui-ink/App.mts"] },
+              {
+                id: "tool-calls",
+                title: "Tool Calls",
+                lines: ["structured durations/status are not available; these rows are inferred from visible output"]
+              },
+              { id: "file-refs", title: "File Refs", lines: ["apps/cli/src/tui-ink/App.mts"] },
+              { id: "inline-diff", title: "Inline Diff", lines: ["(+1/-1 in 1 files)"] },
+              { id: "fix-snippet", title: "Fix Snippet", lines: ["-const mode = \"old\";", "+const mode = \"new\";"] }
+            ],
+            commands: ["agent-hub runs show v3-block"],
+            actions: [{ key: "p", label: "Prepare Command", kind: "prepare_command" }]
+          }
+        ]
+      }
+    };
+    const state = reduceInkState(createInitialInkState(), "down", model);
+    const output = renderToString(
+      React.createElement(TuiInkFrame, {
+        model,
+        state,
+        terminal: { columns: 120, rows: 40 }
+      }),
+      { columns: 120 }
+    );
+
+    expect(state.selectedWorkBlockId).toBe("run:v3-block");
+    expect(output).toContain("╭─ 12:04:00 @implementer completed ✓");
+    expect(output).toContain("> tools inferred 2");
+    expect(output).toContain("> files apps/cli/src/tui-ink/App.mts");
+    expect(output).toContain("> commands 1");
+    expect(output).toContain("保持完整输出");
+    expect(output).toContain("Tool Calls");
+    expect(output).toContain("File Refs");
+    expect(output).toContain("Fix Snippet");
+    expect(output.split("\n").every((value) => value.length <= 120)).toBe(true);
+  });
+
+  it("does not render quick reply suggestions", () => {
+    const model = modelWithFailedRun();
     const idleOutput = renderToString(
       React.createElement(TuiInkFrame, {
         model,
@@ -847,19 +1907,11 @@ describe("Ink TUI renderer", () => {
       }),
       { columns: 100 }
     );
-    const typingOutput = renderToString(
-      React.createElement(TuiInkFrame, {
-        model,
-        state: createInitialInkState("draft"),
-        terminal: { columns: 100, rows: 32 }
-      }),
-      { columns: 100 }
-    );
 
-    expect(idleOutput).toContain("┃   [1] Run more tests");
-    expect(idleOutput).toContain("┃   [2] Fix verification");
-    expect(idleOutput).toContain("┃   [3] Continue");
-    expect(typingOutput).not.toContain("[1] Run more tests");
+    expect(idleOutput).toContain("verification failed");
+    expect(idleOutput).not.toContain("[1] Run more tests");
+    expect(idleOutput).not.toContain("[2] Fix verification");
+    expect(idleOutput).not.toContain("[3] Continue");
   });
 
   it("renders inline diff projections and collapses dense pending-review groups", () => {
@@ -898,7 +1950,7 @@ describe("Ink TUI renderer", () => {
     );
 
     expect(output).toContain("4 pending reviews collapsed");
-    expect(output).toContain("╭ diff (+1/-1 in 1 files)");
+    expect(output).toContain("> diff (+1/-1 in 1 files)");
     expect(output).toContain("diff --git a/src/auth.ts b/src/auth.ts");
     expect(output).toContain("-const mode = \"old\";");
     expect(output).toContain("+const mode = \"new\";");
@@ -1030,6 +2082,95 @@ describe("Ink TUI renderer", () => {
     instance.unmount();
   });
 
+  it("opens the command palette from a slash-only command without submitting a prompt", async () => {
+    const submissions = [];
+    const instance = render(
+      React.createElement(TuiInkApp, {
+        model: baseModel,
+        state: createInitialInkState(),
+        terminal: { columns: 120, rows: 40 },
+        interactive: true,
+        submitPrompt: async (input) => {
+          submissions.push(input);
+          return { ok: true, message: "Submitted prompt.", model: baseModel };
+        }
+      })
+    );
+
+    instance.stdin.write("/");
+    await waitForFrame(instance, "> /");
+    instance.stdin.write("\r");
+    await waitForFrame(instance, "Command Palette");
+
+    expect(submissions).toEqual([]);
+    expect(instance.lastFrame()).toContain("Open Help");
+    expect(instance.lastFrame()).toContain("agent-hub memory list --project-id project_1");
+    expect(instance.lastFrame()).toContain("> @codex prompt");
+    instance.unmount();
+  });
+
+  it("toggles selected detail folds without writing hotkeys into the composer", async () => {
+    const foldModel = {
+      ...baseModel,
+      memory: {
+        ...baseModel.memory,
+        rows: [
+          {
+            ...baseModel.memory.rows[0],
+            evidenceExcerptLines: []
+          },
+          ...baseModel.memory.rows.slice(1)
+        ]
+      },
+      selectionDetails: {
+        ...baseModel.selectionDetails,
+        memoryRows: [
+          {
+            ...baseModel.selectionDetails.memoryRows[0],
+            sections: [
+              { id: "memory", title: "Memory Text", lines: ["Keep memory approval explicit."] },
+              {
+                id: "evidence",
+                title: "Evidence Excerpts",
+                lines: ["manual review required"],
+                collapsedByDefault: true
+              }
+            ]
+          },
+          ...baseModel.selectionDetails.memoryRows.slice(1)
+        ]
+      }
+    };
+    const instance = render(
+      React.createElement(TuiInkApp, {
+        model: foldModel,
+        state: { ...createInitialInkState(), focus: "memory", detailVisible: true },
+        terminal: { columns: 120, rows: 40 },
+        interactive: true
+      })
+    );
+
+    await waitForFrame(instance, "Evidence Excerpts (collapsed)");
+    expect(instance.lastFrame()).not.toContain("manual review required");
+
+    instance.stdin.write("O");
+    await waitForFrame(instance, "Detail sections expanded.");
+    expect(instance.lastFrame()).toContain("manual review required");
+    expect(instance.lastFrame()).toContain("> @codex prompt");
+
+    instance.stdin.write("<");
+    await waitForFrame(instance, "Detail sections collapsed.");
+    expect(instance.lastFrame()).toContain("Evidence Excerpts (collapsed)");
+
+    instance.stdin.write("z");
+    await waitForFrame(instance, "Fold prefix");
+    instance.stdin.write("a");
+    await waitForFrame(instance, "Detail sections expanded.");
+    expect(instance.lastFrame()).toContain("manual review required");
+    expect(instance.lastFrame()).not.toContain("> za");
+    instance.unmount();
+  });
+
   it("keeps full ids and governed commands inside the command palette", () => {
     const output = renderToString(
       React.createElement(TuiInkFrame, {
@@ -1081,7 +2222,7 @@ describe("Ink TUI renderer", () => {
     );
 
     instance.stdin.write("p");
-    await waitForFrame(instance, "Status: agent-hub runs show run_27984312");
+    await waitForFrame(instance, "agent-hub runs show run_27984312");
 
     expect(instance.lastFrame()).toContain("> @codex prompt");
     expect(instance.lastFrame()).not.toContain("> p");
@@ -1118,7 +2259,7 @@ describe("Ink TUI renderer", () => {
     );
 
     expect(output).toContain("Agent Hub TUI");
-    expect(output).toContain("! TUI Project · @codex");
+    expect(output).toContain("! AGENT HUB | TUI Project");
   });
 
   it("keeps interactive startup splash out of the live Ink frame", async () => {
@@ -1335,7 +2476,7 @@ describe("Ink TUI renderer", () => {
       })
     );
 
-    await waitForFrame(instance, "@codex run_short ✓ completed");
+    await waitForFrame(instance, "@codex run_short completed ✓");
 
     expect(notifications).toEqual([]);
     instance.unmount();
@@ -1362,12 +2503,20 @@ describe("Ink TUI renderer", () => {
     }
     instance.stdin.write("\r");
 
-    await waitForFrame(instance, "Team roles shown.");
+    await waitForFrame(instance, "Team Workbench 2");
 
     expect(submissions).toEqual([]);
-    expect(instance.lastFrame()).toContain("Team Roles 2");
-    expect(instance.lastFrame()).toContain("@engineer preset runs with codex #planning");
-    expect(instance.lastFrame()).toContain("@reviewer preset manual #review");
+    expect(instance.lastFrame()).toContain("Team Workbench 2");
+    expect(instance.lastFrame()).toContain("local-only");
+    expect(instance.lastFrame()).toContain("Role          Source");
+    expect(instance.lastFrame()).toContain("@engineer");
+    expect(instance.lastFrame()).toContain("runs with codex");
+    expect(instance.lastFrame()).toContain("@reviewer");
+    expect(instance.lastFrame()).toContain("manual");
+    expect(instance.lastFrame()).toContain("Recent RoleCalls");
+    expect(instance.lastFrame()).toContain("Status   Caller");
+    expect(instance.lastFrame()).toContain("Delegation Matrix");
+    expect(instance.lastFrame()).toContain("Caller");
     expect(instance.lastFrame()).toContain("> @codex prompt");
     instance.unmount();
   });
@@ -1383,11 +2532,15 @@ describe("Ink TUI renderer", () => {
     );
 
     instance.stdin.write("E");
-    await waitForFrame(instance, "Team Roles 2");
+    await waitForFrame(instance, "Team Workbench 2");
 
     expect(instance.lastFrame()).toContain("Team");
     expect(instance.lastFrame()).not.toContain("[E]am");
-    expect(instance.lastFrame()).toContain("@engineer preset runs with codex #planning");
+    expect(instance.lastFrame()).toContain("local-only");
+    expect(instance.lastFrame()).toContain("@engineer");
+    expect(instance.lastFrame()).toContain("runs with codex");
+    expect(instance.lastFrame()).toContain("1/2");
+    expect(instance.lastFrame()).toContain("Recent RoleCalls");
     instance.unmount();
   });
 
@@ -1465,8 +2618,107 @@ describe("Ink TUI renderer", () => {
 
     expect(bottomOutput).toContain("Transcript message 9");
     expect(bottomOutput).not.toContain("Transcript message 0");
-    expect(scrolledOutput).toContain("Transcript message 5");
+    expect(scrolledOutput).toContain("Transcript message 6");
     expect(scrolledOutput).not.toContain("Transcript message 9");
+  });
+
+  it("keeps the selected Work block visible while moving past the current viewport", () => {
+    const model = modelWithWorkBlocks(12);
+    let upwardState = {
+      ...createInitialInkState(),
+      selectedWorkBlockIndex: 11,
+      selectedWorkBlockId: "message:block-11",
+      conversationScrollOffset: 0
+    };
+    for (let index = 0; index < 10; index += 1) {
+      upwardState = reduceInkState(upwardState, "up", model);
+    }
+    const upwardOutput = renderToString(
+      React.createElement(TuiInkFrame, {
+        model,
+        state: upwardState,
+        terminal: { columns: 78, rows: 18 }
+      }),
+      { columns: 78 }
+    );
+
+    expect(upwardState.selectedWorkBlockId).toBe("message:block-1");
+    expect(upwardState.conversationScrollOffset).toBeGreaterThan(0);
+    expect(upwardOutput).toContain("Work block 1");
+
+    let downwardState = {
+      ...createInitialInkState(),
+      selectedWorkBlockIndex: 0,
+      selectedWorkBlockId: "message:block-0",
+      conversationScrollOffset: 99
+    };
+    for (let index = 0; index < 10; index += 1) {
+      downwardState = reduceInkState(downwardState, "down", model);
+    }
+    const downwardOutput = renderToString(
+      React.createElement(TuiInkFrame, {
+        model,
+        state: downwardState,
+        terminal: { columns: 78, rows: 18 }
+      }),
+      { columns: 78 }
+    );
+
+    expect(downwardState.selectedWorkBlockId).toBe("message:block-10");
+    expect(downwardState.conversationScrollOffset).toBeLessThan(99);
+    expect(downwardOutput).toContain("Work block 10");
+  });
+
+  it("does not move the Work viewport when navigation is already at an edge", () => {
+    const model = modelWithWorkBlocks(6);
+    const bottomState = {
+      ...createInitialInkState(),
+      selectedWorkBlockIndex: 5,
+      selectedWorkBlockId: "message:block-5",
+      conversationScrollOffset: 3
+    };
+    const nextBottomState = reduceInkState(bottomState, "down", model);
+    const topState = {
+      ...createInitialInkState(),
+      selectedWorkBlockIndex: 0,
+      selectedWorkBlockId: "message:block-0",
+      conversationScrollOffset: 4
+    };
+    const nextTopState = reduceInkState(topState, "up", model);
+
+    expect(nextBottomState.selectedWorkBlockId).toBe("message:block-5");
+    expect(nextBottomState.conversationScrollOffset).toBe(3);
+    expect(nextTopState.selectedWorkBlockId).toBe("message:block-0");
+    expect(nextTopState.conversationScrollOffset).toBe(4);
+  });
+
+  it("keeps the selected frame visible for long Work blocks", () => {
+    const model = modelWithWorkBlocks(6, {
+      longIndex: 3,
+      longLines: Array.from({ length: 18 }, (_value, index) =>
+        `Long selected Work block line ${index} with enough text to wrap across the terminal viewport.`
+      )
+    });
+    let state = {
+      ...createInitialInkState(),
+      selectedWorkBlockIndex: 4,
+      selectedWorkBlockId: "message:block-4",
+      conversationScrollOffset: 0
+    };
+
+    state = reduceInkState(state, "up", model);
+    const output = renderToString(
+      React.createElement(TuiInkFrame, {
+        model,
+        state,
+        terminal: { columns: 78, rows: 18 }
+      }),
+      { columns: 78 }
+    );
+
+    expect(state.selectedWorkBlockId).toBe("message:block-3");
+    expect(output).toContain("╭─ 12:03:00 user user_message ●");
+    expect(output).toContain("Long selected Work block line 0");
   });
 
   it("polls the read model while interactive", async () => {
@@ -1486,7 +2738,7 @@ describe("Ink TUI renderer", () => {
 
     await new Promise((resolve) => setTimeout(resolve, 30));
 
-    expect(instance.lastFrame()).toContain("@codex run_polled01 ✓ completed");
+    expect(instance.lastFrame()).toContain("@codex run_polled01 completed ✓");
     instance.unmount();
   });
 
@@ -1544,13 +2796,13 @@ describe("Ink TUI renderer", () => {
     await waitForFrame(instance, "Submitting prompt...");
     await waitForFrame(instance, "> @codex prompt");
 
-    instance.stdin.write("\t");
+    instance.stdin.write("R");
     for (const character of "next") {
       instance.stdin.write(character);
       await new Promise((resolve) => setTimeout(resolve, 1));
     }
 
-    await waitForFrame(instance, "[R]uns");
+    await waitForFrame(instance, "Runs: 1 runs");
     await waitForFrame(instance, "> next");
 
     resolveSubmission({ ok: true, message: "Submitted prompt.", model: baseModel });
@@ -1588,13 +2840,13 @@ describe("Ink TUI renderer", () => {
       expect.objectContaining({ prompt: "@unknown summarize" })
     ]);
     expect(instance.lastFrame()).toContain("Submitted prompt.");
-    expect(instance.lastFrame()).toContain("@codex run_12345678 ✓ completed");
+    expect(instance.lastFrame()).toContain("@codex run_12345678 completed ✓");
     instance.unmount();
   });
 
-  it("submits visible quick replies through the normal prompt callback", async () => {
+  it("keeps numeric quick-reply keys as composer input", async () => {
     const submissions = [];
-    const model = modelWithSuggestions();
+    const model = modelWithFailedRun();
     const instance = render(
       React.createElement(TuiInkApp, {
         model,
@@ -1603,19 +2855,15 @@ describe("Ink TUI renderer", () => {
         interactive: true,
         submitPrompt: async (input) => {
           submissions.push(input);
-          return { ok: true, message: "Suggestion submitted.", model };
+          return { ok: true, message: "Submitted prompt.", model };
         }
       })
     );
 
     instance.stdin.write("1");
-    await waitForFrame(instance, "Suggestion submitted.");
+    await waitForFrame(instance, "> 1");
 
-    expect(submissions).toEqual([
-      expect.objectContaining({
-        prompt: "Run more targeted tests for run run_suggest and summarize the failures."
-      })
-    ]);
+    expect(submissions).toEqual([]);
     instance.unmount();
   });
 
@@ -1623,7 +2871,7 @@ describe("Ink TUI renderer", () => {
     const submissions = [];
     const instance = render(
       React.createElement(TuiInkApp, {
-        model: modelWithSuggestions(),
+        model: modelWithFailedRun(),
         state: createInitialInkState("draft"),
         terminal: { columns: 120, rows: 40 },
         interactive: true,
@@ -1874,7 +3122,7 @@ describe("Ink TUI renderer", () => {
     instance.stdin.write("\t");
     await new Promise((resolve) => setTimeout(resolve, 25));
 
-    expect(instance.lastFrame()).toContain("[R]uns");
+    expect(instance.lastFrame()).toContain("> Graph");
     expect(instance.lastFrame()).toContain("> draft");
     instance.unmount();
   });
@@ -1905,7 +3153,7 @@ describe("Ink TUI renderer", () => {
       expect.objectContaining({ prompt: "execute command" })
     ]);
     expect(instance.lastFrame()).toContain("Submitted prompt.");
-    expect(instance.lastFrame()).toContain("[W]ork");
+    expect(instance.lastFrame()).toContain("Work: 2 blocks");
     instance.unmount();
   });
 
@@ -2071,6 +3319,53 @@ function modelWithTranscript(count) {
   };
 }
 
+function modelWithWorkBlocks(count, options = {}) {
+  const workBlocks = Array.from({ length: count }, (_value, index) => ({
+    id: `message:block-${index}`,
+    sourceId: `message:block-${index}`,
+    sourceKind: "conversation",
+    type: "user_message",
+    timestamp: `2026-05-29T12:${String(index).padStart(2, "0")}:00.000Z`,
+    speaker: "user",
+    title: `Work block ${index}`,
+    statusIcon: "●",
+    statusLabel: undefined,
+    statusTone: "normal",
+    messageLines: index === options.longIndex && Array.isArray(options.longLines)
+      ? options.longLines
+      : [`Work block ${index}`],
+    toolSummaryLines: [],
+    fileRefs: [],
+    commandLines: [],
+    artifactLines: [],
+    evidenceLines: []
+  }));
+  return {
+    ...baseModel,
+    conversation: workBlocks.map((block) => ({
+      id: block.id,
+      type: "user_message",
+      timestamp: block.timestamp,
+      author: block.speaker,
+      content: block.messageLines[0]
+    })),
+    activeRuns: [],
+    workBlocks,
+    selectionDetails: {
+      ...baseModel.selectionDetails,
+      workBlocks: workBlocks.map((block) => ({
+        id: block.id,
+        kind: "work_block",
+        title: block.title,
+        subtitle: "message",
+        sections: [{ id: "message", title: "Message", lines: block.messageLines }],
+        commands: [],
+        actions: []
+      }))
+    }
+  };
+}
+
 function modelWithActiveRun() {
   return {
     ...baseModel,
@@ -2085,7 +3380,7 @@ function modelWithActiveRun() {
   };
 }
 
-function modelWithSuggestions() {
+function modelWithFailedRun() {
   return {
     ...baseModel,
     conversation: [
@@ -2098,24 +3393,7 @@ function modelWithSuggestions() {
         runId: "run_suggest",
         statusLabel: "failed",
         outputLines: ["tests failed"],
-        verificationLine: "verification failed (1 checks: pnpm test)",
-        suggestions: [
-          {
-            key: "1",
-            label: "Run more tests",
-            prompt: "Run more targeted tests for run run_suggest and summarize the failures."
-          },
-          {
-            key: "2",
-            label: "Fix verification",
-            prompt: "Fix the verification issues from run run_suggest, then report what changed."
-          },
-          {
-            key: "3",
-            label: "Continue",
-            prompt: "Continue from run run_suggest with the selected agent."
-          }
-        ]
+        verificationLine: "verification failed (1 checks: pnpm test)"
       }
     ],
     activeRuns: []
@@ -2182,6 +3460,21 @@ async function waitForFrame(
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
   throw new Error(`Timed out waiting for frame text: ${expected}`);
+}
+
+function framedContentLines(output: string): string[] {
+  return output.split("\n").map((value) => {
+    if (value.startsWith("│") && value.endsWith("│") && !value.includes("││")) {
+      return value.slice(1, -1).trimEnd();
+    }
+    return value;
+  });
+}
+
+function activeRunFrameLines(output: string): string[] {
+  return framedContentLines(output).filter((value) =>
+    value.startsWith("╭") || value.startsWith("│") || value.startsWith("╰")
+  );
 }
 
 async function waitForCondition(
