@@ -871,6 +871,7 @@ function ShellFrame({
   attentionItems
 }: ShellFrameProps): React.ReactElement {
   const width = terminal.columns;
+  const workbenchHeight = workbenchPanelHeight(model, state, terminal, showSplash);
   return h(
     Box,
     { flexDirection: "column", width },
@@ -883,7 +884,8 @@ function ShellFrame({
       state,
       terminal,
       animationTick,
-      feedbackByRunId
+      feedbackByRunId,
+      height: workbenchHeight
     }),
     h(HorizontalRule, { width }),
     h(Composer, { model, state }),
@@ -1202,25 +1204,34 @@ interface WorkbenchLayoutSpec {
   detailWidth: number;
 }
 
-function WorkbenchLayout(props: TuiInkRenderProps): React.ReactElement {
-  const { model, state, terminal } = props;
+interface WorkbenchLayoutProps extends TuiInkRenderProps {
+  height: number;
+}
+
+function WorkbenchLayout(props: WorkbenchLayoutProps): React.ReactElement {
+  const { model, state, terminal, height } = props;
   const layout = workbenchLayoutSpec(terminal);
+  const panelRows = panelContentHeight(height);
+  const panelTerminal = {
+    ...terminal,
+    rows: panelRows
+  };
   if (layout.navWidth === 0) {
     const contentWidth = panelContentWidth(terminal.columns);
     if (state.detailVisible) {
       return h(
         FramedPanel,
-        { width: terminal.columns, borderColor: "cyan" },
-        h(DetailPane, { model, state, terminal, width: contentWidth })
+        { width: terminal.columns, height, borderColor: "cyan" },
+        h(DetailPane, { model, state, terminal: panelTerminal, width: contentWidth })
       );
     }
     return h(
       FramedPanel,
-      { width: terminal.columns, borderColor: "cyan" },
+      { width: terminal.columns, height, borderColor: "cyan" },
       h(MainView, {
         ...props,
         terminal: {
-          ...terminal,
+          ...panelTerminal,
           columns: contentWidth
         }
       })
@@ -1228,31 +1239,39 @@ function WorkbenchLayout(props: TuiInkRenderProps): React.ReactElement {
   }
 
   const mainTerminal = {
-    ...terminal,
+    ...panelTerminal,
     columns: panelContentWidth(layout.mainWidth)
   };
   const showInlineDetail = state.detailVisible && layout.detailWidth === 0;
   return h(
     Box,
-    { flexDirection: "row", width: terminal.columns },
+    { flexDirection: "row", width: terminal.columns, height },
     h(
       FramedPanel,
-      { width: layout.navWidth, borderColor: "cyan" },
+      { width: layout.navWidth, height, borderColor: "cyan" },
       h(SideNav, { model, state, width: panelContentWidth(layout.navWidth) })
     ),
     h(
       FramedPanel,
-      { width: layout.mainWidth, borderColor: "cyan", flexShrink: 1 },
+      { width: layout.mainWidth, height, borderColor: "cyan", flexShrink: 1 },
       showInlineDetail
-        ? h(DetailPane, { model, state, terminal, width: panelContentWidth(layout.mainWidth) })
+        ? h(DetailPane, { model, state, terminal: mainTerminal, width: panelContentWidth(layout.mainWidth) })
         : h(MainView, { ...props, terminal: mainTerminal })
     ),
     ...(layout.detailWidth > 0
       ? [
           h(
             FramedPanel,
-            { width: layout.detailWidth, borderColor: "cyan" },
-            h(DetailPane, { model, state, terminal, width: panelContentWidth(layout.detailWidth) })
+            { width: layout.detailWidth, height, borderColor: "cyan" },
+            h(DetailPane, {
+              model,
+              state,
+              terminal: {
+                ...panelTerminal,
+                columns: panelContentWidth(layout.detailWidth)
+              },
+              width: panelContentWidth(layout.detailWidth)
+            })
           )
         ]
       : [])
@@ -1262,11 +1281,13 @@ function WorkbenchLayout(props: TuiInkRenderProps): React.ReactElement {
 function FramedPanel({
   children,
   width,
+  height,
   borderColor,
   flexShrink
 }: {
   children?: React.ReactNode;
   width: number;
+  height?: number;
   borderColor?: string;
   flexShrink?: number;
 }): React.ReactElement {
@@ -1277,6 +1298,7 @@ function FramedPanel({
       borderColor,
       flexDirection: "column",
       width,
+      height,
       flexShrink: flexShrink ?? 0
     },
     children
@@ -1285,6 +1307,10 @@ function FramedPanel({
 
 function panelContentWidth(width: number): number {
   return Math.max(1, width - 2);
+}
+
+function panelContentHeight(height: number): number {
+  return Math.max(1, height - 2);
 }
 
 function workbenchLayoutSpec(terminal: TuiInkTerminalSize): WorkbenchLayoutSpec {
@@ -1461,9 +1487,9 @@ function detailBodyLines(
   return [
     line(truncateText(`| ${detail.title}`, width), { bold: true }),
     ...(detail.subtitle ? [line(truncateText(`| ${detail.subtitle}`, width), { dimColor: true })] : []),
-    ...orderedDetailSections(detail).flatMap((section) => detailSectionLines(section, state, width)),
+    ...detailControlsLines(detail, width),
     ...detailCommandsLines(detail, width),
-    ...detailControlsLines(detail, width)
+    ...orderedDetailSections(detail).flatMap((section) => detailSectionLines(section, state, width))
   ];
 }
 
@@ -1642,7 +1668,12 @@ function detailSectionUnavailable(section: TuiDetailSection): boolean {
 }
 
 function detailBodyWindowSize(terminal: TuiInkTerminalSize): number {
-  return boundedWindowSize(terminal.rows - 8, 8, 32);
+  const availableRows = Math.max(1, terminal.rows - 2);
+  return boundedWindowSize(
+    availableRows,
+    Math.min(8, availableRows),
+    Math.min(32, availableRows)
+  );
 }
 
 function detailToneColor(tone: TuiDetailSection["tone"]): string | undefined {
@@ -1769,7 +1800,7 @@ function MainView(props: TuiInkRenderProps): React.ReactElement {
     return h(TasksPane, { model, state, terminal });
   }
   if (state.focus === "memory") {
-    return h(MemoryPane, { model, state });
+    return h(MemoryPane, { model, state, terminal });
   }
   return h(WorkView, {
     model,
@@ -1787,9 +1818,8 @@ function WorkView({
   animationTick,
   feedbackByRunId
 }: TuiInkRenderProps): React.ReactElement {
-  const chromeLineBudget = workChromeLineBudget(model, state, terminal);
   const workBlocks = workBlocksForModel(model);
-  const conversationLines = conversationWindowSize(terminal, 0, chromeLineBudget);
+  const conversationLines = Math.max(1, terminal.rows);
   return h(
     WorkBlockList,
     { model, state, terminal, visibleLines: conversationLines, feedbackByRunId, workBlocks, animationTick }
@@ -1952,7 +1982,7 @@ function workBlockVisibleMessageLines(block: TuiWorkBlock, terminal: TuiInkTermi
   if (block.sourceKind !== "active_run") {
     return block.messageLines;
   }
-  const maximumLines = terminal.rows < 24 ? 3 : 8;
+  const maximumLines = terminal.rows < 16 ? 3 : 8;
   if (block.messageLines.length <= maximumLines) {
     return block.messageLines;
   }
@@ -3060,9 +3090,7 @@ function TeamPane({
   const offset = centeredWindowOffset(selectedIndex, windowSize, team.roles.length);
   const visibleRoles = team.roles.slice(offset, offset + windowSize);
   const remaining = team.roles.length - visibleRoles.length;
-  return h(
-    Pane,
-    { title: `Team Workbench ${team.counts.total}` },
+  const contentLines = [
     line("local-only | SQLite/project settings | no cloud sync", { color: "cyan" }),
     line(
       `enabled ${team.counts.enabled} runnable ${team.counts.runnable} reserved ${team.counts.reserved} custom ${team.counts.custom} overrides ${team.counts.presetOverrides}`,
@@ -3088,6 +3116,12 @@ function TeamPane({
     ...teamDelegationMatrixLines(team, terminal),
     line(""),
     line(`command ${team.command ?? "agent-hub project list"}`, { dimColor: true })
+  ];
+  const visibleContentLines = contentLines.slice(0, Math.max(0, terminal.rows - 1));
+  return h(
+    Pane,
+    { title: `Team Workbench ${team.counts.total}` },
+    ...visibleContentLines
   );
 }
 
@@ -3229,10 +3263,12 @@ function teamExecutorLabel(role: TuiCurrentContextModel["team"]["roles"][number]
 
 function MemoryPane({
   model,
-  state
+  state,
+  terminal
 }: {
   model: TuiCurrentContextModel;
   state: TuiInkState;
+  terminal: TuiInkTerminalSize;
 }): React.ReactElement {
   const selectedSkills =
     model.skills.selected.length === 0
@@ -3246,9 +3282,7 @@ function MemoryPane({
   const rows = model.memory.rows.slice(0, 8);
   const selectedRow = model.memory.rows[selectedIndex];
   const approvedRows = model.memory.rows.filter((row) => row.status === "approved").slice(0, 6);
-  return h(
-    Pane,
-    { title: "Memory Inbox" },
+  const contentLines = [
     line("Memory Governance", { dimColor: true }),
     line("view all   status all   confidence all   search /", { dimColor: true }),
     line(`proposed ${model.memory.counts.proposed} approved ${model.memory.counts.approved} rejected ${model.memory.counts.rejected} retired ${model.memory.counts.retired}`),
@@ -3277,6 +3311,12 @@ function MemoryPane({
     line(`available skills ${availableSkills}`),
     line(`skill source ${model.skills.runtimeSource}`),
     line(`context ${contextModeLabel(model.skills.contextMode)}`)
+  ];
+  const visibleContentLines = contentLines.slice(0, Math.max(0, terminal.rows - 1));
+  return h(
+    Pane,
+    { title: "Memory Inbox" },
+    ...visibleContentLines
   );
 }
 
@@ -3505,7 +3545,7 @@ function HelpPane(): React.ReactElement {
   return h(
     Pane,
     { title: "Help" },
-    line("tabs: Tab focus  W work  R runs  V review  G graph  T tasks  M memory  E team"),
+    line("tabs: Tab focus  W work  G graph  R runs  V review  T tasks  M memory  E team"),
     line("move: Up/Down or j/k  detail: Enter/o  folds: Space/> toggle  < close  za toggle  O open"),
     line("commands: : palette  / then Enter palette"),
     line("/search  /timeline or L  /notify  /team"),
@@ -3920,36 +3960,31 @@ function activeRunLayout(
   return { collapsedBoxes, fullBoxes };
 }
 
-function conversationWindowSize(
-  terminal: TuiInkTerminalSize,
-  activeLineCost: number,
-  chromeLineBudget: number
-): number {
-  const availableRows = Math.max(1, terminal.rows - chromeLineBudget - activeLineCost);
-  const minimumRows = Math.min(minimumWorkConversationRows(terminal), availableRows);
-  const maximumRows = Math.max(minimumRows, terminal.rows - chromeLineBudget);
-  return boundedWindowSize(
-    availableRows,
-    minimumRows,
-    maximumRows
-  );
-}
-
-function workChromeLineBudget(
+function workbenchPanelHeight(
   model: TuiCurrentContextModel,
   state: TuiInkState,
-  terminal: TuiInkTerminalSize
+  terminal: TuiInkTerminalSize,
+  showSplash: boolean
 ): number {
+  return Math.max(1, terminal.rows - shellChromeLineBudget(model, state, terminal, showSplash));
+}
+
+function shellChromeLineBudget(
+  model: TuiCurrentContextModel,
+  state: TuiInkState,
+  terminal: TuiInkTerminalSize,
+  showSplash: boolean
+): number {
+  const splashLines = showSplash ? 2 : 0;
   const headerLines = 1;
   const headerSeparatorLines = 1;
   const warningLines = model.warnings.length;
   const attentionLines = attentionItemsForModel(model).length > 0 ? 1 : 0;
-  const panelBorderLines = terminal.columns >= 40 ? 2 : 0;
   const bottomSeparatorLines = 1;
   const composerLines = composerLineBudget(model, state);
   const hotkeyLines = 1;
   const statusBarLines = 1;
-  return headerLines + headerSeparatorLines + warningLines + attentionLines + panelBorderLines + bottomSeparatorLines + composerLines + hotkeyLines + statusBarLines;
+  return splashLines + headerLines + headerSeparatorLines + warningLines + attentionLines + bottomSeparatorLines + composerLines + hotkeyLines + statusBarLines;
 }
 
 function composerLineBudget(model: TuiCurrentContextModel, state: TuiInkState): number {

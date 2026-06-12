@@ -628,6 +628,35 @@ describe("Ink TUI renderer", () => {
     }
   });
 
+  it("keeps the workbench height stable across tab switches", () => {
+    const terminal = { columns: 120, rows: 28 };
+    const focuses = ["work", "graph", "runs", "review", "tasks", "memory", "team", "help"];
+    const lineCounts = focuses.map((focus) => {
+      const output = renderToString(
+        React.createElement(TuiInkFrame, {
+          model: baseModel,
+          state: { ...createInitialInkState(), focus },
+          terminal
+        }),
+        { columns: terminal.columns }
+      );
+      return output.split("\n").length;
+    });
+
+    expect(new Set(lineCounts).size).toBe(1);
+  });
+
+  it("tabs through panes in the same order as the visible navigation", () => {
+    let state = createInitialInkState();
+
+    state = reduceInkState(state, "tab", baseModel);
+    expect(state.focus).toBe("graph");
+    state = reduceInkState(state, "tab", baseModel);
+    expect(state.focus).toBe("runs");
+    state = reduceInkState(state, "shift_tab", baseModel);
+    expect(state.focus).toBe("graph");
+  });
+
   it("opens selected-object detail in the medium shell without direct data access", () => {
     const state = reduceInkState(
       { ...createInitialInkState(), focus: "runs" },
@@ -686,7 +715,7 @@ describe("Ink TUI renderer", () => {
     );
 
     expect(state.detailScrollOffset).toBeGreaterThan(0);
-    expect(output).toContain("detail line 12");
+    expect(output).toContain("detail line 08");
     expect(output).toContain("scroll ");
     expect(output).not.toContain("detail line 00");
   });
@@ -732,7 +761,7 @@ describe("Ink TUI renderer", () => {
     expect(output).toContain("Context Policy");
     expect(output).toContain("Delegation Matrix");
     expect(output).toContain("empty slot - role-call");
-    expect(output).toContain("Recent Failures");
+    expect(output).toContain("scroll ");
     expect(output).toContain("agent-hub team roles exe...");
   });
 
@@ -1536,7 +1565,11 @@ describe("Ink TUI renderer", () => {
         expect(output).toContain("└");
         expect(output).toContain("> @codex prompt");
         expect(output).toContain("keys:");
-        for (const value of fixture.expected) {
+        const expectedValues = fixture.expected.filter((value) =>
+          !(fixture.name === "live Work" && terminal.rows < 36 && value === "Streaming Output Tail") &&
+          !(fixture.name === "Team" && terminal.rows < 36 && value === "Delegation Matrix")
+        );
+        for (const value of expectedValues) {
           expect(output, `${fixture.name} ${terminal.columns}x${terminal.rows}`).toContain(value);
         }
         if (fixture.name === "Memory" && terminal.columns >= 112) {
@@ -2597,6 +2630,53 @@ describe("Ink TUI renderer", () => {
     expect(scrolledOutput).not.toContain("Transcript message 9");
   });
 
+  it("keeps the selected Work block visible while moving past the current viewport", () => {
+    const model = modelWithWorkBlocks(12);
+    let upwardState = {
+      ...createInitialInkState(),
+      selectedWorkBlockIndex: 11,
+      selectedWorkBlockId: "message:block-11",
+      conversationScrollOffset: 0
+    };
+    for (let index = 0; index < 10; index += 1) {
+      upwardState = reduceInkState(upwardState, "up", model);
+    }
+    const upwardOutput = renderToString(
+      React.createElement(TuiInkFrame, {
+        model,
+        state: upwardState,
+        terminal: { columns: 78, rows: 18 }
+      }),
+      { columns: 78 }
+    );
+
+    expect(upwardState.selectedWorkBlockId).toBe("message:block-1");
+    expect(upwardState.conversationScrollOffset).toBeGreaterThan(0);
+    expect(upwardOutput).toContain("Work block 1");
+
+    let downwardState = {
+      ...createInitialInkState(),
+      selectedWorkBlockIndex: 0,
+      selectedWorkBlockId: "message:block-0",
+      conversationScrollOffset: 99
+    };
+    for (let index = 0; index < 10; index += 1) {
+      downwardState = reduceInkState(downwardState, "down", model);
+    }
+    const downwardOutput = renderToString(
+      React.createElement(TuiInkFrame, {
+        model,
+        state: downwardState,
+        terminal: { columns: 78, rows: 18 }
+      }),
+      { columns: 78 }
+    );
+
+    expect(downwardState.selectedWorkBlockId).toBe("message:block-10");
+    expect(downwardState.conversationScrollOffset).toBeLessThan(99);
+    expect(downwardOutput).toContain("Work block 10");
+  });
+
   it("polls the read model while interactive", async () => {
     const polledModel = modelWithRuns(["run_polled01"]);
     const instance = render(
@@ -3002,7 +3082,7 @@ describe("Ink TUI renderer", () => {
     instance.stdin.write("\t");
     await new Promise((resolve) => setTimeout(resolve, 25));
 
-    expect(instance.lastFrame()).toContain("> Runs");
+    expect(instance.lastFrame()).toContain("> Graph");
     expect(instance.lastFrame()).toContain("> draft");
     instance.unmount();
   });
@@ -3196,6 +3276,51 @@ function modelWithTranscript(count) {
       statusLabel: message.role === "user" ? undefined : "completed"
     })),
     activeRuns: []
+  };
+}
+
+function modelWithWorkBlocks(count) {
+  const workBlocks = Array.from({ length: count }, (_value, index) => ({
+    id: `message:block-${index}`,
+    sourceId: `message:block-${index}`,
+    sourceKind: "conversation",
+    type: "user_message",
+    timestamp: `2026-05-29T12:${String(index).padStart(2, "0")}:00.000Z`,
+    speaker: "user",
+    title: `Work block ${index}`,
+    statusIcon: "●",
+    statusLabel: undefined,
+    statusTone: "normal",
+    messageLines: [`Work block ${index}`],
+    toolSummaryLines: [],
+    fileRefs: [],
+    commandLines: [],
+    artifactLines: [],
+    evidenceLines: []
+  }));
+  return {
+    ...baseModel,
+    conversation: workBlocks.map((block) => ({
+      id: block.id,
+      type: "user_message",
+      timestamp: block.timestamp,
+      author: block.speaker,
+      content: block.messageLines[0]
+    })),
+    activeRuns: [],
+    workBlocks,
+    selectionDetails: {
+      ...baseModel.selectionDetails,
+      workBlocks: workBlocks.map((block) => ({
+        id: block.id,
+        kind: "work_block",
+        title: block.title,
+        subtitle: "message",
+        sections: [{ id: "message", title: "Message", lines: block.messageLines }],
+        commands: [],
+        actions: []
+      }))
+    }
   };
 }
 
