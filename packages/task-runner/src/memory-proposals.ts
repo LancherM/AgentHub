@@ -288,6 +288,7 @@ function hasProjectMemoryContent(
 ): boolean {
   return items.some(
     (item) => item.status !== "rejected" &&
+      item.status !== "retired" &&
       normalizeMemoryContent(item.content) === normalizedContent
   );
 }

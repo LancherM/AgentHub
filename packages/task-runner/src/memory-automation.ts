@@ -586,7 +586,9 @@ function hasSecretLikeText(value: string): boolean {
 
 function canonicalMemoryByContent(items: MemoryItem[]): Map<string, MemoryItem> {
   const byContent = new Map<string, MemoryItem>();
-  for (const item of [...items].sort(compareMemoryItems)) {
+  for (const item of [...items]
+    .filter((candidate) => candidate.status !== "retired")
+    .sort(compareMemoryItems)) {
     const normalizedContent = normalizeMemoryContent(item.content);
     const existing = byContent.get(normalizedContent);
     if (!existing || prefersMemoryItem(item, existing)) {

@@ -1117,6 +1117,78 @@ describe("task runner", () => {
       ]);
   });
 
+  it("allows retired memory content to be proposed again from new run evidence", async () => {
+    const taskRepository = new InMemoryTaskRepository();
+    const taskRunRepository = new InMemoryTaskRunRepository();
+    const runArtifactRepository = new InMemoryRunArtifactRepository();
+    const verificationResultRepository = new InMemoryVerificationResultRepository();
+    const riskReportRepository = new InMemoryRiskReportRepository();
+    const memoryItemRepository = new InMemoryMemoryItemRepository();
+    const now = "2026-01-01T00:00:00.000Z";
+    await taskRepository.create({
+      id: "task_retired_memory_proposal",
+      projectId: "project_retired_memory_proposal",
+      title: "Retired memory proposal",
+      status: "open",
+      createdAt: now,
+      updatedAt: now
+    });
+    await taskRunRepository.create({
+      id: "run_retired_memory_proposal",
+      taskId: "task_retired_memory_proposal",
+      agentKind: "fake",
+      status: "succeeded",
+      createdAt: now,
+      updatedAt: now
+    });
+    await verificationResultRepository.createMany([
+      {
+        id: "verification_retired_memory_proposal",
+        taskRunId: "run_retired_memory_proposal",
+        command: "pnpm test",
+        status: "passed",
+        exitCode: 0,
+        createdAt: now
+      }
+    ]);
+    await memoryItemRepository.create({
+      id: "memory_retired_verification_command",
+      projectId: "project_retired_memory_proposal",
+      taskId: "task_retired_memory_proposal",
+      category: "workflow_rule",
+      status: "retired",
+      content: "Verification command for this project is pnpm test.",
+      createdAt: now,
+      updatedAt: now
+    });
+
+    const created = await generateMemoryProposalsFromCompletedRun(
+      {
+        taskRunRepository,
+        taskRepository,
+        runArtifactRepository,
+        verificationResultRepository,
+        riskReportRepository,
+        memoryItemRepository
+      },
+      {
+        runId: "run_retired_memory_proposal",
+        idGenerator: new SequenceIdGenerator(),
+        clock: new FixedClock("2026-01-01T00:00:01.000Z")
+      }
+    );
+
+    expect(created).toEqual([
+      expect.objectContaining({
+        status: "proposed",
+        content: "Verification command for this project is pnpm test.",
+        metadata: expect.objectContaining({
+          sourceRunId: "run_retired_memory_proposal"
+        })
+      })
+    ]);
+  });
+
   it("does not propose secret-like verification commands as memory", async () => {
     const taskRepository = new InMemoryTaskRepository();
     const taskRunRepository = new InMemoryTaskRunRepository();
@@ -1344,6 +1416,106 @@ describe("task runner", () => {
     await expect(memoryItemRepository.get("memory_eval_eligible")).resolves.toMatchObject({
       status: "proposed"
     });
+  });
+
+  it("does not treat retired memory as duplicate during automation evaluation", async () => {
+    const taskRepository = new InMemoryTaskRepository();
+    const taskRunRepository = new InMemoryTaskRunRepository();
+    const verificationResultRepository = new InMemoryVerificationResultRepository();
+    const riskReportRepository = new InMemoryRiskReportRepository();
+    const memoryItemRepository = new InMemoryMemoryItemRepository();
+    const now = "2026-01-01T00:00:00.000Z";
+    await taskRepository.create({
+      id: "task_memory_eval_retired",
+      projectId: "project_memory_eval_retired",
+      title: "Evaluate retired memory automation",
+      status: "open",
+      createdAt: now,
+      updatedAt: now
+    });
+    await taskRunRepository.create({
+      id: "run_memory_eval_retired",
+      taskId: "task_memory_eval_retired",
+      agentKind: "fake",
+      status: "succeeded",
+      createdAt: now,
+      updatedAt: now
+    });
+    await verificationResultRepository.createMany([
+      {
+        id: "verification_memory_eval_retired",
+        taskRunId: "run_memory_eval_retired",
+        command: "pnpm test",
+        status: "passed",
+        exitCode: 0,
+        createdAt: now
+      }
+    ]);
+    await riskReportRepository.create({
+      id: "risk_memory_eval_retired",
+      taskRunId: "run_memory_eval_retired",
+      level: "low",
+      summary: "low risk",
+      changedFiles: [],
+      verificationSummary: "1 passed",
+      failedChecks: [],
+      riskFactors: [],
+      manualReviewChecklist: [],
+      acceptanceRecommendation: "Accept if expected.",
+      findings: [],
+      createdAt: now
+    });
+    await memoryItemRepository.create({
+      id: "memory_eval_retired_old",
+      projectId: "project_memory_eval_retired",
+      taskId: "task_memory_eval_retired",
+      category: "workflow_rule",
+      status: "retired",
+      content: "Verification command for this project is pnpm test.",
+      metadata: { sourceRunId: "run_memory_eval_old" },
+      createdAt: now,
+      updatedAt: now
+    });
+    await memoryItemRepository.create({
+      id: "memory_eval_retired_new",
+      projectId: "project_memory_eval_retired",
+      taskId: "task_memory_eval_retired",
+      category: "workflow_rule",
+      status: "proposed",
+      content: "Verification command for this project is pnpm test.",
+      metadata: { sourceRunId: "run_memory_eval_retired" },
+      createdAt: "2026-01-01T00:00:01.000Z",
+      updatedAt: "2026-01-01T00:00:01.000Z"
+    });
+
+    const evaluation = await evaluateMemoryAutomationForRun(
+      {
+        taskRunRepository,
+        taskRepository,
+        memoryItemRepository,
+        verificationResultRepository,
+        riskReportRepository
+      },
+      {
+        runId: "run_memory_eval_retired",
+        policy: {
+          mode: "auto_safe_on_success",
+          maxRiskLevel: "low",
+          allowSkippedVerification: false,
+          allowedCategories: ["workflow_rule"],
+          maxAutoApprovalsPerRun: 1
+        },
+        createdAt: now
+      }
+    );
+
+    expect(evaluation.decisions).toEqual([
+      expect.objectContaining({
+        memoryId: "memory_eval_retired_new",
+        status: "eligible",
+        reasonCodes: ["within_policy"]
+      })
+    ]);
   });
 
   it("scopes memory automation evaluation to proposals from the requested run", async () => {
