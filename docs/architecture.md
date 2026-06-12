@@ -620,8 +620,10 @@ and run evidence, producing role rows, delegation matrix rows, recent RoleCall
 summaries, active/recent call counts, derived recent failures, context and
 approval policy detail, metadata-backed verification commands/limits when
 present, and read-only list/executor commands. Ink renders those DTOs as a
-role operations table and selected profile detail; it does not create a new
-role persistence surface or mutate role configuration directly.
+local-only role workbench with a dense roles table, Recent RoleCalls table,
+width-aware delegation matrix grid or row fallback, and selected Role Profile
+detail; it does not create a new role persistence surface or mutate role
+configuration directly.
 V3 Work blocks are also presentation DTOs in the same read model. Core derives
 `TuiWorkBlock` rows from the existing `conversation` and `activeRuns`
 projections, including stable ids, source kind, speaker, timestamp, status,
@@ -651,7 +653,7 @@ The reference fidelity follow-up in `docs/tui-v3-reference-gap-roadmap.md`
 keeps the same architecture and narrows the remaining work to composition:
 framed shell chrome, a dedicated Work block list renderer, view-specific
 scrollable detail panels, Memory inbox bands, Team matrix/profile layout, and
-deterministic visual fixtures. The first four composition slices are
+deterministic visual fixtures. The first five composition slices are
 implemented inside `apps/cli/src/tui-ink` and local state; the follow-up should
 not add new persistence or renderer-side data access merely to satisfy the
 mockup.

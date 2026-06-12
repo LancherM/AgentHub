@@ -90,7 +90,7 @@ describe("TUI current-context read model", () => {
       );
   });
 
-  it("summarizes transcript, runs, RoleCalls, tasks, memory, and skills in stable order", async () => {
+  it("summarizes transcript, runs, RoleCalls, tasks, team, memory, and skills in stable order", async () => {
     const runtime = createCliRuntime({ storageMode: "memory" });
     await seedCurrentContext(runtime);
 

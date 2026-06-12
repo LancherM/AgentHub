@@ -2294,16 +2294,20 @@ describe("Ink TUI renderer", () => {
     }
     instance.stdin.write("\r");
 
-    await waitForFrame(instance, "Team Operations 2");
+    await waitForFrame(instance, "Team Workbench 2");
 
     expect(submissions).toEqual([]);
-    expect(instance.lastFrame()).toContain("Team Operations 2");
+    expect(instance.lastFrame()).toContain("Team Workbench 2");
+    expect(instance.lastFrame()).toContain("local-only");
+    expect(instance.lastFrame()).toContain("Role          Source");
     expect(instance.lastFrame()).toContain("@engineer");
     expect(instance.lastFrame()).toContain("runs with codex");
     expect(instance.lastFrame()).toContain("@reviewer");
     expect(instance.lastFrame()).toContain("manual");
     expect(instance.lastFrame()).toContain("Recent RoleCalls");
+    expect(instance.lastFrame()).toContain("Status   Caller");
     expect(instance.lastFrame()).toContain("Delegation Matrix");
+    expect(instance.lastFrame()).toContain("Caller");
     expect(instance.lastFrame()).toContain("> @codex prompt");
     instance.unmount();
   });
@@ -2319,10 +2323,11 @@ describe("Ink TUI renderer", () => {
     );
 
     instance.stdin.write("E");
-    await waitForFrame(instance, "Team Operations 2");
+    await waitForFrame(instance, "Team Workbench 2");
 
     expect(instance.lastFrame()).toContain("Team");
     expect(instance.lastFrame()).not.toContain("[E]am");
+    expect(instance.lastFrame()).toContain("local-only");
     expect(instance.lastFrame()).toContain("@engineer");
     expect(instance.lastFrame()).toContain("runs with codex");
     expect(instance.lastFrame()).toContain("1/2");

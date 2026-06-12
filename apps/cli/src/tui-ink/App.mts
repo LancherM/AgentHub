@@ -1588,12 +1588,14 @@ function detailSectionOrder(kind: TuiSelectionDetail["kind"]): Map<string, numbe
           "role",
           "executor",
           "mission-boundaries",
-          "allowed-tools",
           "context-policy",
+          "allowed-tools",
           "delegation",
           "verification-profile",
           "limits",
-          "recent-failures"
+          "recent-role-calls",
+          "recent-failures",
+          "skills"
         ]
       : kind === "run"
         ? ["run", "evidence", "review"]
@@ -3055,13 +3057,15 @@ function TeamPane({
   const remaining = team.roles.length - visibleRoles.length;
   return h(
     Pane,
-    { title: `Team Operations ${team.counts.total}` },
+    { title: `Team Workbench ${team.counts.total}` },
+    line("local-only | SQLite/project settings | no cloud sync", { color: "cyan" }),
     line(
       `enabled ${team.counts.enabled} runnable ${team.counts.runnable} reserved ${team.counts.reserved} custom ${team.counts.custom} overrides ${team.counts.presetOverrides}`,
       { dimColor: true }
     ),
-    line("filter all   sort preset/custom, role", { dimColor: true }),
-    line("role          executor           state     calls fail room       next"),
+    line("view roles   status all   executor all   search /", { dimColor: true }),
+    line("Roles"),
+    line("Role          Source    Executor          State     Calls Fail Room       Skills Next"),
     ...visibleRoles.map((role, index) =>
       teamRoleRowLine(role, offset + index === selectedIndex)
     ),
@@ -3070,14 +3074,13 @@ function TeamPane({
       : []),
     line(""),
     line("Recent RoleCalls", { color: "cyan" }),
+    line("Status   Caller      Callee      ID             Run          Updated              Task"),
     ...(team.recentRoleCalls.length > 0
       ? team.recentRoleCalls.slice(0, 4).map((call) => teamRecentRoleCallLine(call))
       : [line("not available in current read model", { dimColor: true })]),
     line(""),
     line("Delegation Matrix", { color: "cyan" }),
-    ...(team.delegationMatrixRows.length > 0
-      ? team.delegationMatrixRows.slice(0, 4).map((row) => teamDelegationMatrixLine(row))
-      : [line("not available in current read model", { dimColor: true })]),
+    ...teamDelegationMatrixLines(team, terminal),
     line(""),
     line(`command ${team.command ?? "agent-hub project list"}`, { dimColor: true })
   );
@@ -3091,15 +3094,20 @@ function teamRoleRowLine(
   const calls = `${role.activeCallCount}/${role.recentCallCount}`;
   const failures = String(role.recentFailures.length);
   const room = role.defaultRoom ? `#${role.defaultRoom}` : "-";
+  const skills = role.defaultSkillReferences.length > 0
+    ? String(role.defaultSkillReferences.length)
+    : "-";
   const text = [
     marker,
     `@${role.handle}`.padEnd(13),
-    teamExecutorLabel(role).padEnd(18),
+    role.source.padEnd(9),
+    teamExecutorLabel(role).padEnd(17),
     (role.enabled ? "enabled" : "disabled").padEnd(9),
     calls.padEnd(5),
     failures.padEnd(4),
     room.padEnd(10),
-    truncateText(role.nextAction, 42)
+    skills.padEnd(6),
+    truncateText(role.nextAction, 30)
   ].join(" ");
   return line(text, {
     color: teamRoleColor(role),
@@ -3110,13 +3118,73 @@ function teamRoleRowLine(
 function teamRecentRoleCallLine(
   call: TuiCurrentContextModel["team"]["recentRoleCalls"][number]
 ): React.ReactElement {
+  const linkedRun = call.linkedRunId ? compactId(call.linkedRunId) : "-";
+  const updated = call.updatedAt.replace("T", " ").replace(/\.\d{3}Z$/, "Z");
   return line(
-    `${call.statusLabel.padEnd(8)} @${call.callerRole}->@${call.calleeRole} ${compactId(call.id)} ${truncateText(call.task, 56)}`,
+    [
+      call.statusLabel.padEnd(8),
+      `@${call.callerRole}`.padEnd(11),
+      `@${call.calleeRole}`.padEnd(11),
+      compactId(call.id).padEnd(14),
+      linkedRun.padEnd(12),
+      updated.padEnd(20),
+      truncateText(call.task, 36)
+    ].join(" "),
     { dimColor: terminalRoleCallLineDim(call.status) }
   );
 }
 
-function teamDelegationMatrixLine(
+function teamDelegationMatrixLines(
+  team: TuiCurrentContextModel["team"],
+  terminal: TuiInkTerminalSize
+): React.ReactElement[] {
+  if (team.delegationMatrixRows.length === 0) {
+    return [line("not available in current read model", { dimColor: true })];
+  }
+  if (terminal.columns >= 72 && team.roles.length > 1) {
+    return teamDelegationMatrixGridLines(team);
+  }
+  return team.delegationMatrixRows.slice(0, 4).map((row) => teamDelegationMatrixRowLine(row));
+}
+
+function teamDelegationMatrixGridLines(team: TuiCurrentContextModel["team"]): React.ReactElement[] {
+  const visibleRoles = team.roles.slice(0, 4);
+  const rowsByCaller = new Map(team.delegationMatrixRows.map((row) => [row.callerRole, row]));
+  return [
+    line(["Caller".padEnd(12), ...visibleRoles.map((role) => `@${role.handle}`.padEnd(10))].join(" ")),
+    ...visibleRoles.map((caller) => {
+      const matrixRow = rowsByCaller.get(caller.handle);
+      return line(
+        [
+          `@${caller.handle}`.padEnd(12),
+          ...visibleRoles.map((callee) => teamDelegationMatrixCell(matrixRow, callee.handle).padEnd(10))
+        ].join(" "),
+        { dimColor: matrixRow?.status === "unavailable" }
+      );
+    }),
+    ...(team.roles.length > visibleRoles.length
+      ? [line(`${team.roles.length - visibleRoles.length} more matrix roles hidden`, { dimColor: true })]
+      : [])
+  ];
+}
+
+function teamDelegationMatrixCell(
+  row: TuiCurrentContextModel["team"]["delegationMatrixRows"][number] | undefined,
+  callee: string
+): string {
+  if (!row || row.status === "unavailable") {
+    return "n/a";
+  }
+  if (row.callerRole === callee) {
+    return "-";
+  }
+  if (!row.allowedTargets.includes(callee)) {
+    return "deny";
+  }
+  return row.requiresApprovalForTargets.includes(callee) ? "allow*" : "allow";
+}
+
+function teamDelegationMatrixRowLine(
   row: TuiCurrentContextModel["team"]["delegationMatrixRows"][number]
 ): React.ReactElement {
   const target = row.allowedTargets.length > 0 ? row.allowedTargets.join(",") : "unavailable";

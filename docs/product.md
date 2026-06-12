@@ -66,13 +66,16 @@ The Team read-model pane is available from the default tab cycle, the `Team`
 tab label, the uppercase `E` focus shortcut, typing `/team` in the composer,
 or the command palette. It is a role operations view over the current project's
 resolved preset, preset-overridden, and custom roles from the same role
-settings used by `team roles list`. It shows enabled/runnable counts, executor
-labels, default rooms, active/recent RoleCall counts, recent failures, next
-suggested action, recent RoleCalls, delegation matrix summaries, selected role
-mission/boundaries, context policy, permissions, approval policy, default
-skills, and safe CLI list/executor commands. Verification commands and limits
-are shown only when role metadata provides them; missing role-policy data is
-marked unavailable rather than invented.
+settings used by `team roles list`. It shows a visible `local-only` badge,
+enabled/runnable counts, a dense roles table with source, executor, state,
+call/failure counts, default room, skill count, and next action, a Recent
+RoleCalls table, and a delegation matrix grid when terminal width allows. The
+selected `Role Profile` detail shows mission/boundaries, context policy,
+permissions, approval policy, delegation, verification profile, limits, recent
+RoleCalls/failures, default skills, and safe CLI list/executor commands.
+Verification commands, max/limit-like data, allowed tools, and matrix values
+are shown only when role metadata or policy evidence provides them; missing
+role-policy data is marked unavailable rather than invented.
 The command palette (`:`) collects current-context CLI command hints for runs,
 RoleCalls, review, and memory. It is a terminal aid only; it does not add
 project or room browsing.
@@ -219,9 +222,9 @@ Reference fidelity follow-up work is tracked in
 `codex/tui-v3-roadmap` branch as the baseline and focuses on matching the
 supplied terminal mockups more closely. The framed shell chrome and branded
 header metadata, dedicated Work block renderer, view-specific scrollable
-detail panel, and Memory reference inbox are implemented; remaining slices
-focus on Team roles/matrix/profile layout and deterministic visual
-fixtures. It does not
+detail panel, Memory reference inbox, and Team reference workbench are
+implemented; remaining slices focus on deterministic visual fixtures. It does
+not
 relax the local read-model boundary or permit fabricated evidence.
 Selected active-run Work blocks expose a live detail view over the same polling
 read model: speaker, running state, started time, elapsed label, spinner state,
