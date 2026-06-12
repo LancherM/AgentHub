@@ -618,9 +618,11 @@ V3 Work blocks are also presentation DTOs in the same read model. Core derives
 projections, including stable ids, source kind, speaker, timestamp, status,
 message lines, conservative inferred tool summaries, file refs, command-like
 lines, evidence lines, and inline diff references. Ink renders selected Work
-rows and folded metadata from those DTOs, while detail sections for tools,
-commands, file refs, inline diffs, and fix snippets are built in core from the
-same persisted evidence.
+blocks through a dedicated block-list renderer with a title row, time gutter,
+speaker column, status token column, selected-block frame, folded metadata
+affordances, quick replies, dense pending-review collapse, and bounded
+active-run tails. Detail sections for tools, commands, file refs, inline diffs,
+and fix snippets are built in core from the same persisted evidence.
 For active-run Work blocks, core builds a live detail section from the same
 polling evidence already used by active run boxes: speaker, running state,
 started timestamp, elapsed/usage labels, spinner state, streaming output tail,

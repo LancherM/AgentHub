@@ -1625,32 +1625,292 @@ function WorkView({
 }: TuiInkRenderProps): React.ReactElement {
   const chromeLineBudget = workChromeLineBudget(model, state, terminal);
   const workBlocks = workBlocksForModel(model);
-  const { collapsedBoxes, fullBoxes } = activeRunLayout(model.activeRuns, terminal, chromeLineBudget);
-  const activeLineCost = activeRunLineCost(collapsedBoxes, fullBoxes, terminal, chromeLineBudget);
-  const conversationLines = conversationWindowSize(terminal, activeLineCost, chromeLineBudget);
+  const conversationLines = conversationWindowSize(terminal, 0, chromeLineBudget);
   return h(
-    Box,
-    { flexDirection: "column" },
-    h(ConversationFlow, { model, state, terminal, visibleLines: conversationLines, feedbackByRunId, workBlocks }),
-    ...(collapsedBoxes.length > 0
-      ? collapsedBoxes.map((box) =>
-          line(`${activeRunTitle(box, animationTick)} ...`, {
-            color: activeRunColor(box),
-            bold: isActiveRunSelected(workBlocks, state, box)
-          })
-        )
-      : []),
-    ...fullBoxes.map((box) =>
-      h(ActiveRunBoxView, {
-        key: box.runId,
-        box,
-        terminal,
-        animationTick,
-        chromeLineBudget,
-        selected: isActiveRunSelected(workBlocks, state, box)
-      })
-    )
+    WorkBlockList,
+    { model, state, terminal, visibleLines: conversationLines, feedbackByRunId, workBlocks, animationTick }
   );
+}
+
+function WorkBlockList({
+  model,
+  state,
+  terminal,
+  visibleLines,
+  feedbackByRunId,
+  workBlocks,
+  animationTick
+}: {
+  model: TuiCurrentContextModel;
+  state: TuiInkState;
+  terminal: TuiInkTerminalSize;
+  visibleLines: number;
+  feedbackByRunId: Partial<Record<string, RunFeedbackKind>>;
+  workBlocks: TuiWorkBlock[];
+  animationTick: number;
+}): React.ReactElement {
+  if (workBlocks.length === 0) {
+    return block(
+      line(workBlockTitleText(model, state), { color: "cyan", bold: true }),
+      line("No messages in the current context.", { dimColor: true })
+    );
+  }
+  const selectedBlock = selectedWorkBlockFromBlocks(workBlocks, state);
+  const renderedLines = [
+    ...workBlockRenderItems(workBlocks).flatMap((item) =>
+      item.kind === "review_group"
+        ? [line(`△ ${item.count} pending reviews collapsed - [V]iew review queue`, { color: "yellow" })]
+        : workBlockLines({
+            block: item.block,
+            selected: item.block.id === selectedBlock?.id,
+            terminal,
+            animationTick,
+            feedback: item.block.runId ? feedbackByRunId[item.block.runId] : undefined
+          })
+    ),
+    ...visibleConversationSuggestions(model, state).map((suggestion) =>
+      line(`  [${suggestion.key}] ${suggestion.label}`, { color: "cyan", dimColor: true })
+    )
+  ];
+  const bodyLines = Math.max(1, visibleLines - 1);
+  const maxOffset = Math.max(0, renderedLines.length - bodyLines);
+  const offsetFromBottom = Math.min(state.conversationScrollOffset, maxOffset);
+  const start = Math.max(0, renderedLines.length - bodyLines - offsetFromBottom);
+  const visible = renderedLines.slice(start, start + bodyLines);
+  return block(
+    line(workBlockTitleText(model, state), { color: "cyan", bold: true }),
+    ...visible
+  );
+}
+
+type WorkBlockRenderItem =
+  | { kind: "block"; block: TuiWorkBlock }
+  | { kind: "review_group"; count: number };
+
+function workBlockRenderItems(blocks: TuiWorkBlock[]): WorkBlockRenderItem[] {
+  const items: WorkBlockRenderItem[] = [];
+  for (let index = 0; index < blocks.length; index += 1) {
+    const blockItem = blocks[index];
+    if (blockItem?.type !== "review_pending") {
+      items.push({ kind: "block", block: blockItem });
+      continue;
+    }
+    const group: TuiWorkBlock[] = [];
+    while (blocks[index]?.type === "review_pending") {
+      group.push(blocks[index]);
+      index += 1;
+    }
+    index -= 1;
+    if (group.length > 3) {
+      items.push({ kind: "review_group", count: group.length });
+    } else {
+      items.push(...group.map((block) => ({ kind: "block" as const, block })));
+    }
+  }
+  return items;
+}
+
+function workBlockTitleText(model: TuiCurrentContextModel, state: TuiInkState): string {
+  const blocks = workBlocksForModel(model).length;
+  const scrollMode = state.conversationScrollOffset > 0 ? "history" : "bottom";
+  const mode = model.activeRuns.length > 0 ? "Live" : "Normal";
+  return `Work - Conversation | ${mode} | ${blocks} blocks | scroll ${scrollMode}`;
+}
+
+function workBlockLines({
+  block,
+  selected,
+  terminal,
+  animationTick,
+  feedback
+}: {
+  block: TuiWorkBlock;
+  selected: boolean;
+  terminal: TuiInkTerminalSize;
+  animationTick: number;
+  feedback?: RunFeedbackKind;
+}): React.ReactElement[] {
+  const columns = terminal.columns;
+  const metrics = workBlockMetrics(columns);
+  const time = truncateText(formatConversationTimestamp(block.timestamp ?? ""), metrics.timeWidth).padEnd(metrics.timeWidth);
+  const speaker = truncateText(block.speaker, metrics.speakerWidth).padEnd(metrics.speakerWidth);
+  const status = workBlockStatusToken(block, animationTick);
+  const color = workBlockToneColor(block, feedback);
+  const summary = block.title || firstContentLine(block.messageLines);
+  const headerText = `${time} | ${speaker} | ${truncateText(summary, metrics.contentWidth)} | ${status}`;
+  const bodyValues = [
+    ...workBlockAffordanceLines(block),
+    ...workBlockVisibleMessageLines(block, terminal)
+  ];
+  if (selected) {
+    const innerWidth = Math.max(10, columns - 2);
+    const topTitle = truncateText(workBlockFrameTitle(block, animationTick, time.trim()), Math.max(8, innerWidth - 4));
+    const top = `╭─ ${topTitle} ${"─".repeat(Math.max(0, innerWidth - terminalDisplayWidth(topTitle) - 4))}╮`;
+    const bottom = `╰${"─".repeat(innerWidth)}╯`;
+    return [
+      line(truncateText(top, columns), { color: "cyan", bold: true }),
+      ...bodyValues.flatMap((value) =>
+        workBlockBodyLines(value, "│ ", Math.max(1, columns - 2), terminal, { color })
+      ),
+      line(truncateText(bottom, columns), { color: "cyan", bold: true })
+    ];
+  }
+  return [
+    line(headerText, { color, bold: feedback === "success", backgroundColor: feedback === "failure" ? "red" : undefined }),
+    ...bodyValues.flatMap((value) =>
+      workBlockBodyLines(value, "  ", Math.max(1, columns - 2), terminal, { color: workBlockBodyColor(value, color) })
+    )
+  ];
+}
+
+function workBlockFrameTitle(block: TuiWorkBlock, animationTick: number, time: string): string {
+  if (block.sourceKind === "active_run") {
+    return [
+      time,
+      block.speaker,
+      block.runId ? compactId(block.runId) : undefined,
+      workBlockStatusToken(block, animationTick),
+      block.statusLabel,
+      block.elapsedLabel,
+      block.usageLabel
+    ].filter((value): value is string => Boolean(value)).join(" ");
+  }
+  return [
+    time,
+    block.speaker,
+    block.runId ? compactId(block.runId) : undefined,
+    block.statusLabel ?? block.type,
+    workBlockStatusToken(block, animationTick)
+  ].filter(Boolean).join(" ");
+}
+
+function workBlockVisibleMessageLines(block: TuiWorkBlock, terminal: TuiInkTerminalSize): string[] {
+  if (block.sourceKind !== "active_run") {
+    return block.messageLines;
+  }
+  const maximumLines = terminal.rows < 24 ? 3 : 8;
+  if (block.messageLines.length <= maximumLines) {
+    return block.messageLines;
+  }
+  const visibleTailCount = Math.max(1, maximumLines - 1);
+  return [
+    `... ${block.messageLines.length - visibleTailCount} older lines hidden`,
+    ...block.messageLines.slice(-visibleTailCount)
+  ];
+}
+
+function workBlockMetrics(columns: number): {
+  timeWidth: number;
+  speakerWidth: number;
+  contentWidth: number;
+} {
+  const timeWidth = columns < 64 ? 5 : 8;
+  const speakerWidth = columns < 64 ? 10 : columns < 96 ? 12 : 14;
+  const separators = 9;
+  const statusWidth = 3;
+  return {
+    timeWidth,
+    speakerWidth,
+    contentWidth: Math.max(8, columns - timeWidth - speakerWidth - separators - statusWidth)
+  };
+}
+
+function workBlockBodyLines(
+  value: string,
+  prefix: string,
+  width: number,
+  terminal: TuiInkTerminalSize,
+  options: { color?: string; dimColor?: boolean } = {}
+): React.ReactElement[] {
+  const contentWidth = Math.max(1, width - terminalDisplayWidth(prefix));
+  return hardWrapLine(value, contentWidth).map((chunk) =>
+    conversationRichLine(chunk, {
+      prefix,
+      agent: false,
+      color: options.color,
+      dimColor: options.dimColor
+    })
+  );
+}
+
+function workBlockAffordanceLines(block: TuiWorkBlock): string[] {
+  const lines: string[] = [];
+  const metadata = [block.elapsedLabel, block.usageLabel]
+    .filter((value): value is string => Boolean(value));
+  if (metadata.length > 0) {
+    lines.push(`> meta ${metadata.join(" | ")}`);
+  }
+  if (block.toolSummaryLines.length > 0) {
+    lines.push(`> tools inferred ${block.toolSummaryLines.length}`);
+  }
+  if (block.fileRefs.length > 0) {
+    lines.push(`> files ${block.fileRefs.slice(0, 3).join(", ")}${block.fileRefs.length > 3 ? ` +${block.fileRefs.length - 3}` : ""}`);
+  }
+  if (block.commandLines.length > 0) {
+    lines.push(`> commands ${block.commandLines.length}`);
+  }
+  if (block.artifactLines.length > 0) {
+    lines.push(`> artifacts ${block.artifactLines.length}`);
+  }
+  if (block.evidenceLines.length > 0) {
+    lines.push(`> evidence ${block.evidenceLines.slice(0, 2).join(" | ")}${block.evidenceLines.length > 2 ? ` +${block.evidenceLines.length - 2}` : ""}`);
+  }
+  if (block.inlineDiff) {
+    lines.push(`> diff ${block.inlineDiff.summary}`);
+    lines.push(...block.inlineDiff.lines.slice(0, 5).map((lineItem) => `> ${lineItem.text}`));
+  }
+  if (block.type === "agent_completed") {
+    lines.push("> final report available");
+  }
+  if (block.type === "review_pending") {
+    lines.push("> final report pending local review");
+  }
+  return lines;
+}
+
+function workBlockStatusToken(block: TuiWorkBlock, animationTick: number): string {
+  if (block.sourceKind === "active_run") {
+    return activeRunSpinnerFrame(animationTick);
+  }
+  if (block.type === "agent_completed") {
+    return "✓";
+  }
+  if (block.type === "agent_failed") {
+    return "✗";
+  }
+  if (block.type === "review_pending") {
+    return "△";
+  }
+  return block.statusIcon;
+}
+
+function workBlockToneColor(block: TuiWorkBlock, feedback?: RunFeedbackKind): string | undefined {
+  if (feedback === "success") {
+    return "green";
+  }
+  if (feedback === "failure") {
+    return "red";
+  }
+  if (block.statusTone === "success") {
+    return "green";
+  }
+  if (block.statusTone === "warning") {
+    return "yellow";
+  }
+  if (block.statusTone === "danger") {
+    return "red";
+  }
+  if (block.statusTone === "info") {
+    return "cyan";
+  }
+  return undefined;
+}
+
+function workBlockBodyColor(value: string, fallback: string | undefined): string | undefined {
+  if (value.startsWith(">")) {
+    return "cyan";
+  }
+  return fallback;
 }
 
 function ConversationFlow({
@@ -2248,6 +2508,7 @@ function fallbackConversationWorkBlock(entry: TuiConversationEntry): TuiWorkBloc
 }
 
 function fallbackActiveRunWorkBlock(run: TuiActiveRunBox): TuiWorkBlock {
+  const stale = activeRunIsStale(run);
   return {
     id: `active-run:${run.runId}`,
     sourceId: run.runId,
@@ -2260,8 +2521,8 @@ function fallbackActiveRunWorkBlock(run: TuiActiveRunBox): TuiWorkBlock {
     speaker: run.displayHandle ? `@${run.displayHandle}` : `@${run.agent}`,
     title: run.title,
     statusIcon: "●",
-    statusLabel: "running",
-    statusTone: "info",
+    statusLabel: stale ? "running stale" : "running",
+    statusTone: stale ? "warning" : "info",
     messageLines: run.outputLines,
     toolSummaryLines: [],
     fileRefs: [],

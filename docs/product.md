@@ -199,17 +199,23 @@ The Work surface also has a typed V3 block projection over existing
 conversation and active-run evidence. Blocks carry stable ids, speaker/time,
 status, full message lines, conservative inferred tool summaries, file refs,
 command-like lines, evidence lines, and inline diff references. The main Work
-stream renders selected rows with folded metadata while keeping completed agent
-output scrollable; the detail pane shows message text, inferred tools,
-commands, file refs, evidence, inline diff summaries, and fix snippets only
-when those fields come from persisted read-model evidence.
+stream now uses a dedicated block-list renderer rather than the older
+ConversationFlow lines. It shows a `Work - Conversation` title row, time
+gutter, speaker column, block body, status token column, selected-block frame,
+inline folded affordances for metadata/tools/files/commands/evidence/diffs, and
+bounded active-run output tails while keeping completed agent output
+scrollable. Quick replies and dense pending-review collapse remain part of the
+Work surface. The detail pane shows message text, inferred tools, commands,
+file refs, evidence, inline diff summaries, and fix snippets only when those
+fields come from persisted read-model evidence.
 Reference fidelity follow-up work is tracked in
 `docs/tui-v3-reference-gap-roadmap.md`. That plan treats the current
 `codex/tui-v3-roadmap` branch as the baseline and focuses on matching the
 supplied terminal mockups more closely. The framed shell chrome and branded
-header metadata are implemented; remaining slices focus on dense Work block
-layout, view-specific detail titles and scrolling, Memory inbox bands, Team
-roles/matrix/profile layout, and deterministic visual fixtures. It does not
+header metadata plus the dedicated Work block renderer are implemented;
+remaining slices focus on view-specific detail titles and scrolling, Memory
+inbox bands, Team roles/matrix/profile layout, and deterministic visual
+fixtures. It does not
 relax the local read-model boundary or permit fabricated evidence.
 Selected active-run Work blocks expose a live detail view over the same polling
 read model: speaker, running state, started time, elapsed label, spinner state,

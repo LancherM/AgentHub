@@ -541,7 +541,9 @@ describe("Ink TUI renderer", () => {
     expect(output).toContain("role:@codex");
     expect(output).toContain("user");
     expect(output).toContain("Check the TUI shell.");
-    expect(output).toContain("@codex run_27984312 △ awaiting review");
+    expect(output).toContain("Work - Conversation | Normal | 2 blocks");
+    expect(output).toContain("@codex run_27984312");
+    expect(output).toContain("| △");
     expect(output).toContain("open [V]iew for details");
     expect(output).not.toContain("checks 0/0/1");
     expect(output).toContain("C continue");
@@ -838,7 +840,7 @@ describe("Ink TUI renderer", () => {
     expect(output).not.toContain("attn:");
   });
 
-  it("renders active run boxes inside Work", () => {
+  it("renders active run blocks inside Work", () => {
     const output = renderToString(
       React.createElement(TuiInkFrame, {
         model: modelWithActiveRun(),
@@ -848,10 +850,11 @@ describe("Ink TUI renderer", () => {
       { columns: 78 }
     );
 
-    expect(output).toContain("@codex run_active ⠋ running");
+    expect(output).toContain("Work - Conversation | Live | 3 blocks");
+    expect(output).toContain("@codex run_active");
+    expect(output).toContain("| ⠋");
     expect(output).toContain("Reading logout.ts");
     expect(output).not.toContain("checks 1/0/0");
-    expect(output).toContain("▍");
   });
 
   it("renders role display handles for active and review-pending runs", () => {
@@ -880,13 +883,14 @@ describe("Ink TUI renderer", () => {
       { columns: 100 }
     );
 
-    expect(output).toContain("@implementer run_27984312 △ awaiting review");
+    expect(output).toContain("@implementer run_27984312");
     expect(output).toContain("Patched auth.ts");
-    expect(output).toContain("△ awaiting review");
-    expect(output).toContain("@reviewer run_active ⠋ running");
+    expect(output).toContain("awaiting review △");
+    expect(output).toContain("@reviewer");
+    expect(output).toContain("run_active");
   });
 
-  it("renders active run liveliness with spinner, fixed rounded box, metadata, and progress", () => {
+  it("renders active run liveliness with spinner, metadata, and output tail", () => {
     const output = renderToString(
       React.createElement(TuiInkFrame, {
         model: {
@@ -916,13 +920,14 @@ describe("Ink TUI renderer", () => {
       { columns: 78 }
     );
 
-    expect(output).toContain("╭─ @engineer run_live ⠼ running 12s 42k tok");
+    expect(output).toContain("@engineer run_live");
+    expect(output).toContain("⠼ running 12s 42k tok");
     expect(output).toContain("│ Reading src/auth.ts");
     expect(output).toContain("│ Running pnpm test");
     expect(output).toContain("2/5");
     expect(output).toContain("╰");
     const boxLines = activeRunFrameLines(output);
-    expect(boxLines).toHaveLength(8);
+    expect(boxLines).toHaveLength(7);
   });
 
   it("opens V3 live-run detail for the selected active Work block", () => {
@@ -1216,10 +1221,8 @@ describe("Ink TUI renderer", () => {
       }),
       { columns: 48 }
     );
-    const narrowBoxLines = activeRunFrameLines(narrowOutput);
-
-    expect(narrowBoxLines).toHaveLength(4);
-    expect(narrowOutput).toContain("│ Step 2/5");
+    expect(narrowOutput).toContain("Work - Conversation | Live");
+    expect(narrowOutput).toContain("Step 2/5");
   });
 
   it("wraps display-wide completed agent lines without losing content", () => {
@@ -1249,14 +1252,19 @@ describe("Ink TUI renderer", () => {
       { columns: 64 }
     );
     const agentLines = framedContentLines(output)
-      .filter((value) => value.startsWith("┃   "));
+      .filter((value) =>
+        value.includes("ContextBundle") ||
+        value.includes("approved memory") ||
+        value.includes("context-compiler.ts") ||
+        value.includes("自动换行")
+      );
 
     expect(output).toContain("目标仓库");
     expect(output).toContain("显式/角色技能");
     expect(output).toContain("context-compiler.ts");
     expect(output).toContain("需要实现自动换行");
     expect(agentLines.length).toBeGreaterThan(1);
-    expect(agentLines.every((value) => value.startsWith("┃   "))).toBe(true);
+    expect(agentLines.every((value) => !value.includes("…"))).toBe(true);
   });
 
   it("wraps CJK selected detail content across release smoke widths", () => {
@@ -1380,7 +1388,7 @@ describe("Ink TUI renderer", () => {
     expect(output).toContain("keys:");
   });
 
-  it("collapses older active runs and keeps at most three full boxes", () => {
+  it("renders active runs as Work blocks without legacy active boxes", () => {
     const output = renderToString(
       React.createElement(TuiInkFrame, {
         model: {
@@ -1399,8 +1407,8 @@ describe("Ink TUI renderer", () => {
       { columns: 100 }
     );
 
-    expect(output.match(/\.\.\./g)?.length).toBe(2);
-    expect(output.match(/╭─ @codex run_active_/g)?.length).toBe(3);
+    expect(output).toContain("Work - Conversation | Live | 5 blocks");
+    expect(output.match(/run_active_/g)?.length).toBeGreaterThanOrEqual(5);
   });
 
   it("renders transient failure feedback when supplied by renderer state", () => {
@@ -1428,7 +1436,7 @@ describe("Ink TUI renderer", () => {
       { columns: 100 }
     );
 
-    expect(output).toContain("┃ !! @codex run_fail ✗ failed");
+    expect(output).toContain("@codex run_fail failed ✗");
   });
 
   it("renders Phase 5A terminal visual grammar in the conversation flow", () => {
@@ -1472,15 +1480,15 @@ describe("Ink TUI renderer", () => {
     );
 
     expect(output).toContain("◈ AGENT HUB | TUI Project");
-    expect(output).toContain("user 12:00:00");
+    expect(output).toContain("12:00:00 user user_message");
     expect(output).toContain("Inspect src/auth.ts:42 and run pnpm test.");
-    expect(output).toContain("┃ @reviewer run_abcdef12 ✓ completed");
+    expect(output).toContain("@reviewer run_abcdef12");
     expect(output).toContain("1m30s");
     expect(output).toContain("92k tok / $0.03");
-    expect(output).toContain("┃   src/auth.ts:42 needs the guard.");
-    expect(output).toContain("┃   pnpm test tests/auth.test.ts");
-    expect(output).toContain("┃   const message = \"ok\"; // comment");
-    expect(output).toContain("── 6m later ──");
+    expect(output).toContain("src/auth.ts:42 needs the guard.");
+    expect(output).toContain("pnpm test tests/auth.test.ts");
+    expect(output).toContain("const message = \"ok\"; // comment");
+    expect(output).toContain("12:06:00 | @reviewer");
     expect(output).not.toContain("more lines");
   });
 
@@ -1609,9 +1617,10 @@ describe("Ink TUI renderer", () => {
     );
 
     expect(state.selectedWorkBlockId).toBe("run:v3-block");
-    expect(output).toContain("> ┃ @implementer v3-block ✓ completed");
-    expect(output).toContain("> tools inferred 2 | files apps/cli/src/tui-ink/App.mts | commands");
-    expect(output).toContain("1");
+    expect(output).toContain("╭─ 12:04:00 @implementer completed ✓");
+    expect(output).toContain("> tools inferred 2");
+    expect(output).toContain("> files apps/cli/src/tui-ink/App.mts");
+    expect(output).toContain("> commands 1");
     expect(output).toContain("保持完整输出");
     expect(output).toContain("Tool Calls");
     expect(output).toContain("File Refs");
@@ -1638,9 +1647,9 @@ describe("Ink TUI renderer", () => {
       { columns: 100 }
     );
 
-    expect(idleOutput).toContain("┃   [1] Run more tests");
-    expect(idleOutput).toContain("┃   [2] Fix verification");
-    expect(idleOutput).toContain("┃   [3] Continue");
+    expect(idleOutput).toContain("[1] Run more tests");
+    expect(idleOutput).toContain("[2] Fix verification");
+    expect(idleOutput).toContain("[3] Continue");
     expect(typingOutput).not.toContain("[1] Run more tests");
   });
 
@@ -1680,7 +1689,7 @@ describe("Ink TUI renderer", () => {
     );
 
     expect(output).toContain("4 pending reviews collapsed");
-    expect(output).toContain("╭ diff (+1/-1 in 1 files)");
+    expect(output).toContain("> diff (+1/-1 in 1 files)");
     expect(output).toContain("diff --git a/src/auth.ts b/src/auth.ts");
     expect(output).toContain("-const mode = \"old\";");
     expect(output).toContain("+const mode = \"new\";");
@@ -2196,7 +2205,7 @@ describe("Ink TUI renderer", () => {
       })
     );
 
-    await waitForFrame(instance, "@codex run_short ✓ completed");
+    await waitForFrame(instance, "@codex run_short completed ✓");
 
     expect(notifications).toEqual([]);
     instance.unmount();
@@ -2354,7 +2363,7 @@ describe("Ink TUI renderer", () => {
 
     await new Promise((resolve) => setTimeout(resolve, 30));
 
-    expect(instance.lastFrame()).toContain("@codex run_polled01 ✓ completed");
+    expect(instance.lastFrame()).toContain("@codex run_polled01 completed ✓");
     instance.unmount();
   });
 
@@ -2456,7 +2465,7 @@ describe("Ink TUI renderer", () => {
       expect.objectContaining({ prompt: "@unknown summarize" })
     ]);
     expect(instance.lastFrame()).toContain("Submitted prompt.");
-    expect(instance.lastFrame()).toContain("@codex run_12345678 ✓ completed");
+    expect(instance.lastFrame()).toContain("@codex run_12345678 completed ✓");
     instance.unmount();
   });
 
