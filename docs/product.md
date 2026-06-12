@@ -169,6 +169,14 @@ The current optimization plan is tracked in
 focuses on footer command hierarchy, narrow-terminal layout, attention/next
 action summaries, warning hygiene, stale active-run signals, and copy/help
 consistency.
+The next proposed TUI refactor is tracked in `docs/tui-v3-roadmap.md`. It keeps
+the current Ink/read-model boundary but moves toward a denser three-region
+terminal workbench: persistent side navigation, a main workflow surface, and a
+selected-object detail panel for Work, Memory, and Team. The plan explicitly
+marks bottom-layer gaps such as generic detail payloads, structured tool-call
+events, memory proposal evidence rows, delegation matrices, role profiles, and
+audited memory action callbacks so later implementation phases do not fake
+unsupported evidence.
 The TUI composer is prompt-first while editing: printable lowercase keys append
 to the prompt from any focus, uppercase tab shortcuts switch
 Work/Runs/View/Graph/Tasks/Memory/Team, `/team` opens the Team roles view
@@ -648,8 +656,9 @@ Not implemented as product behavior today:
 Roadmaps for future work live in `docs/local-ai-workgroup-roadmap.md`,
 `docs/interaction-optimization-roadmap.md`, `docs/tui-roadmap.md`,
 `docs/tui-conversation-terminal-roadmap.md`,
-`docs/tui-optimization-roadmap.md`, `docs/memory-automation-roadmap.md`, and
-the Adaptive Role Calls specification documents. Those files describe
+`docs/tui-optimization-roadmap.md`, `docs/tui-v3-roadmap.md`,
+`docs/memory-automation-roadmap.md`, and the Adaptive Role Calls specification
+documents. Those files describe
 direction; this document describes the current product state. The
 conversation-terminal TUI roadmap now records the
 implemented Work-view direction and remaining hardening guidance: the current
