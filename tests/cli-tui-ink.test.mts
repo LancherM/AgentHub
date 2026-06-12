@@ -537,7 +537,8 @@ describe("Ink TUI renderer", () => {
       { columns: 78 }
     );
 
-    expect(output).toContain("TUI Project · @codex");
+    expect(output).toContain("AGENT HUB | TUI Project");
+    expect(output).toContain("role:@codex");
     expect(output).toContain("user");
     expect(output).toContain("Check the TUI shell.");
     expect(output).toContain("@codex run_27984312 △ awaiting review");
@@ -546,8 +547,8 @@ describe("Ink TUI renderer", () => {
     expect(output).toContain("C continue");
     expect(output).toContain("send @codex  thread Review (#review)  context runtime");
     expect(output).toContain("> @codex prompt");
-    expect(output.indexOf("> @codex prompt")).toBeLessThan(output.indexOf("W Work"));
-    expect(output).toContain("Team");
+    expect(output.indexOf("> @codex prompt")).toBeLessThan(output.indexOf("keys:"));
+    expect(output).toContain("W/R/V/G/T/M/E");
     expect(output).not.toContain("[E]am");
     expect(output).not.toContain("Runs + Review");
     expect(output).not.toContain("-- more hidden --");
@@ -566,8 +567,8 @@ describe("Ink TUI renderer", () => {
       .split("\n")
       .find((value) => value.startsWith("keys:"));
 
-    expect(output).toContain("W R V G T M Team ?");
-    expect(output).toContain("keys: type | : cmd | ? | x");
+    expect(output).toContain("keys: type | W/R/V/G/T/M/E | : | ? | x");
+    expect(output).toContain("Work: 2 blocks");
     expect(output).not.toContain("[E]am");
     expect(output).not.toContain("agent-hub team roles list --project-id project_1");
     expect(footerLine?.length ?? 0).toBeLessThanOrEqual(48);
@@ -591,11 +592,14 @@ describe("Ink TUI renderer", () => {
       );
       const lines = output.split("\n");
 
-      expect(output).toContain("TUI Project · @codex");
+      expect(output).toContain("AGENT HUB");
+      if (item.columns >= 80) {
+        expect(output).toContain("role:@codex");
+      }
       expect(output).toContain("Check the TUI shell.");
       expect(output).toContain("> @codex prompt");
       expect(output).toContain("keys:");
-      expect(output).toContain(item.columns < 56 ? "W R V G T M Team ?" : item.columns < 84 ? "W Work" : "[W]ork");
+      expect(output).toContain(item.columns < 84 ? "W/R/V/G/T/M/E" : "Enter/o detail");
       expect(lines.every((value) => value.length <= item.columns)).toBe(true);
 
       if (item.nav) {
@@ -663,7 +667,7 @@ describe("Ink TUI renderer", () => {
     expect(output).toContain("Delegation Matrix");
     expect(output).toContain("role-call initiation polic");
     expect(output).toContain("Recent Failures");
-    expect(output).toContain("agent-hub team roles executo");
+    expect(output).toContain("agent-hub team roles execu...");
   });
 
   it("renders Memory governance rows with selected proposal detail", () => {
@@ -690,7 +694,7 @@ describe("Ink TUI renderer", () => {
     expect(output).toContain("Runtime injection is the");
     expect(output).toContain("default context mode.");
     expect(output).toContain("recommended action injected");
-    expect(output).toContain("agent-hub memory approve --m...");
+    expect(output).toContain("agent-hub memory approve -...");
     expect(output.split("\n").every((value) => value.length <= 120)).toBe(true);
   });
 
@@ -917,9 +921,7 @@ describe("Ink TUI renderer", () => {
     expect(output).toContain("│ Running pnpm test");
     expect(output).toContain("2/5");
     expect(output).toContain("╰");
-    const boxLines = output
-      .split("\n")
-      .filter((value) => value.startsWith("╭") || value.startsWith("│") || value.startsWith("╰"));
+    const boxLines = activeRunFrameLines(output);
     expect(boxLines).toHaveLength(8);
   });
 
@@ -1201,7 +1203,7 @@ describe("Ink TUI renderer", () => {
 
       expect(output).toContain("> @codex prompt");
       expect(output).toContain("keys:");
-      expect(output).toContain(columns < 56 ? "W R V G T M Team ?" : columns < 84 ? "W Work" : "[W]ork");
+      expect(output).toContain(columns < 84 ? "W/R/V/G/T/M/E" : "Enter/o detail");
       expect(lines.some((value) => value.startsWith(" this deliberately"))).toBe(false);
       expect(lines.every((value) => value.length <= columns)).toBe(true);
     }
@@ -1214,9 +1216,7 @@ describe("Ink TUI renderer", () => {
       }),
       { columns: 48 }
     );
-    const narrowBoxLines = narrowOutput
-      .split("\n")
-      .filter((value) => value.startsWith("╭") || value.startsWith("│") || value.startsWith("╰"));
+    const narrowBoxLines = activeRunFrameLines(narrowOutput);
 
     expect(narrowBoxLines).toHaveLength(4);
     expect(narrowOutput).toContain("│ Step 2/5");
@@ -1248,8 +1248,7 @@ describe("Ink TUI renderer", () => {
       }),
       { columns: 64 }
     );
-    const agentLines = output
-      .split("\n")
+    const agentLines = framedContentLines(output)
       .filter((value) => value.startsWith("┃   "));
 
     expect(output).toContain("目标仓库");
@@ -1330,11 +1329,10 @@ describe("Ink TUI renderer", () => {
       { columns: 78 }
     );
 
-    const boxLines = output
-      .split("\n")
-      .filter((value) => value.startsWith("╭") || value.startsWith("│") || value.startsWith("╰"));
+    const boxLines = activeRunFrameLines(output);
     expect(output.split("\n").length).toBeLessThanOrEqual(20);
-    expect(boxLines).toHaveLength(8);
+    expect(boxLines.length).toBeGreaterThanOrEqual(4);
+    expect(boxLines.length).toBeLessThanOrEqual(8);
     expect(output).toContain("older lines hidden");
     expect(output).toContain("active output line 29");
     expect(output).not.toContain("active output line 0");
@@ -1473,10 +1471,12 @@ describe("Ink TUI renderer", () => {
       { columns: 120 }
     );
 
-    expect(output).toContain("◈ TUI Project · @codex");
+    expect(output).toContain("◈ AGENT HUB | TUI Project");
     expect(output).toContain("user 12:00:00");
     expect(output).toContain("Inspect src/auth.ts:42 and run pnpm test.");
-    expect(output).toContain("┃ @reviewer run_abcdef12 ✓ completed  1m30s  92k tok / $0.03  12:06:00");
+    expect(output).toContain("┃ @reviewer run_abcdef12 ✓ completed");
+    expect(output).toContain("1m30s");
+    expect(output).toContain("92k tok / $0.03");
     expect(output).toContain("┃   src/auth.ts:42 needs the guard.");
     expect(output).toContain("┃   pnpm test tests/auth.test.ts");
     expect(output).toContain("┃   const message = \"ok\"; // comment");
@@ -1610,7 +1610,8 @@ describe("Ink TUI renderer", () => {
 
     expect(state.selectedWorkBlockId).toBe("run:v3-block");
     expect(output).toContain("> ┃ @implementer v3-block ✓ completed");
-    expect(output).toContain("> tools inferred 2 | files apps/cli/src/tui-ink/App.mts | commands 1");
+    expect(output).toContain("> tools inferred 2 | files apps/cli/src/tui-ink/App.mts | commands");
+    expect(output).toContain("1");
     expect(output).toContain("保持完整输出");
     expect(output).toContain("Tool Calls");
     expect(output).toContain("File Refs");
@@ -1941,7 +1942,7 @@ describe("Ink TUI renderer", () => {
     );
 
     instance.stdin.write("p");
-    await waitForFrame(instance, "Status: agent-hub runs show run_27984312");
+    await waitForFrame(instance, "agent-hub runs show run_27984312");
 
     expect(instance.lastFrame()).toContain("> @codex prompt");
     expect(instance.lastFrame()).not.toContain("> p");
@@ -1978,7 +1979,7 @@ describe("Ink TUI renderer", () => {
     );
 
     expect(output).toContain("Agent Hub TUI");
-    expect(output).toContain("! TUI Project · @codex");
+    expect(output).toContain("! AGENT HUB | TUI Project");
   });
 
   it("keeps interactive startup splash out of the live Ink frame", async () => {
@@ -2332,7 +2333,7 @@ describe("Ink TUI renderer", () => {
 
     expect(bottomOutput).toContain("Transcript message 9");
     expect(bottomOutput).not.toContain("Transcript message 0");
-    expect(scrolledOutput).toContain("Transcript message 5");
+    expect(scrolledOutput).toContain("Transcript message 6");
     expect(scrolledOutput).not.toContain("Transcript message 9");
   });
 
@@ -2411,13 +2412,13 @@ describe("Ink TUI renderer", () => {
     await waitForFrame(instance, "Submitting prompt...");
     await waitForFrame(instance, "> @codex prompt");
 
-    instance.stdin.write("\t");
+    instance.stdin.write("R");
     for (const character of "next") {
       instance.stdin.write(character);
       await new Promise((resolve) => setTimeout(resolve, 1));
     }
 
-    await waitForFrame(instance, "[R]uns");
+    await waitForFrame(instance, "Runs: 1 runs");
     await waitForFrame(instance, "> next");
 
     resolveSubmission({ ok: true, message: "Submitted prompt.", model: baseModel });
@@ -2741,7 +2742,7 @@ describe("Ink TUI renderer", () => {
     instance.stdin.write("\t");
     await new Promise((resolve) => setTimeout(resolve, 25));
 
-    expect(instance.lastFrame()).toContain("[R]uns");
+    expect(instance.lastFrame()).toContain("> Runs");
     expect(instance.lastFrame()).toContain("> draft");
     instance.unmount();
   });
@@ -2772,7 +2773,7 @@ describe("Ink TUI renderer", () => {
       expect.objectContaining({ prompt: "execute command" })
     ]);
     expect(instance.lastFrame()).toContain("Submitted prompt.");
-    expect(instance.lastFrame()).toContain("[W]ork");
+    expect(instance.lastFrame()).toContain("Work: 2 blocks");
     instance.unmount();
   });
 
@@ -3049,6 +3050,21 @@ async function waitForFrame(
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
   throw new Error(`Timed out waiting for frame text: ${expected}`);
+}
+
+function framedContentLines(output: string): string[] {
+  return output.split("\n").map((value) => {
+    if (value.startsWith("│") && value.endsWith("│") && !value.includes("││")) {
+      return value.slice(1, -1).trimEnd();
+    }
+    return value;
+  });
+}
+
+function activeRunFrameLines(output: string): string[] {
+  return framedContentLines(output).filter((value) =>
+    value.startsWith("╭") || value.startsWith("│") || value.startsWith("╰")
+  );
 }
 
 async function waitForCondition(

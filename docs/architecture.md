@@ -587,9 +587,10 @@ new persistence or raw log/diff rendering.
 The V3 TUI plan in `docs/tui-v3-roadmap.md` keeps the same boundary while
 introducing a shared shell frame, selected-object detail contract, and
 table/detail primitives for Work, Memory, and Team. `TuiInkFrame` composes a
-shared shell with header, persistent side navigation at normal and wide widths,
-the existing main view, a wide-width detail rail, medium/narrow detail overlay,
-composer, tab map, and bottom shortcut/status chrome. That shell passes
+shared shell with branded metadata header, persistent side navigation at normal
+and wide widths, framed main/detail regions, a wide-width detail rail,
+medium/narrow detail overlay, composer, hotkey band, and bottom status band.
+That shell passes
 column-adjusted terminal dimensions into the existing view renderers and does
 not add storage access or persistence.
 The selected-object detail contract lives in `packages/core/src/tui-read-model.ts`
@@ -666,11 +667,11 @@ metadata; no executor backend, database table, daemon, or desktop behavior is
 added for the TUI.
 Terminal polish is also contained in the CLI renderer. It compacts identifiers,
 renders the Work view as a conversation flow plus bounded active-run boxes,
-moves the shortcut-labelled Work/Runs/View/Graph/Tasks/Memory/Team/Help tabs
-below the composer, renders a focus-specific shortcut hint as the bottom line,
-uses width-aware tab/footer labels so narrow terminals keep primary keys
-readable, and uses Ink components for terminal layout instead of hand-wrapped
-string panels. Full current-context CLI commands stay in Palette, focused
+moves Work/Runs/View/Graph/Tasks/Memory/Team/Help into the persistent side
+navigation when width allows, renders focus-specific hotkey and status bands
+below the composer, uses width-aware footer labels so narrow terminals keep
+primary keys readable, and uses Ink components for terminal layout instead of
+hand-wrapped string panels. Full current-context CLI commands stay in Palette, focused
 detail panes, or explicit command-print status messages rather than permanent
 footer chrome. Work layout budgets are calculated from terminal width/height
 after reserving fixed chrome rows for the header, warnings/status, attention
@@ -876,6 +877,11 @@ behavior. Its local implementation prompt companion is
 `docs/tui-v3-implementation-prompts.md`; that prompt pack is intentionally kept
 under the ignored implementation-prompt convention unless the user explicitly
 asks to publish it.
+The V3 reference-gap follow-up is tracked in
+`docs/tui-v3-reference-gap-roadmap.md`; its first implemented slice keeps the
+Ink/read-model boundary while aligning the shell frame with the reference
+console chrome through a branded header, framed nav/main/detail panels, and
+separate composer, hotkey, and status bands.
 The reference-gap follow-up is documented in
 `docs/tui-v3-reference-gap-roadmap.md`, with local prompts in
 `docs/tui-v3-reference-gap-implementation-prompts.md` under the same ignored

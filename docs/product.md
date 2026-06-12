@@ -95,17 +95,20 @@ runtime warnings, Codex internal diagnostics, and skill activation noise. Runs a
 files leave the active box and render their completed output plus
 verification/risk summaries and a final `[V]iew` review hint. Runs with no
 changed files render as completed output without an awaiting-review prompt.
-The Work conversation uses a terminal-native visual grammar: the header is a
-reverse-color status bar with project, selected agent, iteration, risk, and the
-current clock; high/blocking risk turns the header red and medium risk turns it
-yellow. Idle sessions show a low-flicker `◈` indicator that does not drive a
-constant screen repaint, while active sessions use the running marker. Agent
+The Work conversation uses a terminal-native visual grammar inside the shared
+TUI shell frame: the branded header starts with `AGENT HUB`, then shows project,
+role, room, context mode, focused view, iteration/risk, and the current clock
+as width permits; high/blocking risk turns the header red and medium risk turns
+it yellow. Idle sessions show a low-flicker `◈` indicator that does not drive a
+constant screen repaint, while active sessions use the running marker. Normal
+and wide terminals frame the side navigation, main Work surface, and detail rail
+with visible borders; narrow terminals fall back to a single framed panel. Agent
 and role-backed run entries use a colored left `┃` bar, role/run/status
 metadata, elapsed time, optional token/cost usage, and a timestamp. User
 messages stay plain with a timestamp. The Work viewport budgets fixed chrome
-rows for the header, warnings/status/attention strip, composer, tabs, and
-status bar before slicing the visible conversation tail, so long agent output
-does not push earlier visible rows under the header. Conversation content
+rows for the header, attention strip, framed panel borders, composer, hotkey
+band, and status band before slicing the visible conversation tail, so long
+agent output does not push earlier visible rows under the header. Conversation content
 keeps file paths underlined and blue with safe OSC 8 file links when the
 terminal supports them, shell-command lines bold, and fenced code blocks lightly
 highlighted for keywords, strings, and comments. Agent output content is not
@@ -162,9 +165,10 @@ alter run behavior, or invoke external services. Startup splash is explicit:
 `--splash` prints a short prelude before the interactive Ink frame, so the live
 frame does not need a delayed splash-removal repaint; `--no-splash` suppresses
 it.
-The default tab bar matches the conversation-terminal scheme: Work, Runs, View,
-Graph, Tasks, Memory, Team, and Help stay one key away instead of being
-embedded into the first screen.
+The persistent side navigation keeps Work, Runs, View, Graph, Tasks, Memory,
+Team, and Help one key away at normal and wide widths. The bottom chrome is
+split into composer, hotkey, and status bands; narrow terminals keep compact
+focus keys in the hotkey band instead of rendering a duplicate tab row.
 One-shot TUI renders (`--once`) are intended for quick smoke checks and return
 to the shell after printing the current workbench. Normal `agent-hub tui`
 launches stay open when stdin/stdout are an interactive terminal with raw-mode
@@ -181,10 +185,10 @@ action summaries, warning hygiene, stale active-run signals, and copy/help
 consistency.
 The next TUI refactor is tracked in `docs/tui-v3-roadmap.md`. Its first runtime
 slices keep the current Ink/read-model boundary while moving the TUI into a
-shared shell frame and selected-object detail contract. The shell includes the
-header, persistent side navigation at normal and wide widths, main workflow
-surface, wide detail rail, medium/narrow detail overlay, composer, tab map, and
-bottom shortcut/status chrome. The core read model now exposes presentation
+shared shell frame and selected-object detail contract. The shell now includes
+the branded metadata header, framed side navigation at normal and wide widths,
+framed main workflow surface, wide detail rail, medium/narrow detail overlay,
+composer, hotkey band, and bottom status band. The core read model now exposes presentation
 detail payloads for Work blocks, runs, RoleCalls, tasks, team roles, and memory
 governance; `Enter` or empty-composer `o` opens the selected detail without
 letting Ink read lower-level stores. Unsupported evidence such as structured
@@ -202,11 +206,11 @@ when those fields come from persisted read-model evidence.
 Reference fidelity follow-up work is tracked in
 `docs/tui-v3-reference-gap-roadmap.md`. That plan treats the current
 `codex/tui-v3-roadmap` branch as the baseline and focuses on matching the
-supplied terminal mockups more closely: framed shell chrome, branded header
-metadata, dense Work block layout, view-specific detail titles and scrolling,
-Memory inbox bands, Team roles/matrix/profile layout, and deterministic visual
-fixtures. It does not relax the local read-model boundary or permit fabricated
-evidence.
+supplied terminal mockups more closely. The framed shell chrome and branded
+header metadata are implemented; remaining slices focus on dense Work block
+layout, view-specific detail titles and scrolling, Memory inbox bands, Team
+roles/matrix/profile layout, and deterministic visual fixtures. It does not
+relax the local read-model boundary or permit fabricated evidence.
 Selected active-run Work blocks expose a live detail view over the same polling
 read model: speaker, running state, started time, elapsed label, spinner state,
 streaming output tail, inferred tool text, inferred active commands, and

@@ -224,7 +224,7 @@ export function TuiInkApp(props: TuiInkAppProps): React.ReactElement {
 
   const applyKey = (key: TuiInkKey) => {
     const nextState = reduceInkState(stateRef.current, key, modelRef.current);
-    setState(nextState);
+    setStateNow(nextState);
   };
 
   const setStateNow = (nextState: TuiInkState) => {
@@ -872,11 +872,8 @@ function ShellFrame({
     { flexDirection: "column", width },
     ...(showSplash ? [h(SplashPane, { key: "splash" })] : []),
     h(HeaderBar, { model, state, terminal, badgeFlash }),
-    ...model.warnings.map((warning) => line(`! ${warning}`, { color: "yellow" })),
-    ...(state.statusMessage ? [line(`Status: ${state.statusMessage}`, { color: "green" })] : []),
-    ...(attentionItems.length > 0
-      ? [h(AttentionStrip, { items: attentionItems, terminal })]
-      : []),
+    h(HorizontalRule, { width }),
+    h(ShellNoticeBand, { model, attentionItems, terminal }),
     h(WorkbenchLayout, {
       model,
       state,
@@ -884,9 +881,10 @@ function ShellFrame({
       animationTick,
       feedbackByRunId
     }),
+    h(HorizontalRule, { width }),
     h(Composer, { model, state }),
-    h(FocusTabs, { state, terminal }),
-    h(StatusBar, { state, terminal })
+    h(HotkeyBar, { state, terminal }),
+    h(StatusBar, { model, state, terminal, attentionItems })
   );
 }
 
@@ -903,23 +901,27 @@ function HeaderBar({
 }): React.ReactElement {
   const idle = model.activeRuns.length === 0 && state.composer.length === 0;
   const project = model.context.projectName ?? model.context.projectId ?? "unregistered";
-  const agent = model.context.selectedAgent ? `@${model.context.selectedAgent}` : "@agent";
+  const room = model.context.roomHandle ?? model.context.threadTitle ?? model.context.threadId ?? "current";
+  const role = composerTarget(model, state);
   const loop = model.roleCalls.loop.maxIterations === undefined
     ? `iter ${model.roleCalls.loop.iteration}`
     : `iter ${model.roleCalls.loop.iteration}/${model.roleCalls.loop.maxIterations}`;
   const risk = highestRisk(model);
   const parts: HeaderPart[] = [
+    { text: "AGENT HUB", bold: true },
     { text: project, bold: true },
-    { text: agent },
-    { text: loop },
-    { text: `risk ${risk}` }
+    { text: `role:${role}` },
+    { text: `room:${room}` },
+    { text: `mode:${contextModeLabel(model.context.contextMode)}` },
+    { text: focusDisplayLabel(state.focus) }
   ];
   const clock = formatHeaderClock(new Date());
   const symbol = badgeFlash ? "!" : idle ? "◈" : "●";
-  const availableWidth = Math.max(12, terminal.columns - clock.length - 4);
+  const rightStatus = `${loop} | risk ${risk} | ${clock}`;
+  const availableWidth = Math.max(12, terminal.columns - rightStatus.length - 4);
   const visibleParts = compactHeaderParts(parts, availableWidth);
   const leftText = headerPartsText(visibleParts);
-  const content = `${leftText}${" ".repeat(Math.max(1, terminal.columns - leftText.length - clock.length - 2))}${clock}`;
+  const content = `${leftText}${" ".repeat(Math.max(1, terminal.columns - leftText.length - rightStatus.length - 2))}${rightStatus}`;
   const headerColor = riskHeaderColor(risk);
   return h(
     Box,
@@ -937,6 +939,13 @@ function HeaderBar({
   );
 }
 
+function focusDisplayLabel(focus: TuiInkFocus): string {
+  if (focus === "graph") {
+    return "Graph";
+  }
+  return `${focus.slice(0, 1).toUpperCase()}${focus.slice(1)}`;
+}
+
 interface HeaderPart {
   text: string;
   color?: string;
@@ -949,16 +958,43 @@ interface AttentionItem {
   color?: string;
 }
 
-function AttentionStrip({
-  items,
+function ShellNoticeBand({
+  model,
+  attentionItems,
   terminal
 }: {
-  items: AttentionItem[];
+  model: TuiCurrentContextModel;
+  attentionItems: AttentionItem[];
   terminal: TuiInkTerminalSize;
 }): React.ReactElement {
-  return line(attentionStripText(items, terminal.columns), {
-    color: items[0]?.color ?? "yellow"
-  });
+  const notices = [
+    ...model.warnings.map((warning) => ({
+      text: `! ${warning}`,
+      color: "yellow"
+    })),
+    ...(attentionItems.length > 0
+      ? [{
+          text: attentionStripText(attentionItems, terminal.columns),
+          color: attentionItems[0]?.color ?? "yellow"
+        }]
+      : [])
+  ];
+  if (notices.length === 0) {
+    return h(React.Fragment, null);
+  }
+  return h(
+    Box,
+    { flexDirection: "column", width: terminal.columns },
+    ...notices.map((notice) =>
+      line(truncateText(notice.text, terminal.columns), {
+        color: notice.color
+      })
+    )
+  );
+}
+
+function HorizontalRule({ width }: { width: number }): React.ReactElement {
+  return line("─".repeat(Math.max(1, width)), { dimColor: true });
 }
 
 function attentionStripText(items: AttentionItem[], columns: number): string {
@@ -1148,76 +1184,6 @@ function useCompletionNotifications(
   }, [model, notify, notifyEnabled]);
 }
 
-function FocusTabs({
-  state,
-  terminal
-}: {
-  state: TuiInkState;
-  terminal: TuiInkTerminalSize;
-}): React.ReactElement {
-  const tabs = focusTabLabels(terminal.columns);
-  return h(
-    Box,
-    { flexDirection: "row" },
-    ...tabs.map((tab) => h(FocusTab, {
-        key: tab.focus,
-        active: tab.focus === state.focus,
-        label: tab.label
-      }))
-  );
-}
-
-function FocusTab({
-  active,
-  label
-}: {
-  active: boolean;
-  label: string;
-}): React.ReactElement {
-  return h(
-    Box,
-    { marginRight: 1 },
-    h(Text, { color: "green", bold: true, inverse: active, wrap: "truncate" }, label)
-  );
-}
-
-function focusTabLabels(columns: number): Array<{ focus: TuiInkFocus; label: string }> {
-  if (columns < 56) {
-    return [
-      { focus: "work", label: "W" },
-      { focus: "runs", label: "R" },
-      { focus: "review", label: "V" },
-      { focus: "graph", label: "G" },
-      { focus: "tasks", label: "T" },
-      { focus: "memory", label: "M" },
-      { focus: "team", label: "Team" },
-      { focus: "help", label: "?" }
-    ];
-  }
-  if (columns < 84) {
-    return [
-      { focus: "work", label: "W Work" },
-      { focus: "runs", label: "R Runs" },
-      { focus: "review", label: "V View" },
-      { focus: "graph", label: "G Graph" },
-      { focus: "tasks", label: "T Tasks" },
-      { focus: "memory", label: "M Mem" },
-      { focus: "team", label: "Team" },
-      { focus: "help", label: "?" }
-    ];
-  }
-  return [
-    { focus: "work", label: "[W]ork" },
-    { focus: "runs", label: "[R]uns" },
-    { focus: "review", label: "[V]iew" },
-    { focus: "graph", label: "[G]raph" },
-    { focus: "tasks", label: "[T]asks" },
-    { focus: "memory", label: "[M]em" },
-    { focus: "team", label: "Team" },
-    { focus: "help", label: "?" }
-  ];
-}
-
 interface TuiInkRenderProps {
   model: TuiCurrentContextModel;
   state: TuiInkState;
@@ -1236,32 +1202,85 @@ function WorkbenchLayout(props: TuiInkRenderProps): React.ReactElement {
   const { model, state, terminal } = props;
   const layout = workbenchLayoutSpec(terminal);
   if (layout.navWidth === 0) {
+    const contentWidth = panelContentWidth(terminal.columns);
     if (state.detailVisible) {
-      return h(DetailPane, { model, state, width: terminal.columns });
+      return h(
+        FramedPanel,
+        { width: terminal.columns, borderColor: "cyan" },
+        h(DetailPane, { model, state, width: contentWidth })
+      );
     }
-    return h(MainView, props);
+    return h(
+      FramedPanel,
+      { width: terminal.columns, borderColor: "cyan" },
+      h(MainView, {
+        ...props,
+        terminal: {
+          ...terminal,
+          columns: contentWidth
+        }
+      })
+    );
   }
 
   const mainTerminal = {
     ...terminal,
-    columns: layout.mainWidth
+    columns: panelContentWidth(layout.mainWidth)
   };
   const showInlineDetail = state.detailVisible && layout.detailWidth === 0;
   return h(
     Box,
     { flexDirection: "row", width: terminal.columns },
-    h(SideNav, { model, state, width: layout.navWidth }),
     h(
-      Box,
-      { flexDirection: "column", width: layout.mainWidth, flexShrink: 1 },
+      FramedPanel,
+      { width: layout.navWidth, borderColor: "cyan" },
+      h(SideNav, { model, state, width: panelContentWidth(layout.navWidth) })
+    ),
+    h(
+      FramedPanel,
+      { width: layout.mainWidth, borderColor: "cyan", flexShrink: 1 },
       showInlineDetail
-        ? h(DetailPane, { model, state, width: layout.mainWidth })
+        ? h(DetailPane, { model, state, width: panelContentWidth(layout.mainWidth) })
         : h(MainView, { ...props, terminal: mainTerminal })
     ),
     ...(layout.detailWidth > 0
-      ? [h(DetailPane, { model, state, width: layout.detailWidth })]
+      ? [
+          h(
+            FramedPanel,
+            { width: layout.detailWidth, borderColor: "cyan" },
+            h(DetailPane, { model, state, width: panelContentWidth(layout.detailWidth) })
+          )
+        ]
       : [])
   );
+}
+
+function FramedPanel({
+  children,
+  width,
+  borderColor,
+  flexShrink
+}: {
+  children?: React.ReactNode;
+  width: number;
+  borderColor?: string;
+  flexShrink?: number;
+}): React.ReactElement {
+  return h(
+    Box,
+    {
+      borderStyle: "single",
+      borderColor,
+      flexDirection: "column",
+      width,
+      flexShrink: flexShrink ?? 0
+    },
+    children
+  );
+}
+
+function panelContentWidth(width: number): number {
+  return Math.max(1, width - 2);
 }
 
 function workbenchLayoutSpec(terminal: TuiInkTerminalSize): WorkbenchLayoutSpec {
@@ -1604,7 +1623,7 @@ function WorkView({
   animationTick,
   feedbackByRunId
 }: TuiInkRenderProps): React.ReactElement {
-  const chromeLineBudget = workChromeLineBudget(model, state);
+  const chromeLineBudget = workChromeLineBudget(model, state, terminal);
   const workBlocks = workBlocksForModel(model);
   const { collapsedBoxes, fullBoxes } = activeRunLayout(model.activeRuns, terminal, chromeLineBudget);
   const activeLineCost = activeRunLineCost(collapsedBoxes, fullBoxes, terminal, chromeLineBudget);
@@ -3132,7 +3151,7 @@ function Composer({ model, state }: { model: TuiCurrentContextModel; state: TuiI
   );
 }
 
-function StatusBar({
+function HotkeyBar({
   state,
   terminal
 }: {
@@ -3140,12 +3159,54 @@ function StatusBar({
   terminal: TuiInkTerminalSize;
 }): React.ReactElement {
   const hints = contextualShortcutHint(state, terminal.columns);
+  return line(hints, { dimColor: true });
+}
+
+function StatusBar({
+  model,
+  state,
+  terminal,
+  attentionItems
+}: {
+  model: TuiCurrentContextModel;
+  state: TuiInkState;
+  terminal: TuiInkTerminalSize;
+  attentionItems: AttentionItem[];
+}): React.ReactElement {
   const localState = [
+    `${focusDisplayLabel(state.focus)}: ${focusStatusMetric(model, state)}`,
+    state.detailVisible ? "detail open" : "normal",
+    attentionItems.length > 0 ? `attention ${attentionItems.length}` : "attention 0",
     state.notifyEnabled ? "notify on" : "notify off",
-    state.timelineOpen ? "timeline" : undefined
+    state.timelineOpen ? "timeline" : undefined,
+    state.statusMessage
   ].filter(Boolean).join("  ");
-  const showLocalState = terminal.columns >= 72 && localState.length > 0;
-  return line(`${hints}${showLocalState ? `  ${localState}` : ""}`, { dimColor: true });
+  return line(truncateText(localState, terminal.columns), { dimColor: true });
+}
+
+function focusStatusMetric(model: TuiCurrentContextModel, state: TuiInkState): string {
+  if (state.focus === "work") {
+    return `${workBlocksForModel(model).length} blocks`;
+  }
+  if (state.focus === "runs") {
+    return `${model.runs.length} runs`;
+  }
+  if (state.focus === "review") {
+    return `${model.runs.filter((run) => run.reviewDecision.status === "pending").length} pending`;
+  }
+  if (state.focus === "graph") {
+    return `${model.roleCalls.counts.visible ?? model.roleCalls.counts.total} calls`;
+  }
+  if (state.focus === "tasks") {
+    return `${model.tasks.length} tasks`;
+  }
+  if (state.focus === "memory") {
+    return `${model.memory.rows.length} proposals`;
+  }
+  if (state.focus === "team") {
+    return `${model.team.roles.length} roles`;
+  }
+  return "ready";
 }
 
 interface AgentCompletion {
@@ -3305,12 +3366,12 @@ function contextualShortcutHint(state: TuiInkState, columns: number): string {
     return "keys: W work | Tab focus | Esc back | x exit";
   }
   if (columns < 56) {
-    return "keys: type | : cmd | ? | x";
+    return "keys: type | W/R/V/G/T/M/E | : | ? | x";
   }
   if (columns < 84) {
-    return "keys: type prompt | C continue | : commands | ? help | x exit";
+    return "keys: type prompt | W/R/V/G/T/M/E | C continue | : palette | ? help | x exit";
   }
-  return "keys: type prompt | @ agents | C continue | L timeline | : palette | ? help | x exit";
+  return "keys: up/down/j/k move | Enter/o detail | >/< fold | za all fold | O all open | ? help | / palette";
 }
 
 function Pane({
@@ -3404,15 +3465,21 @@ function conversationWindowSize(
   );
 }
 
-function workChromeLineBudget(model: TuiCurrentContextModel, state: TuiInkState): number {
+function workChromeLineBudget(
+  model: TuiCurrentContextModel,
+  state: TuiInkState,
+  terminal: TuiInkTerminalSize
+): number {
   const headerLines = 1;
+  const headerSeparatorLines = 1;
   const warningLines = model.warnings.length;
-  const statusLines = state.statusMessage ? 1 : 0;
   const attentionLines = attentionItemsForModel(model).length > 0 ? 1 : 0;
+  const panelBorderLines = terminal.columns >= 40 ? 2 : 0;
+  const bottomSeparatorLines = 1;
   const composerLines = composerLineBudget(model, state);
-  const tabLines = 1;
+  const hotkeyLines = 1;
   const statusBarLines = 1;
-  return headerLines + warningLines + statusLines + attentionLines + composerLines + tabLines + statusBarLines;
+  return headerLines + headerSeparatorLines + warningLines + attentionLines + panelBorderLines + bottomSeparatorLines + composerLines + hotkeyLines + statusBarLines;
 }
 
 function composerLineBudget(model: TuiCurrentContextModel, state: TuiInkState): number {
@@ -3462,7 +3529,7 @@ function activeRunMinimumContentHeight(_terminal: TuiInkTerminalSize): number {
 }
 
 function activeRunMaximumContentHeight(terminal: TuiInkTerminalSize, chromeLineBudget: number): number {
-  return Math.max(1, terminal.rows - chromeLineBudget - minimumWorkConversationRows(terminal) - 3);
+  return Math.max(2, terminal.rows - chromeLineBudget - minimumWorkConversationRows(terminal) - 3);
 }
 
 function activeRunContentHeight(
@@ -4189,7 +4256,7 @@ function compactHeaderParts(parts: HeaderPart[], columns: number): HeaderPart[] 
 }
 
 function headerPartsText(parts: HeaderPart[]): string {
-  return parts.map((part) => part.text).join(" · ");
+  return parts.map((part) => part.text).join(" | ");
 }
 
 function riskHeaderColor(risk: string): string | undefined {
