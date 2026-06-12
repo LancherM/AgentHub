@@ -1,6 +1,6 @@
 # TUI V3 Roadmap
 
-Status: implementation in progress; V3-1 through V3-7 implemented
+Status: V3 implementation complete through verification hardening
 Last updated: 2026-06-12
 
 This roadmap defines the next major terminal UI refactor for Agent Hub. It is
@@ -435,6 +435,10 @@ Acceptance:
 ### Phase V3-8: Verification And Release Hardening
 
 Goal: make V3 changes hard to regress.
+
+Status: implemented. Final hardening adds read-model unsupported-placeholder
+coverage, renderer CJK/detail wrapping coverage across release smoke widths,
+full validation, rebuilt `--once` smoke checks, and manual PTY verification.
 
 Scope:
 

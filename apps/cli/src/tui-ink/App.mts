@@ -1444,10 +1444,22 @@ function detailSectionLines(
   }
   return [
     line(truncateText(title, width), { color }),
-    ...section.lines.slice(0, 6).map((value) =>
-      line(truncateText(`|   ${value}`, width), { dimColor: section.tone === "normal" })
+    ...section.lines.slice(0, 6).flatMap((value) =>
+      detailValueLines(value, width, { dimColor: section.tone === "normal" })
     )
   ];
+}
+
+function detailValueLines(
+  value: string,
+  width: number,
+  options: { dimColor?: boolean } = {}
+): React.ReactElement[] {
+  const prefix = "|   ";
+  const contentWidth = Math.max(1, width - terminalDisplayWidth(prefix));
+  return hardWrapLine(value, contentWidth).map((lineValue) =>
+    line(truncateText(`${prefix}${lineValue}`, width), options)
+  );
 }
 
 function detailToneColor(tone: TuiDetailSection["tone"]): string | undefined {

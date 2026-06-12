@@ -687,8 +687,9 @@ describe("Ink TUI renderer", () => {
     expect(output).toContain("proposed workflow_rule");
     expect(output).toContain("approved project_fact");
     expect(output).toContain("▌ approved");
-    expect(output).toContain("Runtime injection is the d...");
-    expect(output).toContain("recommended action injecte...");
+    expect(output).toContain("Runtime injection is the");
+    expect(output).toContain("default context mode.");
+    expect(output).toContain("recommended action injected");
     expect(output).toContain("agent-hub memory approve --m...");
     expect(output.split("\n").every((value) => value.length <= 120)).toBe(true);
   });
@@ -1257,6 +1258,54 @@ describe("Ink TUI renderer", () => {
     expect(output).toContain("需要实现自动换行");
     expect(agentLines.length).toBeGreaterThan(1);
     expect(agentLines.every((value) => value.startsWith("┃   "))).toBe(true);
+  });
+
+  it("wraps CJK selected detail content across release smoke widths", () => {
+    const model = {
+      ...baseModel,
+      selectionDetails: {
+        ...baseModel.selectionDetails,
+        workBlocks: [
+          {
+            ...baseModel.selectionDetails.workBlocks[0],
+            sections: [
+              {
+                id: "cjk-detail",
+                title: "CJK Detail",
+                lines: [
+                  "默认上下文注入保持仓库根目录干净，审批记忆必须显式完成，长句在详情面板内需要稳定换行。"
+                ]
+              },
+              {
+                id: "unsupported",
+                title: "Evidence Gap",
+                lines: ["related skills/memory joins not available in current read model"],
+                collapsedByDefault: true
+              }
+            ]
+          },
+          ...baseModel.selectionDetails.workBlocks.slice(1)
+        ]
+      }
+    };
+
+    for (const columns of [120, 80, 48]) {
+      const output = renderToString(
+        React.createElement(TuiInkFrame, {
+          model,
+          state: { ...createInitialInkState(), detailVisible: true },
+          terminal: { columns, rows: 40 }
+        }),
+        { columns }
+      );
+      const lines = output.split("\n");
+
+      expect(output).toContain("Block Detail");
+      expect(output).toContain("默认上下文注入");
+      expect(output).toContain("审批记忆");
+      expect(output).toContain("Evidence Gap (collapsed)");
+      expect(lines.every((value) => value.length <= columns)).toBe(true);
+    }
   });
 
   it("caps chatty active run boxes to preserve terminal row budget", () => {

@@ -225,7 +225,9 @@ selected-object detail, and detail sections can be expanded or collapsed with
 selected rows with a visible `▌` marker plus inverse row styling, and the
 bottom shortcut hint changes by focus instead of showing one global command
 string. Memory and Team tables include compact filter/sort labels. The
-permanent footer is
+selected-object detail pane wraps long value lines, including CJK text, IDs,
+paths, policy text, and unavailable-placeholder messages, using the same
+display-width-aware terminal rules as active output. The permanent footer is
 width-aware: narrow terminals keep only primary keys visible, while full
 current-context CLI commands remain in the command palette, focused detail
 panes, or explicit command-print status messages. The Work surface uses

@@ -50,6 +50,44 @@ describe("TUI current-context read model", () => {
       "thread missing_thread not found",
       "project missing_project not found"
     ]);
+    expect(model.selectionDetails.memory.sections).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "proposal-rows",
+          lines: ["not available in current read model"]
+        }),
+        expect.objectContaining({
+          id: "evidence",
+          lines: ["proposal evidence rows not available in current read model"]
+        }),
+        expect.objectContaining({
+          id: "writeback",
+          lines: ["context-store target path not available in current read model"],
+          collapsedByDefault: true
+        }),
+        expect.objectContaining({
+          id: "related",
+          tone: "warning",
+          lines: ["related skills/memory joins not available in current read model"],
+          collapsedByDefault: true
+        })
+      ])
+    );
+    expect(model.selectionDetails.teamRoles.find((detail) => detail.id === "preset:engineer")?.sections)
+      .toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            id: "delegation",
+            lines: ["role-call initiation policy not configured"],
+            collapsedByDefault: true
+          }),
+          expect.objectContaining({
+            id: "recent-role-calls",
+            lines: ["not available in current read model"],
+            collapsedByDefault: true
+          })
+        ])
+      );
   });
 
   it("summarizes transcript, runs, RoleCalls, tasks, memory, and skills in stable order", async () => {

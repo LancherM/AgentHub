@@ -752,7 +752,10 @@ Detail fold state is also local Ink state. The renderer tracks collapsed and
 explicitly expanded detail section ids so default-collapsed evidence, tool,
 snippet, verification, limit, and recent-failure sections can be expanded with
 `Space`, `>`, `O`, or `za`, and collapsed with `<` or another toggle. This fold
-state is not persisted and does not change the core read model.
+state is not persisted and does not change the core read model. Detail value
+lines are hard-wrapped in the renderer with the existing display-width-aware
+terminal helper, preserving the `|   ` detail prefix across wrapped CJK text,
+long ids, paths, policy text, and unavailable-placeholder messages.
 Notifications, timeline, and splash remain CLI renderer concerns.
 `/notify` toggles an in-memory flag for the current Ink session; when enabled,
 the renderer may write only terminal escape output (bell plus OSC 9) after a
