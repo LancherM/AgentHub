@@ -653,8 +653,8 @@ The reference fidelity follow-up in `docs/tui-v3-reference-gap-roadmap.md`
 keeps the same architecture and narrows the remaining work to composition:
 framed shell chrome, a dedicated Work block list renderer, view-specific
 scrollable detail panels, Memory inbox bands, Team matrix/profile layout, and
-deterministic visual fixtures. The first five composition slices are
-implemented inside `apps/cli/src/tui-ink` and local state; the follow-up should
+deterministic visual fixtures. These composition slices are implemented inside
+`apps/cli/src/tui-ink`, local state, and renderer tests; the follow-up should
 not add new persistence or renderer-side data access merely to satisfy the
 mockup.
 RoleCall loop controls reuse the core convergence helper plus TUI risk

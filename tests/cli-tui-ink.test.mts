@@ -1367,6 +1367,170 @@ describe("Ink TUI renderer", () => {
     }
   });
 
+  it("renders V3 reference fixtures across visual QA sizes", () => {
+    const sizes = [
+      { columns: 154, rows: 42 },
+      { columns: 160, rows: 48 },
+      { columns: 120, rows: 36 },
+      { columns: 80, rows: 24 }
+    ];
+    const completedWorkModel = {
+      ...baseModel,
+      selectionDetails: {
+        ...baseModel.selectionDetails,
+        workBlocks: [
+          baseModel.selectionDetails.workBlocks[0],
+          {
+            ...baseModel.selectionDetails.workBlocks[1],
+            sections: [
+              {
+                id: "message",
+                title: "Message",
+                lines: [
+                  "awaiting review - open [V]iew for details",
+                  "审批记忆必须显式完成，长句在详情面板内需要稳定换行。"
+                ]
+              },
+              ...baseModel.selectionDetails.workBlocks[1].sections.slice(1)
+            ]
+          }
+        ]
+      }
+    };
+    const liveWorkModel = {
+      ...baseModel,
+      conversation: [],
+      activeRuns: [
+        {
+          runId: "run_reference_live",
+          agent: "codex",
+          displayHandle: "engineer",
+          title: "@engineer run_reference_live ● running",
+          startedAt: "2026-05-29T12:00:00.000Z",
+          elapsedLabel: "45s",
+          usageLabel: "12k tok",
+          outputLines: ["Reading src/auth.ts", "pnpm test tests/auth.test.ts"]
+        }
+      ],
+      workBlocks: [
+        {
+          id: "active-run:run_reference_live",
+          sourceId: "run_reference_live",
+          sourceKind: "active_run",
+          type: "active_run",
+          runId: "run_reference_live",
+          timestamp: "2026-05-29T12:00:00.000Z",
+          elapsedLabel: "45s",
+          usageLabel: "12k tok",
+          speaker: "@engineer",
+          title: "@engineer run_reference_live ● running",
+          statusIcon: "●",
+          statusLabel: "running",
+          statusTone: "info",
+          messageLines: ["Reading src/auth.ts", "pnpm test tests/auth.test.ts"],
+          toolSummaryLines: ["inferred: Reading src/auth.ts"],
+          fileRefs: ["src/auth.ts"],
+          commandLines: ["pnpm test tests/auth.test.ts"],
+          artifactLines: [],
+          evidenceLines: ["elapsed 45s", "usage 12k tok"]
+        }
+      ],
+      selectionDetails: {
+        ...baseModel.selectionDetails,
+        workBlocks: [
+          {
+            id: "active-run:run_reference_live",
+            kind: "work_block",
+            title: "@engineer run_reference_live ● running",
+            subtitle: "running",
+            sections: [
+              {
+                id: "live-run",
+                title: "Live Run",
+                lines: ["speaker @engineer", "state running", "elapsed 45s", "spinner active", "usage 12k tok"]
+              },
+              {
+                id: "streaming-output",
+                title: "Streaming Output Tail",
+                lines: ["Reading src/auth.ts", "pnpm test tests/auth.test.ts"]
+              },
+              {
+                id: "tool-calls",
+                title: "Tool Calls",
+                lines: ["inferred: Reading src/auth.ts"],
+                collapsedByDefault: true
+              }
+            ],
+            commands: ["agent-hub runs show run_reference_live"],
+            actions: [{ key: "p", label: "Prepare Command", kind: "prepare_command" }]
+          }
+        ]
+      }
+    };
+    const fixtures = [
+      {
+        name: "completed Work",
+        model: completedWorkModel,
+        state: {
+          ...createInitialInkState(),
+          selectedWorkBlockIndex: 1,
+          selectedWorkBlockId: "review-pending:run_27984312-fc9a-46bf-9ccf-c06997187091",
+          detailVisible: true
+        },
+        expected: ["Block Detail", "审批记忆", "Controls"]
+      },
+      {
+        name: "live Work",
+        model: liveWorkModel,
+        state: { ...createInitialInkState(), detailVisible: true },
+        expected: ["Live Block Detail", "Live Run", "Streaming Output Tail"]
+      },
+      {
+        name: "Memory",
+        model: baseModel,
+        state: { ...createInitialInkState(), focus: "memory" },
+        expected: ["Memory Inbox", "ID                  Category", "Evidence Excerpts", "Approved Memory Index"]
+      },
+      {
+        name: "Team",
+        model: baseModel,
+        state: { ...createInitialInkState(), focus: "team" },
+        expected: ["Team Workbench", "local-only", "Role          Source", "Recent RoleCalls", "Delegation Matrix"]
+      }
+    ];
+
+    for (const fixture of fixtures) {
+      for (const terminal of sizes) {
+        const output = renderToString(
+          React.createElement(TuiInkFrame, {
+            model: fixture.model,
+            state: fixture.state,
+            terminal
+          }),
+          { columns: terminal.columns }
+        );
+        const lines = output.split("\n");
+
+        expect(output, `${fixture.name} ${terminal.columns}x${terminal.rows}`).toContain("AGENT HUB");
+        expect(output).toContain("┌");
+        expect(output).toContain("└");
+        expect(output).toContain("> @codex prompt");
+        expect(output).toContain("keys:");
+        for (const value of fixture.expected) {
+          expect(output, `${fixture.name} ${terminal.columns}x${terminal.rows}`).toContain(value);
+        }
+        if (fixture.name === "Memory" && terminal.columns >= 112) {
+          expect(output).toContain("Proposal Detail");
+        }
+        if (fixture.name === "Team" && terminal.columns >= 112) {
+          expect(output).toContain("Role Profile");
+          expect(output).toContain("Caller");
+        }
+        expect(lines.every((value) => value.length <= terminal.columns)).toBe(true);
+      }
+    }
+  });
+
   it("caps chatty active run boxes to preserve terminal row budget", () => {
     const output = renderToString(
       React.createElement(TuiInkFrame, {

@@ -222,9 +222,9 @@ Reference fidelity follow-up work is tracked in
 `codex/tui-v3-roadmap` branch as the baseline and focuses on matching the
 supplied terminal mockups more closely. The framed shell chrome and branded
 header metadata, dedicated Work block renderer, view-specific scrollable
-detail panel, Memory reference inbox, and Team reference workbench are
-implemented; remaining slices focus on deterministic visual fixtures. It does
-not
+detail panel, Memory reference inbox, Team reference workbench, and
+deterministic reference fixture coverage are implemented; remaining slices
+focus on interaction polish. It does not
 relax the local read-model boundary or permit fabricated evidence.
 Selected active-run Work blocks expose a live detail view over the same polling
 read model: speaker, running state, started time, elapsed label, spinner state,
