@@ -1,6 +1,6 @@
 # TUI V3 Roadmap
 
-Status: implementation in progress; V3-1 through V3-3 implemented
+Status: implementation in progress; V3-1 through V3-4 implemented
 Last updated: 2026-06-12
 
 This roadmap defines the next major terminal UI refactor for Agent Hub. It is
@@ -101,8 +101,11 @@ The reference UI requires functionality that is only partially supported:
   file refs, evidence refs, inline diff summaries, and fix snippets are
   projected only when existing conversation, active-run, or diff evidence can
   support them.
-- Live run detail can show output tails and elapsed labels, but does not yet
-  expose a typed live tool-call table or queued/running/completed tool status.
+- Live run detail now shows speaker, running state, started time, elapsed
+  label, spinner state, streaming output tail, inferred tool-call text,
+  inferred active commands, and pending-artifact placeholders. It still does
+  not expose typed tool-call lifecycle rows or queued/running command status
+  unless those become persisted evidence.
 - Memory is currently a summary plus commands. It does not expose proposal
   rows, selected proposal detail, evidence excerpts, related skills, writeback
   targets, or editable action state in the TUI model.
@@ -287,6 +290,8 @@ Acceptance:
 - CJK, code fences, file paths, and inline links wrap without breaking borders.
 
 ### Phase V3-4: Live Run Detail
+
+Status: implemented.
 
 Goal: make running blocks inspectable without raw-log noise.
 

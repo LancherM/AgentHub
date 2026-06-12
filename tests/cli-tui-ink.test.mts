@@ -639,6 +639,127 @@ describe("Ink TUI renderer", () => {
     expect(boxLines).toHaveLength(8);
   });
 
+  it("opens V3 live-run detail for the selected active Work block", () => {
+    const model = {
+      ...baseModel,
+      conversation: [],
+      activeRuns: [
+        {
+          runId: "run_live_detail",
+          agent: "codex",
+          displayHandle: "engineer",
+          title: "@engineer run_live_detail ● running",
+          startedAt: "2026-05-29T12:00:00.000Z",
+          elapsedLabel: "45s",
+          usageLabel: "12k tok",
+          outputLines: [
+            "Reading src/auth.ts",
+            "pnpm test tests/auth.test.ts"
+          ]
+        }
+      ],
+      workBlocks: [
+        {
+          id: "active-run:run_live_detail",
+          sourceId: "run_live_detail",
+          sourceKind: "active_run",
+          type: "active_run",
+          runId: "run_live_detail",
+          timestamp: "2026-05-29T12:00:00.000Z",
+          elapsedLabel: "45s",
+          usageLabel: "12k tok",
+          speaker: "@engineer",
+          title: "@engineer run_live_detail ● running",
+          statusIcon: "●",
+          statusLabel: "running",
+          statusTone: "info",
+          messageLines: [
+            "Reading src/auth.ts",
+            "pnpm test tests/auth.test.ts"
+          ],
+          toolSummaryLines: [
+            "inferred: Reading src/auth.ts",
+            "inferred: pnpm test tests/auth.test.ts"
+          ],
+          fileRefs: ["src/auth.ts"],
+          commandLines: ["pnpm test tests/auth.test.ts"],
+          artifactLines: [],
+          evidenceLines: ["elapsed 45s", "usage 12k tok"]
+        }
+      ],
+      selectionDetails: {
+        ...baseModel.selectionDetails,
+        workBlocks: [
+          {
+            id: "active-run:run_live_detail",
+            kind: "work_block",
+            title: "@engineer run_live_detail ● running",
+            subtitle: "running",
+            sections: [
+              {
+                id: "live-run",
+                title: "Live Run",
+                lines: [
+                  "speaker @engineer",
+                  "state running",
+                  "started 2026-05-29T12:00:00.000Z",
+                  "elapsed 45s",
+                  "spinner active",
+                  "usage 12k tok"
+                ]
+              },
+              {
+                id: "streaming-output",
+                title: "Streaming Output Tail",
+                lines: ["Reading src/auth.ts", "pnpm test tests/auth.test.ts"]
+              },
+              {
+                id: "tool-calls",
+                title: "Tool Calls",
+                lines: [
+                  "structured durations/status are not available; these rows are inferred from visible output",
+                  "inferred: Reading src/auth.ts"
+                ]
+              },
+              {
+                id: "active-commands",
+                title: "Active Commands",
+                lines: [
+                  "queued/running command status is not available; commands are inferred from visible output",
+                  "pnpm test tests/auth.test.ts"
+                ]
+              },
+              {
+                id: "pending-artifacts",
+                title: "Pending Artifacts",
+                lines: ["pending artifact rows not available in current read model"]
+              }
+            ],
+            commands: ["agent-hub runs show run_live_detail"],
+            actions: [{ key: "p", label: "Prepare Command", kind: "prepare_command" }]
+          }
+        ]
+      }
+    };
+    const output = renderToString(
+      React.createElement(TuiInkFrame, {
+        model,
+        state: { ...createInitialInkState(), detailVisible: true },
+        terminal: { columns: 80, rows: 24 }
+      }),
+      { columns: 80 }
+    );
+
+    expect(output).toContain("Block Detail");
+    expect(output).toContain("Live Run");
+    expect(output).toContain("speaker @engineer");
+    expect(output).toContain("spinner active");
+    expect(output).toContain("Streaming Output Tail");
+    expect(output).toContain("Active Commands");
+    expect(output).toContain("Pending Artifacts");
+    expect(output).toContain("agent-hub runs show run_live_detail");
+  });
+
   it("marks old active runs as stale only when no useful output is visible", () => {
     const model = {
       ...baseModel,

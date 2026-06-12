@@ -606,6 +606,13 @@ lines, evidence lines, and inline diff references. Ink renders selected Work
 rows and folded metadata from those DTOs, while detail sections for tools,
 commands, file refs, inline diffs, and fix snippets are built in core from the
 same persisted evidence.
+For active-run Work blocks, core builds a live detail section from the same
+polling evidence already used by active run boxes: speaker, running state,
+started timestamp, elapsed/usage labels, spinner state, streaming output tail,
+inferred tool text, inferred active commands, and pending-artifact
+placeholders. The command section explicitly says queued/running command status
+is unavailable unless persisted evidence provides it; no socket, daemon, or
+direct adapter channel is added.
 Several reference-screen features still require new read-model projections
 before they can be rendered truthfully: structured tool-call lifecycle rows,
 normalized block artifacts, memory proposal evidence excerpts,

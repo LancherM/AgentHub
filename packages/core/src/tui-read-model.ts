@@ -226,6 +226,8 @@ export interface TuiWorkBlock {
   runId?: string;
   roleCallId?: string;
   timestamp?: string;
+  elapsedLabel?: string;
+  usageLabel?: string;
   speaker: string;
   title: string;
   statusIcon: string;
@@ -1174,6 +1176,8 @@ function conversationWorkBlock(entry: TuiConversationEntry): TuiWorkBlock {
     runId: entry.runId,
     roleCallId: entry.roleCallId,
     timestamp: entry.timestamp,
+    elapsedLabel: entry.elapsedLabel,
+    usageLabel: entry.usageLabel,
     speaker: conversationEntrySpeaker(entry),
     title: conversationDetailTitle(entry),
     statusIcon: status.icon,
@@ -1198,6 +1202,8 @@ function activeRunWorkBlock(run: TuiActiveRunBox): TuiWorkBlock {
     type: "active_run",
     runId: run.runId,
     timestamp: run.startedAt,
+    elapsedLabel: run.elapsedLabel,
+    usageLabel: run.usageLabel,
     speaker: run.displayHandle ? `@${run.displayHandle}` : `@${run.agent}`,
     title: run.title,
     statusIcon: "●",
@@ -2056,9 +2062,13 @@ function workBlockDetail(block: TuiWorkBlock): TuiSelectionDetail {
     title: block.title,
     subtitle: block.statusLabel,
     sections: [
+      ...(block.sourceKind === "active_run"
+        ? [liveRunDetailSection(block)]
+        : []),
       {
-        id: "message",
-        title: "Message",
+        id: block.sourceKind === "active_run" ? "streaming-output" : "message",
+        title: block.sourceKind === "active_run" ? "Streaming Output Tail" : "Message",
+        tone: block.sourceKind === "active_run" ? "info" as const : undefined,
         lines: block.messageLines
       },
       ...(block.toolSummaryLines.length > 0
@@ -2078,14 +2088,21 @@ function workBlockDetail(block: TuiWorkBlock): TuiSelectionDetail {
       ...(block.commandLines.length > 0
         ? [
             {
-              id: "commands",
-              title: "Commands",
+              id: block.sourceKind === "active_run" ? "active-commands" : "commands",
+              title: block.sourceKind === "active_run" ? "Active Commands" : "Commands",
               tone: "info" as const,
-              lines: block.commandLines,
+              lines: block.sourceKind === "active_run"
+                ? [
+                    "queued/running command status is not available; commands are inferred from visible output",
+                    ...block.commandLines
+                  ]
+                : block.commandLines,
               collapsedByDefault: true
             }
           ]
-        : []),
+        : block.sourceKind === "active_run"
+          ? [unavailableDetailSection("active-commands", "Active Commands", "queued/running command status")]
+          : []),
       ...(block.fileRefs.length > 0
         ? [
             {
@@ -2135,16 +2152,38 @@ function workBlockDetail(block: TuiWorkBlock): TuiSelectionDetail {
       ...(block.artifactLines.length > 0
         ? [
             {
-              id: "artifacts",
-              title: "Artifacts",
+              id: block.sourceKind === "active_run" ? "pending-artifacts" : "artifacts",
+              title: block.sourceKind === "active_run" ? "Pending Artifacts" : "Artifacts",
               lines: block.artifactLines,
               collapsedByDefault: true
             }
           ]
-        : [unavailableDetailSection("artifacts", "Artifacts", "artifact rows")])
+        : [
+            unavailableDetailSection(
+              block.sourceKind === "active_run" ? "pending-artifacts" : "artifacts",
+              block.sourceKind === "active_run" ? "Pending Artifacts" : "Artifacts",
+              block.sourceKind === "active_run" ? "pending artifact rows" : "artifact rows"
+            )
+          ])
     ],
     commands,
     actions: detailActions(commands)
+  };
+}
+
+function liveRunDetailSection(block: TuiWorkBlock): TuiDetailSection {
+  return {
+    id: "live-run",
+    title: "Live Run",
+    tone: "info",
+    lines: [
+      `speaker ${block.speaker}`,
+      `state ${block.statusLabel ?? "running"}`,
+      block.timestamp ? `started ${block.timestamp}` : "started not available in current read model",
+      block.elapsedLabel ? `elapsed ${block.elapsedLabel}` : "elapsed not available in current read model",
+      "spinner active",
+      block.usageLabel ? `usage ${block.usageLabel}` : undefined
+    ].filter((value): value is string => Boolean(value))
   };
 }
 

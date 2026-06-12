@@ -386,6 +386,31 @@ describe("TUI current-context read model", () => {
     expect(model.activeRuns[0]?.outputLines.join("\n")).not.toContain("Using `");
     expect(model.activeRuns[0]?.outputLines.join("\n")).not.toContain("codex_memories_write");
     expect(model.activeRuns[0]?.outputLines.join("\n")).not.toContain("codex_models_manager");
+    expect(model.selectionDetails.workBlocks.find((detail) => detail.id === "active-run:run_live"))
+      .toMatchObject({
+        sections: expect.arrayContaining([
+          expect.objectContaining({
+            id: "live-run",
+            lines: expect.arrayContaining([
+              "speaker @codex",
+              "state running",
+              "started 2026-05-29T10:00:00.000Z",
+              "elapsed 0s",
+              "spinner active"
+            ])
+          }),
+          expect.objectContaining({
+            id: "streaming-output",
+            title: "Streaming Output Tail",
+            lines: ["stderr: waiting for network"]
+          }),
+          expect.objectContaining({
+            id: "active-commands",
+            lines: ["queued/running command status not available in current read model"]
+          }),
+          expect.objectContaining({ id: "pending-artifacts" })
+        ])
+      });
   });
 
   it("uses a thinking placeholder until observable agent output exists", async () => {
@@ -472,7 +497,7 @@ describe("TUI current-context read model", () => {
         "run_long_output",
         0,
         "message",
-        `first line\n  ${longLine}`,
+        `first line\n  ${longLine}\npnpm test tests/auth.test.ts`,
         { assistantOutput: true }
       )
     ]);
@@ -484,9 +509,28 @@ describe("TUI current-context read model", () => {
 
     expect(model.activeRuns[0]?.outputLines).toEqual([
       "first line",
-      `  ${longLine}`
+      `  ${longLine}`,
+      "pnpm test tests/auth.test.ts"
     ]);
     expect(model.activeRuns[0]?.outputLines.join("\n")).not.toContain("...");
+    expect(model.workBlocks.find((block) => block.id === "active-run:run_long_output")).toMatchObject({
+      commandLines: ["pnpm test tests/auth.test.ts"],
+      toolSummaryLines: expect.arrayContaining([
+        "inferred: pnpm test tests/auth.test.ts"
+      ])
+    });
+    expect(model.selectionDetails.workBlocks.find((detail) => detail.id === "active-run:run_long_output"))
+      .toMatchObject({
+        sections: expect.arrayContaining([
+          expect.objectContaining({
+            id: "active-commands",
+            lines: expect.arrayContaining([
+              "queued/running command status is not available; commands are inferred from visible output",
+              "pnpm test tests/auth.test.ts"
+            ])
+          })
+        ])
+      });
   });
 
   it("adds elapsed and usage labels for terminal run conversation entries", async () => {

@@ -189,6 +189,12 @@ stream renders selected rows with folded metadata while keeping completed agent
 output scrollable; the detail pane shows message text, inferred tools,
 commands, file refs, evidence, inline diff summaries, and fix snippets only
 when those fields come from persisted read-model evidence.
+Selected active-run Work blocks expose a live detail view over the same polling
+read model: speaker, running state, started time, elapsed label, spinner state,
+streaming output tail, inferred tool text, inferred active commands, and
+pending-artifact placeholders. The TUI does not guess queued/running command
+status or structured tool durations; those remain unavailable until adapters
+persist them as structured evidence.
 The TUI composer is prompt-first while editing: printable lowercase keys append
 to the prompt from any focus, uppercase tab shortcuts switch
 Work/Runs/View/Graph/Tasks/Memory/Team, `/team` opens the Team roles view
