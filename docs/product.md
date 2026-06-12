@@ -199,6 +199,14 @@ stream renders selected rows with folded metadata while keeping completed agent
 output scrollable; the detail pane shows message text, inferred tools,
 commands, file refs, evidence, inline diff summaries, and fix snippets only
 when those fields come from persisted read-model evidence.
+Reference fidelity follow-up work is tracked in
+`docs/tui-v3-reference-gap-roadmap.md`. That plan treats the current
+`codex/tui-v3-roadmap` branch as the baseline and focuses on matching the
+supplied terminal mockups more closely: framed shell chrome, branded header
+metadata, dense Work block layout, view-specific detail titles and scrolling,
+Memory inbox bands, Team roles/matrix/profile layout, and deterministic visual
+fixtures. It does not relax the local read-model boundary or permit fabricated
+evidence.
 Selected active-run Work blocks expose a live detail view over the same polling
 read model: speaker, running state, started time, elapsed label, spinner state,
 streaming output tail, inferred tool text, inferred active commands, and
@@ -691,8 +699,8 @@ Roadmaps for future work live in `docs/local-ai-workgroup-roadmap.md`,
 `docs/interaction-optimization-roadmap.md`, `docs/tui-roadmap.md`,
 `docs/tui-conversation-terminal-roadmap.md`,
 `docs/tui-optimization-roadmap.md`, `docs/tui-v3-roadmap.md`,
-`docs/memory-automation-roadmap.md`, and the Adaptive Role Calls specification
-documents. Those files describe
+`docs/tui-v3-reference-gap-roadmap.md`, `docs/memory-automation-roadmap.md`,
+and the Adaptive Role Calls specification documents. Those files describe
 direction; this document describes the current product state. The
 conversation-terminal TUI roadmap now records the
 implemented Work-view direction and remaining hardening guidance: the current

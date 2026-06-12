@@ -635,6 +635,12 @@ profiles, and audited memory action callbacks. Until those
 projections or callbacks exist, the renderer shows unavailable/disabled
 sections and command hints rather than fabricating data or reading lower-level
 stores directly.
+The reference fidelity follow-up in `docs/tui-v3-reference-gap-roadmap.md`
+keeps the same architecture and narrows the remaining work to composition:
+framed shell chrome, a dedicated Work block list renderer, view-specific detail
+titles and detail scrolling, Memory inbox bands, Team matrix/profile layout,
+and deterministic visual fixtures. It should not add new persistence or
+renderer-side data access merely to satisfy the mockup.
 RoleCall loop controls reuse the core convergence helper plus TUI risk
 summaries. The CLI renderer can prepare an explicit continuation prompt, but it
 does not run an autonomous background loop or add a daemon.
@@ -870,3 +876,7 @@ behavior. Its local implementation prompt companion is
 `docs/tui-v3-implementation-prompts.md`; that prompt pack is intentionally kept
 under the ignored implementation-prompt convention unless the user explicitly
 asks to publish it.
+The reference-gap follow-up is documented in
+`docs/tui-v3-reference-gap-roadmap.md`, with local prompts in
+`docs/tui-v3-reference-gap-implementation-prompts.md` under the same ignored
+implementation-prompt convention.
