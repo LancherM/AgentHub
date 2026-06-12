@@ -1540,7 +1540,7 @@ function MainView(props: TuiInkRenderProps): React.ReactElement {
     return h(RoleCallsPane, { model, state, terminal, detail: true });
   }
   if (state.focus === "team") {
-    return h(TeamPane, { model, terminal });
+    return h(TeamPane, { model, state, terminal });
   }
   if (state.focus === "runs") {
     return h(RunsPane, { model, state, terminal, detail: true });
@@ -2554,9 +2554,11 @@ function TasksPane({
 
 function TeamPane({
   model,
+  state,
   terminal
 }: {
   model: TuiCurrentContextModel;
+  state: TuiInkState;
   terminal: TuiInkTerminalSize;
 }): React.ReactElement {
   const team = model.team;
@@ -2576,24 +2578,97 @@ function TeamPane({
     );
   }
   const windowSize = teamWindowSize(terminal);
-  const visibleRoles = team.roles.slice(0, windowSize);
+  const selectedIndex = selectedTeamRoleIndex(model, state);
+  const offset = centeredWindowOffset(selectedIndex, windowSize, team.roles.length);
+  const visibleRoles = team.roles.slice(offset, offset + windowSize);
   const remaining = team.roles.length - visibleRoles.length;
   return h(
     Pane,
-    { title: `Team Roles ${team.counts.total}` },
+    { title: `Team Operations ${team.counts.total}` },
     line(
       `enabled ${team.counts.enabled} runnable ${team.counts.runnable} reserved ${team.counts.reserved} custom ${team.counts.custom} overrides ${team.counts.presetOverrides}`,
       { dimColor: true }
     ),
-    ...visibleRoles.map((role) =>
-      line(
-        `${role.enabled ? " " : "!"} @${role.handle} ${role.source} ${teamExecutorLabel(role)}${role.defaultRoom ? ` #${role.defaultRoom}` : ""} - ${truncateText(role.capabilitySummary, 62)}`
-      )
+    line("role          executor           state     calls fail room       next"),
+    ...visibleRoles.map((role, index) =>
+      teamRoleRowLine(role, offset + index === selectedIndex)
     ),
-    ...(remaining > 0 ? [line(`${remaining} more roles hidden by window size`, { dimColor: true })] : []),
+    ...(offset > 0 || remaining > 0
+      ? [line(`${offset} previous / ${remaining} more roles hidden`, { dimColor: true })]
+      : []),
+    line(""),
+    line("Recent RoleCalls", { color: "cyan" }),
+    ...(team.recentRoleCalls.length > 0
+      ? team.recentRoleCalls.slice(0, 4).map((call) => teamRecentRoleCallLine(call))
+      : [line("not available in current read model", { dimColor: true })]),
+    line(""),
+    line("Delegation Matrix", { color: "cyan" }),
+    ...(team.delegationMatrixRows.length > 0
+      ? team.delegationMatrixRows.slice(0, 4).map((row) => teamDelegationMatrixLine(row))
+      : [line("not available in current read model", { dimColor: true })]),
     line(""),
     line(`command ${team.command ?? "agent-hub project list"}`, { dimColor: true })
   );
+}
+
+function teamRoleRowLine(
+  role: TuiCurrentContextModel["team"]["roles"][number],
+  selected: boolean
+): React.ReactElement {
+  const marker = selected ? "▌" : role.enabled ? " " : "!";
+  const calls = `${role.activeCallCount}/${role.recentCallCount}`;
+  const failures = String(role.recentFailures.length);
+  const room = role.defaultRoom ? `#${role.defaultRoom}` : "-";
+  const text = [
+    marker,
+    `@${role.handle}`.padEnd(13),
+    teamExecutorLabel(role).padEnd(18),
+    (role.enabled ? "enabled" : "disabled").padEnd(9),
+    calls.padEnd(5),
+    failures.padEnd(4),
+    room.padEnd(10),
+    truncateText(role.nextAction, 42)
+  ].join(" ");
+  return line(text, {
+    color: teamRoleColor(role),
+    inverse: selected
+  });
+}
+
+function teamRecentRoleCallLine(
+  call: TuiCurrentContextModel["team"]["recentRoleCalls"][number]
+): React.ReactElement {
+  return line(
+    `${call.statusLabel.padEnd(8)} @${call.callerRole}->@${call.calleeRole} ${compactId(call.id)} ${truncateText(call.task, 56)}`,
+    { dimColor: terminalRoleCallLineDim(call.status) }
+  );
+}
+
+function teamDelegationMatrixLine(
+  row: TuiCurrentContextModel["team"]["delegationMatrixRows"][number]
+): React.ReactElement {
+  const target = row.allowedTargets.length > 0 ? row.allowedTargets.join(",") : "unavailable";
+  const approval = row.requiresApprovalForTargets.length > 0
+    ? ` approval ${row.requiresApprovalForTargets.join(",")}`
+    : "";
+  return line(
+    `@${row.callerRole} ${row.status} -> ${truncateText(target, 42)}${approval}`,
+    { dimColor: row.status === "unavailable" }
+  );
+}
+
+function teamRoleColor(role: TuiCurrentContextModel["team"]["roles"][number]): string | undefined {
+  if (!role.enabled || role.recentFailures.length > 0) {
+    return "red";
+  }
+  if (!role.executorRunnable) {
+    return "yellow";
+  }
+  return "green";
+}
+
+function terminalRoleCallLineDim(status: TuiCurrentContextModel["team"]["recentRoleCalls"][number]["status"]): boolean {
+  return status === "succeeded" || status === "cancelled";
 }
 
 function teamExecutorLabel(role: TuiCurrentContextModel["team"]["roles"][number]): string {
@@ -3179,9 +3254,9 @@ function contextualShortcutHint(state: TuiInkState, columns: number): string {
   }
   if (state.focus === "team") {
     if (columns < 56) {
-      return "keys: Team | p cmd | Esc";
+      return "keys: Up/Down | Enter | p cmd | Esc";
     }
-    return "keys: Team | p command | : palette | Esc back";
+    return "keys: Up/Down select | Enter detail | p command | : palette | Esc back";
   }
   if (state.focus === "help") {
     if (columns < 56) {
@@ -3248,7 +3323,7 @@ function taskWindowSize(terminal: TuiInkTerminalSize): number {
 }
 
 function teamWindowSize(terminal: TuiInkTerminalSize): number {
-  return boundedWindowSize(terminal.rows - 12, 8, 32);
+  return boundedWindowSize(terminal.rows - 22, 4, 16);
 }
 
 function activeRunLayout(
@@ -3567,6 +3642,14 @@ function isFullWidthCodePoint(codePoint: number): boolean {
 
 function boundedWindowSize(value: number, minimum: number, maximum: number): number {
   return Math.min(Math.max(value, minimum), maximum);
+}
+
+function centeredWindowOffset(selectedIndex: number, windowSize: number, total: number): number {
+  if (total <= windowSize) {
+    return 0;
+  }
+  const half = Math.floor(windowSize / 2);
+  return Math.min(Math.max(selectedIndex - half, 0), Math.max(0, total - windowSize));
 }
 
 function withTimeout<T>(

@@ -162,8 +162,36 @@ const baseModel = {
         executorLabel: "agent_adapter / codex",
         executorRunnable: true,
         defaultRoom: "planning",
+        purpose: "Implement local code changes through the coding agent path.",
         capabilitySummary: "Implementation, tests, refactoring within task scope.",
-        defaultSkillReferences: []
+        persona: "Careful engineer who keeps changes small, tested, and local-first.",
+        defaultInstructions: "Implement only the requested slice.",
+        permissions: ["read_project_context", "write_isolated_worktree"],
+        contextPolicy: {
+          scope: "current_thread_and_project_context",
+          includeApprovedMemory: true,
+          includeThreadSummary: true,
+          instructions: ["Use Agent Hub runtime-injected context only."]
+        },
+        approvalPolicy: {
+          requiredFor: ["memory_approval"],
+          summary: "User approval is required for memory approval."
+        },
+        delegation: {
+          canInitiate: true,
+          allowedIntentTypes: ["delegate", "request_review"],
+          allowedTargets: ["@reviewer"],
+          requiresApprovalForTargets: [],
+          summary: "enabled intents delegate,request_review; targets @reviewer"
+        },
+        defaultSkillReferences: [],
+        verificationCommands: ["pnpm test"],
+        limits: ["keep changes small"],
+        tags: ["engineering"],
+        activeCallCount: 1,
+        recentCallCount: 2,
+        recentFailures: ["call_failed failed: Executor failed."],
+        nextAction: "monitor 1 active call"
       },
       {
         id: "preset:reviewer",
@@ -175,9 +203,79 @@ const baseModel = {
         executorLabel: "human reserved",
         executorRunnable: false,
         defaultRoom: "review",
+        purpose: "Review outputs, checks, risks, and acceptance readiness.",
         capabilitySummary: "Review, risk assessment, verification planning.",
+        persona: "Strict reviewer who prioritizes evidence and missing tests.",
+        defaultInstructions: "Inspect claims against evidence.",
+        permissions: ["read_project_context", "read_run_evidence"],
+        contextPolicy: {
+          scope: "current_thread_and_project_context",
+          includeApprovedMemory: true,
+          includeThreadSummary: true,
+          instructions: ["Use Agent Hub runtime-injected context only."]
+        },
+        approvalPolicy: {
+          requiredFor: ["external_side_effects"],
+          summary: "User approval is required for external effects."
+        },
+        delegation: {
+          canInitiate: false,
+          allowedIntentTypes: [],
+          allowedTargets: [],
+          requiresApprovalForTargets: [],
+          summary: "role-call initiation policy not configured",
+          unavailableReason: "role-call initiation policy not configured"
+        },
         defaultSkillReferences: [],
+        verificationCommands: [],
+        limits: [],
+        tags: ["review"],
+        activeCallCount: 1,
+        recentCallCount: 2,
+        recentFailures: ["call_failed failed: Executor failed."],
+        nextAction: "reserved/manual executor",
         unavailableReason: "Reserved executor is not runnable in this phase."
+      }
+    ],
+    delegationMatrixRows: [
+      {
+        id: "preset:engineer",
+        callerRole: "engineer",
+        status: "enabled",
+        allowedTargets: ["@reviewer"],
+        requiresApprovalForTargets: [],
+        allowedIntentTypes: ["delegate", "request_review"],
+        summary: "enabled intents delegate,request_review; targets @reviewer"
+      },
+      {
+        id: "preset:reviewer",
+        callerRole: "reviewer",
+        status: "unavailable",
+        allowedTargets: [],
+        requiresApprovalForTargets: [],
+        allowedIntentTypes: [],
+        summary: "role-call initiation policy not configured"
+      }
+    ],
+    recentRoleCalls: [
+      {
+        id: "call_running",
+        callerRole: "engineer",
+        calleeRole: "reviewer",
+        status: "running",
+        statusLabel: "running",
+        task: "Review retained-run cleanup summary.",
+        updatedAt: "2026-05-29T12:05:00.000Z",
+        linkedRunId: "run_27984312-fc9a-46bf-9ccf-c06997187091"
+      },
+      {
+        id: "call_failed",
+        callerRole: "engineer",
+        calleeRole: "reviewer",
+        status: "failed",
+        statusLabel: "failed",
+        task: "Review failed output.",
+        updatedAt: "2026-05-29T12:04:00.000Z"
       }
     ],
     counts: {
@@ -370,8 +468,20 @@ const baseModel = {
         kind: "team_role",
         title: "@engineer",
         subtitle: "Engineer",
-        sections: [{ id: "role", title: "Role", lines: ["enabled yes", "executor codex"] }],
-        commands: ["agent-hub team roles list --project-id project_1"],
+        sections: [
+          { id: "role", title: "Role", lines: ["enabled yes", "executor codex"] },
+          { id: "mission-boundaries", title: "Mission And Boundaries", lines: ["persona careful engineer"] },
+          { id: "allowed-tools", title: "Allowed Tools And Permissions", lines: ["write_isolated_worktree"] },
+          { id: "context-policy", title: "Context Policy", lines: ["scope current_thread_and_project_context"] },
+          { id: "delegation", title: "Delegation Matrix", lines: ["enabled intents delegate,request_review; targets @reviewer"] },
+          { id: "verification-profile", title: "Verification Profile", lines: ["pnpm test"] },
+          { id: "limits", title: "Limits", lines: ["keep changes small"] },
+          { id: "recent-failures", title: "Recent Failures", lines: ["call_failed failed: Executor failed."] }
+        ],
+        commands: [
+          "agent-hub team roles list --project-id project_1",
+          "agent-hub team roles executor --project-id project_1 --role engineer"
+        ],
         actions: [{ key: "p", label: "Prepare Command", kind: "prepare_command" }]
       },
       {
@@ -379,8 +489,28 @@ const baseModel = {
         kind: "team_role",
         title: "@reviewer",
         subtitle: "Reviewer",
-        sections: [{ id: "role", title: "Role", lines: ["enabled yes", "executor human reserved"] }],
-        commands: ["agent-hub team roles list --project-id project_1"],
+        sections: [
+          { id: "role", title: "Role", lines: ["enabled yes", "executor human reserved"] },
+          { id: "mission-boundaries", title: "Mission And Boundaries", lines: ["persona strict reviewer"] },
+          { id: "allowed-tools", title: "Allowed Tools And Permissions", lines: ["read_run_evidence"] },
+          { id: "context-policy", title: "Context Policy", lines: ["scope current_thread_and_project_context"] },
+          { id: "delegation", title: "Delegation Matrix", lines: ["role-call initiation policy not configured"] },
+          {
+            id: "verification-profile",
+            title: "Verification Profile",
+            lines: ["role-specific verification commands not available in current read model"]
+          },
+          {
+            id: "limits",
+            title: "Limits",
+            lines: ["role-specific limits not available in current read model"]
+          },
+          { id: "recent-failures", title: "Recent Failures", lines: ["call_failed failed: Executor failed."] }
+        ],
+        commands: [
+          "agent-hub team roles list --project-id project_1",
+          "agent-hub team roles executor --project-id project_1 --role reviewer"
+        ],
         actions: [{ key: "p", label: "Prepare Command", kind: "prepare_command" }]
       }
     ],
@@ -520,15 +650,20 @@ describe("Ink TUI renderer", () => {
       React.createElement(TuiInkFrame, {
         model: baseModel,
         state: teamState,
-        terminal: { columns: 80, rows: 24 }
+        terminal: { columns: 120, rows: 40 }
       }),
-      { columns: 80 }
+      { columns: 120 }
     );
 
     expect(teamState.selectedTeamRoleId).toBe("preset:reviewer");
     expect(output).toContain("@reviewer");
     expect(output).toContain("executor human reserved");
-    expect(output).not.toContain("@engineer");
+    expect(output).toContain("Mission And Boundaries");
+    expect(output).toContain("Context Policy");
+    expect(output).toContain("Delegation Matrix");
+    expect(output).toContain("role-call initiation polic");
+    expect(output).toContain("Recent Failures");
+    expect(output).toContain("agent-hub team roles executo");
   });
 
   it("renders Memory governance rows with selected proposal detail", () => {
@@ -1959,12 +2094,16 @@ describe("Ink TUI renderer", () => {
     }
     instance.stdin.write("\r");
 
-    await waitForFrame(instance, "Team roles shown.");
+    await waitForFrame(instance, "Team Operations 2");
 
     expect(submissions).toEqual([]);
-    expect(instance.lastFrame()).toContain("Team Roles 2");
-    expect(instance.lastFrame()).toContain("@engineer preset runs with codex #planning");
-    expect(instance.lastFrame()).toContain("@reviewer preset manual #review");
+    expect(instance.lastFrame()).toContain("Team Operations 2");
+    expect(instance.lastFrame()).toContain("@engineer");
+    expect(instance.lastFrame()).toContain("runs with codex");
+    expect(instance.lastFrame()).toContain("@reviewer");
+    expect(instance.lastFrame()).toContain("manual");
+    expect(instance.lastFrame()).toContain("Recent RoleCalls");
+    expect(instance.lastFrame()).toContain("Delegation Matrix");
     expect(instance.lastFrame()).toContain("> @codex prompt");
     instance.unmount();
   });
@@ -1980,11 +2119,14 @@ describe("Ink TUI renderer", () => {
     );
 
     instance.stdin.write("E");
-    await waitForFrame(instance, "Team Roles 2");
+    await waitForFrame(instance, "Team Operations 2");
 
     expect(instance.lastFrame()).toContain("Team");
     expect(instance.lastFrame()).not.toContain("[E]am");
-    expect(instance.lastFrame()).toContain("@engineer preset runs with codex #planning");
+    expect(instance.lastFrame()).toContain("@engineer");
+    expect(instance.lastFrame()).toContain("runs with codex");
+    expect(instance.lastFrame()).toContain("1/2");
+    expect(instance.lastFrame()).toContain("Recent RoleCalls");
     instance.unmount();
   });
 

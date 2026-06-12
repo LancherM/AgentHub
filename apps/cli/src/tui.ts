@@ -696,6 +696,8 @@ function buildTuiFailureModel(input: TuiFailureModelInput): TuiCurrentContextMod
     team: {
       projectId: input.modelInput.projectId,
       roles: [],
+      delegationMatrixRows: [],
+      recentRoleCalls: [],
       counts: {
         total: 0,
         enabled: 0,

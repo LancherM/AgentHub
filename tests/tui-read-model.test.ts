@@ -174,6 +174,37 @@ describe("TUI current-context read model", () => {
       reserved: 0
     });
     expect(model.team.command).toBe("agent-hub team roles list --project-id project_1");
+    expect(model.team.roles.find((role) => role.handle === "engineer")).toMatchObject({
+      purpose: "Implement local code changes through the coding agent path.",
+      activeCallCount: 1,
+      recentCallCount: 6,
+      nextAction: "monitor 1 active call",
+      contextPolicy: expect.objectContaining({
+        scope: "current_thread_and_project_context",
+        includeApprovedMemory: true
+      }),
+      delegation: expect.objectContaining({
+        canInitiate: false,
+        unavailableReason: "role-call initiation policy not configured"
+      })
+    });
+    expect(model.team.roles.find((role) => role.handle === "engineer")?.recentFailures).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("call_failed failed")
+      ])
+    );
+    expect(model.team.recentRoleCalls.map((call) => call.id)).toEqual([
+      "call_running",
+      "call_waiting_approval",
+      "call_waiting_context",
+      "call_failed",
+      "call_deferred",
+      "call_succeeded"
+    ]);
+    expect(model.team.delegationMatrixRows.find((row) => row.callerRole === "engineer")).toMatchObject({
+      status: "unavailable",
+      summary: "role-call initiation policy not configured"
+    });
     expect(model.memory.counts).toEqual({
       proposed: 2,
       approved: 1,
@@ -221,7 +252,18 @@ describe("TUI current-context read model", () => {
     expect(model.selectionDetails.teamRoles.find((detail) => detail.id === "preset:engineer")).toMatchObject({
       kind: "team_role",
       title: "@engineer",
-      commands: ["agent-hub team roles list --project-id project_1"]
+      commands: expect.arrayContaining([
+        "agent-hub team roles list --project-id project_1",
+        "agent-hub team roles executor --project-id project_1 --role engineer"
+      ]),
+      sections: expect.arrayContaining([
+        expect.objectContaining({ id: "mission-boundaries" }),
+        expect.objectContaining({ id: "allowed-tools" }),
+        expect.objectContaining({ id: "context-policy" }),
+        expect.objectContaining({ id: "delegation" }),
+        expect.objectContaining({ id: "recent-failures" }),
+        expect.objectContaining({ id: "recent-role-calls" })
+      ])
     });
     expect(model.selectionDetails.memory).toMatchObject({
       kind: "memory",

@@ -604,6 +604,14 @@ source run/task ids, evidence excerpts from stored metadata, writeback target
 when present, and safe source/approval commands. Ink renders the table and
 selected-row detail only; approve/reject/edit controls stay disabled unless a
 future audited IPC or CLI callback is explicitly wired.
+Team operations also stay in the read-model layer. Core enriches resolved
+preset, overridden, and custom `WorkgroupRole` records with current RoleCall
+and run evidence, producing role rows, delegation matrix rows, recent RoleCall
+summaries, active/recent call counts, derived recent failures, context and
+approval policy detail, metadata-backed verification commands/limits when
+present, and read-only list/executor commands. Ink renders those DTOs as a
+role operations table and selected profile detail; it does not create a new
+role persistence surface or mutate role configuration directly.
 V3 Work blocks are also presentation DTOs in the same read model. Core derives
 `TuiWorkBlock` rows from the existing `conversation` and `activeRuns`
 projections, including stable ids, source kind, speaker, timestamp, status,

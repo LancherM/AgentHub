@@ -1,6 +1,6 @@
 # TUI V3 Roadmap
 
-Status: implementation in progress; V3-1 through V3-5 implemented
+Status: implementation in progress; V3-1 through V3-6 implemented
 Last updated: 2026-06-12
 
 This roadmap defines the next major terminal UI refactor for Agent Hub. It is
@@ -80,7 +80,7 @@ The current code already supports these foundations:
   warnings.
 - Work conversation flow plus bounded active-run boxes.
 - Display-width-aware wrapping for mixed CJK/code/path output.
-- Team focus mode as a simple read-model summary pane, and Memory focus mode
+- Team focus mode as a local role operations workbench, and Memory focus mode
   as a proposal governance table with selected-row detail.
 - Command palette, search, timeline, composer history, mention completion, and
   non-blocking interactive prompt submission.
@@ -112,9 +112,13 @@ The reference UI requires functionality that is only partially supported:
   evidence excerpts, writeback target when stored, source commands, and
   selected-row details. Related skills/memory joins and editable action state
   remain unavailable.
-- Team is currently a role summary list. It does not expose a delegation matrix,
-  selected role profile, allowed tools, verification commands, limits, recent
-  failures, or next action as first-class TUI fields.
+- Team now exposes a role operations table, selected role profile detail,
+  delegation matrix rows from real role policy when configured, recent
+  RoleCalls, active/recent call counts, derived recent failures, context
+  policy, permissions, approval policy, default skills, verification commands
+  from role metadata when present, limits from role metadata when present, and
+  next suggested action. Missing role-policy, verification-command, and limit
+  data is rendered as unavailable instead of synthesized.
 - Table sorting, table filters, and per-view search controls are not generic
   primitives.
 - Approve/reject/edit/open controls for memory proposals must not be added as
@@ -359,6 +363,12 @@ Acceptance:
 
 Goal: replace the Team summary pane with a local role operations view.
 
+Status: implemented. The read model now enriches resolved preset/custom roles
+with RoleCall/run evidence, delegation policy summaries, selected profile
+detail, recent failures, and safe list/executor commands. The Ink Team pane
+renders a role operations table plus recent RoleCalls and delegation matrix
+summaries without adding a new role persistence surface.
+
 Scope:
 
 - Extend the read model with role rows, a delegation matrix, recent RoleCalls,
@@ -371,12 +381,13 @@ Scope:
 
 Unsupported data to call out:
 
-- mission, boundaries, allowed tools, verification profile, and limits may not
-  exist as normalized persisted fields for every role;
-- recent failures may need to be derived from run and RoleCall summaries;
-- delegation matrix may require policy summary helpers in core/safety;
-- verification commands per role may need existing role metadata to be
-  normalized before the TUI can display them reliably.
+- verification commands and limits are only shown when role metadata provides
+  them;
+- recent failures are derived from current RoleCall and linked run summaries;
+- delegation matrix rows are real role `delegationPolicy` summaries or
+  explicitly unavailable;
+- normalized role-specific tool and verification profiles remain limited by
+  the existing role model.
 
 Acceptance:
 

@@ -419,6 +419,8 @@ export type TuiTeamRoleSource = "preset" | "preset_override" | "custom";
 export interface TuiTeamSummary {
   projectId?: string;
   roles: TuiTeamRoleSummary[];
+  delegationMatrixRows: TuiTeamDelegationMatrixRow[];
+  recentRoleCalls: TuiTeamRecentRoleCall[];
   counts: {
     total: number;
     enabled: number;
@@ -440,9 +442,65 @@ export interface TuiTeamRoleSummary {
   executorLabel: string;
   executorRunnable: boolean;
   defaultRoom?: string;
+  purpose: string;
   capabilitySummary: string;
+  persona: string;
+  defaultInstructions: string;
+  permissions: string[];
+  contextPolicy: TuiTeamContextPolicySummary;
+  approvalPolicy: TuiTeamApprovalPolicySummary;
+  delegation: TuiTeamDelegationSummary;
   defaultSkillReferences: NonNullable<WorkgroupRole["defaultSkillReferences"]>;
+  verificationCommands: string[];
+  limits: string[];
+  tags: string[];
+  activeCallCount: number;
+  recentCallCount: number;
+  recentFailures: string[];
+  nextAction: string;
   unavailableReason?: string;
+}
+
+export interface TuiTeamContextPolicySummary {
+  scope: string;
+  includeApprovedMemory: boolean;
+  includeThreadSummary: boolean;
+  instructions: string[];
+}
+
+export interface TuiTeamApprovalPolicySummary {
+  requiredFor: string[];
+  summary: string;
+}
+
+export interface TuiTeamDelegationSummary {
+  canInitiate: boolean;
+  allowedIntentTypes: string[];
+  allowedTargets: string[];
+  requiresApprovalForTargets: string[];
+  summary: string;
+  unavailableReason?: string;
+}
+
+export interface TuiTeamDelegationMatrixRow {
+  id: string;
+  callerRole: string;
+  status: "enabled" | "unavailable";
+  allowedTargets: string[];
+  requiresApprovalForTargets: string[];
+  allowedIntentTypes: string[];
+  summary: string;
+}
+
+export interface TuiTeamRecentRoleCall {
+  id: string;
+  callerRole: string;
+  calleeRole: string;
+  status: RoleCallStatus;
+  statusLabel: string;
+  task: string;
+  updatedAt: string;
+  linkedRunId?: string;
 }
 
 export interface TuiMemorySummary {
@@ -596,11 +654,6 @@ export async function buildTuiCurrentContextModel(
         : Promise.resolve([]),
       repositories.skillRepository.list()
     ]);
-  const teamResult = await summarizeTeam(repositories, projectId);
-  if (teamResult.warning) {
-    warnings.push(teamResult.warning);
-  }
-
   const contextTasks = filterTasksForThread(tasks, thread?.id);
   const runs = await runsForTasks(repositories, contextTasks);
   const runSummaries = await Promise.all(
@@ -622,6 +675,13 @@ export async function buildTuiCurrentContextModel(
   const visibleRoleCallNodes = roleCallNodes
     .filter((node) => !node.hidden)
     .slice(0, input.maxRoleCalls ?? defaultLimits.roleCalls);
+  const teamResult = await summarizeTeam(repositories, projectId, {
+    roleCallNodes,
+    runSummaries: boundedRuns
+  });
+  if (teamResult.warning) {
+    warnings.push(teamResult.warning);
+  }
 
   const conversation = await summarizeConversation(repositories, {
     messages,
@@ -1733,7 +1793,11 @@ function summarizeTodos(todos: RoleTodo[], limit: number): TuiRoleTodoSummary[] 
 
 async function summarizeTeam(
   repositories: TuiReadModelRepositories,
-  projectId: string | undefined
+  projectId: string | undefined,
+  evidence: {
+    roleCallNodes: TuiRoleCallNodeSummary[];
+    runSummaries: TuiRunSummary[];
+  }
 ): Promise<{ summary: TuiTeamSummary; warning?: string }> {
   if (!projectId) {
     return { summary: emptyTeamSummary(undefined) };
@@ -1741,13 +1805,13 @@ async function summarizeTeam(
   try {
     const roles = await resolvedTeamRoles(repositories, projectId);
     const summaries = roles.map((entry) => toTuiTeamRoleSummary(entry.role, entry.source));
-    return { summary: teamSummaryFromRoles(projectId, summaries) };
+    return { summary: teamSummaryWithEvidence(teamSummaryFromRoles(projectId, summaries), evidence) };
   } catch (error) {
     const summaries = presetWorkgroupRoles.map((role) =>
       toTuiTeamRoleSummary(role, "preset")
     );
     return {
-      summary: teamSummaryFromRoles(projectId, summaries),
+      summary: teamSummaryWithEvidence(teamSummaryFromRoles(projectId, summaries), evidence),
       warning: `team roles unavailable: ${errorMessage(error)}`
     };
   }
@@ -1815,8 +1879,32 @@ function toTuiTeamRoleSummary(
     executorLabel: executorLabel(role.executor, executorRunnable),
     executorRunnable,
     defaultRoom: role.defaultRoom,
+    purpose: truncate(role.purpose, defaultLimits.contentChars),
     capabilitySummary: truncate(role.capabilitySummary, defaultLimits.contentChars),
+    persona: truncate(role.persona, defaultLimits.contentChars),
+    defaultInstructions: truncate(role.defaultInstructions, defaultLimits.contentChars),
+    permissions: [...role.permissions],
+    contextPolicy: {
+      scope: role.contextPolicy.scope,
+      includeApprovedMemory: role.contextPolicy.includeApprovedMemory,
+      includeThreadSummary: role.contextPolicy.includeThreadSummary,
+      instructions: role.contextPolicy.instructions.map((line) =>
+        truncate(line, defaultLimits.contentChars)
+      )
+    },
+    approvalPolicy: {
+      requiredFor: [...role.approvalPolicy.requiredFor],
+      summary: truncate(role.approvalPolicy.summary, defaultLimits.contentChars)
+    },
+    delegation: roleDelegationSummary(role),
     defaultSkillReferences: role.defaultSkillReferences ?? [],
+    verificationCommands: metadataStringArray(role.metadata, "verificationCommands"),
+    limits: metadataStringArray(role.metadata, "limits"),
+    tags: role.tags ?? [],
+    activeCallCount: 0,
+    recentCallCount: 0,
+    recentFailures: [],
+    nextAction: "ready for assignment",
     unavailableReason:
       role.executor.kind === "agent_adapter"
         ? undefined
@@ -1831,6 +1919,8 @@ function teamSummaryFromRoles(
   return {
     projectId,
     roles,
+    delegationMatrixRows: roles.map(roleDelegationMatrixRow),
+    recentRoleCalls: [],
     counts: {
       total: roles.length,
       enabled: roles.filter((role) => role.enabled).length,
@@ -1847,6 +1937,8 @@ function emptyTeamSummary(projectId: string | undefined): TuiTeamSummary {
   return {
     projectId,
     roles: [],
+    delegationMatrixRows: [],
+    recentRoleCalls: [],
     counts: {
       total: 0,
       enabled: 0,
@@ -1857,6 +1949,174 @@ function emptyTeamSummary(projectId: string | undefined): TuiTeamSummary {
     },
     command: projectId ? `agent-hub team roles list --project-id ${projectId}` : undefined
   };
+}
+
+function teamSummaryWithEvidence(
+  summary: TuiTeamSummary,
+  evidence: {
+    roleCallNodes: TuiRoleCallNodeSummary[];
+    runSummaries: TuiRunSummary[];
+  }
+): TuiTeamSummary {
+  const callsByRole = new Map<string, TuiRoleCallNodeSummary[]>();
+  for (const call of evidence.roleCallNodes) {
+    appendRoleCall(callsByRole, call.callerRole, call);
+    appendRoleCall(callsByRole, call.calleeRole, call);
+  }
+  const runsById = new Map(evidence.runSummaries.map((run) => [run.id, run]));
+  const roles = summary.roles.map((role) => {
+    const calls = callsByRole.get(role.handle) ?? [];
+    const activeCallCount = calls.filter((call) => activeRoleCallStatuses.has(call.status)).length;
+    const recentFailures = teamRecentFailures(calls, runsById);
+    return {
+      ...role,
+      activeCallCount,
+      recentCallCount: calls.length,
+      recentFailures,
+      nextAction: teamRoleNextAction(role, activeCallCount, recentFailures)
+    };
+  });
+  return {
+    ...summary,
+    roles,
+    delegationMatrixRows: roles.map(roleDelegationMatrixRow),
+    recentRoleCalls: summarizeTeamRecentRoleCalls(evidence.roleCallNodes, 8)
+  };
+}
+
+function appendRoleCall(
+  callsByRole: Map<string, TuiRoleCallNodeSummary[]>,
+  role: string,
+  call: TuiRoleCallNodeSummary
+): void {
+  const existing = callsByRole.get(role) ?? [];
+  existing.push(call);
+  callsByRole.set(role, existing);
+}
+
+function summarizeTeamRecentRoleCalls(
+  roleCallNodes: TuiRoleCallNodeSummary[],
+  limit: number
+): TuiTeamRecentRoleCall[] {
+  return [...roleCallNodes]
+    .sort((left, right) => roleCallUpdatedAt(right).localeCompare(roleCallUpdatedAt(left)))
+    .slice(0, limit)
+    .map((call) => ({
+      id: call.id,
+      callerRole: call.callerRole,
+      calleeRole: call.calleeRole,
+      status: call.status,
+      statusLabel: call.statusLabel,
+      task: call.task,
+      updatedAt: roleCallUpdatedAt(call),
+      linkedRunId: call.linkedRunId
+    }));
+}
+
+function teamRecentFailures(
+  calls: TuiRoleCallNodeSummary[],
+  runsById: Map<string, TuiRunSummary>
+): string[] {
+  return [...calls]
+    .filter((call) => {
+      const linkedRun = call.linkedRunId ? runsById.get(call.linkedRunId) : undefined;
+      return call.status === "failed" ||
+        (call.evidence.checks?.failed ?? 0) > 0 ||
+        call.evidence.risk?.level === "high" ||
+        call.evidence.risk?.level === "blocking" ||
+        linkedRun?.status === "failed";
+    })
+    .sort((left, right) => roleCallUpdatedAt(right).localeCompare(roleCallUpdatedAt(left)))
+    .slice(0, 4)
+    .map((call) => {
+      const reason =
+        call.evidence.resultSummary ??
+        call.evidence.waitingReason ??
+        call.evidence.risk?.primaryReason ??
+        "failure evidence available";
+      return `${call.id} ${call.statusLabel}: ${truncate(reason, 96)}`;
+    });
+}
+
+function teamRoleNextAction(
+  role: TuiTeamRoleSummary,
+  activeCallCount: number,
+  recentFailures: string[]
+): string {
+  if (!role.enabled) {
+    return "enable or leave disabled";
+  }
+  if (activeCallCount > 0) {
+    return `monitor ${activeCallCount} active call${activeCallCount === 1 ? "" : "s"}`;
+  }
+  if (!role.executorRunnable) {
+    return role.executorKind === "agent_adapter"
+      ? "configure local adapter"
+      : "reserved/manual executor";
+  }
+  if (recentFailures.length > 0) {
+    return "inspect recent failure";
+  }
+  if (role.delegation.canInitiate) {
+    return "ready to delegate";
+  }
+  return "ready for assignment";
+}
+
+function roleDelegationMatrixRow(role: TuiTeamRoleSummary): TuiTeamDelegationMatrixRow {
+  return {
+    id: role.id,
+    callerRole: role.handle,
+    status: role.delegation.canInitiate ? "enabled" : "unavailable",
+    allowedTargets: role.delegation.allowedTargets,
+    requiresApprovalForTargets: role.delegation.requiresApprovalForTargets,
+    allowedIntentTypes: role.delegation.allowedIntentTypes,
+    summary: role.delegation.summary
+  };
+}
+
+function roleDelegationSummary(role: WorkgroupRole): TuiTeamDelegationSummary {
+  const policy = role.delegationPolicy;
+  if (!policy?.canInitiateRoleCalls) {
+    return {
+      canInitiate: false,
+      allowedIntentTypes: [],
+      allowedTargets: [],
+      requiresApprovalForTargets: [],
+      summary: "role-call initiation policy not configured",
+      unavailableReason: "role-call initiation policy not configured"
+    };
+  }
+  const allowedTargets = [
+    ...(policy.allowedTargetRoles?.map(formatDelegationTargetRole) ?? []),
+    ...(policy.allowedTargetCapabilities?.map((capability) => `capability:${capability}`) ?? [])
+  ];
+  const approvalTargets = policy.requiresApprovalForTargets?.map(formatDelegationTargetRole) ?? [];
+  return {
+    canInitiate: true,
+    allowedIntentTypes: [...policy.allowedIntentTypes],
+    allowedTargets,
+    requiresApprovalForTargets: approvalTargets,
+    summary: [
+      `enabled intents ${policy.allowedIntentTypes.join(",") || "none"}`,
+      `targets ${allowedTargets.join(",") || "none"}`,
+      approvalTargets.length > 0 ? `approval ${approvalTargets.join(",")}` : undefined
+    ].filter((value): value is string => Boolean(value)).join("; ")
+  };
+}
+
+function formatDelegationTargetRole(target: string): string {
+  return target === "*" ? "*" : `@${target}`;
+}
+
+function roleCallUpdatedAt(call: TuiRoleCallNodeSummary): string {
+  return call.completedAt ?? call.startedAt ?? call.createdAt;
+}
+
+function metadataStringArray(metadata: Record<string, unknown> | undefined, key: string): string[] {
+  return (arrayValue(metadata, key) ?? [])
+    .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+    .map((value) => truncate(value, defaultLimits.contentChars));
 }
 
 function roleSettingsKey(projectId: string): string {
@@ -2432,7 +2692,13 @@ function teamRoleSelectionDetail(
   team: TuiTeamSummary,
   role: TuiTeamRoleSummary
 ): TuiSelectionDetail {
-  const commands = team.command ? [team.command] : [];
+  const roleCalls = team.recentRoleCalls.filter((call) =>
+    call.callerRole === role.handle || call.calleeRole === role.handle
+  );
+  const commands = [
+    team.command,
+    team.projectId ? `agent-hub team roles executor --project-id ${team.projectId} --role ${role.handle}` : undefined
+  ].filter((value): value is string => Boolean(value));
   return {
     id: role.id,
     kind: "team_role",
@@ -2447,8 +2713,10 @@ function teamRoleSelectionDetail(
           `display ${role.displayName}`,
           `source ${role.source}`,
           `enabled ${role.enabled ? "yes" : "no"}`,
+          `mission ${role.purpose}`,
           role.defaultRoom ? `default room ${role.defaultRoom}` : undefined,
-          `capabilities ${role.capabilitySummary}`
+          `capabilities ${role.capabilitySummary}`,
+          `next action ${role.nextAction}`
         ].filter((value): value is string => Boolean(value))
       },
       {
@@ -2459,8 +2727,88 @@ function teamRoleSelectionDetail(
           `kind ${role.executorKind}`,
           `label ${role.executorLabel}`,
           `runnable ${role.executorRunnable ? "yes" : "no"}`,
+          `active calls ${role.activeCallCount}`,
+          `recent calls ${role.recentCallCount}`,
           role.unavailableReason ? `unavailable ${role.unavailableReason}` : undefined
         ].filter((value): value is string => Boolean(value))
+      },
+      {
+        id: "mission-boundaries",
+        title: "Mission And Boundaries",
+        lines: [
+          `persona ${role.persona}`,
+          `instructions ${role.defaultInstructions}`,
+          `approval ${role.approvalPolicy.summary}`,
+          role.approvalPolicy.requiredFor.length > 0
+            ? `approval required for ${role.approvalPolicy.requiredFor.join(", ")}`
+            : undefined
+        ].filter((value): value is string => Boolean(value))
+      },
+      {
+        id: "allowed-tools",
+        title: "Allowed Tools And Permissions",
+        lines: role.permissions.length > 0
+          ? role.permissions
+          : ["not available in current read model"]
+      },
+      {
+        id: "context-policy",
+        title: "Context Policy",
+        lines: [
+          `scope ${role.contextPolicy.scope}`,
+          `approved memory ${role.contextPolicy.includeApprovedMemory ? "yes" : "no"}`,
+          `thread summary ${role.contextPolicy.includeThreadSummary ? "yes" : "no"}`,
+          ...role.contextPolicy.instructions.map((instruction) => `instruction ${instruction}`)
+        ]
+      },
+      {
+        id: "delegation",
+        title: "Delegation Matrix",
+        tone: role.delegation.canInitiate ? "success" : "warning",
+        lines: role.delegation.canInitiate
+          ? [
+              role.delegation.summary,
+              `intents ${role.delegation.allowedIntentTypes.join(",") || "none"}`,
+              `targets ${role.delegation.allowedTargets.join(",") || "none"}`,
+              `approval targets ${role.delegation.requiresApprovalForTargets.join(",") || "none"}`
+            ]
+          : [role.delegation.unavailableReason ?? "normalized policy matrix not available"],
+        collapsedByDefault: !role.delegation.canInitiate
+      },
+      {
+        id: "verification-profile",
+        title: "Verification Profile",
+        lines: role.verificationCommands.length > 0
+          ? role.verificationCommands
+          : ["role-specific verification commands not available in current read model"],
+        collapsedByDefault: role.verificationCommands.length === 0
+      },
+      {
+        id: "limits",
+        title: "Limits",
+        lines: role.limits.length > 0
+          ? role.limits
+          : ["role-specific limits not available in current read model"],
+        collapsedByDefault: role.limits.length === 0
+      },
+      {
+        id: "recent-failures",
+        title: "Recent Failures",
+        tone: role.recentFailures.length > 0 ? "danger" : "success",
+        lines: role.recentFailures.length > 0
+          ? role.recentFailures
+          : ["none in current read model"],
+        collapsedByDefault: role.recentFailures.length === 0
+      },
+      {
+        id: "recent-role-calls",
+        title: "Recent RoleCalls",
+        lines: roleCalls.length > 0
+          ? roleCalls.map((call) =>
+              `${call.id} @${call.callerRole}->@${call.calleeRole} ${call.statusLabel}: ${call.task}`
+            )
+          : ["not available in current read model"],
+        collapsedByDefault: roleCalls.length === 0
       },
       {
         id: "skills",
@@ -2470,7 +2818,6 @@ function teamRoleSelectionDetail(
           : ["not available in current read model"],
         collapsedByDefault: role.defaultSkillReferences.length === 0
       },
-      unavailableDetailSection("delegation", "Delegation Matrix", "normalized policy matrix")
     ],
     commands,
     actions: detailActions(commands)

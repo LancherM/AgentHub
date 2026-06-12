@@ -63,10 +63,15 @@ Approve/reject/edit actions are shown as disabled governed controls until
 audited local callbacks exist; the TUI renders equivalent CLI commands instead.
 The Team read-model pane is available from the default tab cycle, the `Team`
 tab label, the uppercase `E` focus shortcut, typing `/team` in the composer,
-or the command palette. It shows the current project's resolved preset,
-preset-overridden, and custom roles from the same role settings used by
-`team roles list`, including enabled/runnable counts, executor labels, default
-rooms, and the equivalent CLI list command.
+or the command palette. It is a role operations view over the current project's
+resolved preset, preset-overridden, and custom roles from the same role
+settings used by `team roles list`. It shows enabled/runnable counts, executor
+labels, default rooms, active/recent RoleCall counts, recent failures, next
+suggested action, recent RoleCalls, delegation matrix summaries, selected role
+mission/boundaries, context policy, permissions, approval policy, default
+skills, and safe CLI list/executor commands. Verification commands and limits
+are shown only when role metadata provides them; missing role-policy data is
+marked unavailable rather than invented.
 The command palette (`:`) collects current-context CLI command hints for runs,
 RoleCalls, review, and memory. It is a terminal aid only; it does not add
 project or room browsing.
