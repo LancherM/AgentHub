@@ -207,14 +207,19 @@ bounded active-run output tails while keeping completed agent output
 scrollable. Quick replies and dense pending-review collapse remain part of the
 Work surface. The detail pane shows message text, inferred tools, commands,
 file refs, evidence, inline diff summaries, and fix snippets only when those
-fields come from persisted read-model evidence.
+fields come from persisted read-model evidence. The right detail panel now uses
+view-specific titles (`Block Detail`, `Live Block Detail`, `Final Report
+Detail`, `Proposal Detail`, and `Role Profile`), section dividers, stable
+section ordering, a renderer-owned PageUp/PageDown scroll window, and a
+`Controls` section that marks disabled governed actions instead of hiding them.
+Unavailable read-model gaps render as deliberate empty slots.
 Reference fidelity follow-up work is tracked in
 `docs/tui-v3-reference-gap-roadmap.md`. That plan treats the current
 `codex/tui-v3-roadmap` branch as the baseline and focuses on matching the
 supplied terminal mockups more closely. The framed shell chrome and branded
-header metadata plus the dedicated Work block renderer are implemented;
-remaining slices focus on view-specific detail titles and scrolling, Memory
-inbox bands, Team roles/matrix/profile layout, and deterministic visual
+header metadata, dedicated Work block renderer, and view-specific scrollable
+detail panel are implemented; remaining slices focus on Memory inbox bands,
+Team roles/matrix/profile layout, and deterministic visual
 fixtures. It does not
 relax the local read-model boundary or permit fabricated evidence.
 Selected active-run Work blocks expose a live detail view over the same polling

@@ -1207,7 +1207,7 @@ function WorkbenchLayout(props: TuiInkRenderProps): React.ReactElement {
       return h(
         FramedPanel,
         { width: terminal.columns, borderColor: "cyan" },
-        h(DetailPane, { model, state, width: contentWidth })
+        h(DetailPane, { model, state, terminal, width: contentWidth })
       );
     }
     return h(
@@ -1240,7 +1240,7 @@ function WorkbenchLayout(props: TuiInkRenderProps): React.ReactElement {
       FramedPanel,
       { width: layout.mainWidth, borderColor: "cyan", flexShrink: 1 },
       showInlineDetail
-        ? h(DetailPane, { model, state, width: panelContentWidth(layout.mainWidth) })
+        ? h(DetailPane, { model, state, terminal, width: panelContentWidth(layout.mainWidth) })
         : h(MainView, { ...props, terminal: mainTerminal })
     ),
     ...(layout.detailWidth > 0
@@ -1248,7 +1248,7 @@ function WorkbenchLayout(props: TuiInkRenderProps): React.ReactElement {
           h(
             FramedPanel,
             { width: layout.detailWidth, borderColor: "cyan" },
-            h(DetailPane, { model, state, width: panelContentWidth(layout.detailWidth) })
+            h(DetailPane, { model, state, terminal, width: panelContentWidth(layout.detailWidth) })
           )
         ]
       : [])
@@ -1402,49 +1402,64 @@ function sideNavItems(model: TuiCurrentContextModel): SideNavItem[] {
 function DetailPane({
   model,
   state,
+  terminal,
   width
 }: {
   model: TuiCurrentContextModel;
   state: TuiInkState;
+  terminal: TuiInkTerminalSize;
   width: number;
 }): React.ReactElement {
   const detail = selectedDetail(model, state);
+  const title = detailPaneTitle(model, state, detail);
   if (!detail) {
     return h(
       Box,
       { flexDirection: "column", width, flexShrink: 0 },
-      line(truncateText("Block Detail", width), { color: "cyan", bold: true }),
-      line(truncateText("| No detail selected", width), { dimColor: true }),
-      line(truncateText("| not available in current read model", width), { dimColor: true })
+      line(truncateText(title, width), { color: "cyan", bold: true }),
+      line(truncateText("| Empty Slot", width), { color: "yellow" }),
+      line(truncateText("|   empty slot - no selected detail is available in the current read model", width), {
+        dimColor: true
+      })
     );
   }
 
+  const bodyLines = detailBodyLines(state, detail, width);
+  const windowSize = detailBodyWindowSize(terminal);
+  const maxOffset = Math.max(0, bodyLines.length - windowSize);
+  const scrollOffset = Math.min(Math.max(state.detailScrollOffset ?? 0, 0), maxOffset);
+  const visibleLines = bodyLines.slice(scrollOffset, scrollOffset + windowSize);
   return h(
     Box,
     { flexDirection: "column", width, flexShrink: 0 },
-    line(truncateText("Block Detail", width), { color: "cyan", bold: true }),
-    line(truncateText(`| ${detail.title}`, width), { bold: true }),
-    ...(detail.subtitle ? [line(truncateText(`| ${detail.subtitle}`, width), { dimColor: true })] : []),
-    ...detail.sections.flatMap((section) => detailSectionLines(section, state, width)),
-    ...(detail.commands.length > 0
+    line(truncateText(title, width), { color: "cyan", bold: true }),
+    ...visibleLines,
+    ...(maxOffset > 0
       ? [
-          line(truncateText("| Commands", width), { color: "cyan" }),
-          ...detail.commands.slice(0, 4).map((command) =>
-            line(truncateText(`| ${command}`, width), { dimColor: true })
-          )
-        ]
-      : []),
-    ...(detail.actions.length > 0
-      ? [
-          line(truncateText("| Actions", width), { color: "cyan" }),
-          ...detail.actions.slice(0, 4).map((action) =>
-            line(truncateText(`| ${action.key} ${action.label}${action.disabledReason ? ` (${action.disabledReason})` : ""}`, width), {
-              dimColor: Boolean(action.disabledReason)
-            })
+          line(
+            truncateText(
+              `| scroll ${scrollOffset + 1}-${Math.min(scrollOffset + windowSize, bodyLines.length)}/${bodyLines.length} PageUp/PageDown Home/End`,
+              width
+            ),
+            { dimColor: true }
           )
         ]
       : [])
   );
+}
+
+function detailBodyLines(
+  state: TuiInkState,
+  detail: TuiSelectionDetail,
+  width: number
+): React.ReactElement[] {
+  return [
+    line(truncateText(`| ${detail.title}`, width), { bold: true }),
+    ...(detail.subtitle ? [line(truncateText(`| ${detail.subtitle}`, width), { dimColor: true })] : []),
+    ...orderedDetailSections(detail).flatMap((section) => detailSectionLines(section, state, width)),
+    ...detailCommandsLines(detail, width),
+    ...detailControlsLines(detail, width)
+  ];
 }
 
 function detailSectionLines(
@@ -1456,15 +1471,24 @@ function detailSectionLines(
   const expandedIds = state.expandedDetailSectionIds ?? [];
   const collapsed = collapsedIds.includes(section.id) ||
     (section.collapsedByDefault === true && !expandedIds.includes(section.id));
-  const title = collapsed ? `| ${section.title} (collapsed)` : `| ${section.title}`;
+  const unavailable = detailSectionUnavailable(section);
+  const title = collapsed
+    ? detailDividerLine(`${section.title} (collapsed)`, width)
+    : detailDividerLine(section.title, width);
   const color = detailToneColor(section.tone);
   if (collapsed) {
     return [line(truncateText(title, width), { color, dimColor: true })];
   }
+  const valueLines = section.lines.length > 0
+    ? section.lines
+    : ["not available in current read model"];
   return [
-    line(truncateText(title, width), { color }),
-    ...section.lines.slice(0, 6).flatMap((value) =>
-      detailValueLines(value, width, { dimColor: section.tone === "normal" })
+    line(truncateText(title, width), { color: unavailable ? "yellow" : color }),
+    ...valueLines.flatMap((value) =>
+      detailValueLines(value, width, {
+        dimColor: section.tone === "normal" || unavailable,
+        placeholder: unavailable
+      })
     )
   ];
 }
@@ -1472,13 +1496,146 @@ function detailSectionLines(
 function detailValueLines(
   value: string,
   width: number,
-  options: { dimColor?: boolean } = {}
+  options: { dimColor?: boolean; placeholder?: boolean } = {}
 ): React.ReactElement[] {
   const prefix = "|   ";
   const contentWidth = Math.max(1, width - terminalDisplayWidth(prefix));
-  return hardWrapLine(value, contentWidth).map((lineValue) =>
-    line(truncateText(`${prefix}${lineValue}`, width), options)
+  const { placeholder, ...lineOptions } = options;
+  const displayValue = placeholder ? `empty slot - ${value}` : value;
+  return hardWrapLine(displayValue, contentWidth).map((lineValue) =>
+    line(truncateText(`${prefix}${lineValue}`, width), lineOptions)
   );
+}
+
+function detailCommandsLines(detail: TuiSelectionDetail, width: number): React.ReactElement[] {
+  if (detail.commands.length === 0) {
+    return [];
+  }
+  return [
+    line(truncateText(detailDividerLine("Commands", width), width), { color: "cyan" }),
+    ...detail.commands.map((command) =>
+      line(truncateText(`|   ${command}`, width), { dimColor: true })
+    )
+  ];
+}
+
+function detailControlsLines(detail: TuiSelectionDetail, width: number): React.ReactElement[] {
+  if (detail.actions.length === 0) {
+    return [];
+  }
+  return [
+    line(truncateText(detailDividerLine("Controls", width), width), { color: "cyan" }),
+    ...detail.actions.map((action) => {
+      const enabled = !action.disabledReason;
+      const status = enabled ? "enabled" : `disabled - ${action.disabledReason}`;
+      return line(truncateText(`|   [${action.key}] ${action.label} (${status})`, width), {
+        dimColor: !enabled
+      });
+    })
+  ];
+}
+
+function detailPaneTitle(
+  model: TuiCurrentContextModel,
+  state: TuiInkState,
+  detail: TuiSelectionDetail | undefined
+): string {
+  if (state.focus === "memory" || detail?.kind === "memory") {
+    return "Proposal Detail";
+  }
+  if (state.focus === "team" || detail?.kind === "team_role") {
+    return "Role Profile";
+  }
+  if (state.focus === "review" || detail?.kind === "run") {
+    return "Final Report Detail";
+  }
+  if (detail?.kind === "work_block" && detailIsLiveWorkBlock(model, state, detail)) {
+    return "Live Block Detail";
+  }
+  return "Block Detail";
+}
+
+function detailIsLiveWorkBlock(
+  model: TuiCurrentContextModel,
+  state: TuiInkState,
+  detail: TuiSelectionDetail
+): boolean {
+  const selected = selectedWorkBlockFromBlocks(workBlocksForModel(model), state);
+  return selected?.id === detail.id
+    ? selected.sourceKind === "active_run"
+    : detail.sections.some((section) => section.id === "live-run");
+}
+
+function orderedDetailSections(detail: TuiSelectionDetail): TuiDetailSection[] {
+  const order = detailSectionOrder(detail.kind);
+  return detail.sections
+    .map((section, index) => ({ section, index }))
+    .sort((left, right) => {
+      const leftRank = order.get(left.section.id) ?? Number.MAX_SAFE_INTEGER;
+      const rightRank = order.get(right.section.id) ?? Number.MAX_SAFE_INTEGER;
+      return leftRank === rightRank
+        ? left.index - right.index
+        : leftRank - rightRank;
+    })
+    .map(({ section }) => section);
+}
+
+function detailSectionOrder(kind: TuiSelectionDetail["kind"]): Map<string, number> {
+  const ids = kind === "memory"
+    ? ["memory", "why", "evidence", "writeback", "related", "source-commands"]
+    : kind === "team_role"
+      ? [
+          "role",
+          "executor",
+          "mission-boundaries",
+          "allowed-tools",
+          "context-policy",
+          "delegation",
+          "verification-profile",
+          "limits",
+          "recent-failures"
+        ]
+      : kind === "run"
+        ? ["run", "evidence", "review"]
+        : kind === "role_call"
+          ? ["role-call", "evidence"]
+          : kind === "work_block"
+            ? [
+                "live-run",
+                "message",
+                "streaming-output",
+                "tool-calls",
+                "commands",
+                "active-commands",
+                "file-refs",
+                "evidence",
+                "inline-diff",
+                "fix-snippet",
+                "artifacts",
+                "pending-artifacts"
+              ]
+            : ["task", "context", "verification", "commands"];
+  return new Map(ids.map((id, index) => [id, index]));
+}
+
+function detailDividerLine(title: string, width: number): string {
+  const bareTitle = `| ${title}`;
+  if (terminalDisplayWidth(`| -- ${title} `) + 2 >= width) {
+    return bareTitle;
+  }
+  const prefix = `| -- ${title} `;
+  const remaining = Math.max(2, width - terminalDisplayWidth(prefix));
+  return `${prefix}${"-".repeat(remaining)}`;
+}
+
+function detailSectionUnavailable(section: TuiDetailSection): boolean {
+  return section.id === "unavailable" ||
+    section.lines.length === 0 ||
+    section.lines.every((value) => /not available|not configured|not supported|current read model/i.test(value));
+}
+
+function detailBodyWindowSize(terminal: TuiInkTerminalSize): number {
+  return boundedWindowSize(terminal.rows - 8, 8, 32);
 }
 
 function detailToneColor(tone: TuiDetailSection["tone"]): string | undefined {
@@ -3580,6 +3737,15 @@ function contextualShortcutHint(state: TuiInkState, columns: number): string {
       return "keys: enter submit | tab complete | esc clear | ctrl+c exit";
     }
     return "keys: enter submit | ctrl+o newline | tab complete/focus | esc clear | ctrl+c exit";
+  }
+  if (state.detailVisible) {
+    if (columns < 56) {
+      return "keys: PgUp/PgDn detail | Esc";
+    }
+    if (columns < 84) {
+      return "keys: PgUp/PgDn detail | Home/End | Esc close | x exit";
+    }
+    return "keys: PageUp/PageDown detail | Home/End jump | Up/Down select | Esc close | >/< fold";
   }
   if (state.focus === "runs") {
     if (columns < 56) {

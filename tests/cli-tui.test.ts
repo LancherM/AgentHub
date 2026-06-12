@@ -86,10 +86,10 @@ describe("CLI TUI command", () => {
 
     const rendered = output.join("");
     expect(errors.join("")).toBe("");
-    expect(rendered).toContain("TUI Project · @codex");
+    expect(rendered).toContain("AGENT HUB | TUI Project | role:@codex");
     expect(rendered).toContain("@codex");
     expect(rendered).toContain("Check TUI evidence.");
-    expect(rendered).toContain("@reviewer run_1 ⠋ running");
+    expect(rendered).toContain("@reviewer run_1 ● running");
     expect(rendered).toContain("> @codex prompt");
   });
 

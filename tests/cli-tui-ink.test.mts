@@ -639,11 +639,48 @@ describe("Ink TUI renderer", () => {
 
     expect(state.detailVisible).toBe(true);
     expect(openedWithO.detailVisible).toBe(true);
-    expect(output).toContain("Block Detail");
+    expect(output).toContain("Final Report Detail");
     expect(output).toContain("Check TUI shell");
     expect(output).toContain("status succeeded");
     expect(output).toContain("agent-hub runs show run_27984312");
     expect(output).not.toContain("No detail selected");
+  });
+
+  it("pages long selected detail content without silently capping sections", () => {
+    const detailLines = Array.from({ length: 20 }, (_, index) =>
+      `detail line ${String(index).padStart(2, "0")}`
+    );
+    const model = {
+      ...baseModel,
+      selectionDetails: {
+        ...baseModel.selectionDetails,
+        workBlocks: [
+          {
+            ...baseModel.selectionDetails.workBlocks[0],
+            sections: [{ id: "long-detail", title: "Long Detail", lines: detailLines }]
+          },
+          ...baseModel.selectionDetails.workBlocks.slice(1)
+        ]
+      }
+    };
+    const state = reduceInkState(
+      { ...createInitialInkState(), detailVisible: true },
+      "page_down",
+      model
+    );
+    const output = renderToString(
+      React.createElement(TuiInkFrame, {
+        model,
+        state,
+        terminal: { columns: 80, rows: 16 }
+      }),
+      { columns: 80 }
+    );
+
+    expect(state.detailScrollOffset).toBeGreaterThan(0);
+    expect(output).toContain("detail line 12");
+    expect(output).toContain("scroll ");
+    expect(output).not.toContain("detail line 00");
   });
 
   it("keeps team detail selection stable by selected id", () => {
@@ -667,9 +704,9 @@ describe("Ink TUI renderer", () => {
     expect(output).toContain("Mission And Boundaries");
     expect(output).toContain("Context Policy");
     expect(output).toContain("Delegation Matrix");
-    expect(output).toContain("role-call initiation polic");
+    expect(output).toContain("empty slot - role-call");
     expect(output).toContain("Recent Failures");
-    expect(output).toContain("agent-hub team roles execu...");
+    expect(output).toContain("agent-hub team roles exe...");
   });
 
   it("renders Memory governance rows with selected proposal detail", () => {
@@ -696,7 +733,7 @@ describe("Ink TUI renderer", () => {
     expect(output).toContain("Runtime injection is the");
     expect(output).toContain("default context mode.");
     expect(output).toContain("recommended action injected");
-    expect(output).toContain("agent-hub memory approve -...");
+    expect(output).toContain("agent-hub memory approve...");
     expect(output.split("\n").every((value) => value.length <= 120)).toBe(true);
   });
 
@@ -1036,12 +1073,12 @@ describe("Ink TUI renderer", () => {
       React.createElement(TuiInkFrame, {
         model,
         state: { ...createInitialInkState(), detailVisible: true },
-        terminal: { columns: 80, rows: 24 }
+        terminal: { columns: 80, rows: 40 }
       }),
       { columns: 80 }
     );
 
-    expect(output).toContain("Block Detail");
+    expect(output).toContain("Live Block Detail");
     expect(output).toContain("Live Run");
     expect(output).toContain("speaker @engineer");
     expect(output).toContain("spinner active");

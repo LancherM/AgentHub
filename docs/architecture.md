@@ -599,6 +599,12 @@ as presentation DTOs (`TuiSelectionDetail`, `TuiDetailSection`, and
 Work blocks, runs, RoleCalls, tasks, team roles, and memory governance; Ink only
 selects and renders those payloads from local state. `Enter` or empty-composer
 `o` opens detail, while `Esc` closes the detail overlay before returning focus.
+The renderer maps the selected payload to view-specific panel titles, keeps a
+local detail scroll offset for PageUp/PageDown/Home/End, renders stable section
+ordering and divider rows, and derives a `Controls` section from
+`TuiDetailAction` disabled state. Unavailable sections remain read-model data;
+Ink only styles them as empty slots and does not query lower-level stores to
+fill them.
 Memory governance uses the same boundary: core projects `MemoryItem` records
 into bounded `TuiMemoryRow` DTOs with lifecycle status, category, confidence,
 source run/task ids, evidence excerpts from stored metadata, writeback target
@@ -640,10 +646,12 @@ sections and command hints rather than fabricating data or reading lower-level
 stores directly.
 The reference fidelity follow-up in `docs/tui-v3-reference-gap-roadmap.md`
 keeps the same architecture and narrows the remaining work to composition:
-framed shell chrome, a dedicated Work block list renderer, view-specific detail
-titles and detail scrolling, Memory inbox bands, Team matrix/profile layout,
-and deterministic visual fixtures. It should not add new persistence or
-renderer-side data access merely to satisfy the mockup.
+framed shell chrome, a dedicated Work block list renderer, view-specific
+scrollable detail panels, Memory inbox bands, Team matrix/profile layout, and
+deterministic visual fixtures. The first three composition slices are
+implemented inside `apps/cli/src/tui-ink` and local state; the follow-up should
+not add new persistence or renderer-side data access merely to satisfy the
+mockup.
 RoleCall loop controls reuse the core convergence helper plus TUI risk
 summaries. The CLI renderer can prepare an explicit continuation prompt, but it
 does not run an autonomous background loop or add a daemon.
