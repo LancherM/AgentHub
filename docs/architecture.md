@@ -744,8 +744,15 @@ Search and command-palette input are local Ink state. Conversation search reads
 only the rendered read-model text already present in memory, highlights matches,
 and never mutates composer contents. Palette filtering is fuzzy over safe focus
 items and existing CLI command hints; `Enter` either changes TUI focus or copies
-a command hint into the composer for explicit user submission. It never invokes
-shell commands directly.
+a command hint into the composer for explicit user submission. `:` opens the
+same palette directly, while a slash-only `/` composer command opens it without
+submitting a prompt and without stealing `/search`, `/timeline`, `/notify`, or
+`/team`. It never invokes shell commands directly.
+Detail fold state is also local Ink state. The renderer tracks collapsed and
+explicitly expanded detail section ids so default-collapsed evidence, tool,
+snippet, verification, limit, and recent-failure sections can be expanded with
+`Space`, `>`, `O`, or `za`, and collapsed with `<` or another toggle. This fold
+state is not persisted and does not change the core read model.
 Notifications, timeline, and splash remain CLI renderer concerns.
 `/notify` toggles an in-memory flag for the current Ink session; when enabled,
 the renderer may write only terminal escape output (bell plus OSC 9) after a
@@ -769,8 +776,9 @@ terminal while preserving deterministic `--once` and non-TTY smoke renders.
 Composer editing is handled in the Ink component state before shortcut
 dispatch: printable lowercase keys update the composer from any focus,
 uppercase tab shortcuts switch Work/Runs/View/Graph/Tasks/Memory/Team,
-`/team` clears the composer and switches to the Team view, `Enter` submits
-other non-empty composer text, empty-composer `Enter` is a no-op, `Esc` clears
+`/team` clears the composer and switches to the Team view, slash-only `/` opens
+the palette, `Enter` submits other non-empty composer text, empty-composer
+`Enter` opens selected detail, `Esc` clears
 composer text or returns auxiliary panes to Work, and `Tab` remains a
 focus-navigation key unless an active `@` completion token is open. The composer
 tracks a cursor offset for left/right, Home/End, Backspace/Delete, and

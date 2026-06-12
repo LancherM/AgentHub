@@ -1,6 +1,6 @@
 # TUI V3 Roadmap
 
-Status: implementation in progress; V3-1 through V3-6 implemented
+Status: implementation in progress; V3-1 through V3-7 implemented
 Last updated: 2026-06-12
 
 This roadmap defines the next major terminal UI refactor for Agent Hub. It is
@@ -119,8 +119,10 @@ The reference UI requires functionality that is only partially supported:
   from role metadata when present, limits from role metadata when present, and
   next suggested action. Missing role-policy, verification-command, and limit
   data is rendered as unavailable instead of synthesized.
-- Table sorting, table filters, and per-view search controls are not generic
-  primitives.
+- Workbench tables now show compact filter/sort labels where row tables exist,
+  and selected-row movement is normalized across Work, Runs, Graph, Tasks,
+  Memory, and Team. A generic table primitive with reusable per-view filters
+  remains future polish.
 - Approve/reject/edit/open controls for memory proposals must not be added as
   renderer-side shortcuts until they have explicit audited local action
   callbacks. Showing equivalent CLI commands is acceptable before callbacks
@@ -399,6 +401,12 @@ Acceptance:
 ### Phase V3-7: Table, Fold, Search, And Help Polish
 
 Goal: make the V3 shell efficient for repeated keyboard use.
+
+Status: implemented. Empty-composer `j/k` movement, `Enter/o` detail,
+`Space`/`>`/`<`/`O` detail section folds, `za` fold toggling, slash-only
+palette opening, compact table filter/sort labels, and expanded Help/Palette
+entries are wired through local Ink state without stealing normal composer
+text.
 
 Scope:
 

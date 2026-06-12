@@ -147,9 +147,10 @@ summary only when the selected task has at least two runs.
 Search is local to the TUI renderer. `Ctrl+F` or `/search` opens a search
 overlay over rendered conversation text, shows match count/current match, and
 uses Up/Down to move between matches; `Esc` closes it without corrupting the
-composer. The command palette accepts input, fuzzy filters safe focus actions
-and existing local CLI command hints, highlights matches, and uses `Enter` to
-either switch focus or prepare the selected command in the composer.
+composer. The command palette opens with `:`, or by submitting a slash-only `/`
+composer command, accepts input, fuzzy filters safe focus actions and existing
+local CLI command hints, highlights matches, and uses `Enter` to either switch
+focus or prepare the selected command in the composer.
 The optional mini timeline is also local renderer state. `/timeline` or
 empty-composer `L` opens a compact chronological view over the current rendered
 conversation, active runs, and recent runs; `Esc` or `L` closes it. `/notify`
@@ -218,9 +219,13 @@ agent, and enabled team-role completions while editing an `@` token. It also
 supports cursor movement plus Home/End, Backspace/Delete, and Ctrl+A/E/U/D
 editing controls. Empty-composer Work shortcuts that would steal normal prompt
 text use uppercase keys, including `C` for continue and `L` for the mini
-timeline. Runs, RoleCalls, and Tasks show selected rows with a visible `▌`
-marker plus inverse row styling, and the bottom shortcut hint changes by focus
-instead of showing one global command string. The permanent footer is
+timeline. Empty-composer `j/k` mirrors Up/Down movement, `Enter`/`o` opens
+selected-object detail, and detail sections can be expanded or collapsed with
+`Space`/`>`/`<`, `O`, or `za`. Runs, RoleCalls, Tasks, Memory, and Team show
+selected rows with a visible `▌` marker plus inverse row styling, and the
+bottom shortcut hint changes by focus instead of showing one global command
+string. Memory and Team tables include compact filter/sort labels. The
+permanent footer is
 width-aware: narrow terminals keep only primary keys visible, while full
 current-context CLI commands remain in the command palette, focused detail
 panes, or explicit command-print status messages. The Work surface uses

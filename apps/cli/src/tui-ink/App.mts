@@ -261,6 +261,22 @@ export function TuiInkApp(props: TuiInkAppProps): React.ReactElement {
   const applyComposerCommand = (): boolean => {
     const currentState = stateRef.current;
     const command = currentState.composer.trim().toLowerCase();
+    if (command === "/") {
+      setStateNow({
+        ...currentState,
+        commandPaletteOpen: true,
+        searchOpen: false,
+        composer: "",
+        composerCursorPosition: 0,
+        composerHistoryIndex: undefined,
+        composerHistoryDraft: "",
+        agentCompletionIndex: 0,
+        paletteQuery: "",
+        paletteSelectedIndex: 0,
+        statusMessage: "Command palette opened."
+      });
+      return true;
+    }
     if (command === "/team" || command === "/roles") {
       setStateNow({
         ...currentState,
@@ -702,6 +718,10 @@ export function TuiInkApp(props: TuiInkAppProps): React.ReactElement {
         return;
       }
       const canRecordReview = currentState.focus === "review";
+      if (currentState.foldPrefixPending && currentState.composer.length === 0) {
+        applyKey(input === "a" ? "toggle_detail_sections" : "cancel_fold_prefix");
+        return;
+      }
       if (input === "a" && canRecordReview && currentState.composer.length === 0) {
         if (isBusy) {
           showBusyInputMessage();
@@ -1414,7 +1434,9 @@ function detailSectionLines(
   width: number
 ): React.ReactElement[] {
   const collapsedIds = state.collapsedDetailSectionIds ?? [];
-  const collapsed = collapsedIds.includes(section.id) || section.collapsedByDefault === true;
+  const expandedIds = state.expandedDetailSectionIds ?? [];
+  const collapsed = collapsedIds.includes(section.id) ||
+    (section.collapsedByDefault === true && !expandedIds.includes(section.id));
   const title = collapsed ? `| ${section.title} (collapsed)` : `| ${section.title}`;
   const color = detailToneColor(section.tone);
   if (collapsed) {
@@ -2589,6 +2611,7 @@ function TeamPane({
       `enabled ${team.counts.enabled} runnable ${team.counts.runnable} reserved ${team.counts.reserved} custom ${team.counts.custom} overrides ${team.counts.presetOverrides}`,
       { dimColor: true }
     ),
+    line("filter all   sort preset/custom, role", { dimColor: true }),
     line("role          executor           state     calls fail room       next"),
     ...visibleRoles.map((role, index) =>
       teamRoleRowLine(role, offset + index === selectedIndex)
@@ -2703,6 +2726,7 @@ function MemoryPane({
     Pane,
     { title: "Memory Governance" },
     line(`proposed ${model.memory.counts.proposed} approved ${model.memory.counts.approved} rejected ${model.memory.counts.rejected} retired ${model.memory.counts.retired}`),
+    line("filter all   sort status, updated desc", { dimColor: true }),
     line("status   category        conf   source        updated              action"),
     ...(rows.length > 0
       ? rows.map((row, index) => memoryRowLine(row, index === selectedIndex))
@@ -2929,8 +2953,10 @@ function HelpPane(): React.ReactElement {
   return h(
     Pane,
     { title: "Help" },
-    line("tabs: W work  R runs  V review  G graph  T tasks  M memory  E team"),
-    line(": palette   /search   /timeline or L   /notify   /team"),
+    line("tabs: Tab focus  W work  R runs  V review  G graph  T tasks  M memory  E team"),
+    line("move: Up/Down or j/k  detail: Enter/o  folds: Space/> toggle  < close  za toggle  O open"),
+    line("commands: : palette  / then Enter palette"),
+    line("/search  /timeline or L  /notify  /team"),
     line("review: a accept  R reject  audit only; no apply, merge, or push"),
     line("prompt: enter submit  ctrl+o newline  esc clear  ctrl+u clear")
   );
@@ -2958,9 +2984,11 @@ function paletteItems(model: TuiCurrentContextModel, state: TuiInkState): Palett
     { kind: "focus", label: "Open Review", focus: "review" },
     { kind: "focus", label: "Open Team", focus: "team" },
     { kind: "focus", label: "Open Memory", focus: "memory" },
+    { kind: "focus", label: "Open Help", focus: "help" },
+    ...commands.map((command) => ({ kind: "command" as const, label: command, command })),
+    { kind: "command", label: "/search", command: "/search" },
     { kind: "command", label: "/timeline", command: "/timeline" },
-    { kind: "command", label: "/notify", command: "/notify" },
-    ...commands.map((command) => ({ kind: "command" as const, label: command, command }))
+    { kind: "command", label: "/notify", command: "/notify" }
   ];
 }
 
@@ -3776,6 +3804,18 @@ function keyToAction(input: string, key: Key, focus: string): TuiInkKey | undefi
   if (input === "o") {
     return "open_detail";
   }
+  if (input === " " || input === ">") {
+    return "toggle_detail_sections";
+  }
+  if (input === "<") {
+    return "collapse_detail_sections";
+  }
+  if (input === "O") {
+    return "expand_detail_sections";
+  }
+  if (input === "z") {
+    return "fold_prefix";
+  }
   if (input === "W") {
     return "work";
   }
@@ -3830,6 +3870,14 @@ function isDirectFocusAction(action: TuiInkKey): boolean {
 
 function isImmediateEmptyComposerAction(action: TuiInkKey, focus: TuiInkFocus): boolean {
   if (action === "open_detail") {
+    return true;
+  }
+  if (
+    action === "fold_prefix" ||
+    action === "toggle_detail_sections" ||
+    action === "collapse_detail_sections" ||
+    action === "expand_detail_sections"
+  ) {
     return true;
   }
   if (isDirectFocusAction(action)) {

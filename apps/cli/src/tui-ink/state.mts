@@ -2,8 +2,10 @@ import type {
   TuiConversationEntry,
   TuiConversationSuggestion,
   TuiCurrentContextModel,
+  TuiDetailSection,
   TuiRoleCallNodeSummary,
   TuiRunSummary,
+  TuiSelectionDetail,
   TuiTaskSummary,
   TuiWorkBlock
 } from "@agent-hub/core";
@@ -39,6 +41,8 @@ export interface TuiInkState {
   hideCompletedRoleCalls: boolean;
   collapsedRoleCallIds: string[];
   collapsedDetailSectionIds: string[];
+  expandedDetailSectionIds: string[];
+  foldPrefixPending: boolean;
   detailVisible: boolean;
   scrollOffsets: {
     runs: number;
@@ -98,6 +102,11 @@ export type TuiInkKey =
   | "reject_review"
   | "open_detail"
   | "close_detail"
+  | "fold_prefix"
+  | "cancel_fold_prefix"
+  | "toggle_detail_sections"
+  | "collapse_detail_sections"
+  | "expand_detail_sections"
   | "print_commands"
   | "palette";
 
@@ -125,6 +134,8 @@ export function createInitialInkState(composer = ""): TuiInkState {
     hideCompletedRoleCalls: false,
     collapsedRoleCallIds: [],
     collapsedDetailSectionIds: [],
+    expandedDetailSectionIds: [],
+    foldPrefixPending: false,
     detailVisible: false,
     scrollOffsets: {
       runs: 0,
@@ -163,6 +174,8 @@ export function reduceInkState(
     detailVisible: state.detailVisible ?? false,
     collapsedRoleCallIds: [...(state.collapsedRoleCallIds ?? [])],
     collapsedDetailSectionIds: [...(state.collapsedDetailSectionIds ?? [])],
+    expandedDetailSectionIds: [...(state.expandedDetailSectionIds ?? [])],
+    foldPrefixPending: false,
     composerHistory: [...(state.composerHistory ?? [])],
     statusMessage: undefined
   };
@@ -262,6 +275,19 @@ export function reduceInkState(
   if (key === "close_detail") {
     next.detailVisible = false;
     next.statusMessage = "Detail closed.";
+    return next;
+  }
+  if (key === "fold_prefix") {
+    next.foldPrefixPending = true;
+    next.statusMessage = "Fold prefix: press a to toggle detail sections.";
+    return next;
+  }
+  if (key === "cancel_fold_prefix") {
+    next.statusMessage = "Fold prefix cancelled.";
+    return next;
+  }
+  if (key === "toggle_detail_sections" || key === "collapse_detail_sections" || key === "expand_detail_sections") {
+    updateDetailSectionFolds(next, model, key);
     return next;
   }
   if (key === "accept_review" || key === "reject_review") {
@@ -724,6 +750,100 @@ function toggleSelectedRoleCallCollapse(
     state.statusMessage = `Expanded ${selected.id}.`;
   }
   state.collapsedRoleCallIds = [...collapsed];
+}
+
+function updateDetailSectionFolds(
+  state: TuiInkState,
+  model: TuiCurrentContextModel,
+  key: "toggle_detail_sections" | "collapse_detail_sections" | "expand_detail_sections"
+): void {
+  const sections = selectedDetailSections(model, state);
+  if (sections.length === 0) {
+    state.statusMessage = "No detail sections are available to fold.";
+    return;
+  }
+  if (key === "collapse_detail_sections") {
+    state.collapsedDetailSectionIds = sections.map((section) => section.id);
+    state.expandedDetailSectionIds = state.expandedDetailSectionIds.filter(
+      (id) => !sections.some((section) => section.id === id)
+    );
+    state.statusMessage = "Detail sections collapsed.";
+    return;
+  }
+  if (key === "expand_detail_sections") {
+    const ids = new Set([...state.expandedDetailSectionIds, ...sections.map((section) => section.id)]);
+    state.expandedDetailSectionIds = [...ids];
+    state.collapsedDetailSectionIds = state.collapsedDetailSectionIds.filter(
+      (id) => !sections.some((section) => section.id === id)
+    );
+    state.statusMessage = "Detail sections expanded.";
+    return;
+  }
+  const anyCollapsed = sections.some((section) => detailSectionCollapsed(section, state));
+  updateDetailSectionFolds(
+    state,
+    model,
+    anyCollapsed ? "expand_detail_sections" : "collapse_detail_sections"
+  );
+}
+
+function selectedDetailSections(
+  model: TuiCurrentContextModel,
+  state: TuiInkState
+): TuiDetailSection[] {
+  return selectedDetail(model, state)?.sections ?? [];
+}
+
+function selectedDetail(
+  model: TuiCurrentContextModel,
+  state: TuiInkState
+): TuiSelectionDetail | undefined {
+  const details = model.selectionDetails;
+  if (state.focus === "runs") {
+    const run = selectedRun(model, state);
+    return run ? details.runs.find((detail) => detail.id === run.id) : undefined;
+  }
+  if (state.focus === "review") {
+    if (model.review.kind === "run" && model.review.selectedId) {
+      return details.runs.find((detail) => detail.id === model.review.selectedId);
+    }
+    if (model.review.kind === "role_call" && model.review.selectedId) {
+      return details.roleCalls.find((detail) => detail.id === model.review.selectedId);
+    }
+    return undefined;
+  }
+  if (state.focus === "graph") {
+    const call = selectedRoleCall(model, state);
+    return call ? details.roleCalls.find((detail) => detail.id === call.id) : undefined;
+  }
+  if (state.focus === "tasks") {
+    const task = selectedTask(model, state);
+    return task ? details.tasks.find((detail) => detail.id === task.id) : undefined;
+  }
+  if (state.focus === "team") {
+    const role = model.team.roles[selectedTeamRoleIndex(model, state)];
+    return role ? details.teamRoles.find((detail) => detail.id === role.id) : undefined;
+  }
+  if (state.focus === "memory") {
+    const rowDetails = details.memoryRows;
+    if (rowDetails.length === 0) {
+      return details.memory;
+    }
+    return rowDetails[selectedIndexById(rowDetails, state.selectedMemoryItemId, state.selectedMemoryItemIndex)] ?? rowDetails[0];
+  }
+  if (state.focus === "work") {
+    const workDetails = details.workBlocks;
+    return workDetails[selectedIndexById(workDetails, state.selectedWorkBlockId, state.selectedWorkBlockIndex)] ?? workDetails.at(-1);
+  }
+  return undefined;
+}
+
+function detailSectionCollapsed(section: TuiDetailSection, state: TuiInkState): boolean {
+  if (state.collapsedDetailSectionIds.includes(section.id)) {
+    return true;
+  }
+  return section.collapsedByDefault === true &&
+    !state.expandedDetailSectionIds.includes(section.id);
 }
 
 function applyContinuePrompt(

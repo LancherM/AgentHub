@@ -1762,6 +1762,85 @@ describe("Ink TUI renderer", () => {
     instance.unmount();
   });
 
+  it("opens the command palette from a slash-only command without submitting a prompt", async () => {
+    const submissions = [];
+    const instance = render(
+      React.createElement(TuiInkApp, {
+        model: baseModel,
+        state: createInitialInkState(),
+        terminal: { columns: 120, rows: 40 },
+        interactive: true,
+        submitPrompt: async (input) => {
+          submissions.push(input);
+          return { ok: true, message: "Submitted prompt.", model: baseModel };
+        }
+      })
+    );
+
+    instance.stdin.write("/");
+    await waitForFrame(instance, "> /");
+    instance.stdin.write("\r");
+    await waitForFrame(instance, "Command Palette");
+
+    expect(submissions).toEqual([]);
+    expect(instance.lastFrame()).toContain("Open Help");
+    expect(instance.lastFrame()).toContain("agent-hub memory list --project-id project_1");
+    expect(instance.lastFrame()).toContain("> @codex prompt");
+    instance.unmount();
+  });
+
+  it("toggles selected detail folds without writing hotkeys into the composer", async () => {
+    const foldModel = {
+      ...baseModel,
+      selectionDetails: {
+        ...baseModel.selectionDetails,
+        memoryRows: [
+          {
+            ...baseModel.selectionDetails.memoryRows[0],
+            sections: [
+              { id: "memory", title: "Memory Text", lines: ["Keep memory approval explicit."] },
+              {
+                id: "evidence",
+                title: "Evidence Excerpts",
+                lines: ["manual review required"],
+                collapsedByDefault: true
+              }
+            ]
+          },
+          ...baseModel.selectionDetails.memoryRows.slice(1)
+        ]
+      }
+    };
+    const instance = render(
+      React.createElement(TuiInkApp, {
+        model: foldModel,
+        state: { ...createInitialInkState(), focus: "memory", detailVisible: true },
+        terminal: { columns: 120, rows: 40 },
+        interactive: true
+      })
+    );
+
+    await waitForFrame(instance, "Evidence Excerpts (collapsed)");
+    expect(instance.lastFrame()).not.toContain("manual review required");
+
+    instance.stdin.write("O");
+    await waitForFrame(instance, "Detail sections expanded.");
+    expect(instance.lastFrame()).toContain("manual review required");
+    expect(instance.lastFrame()).toContain("> @codex prompt");
+
+    instance.stdin.write("<");
+    await waitForFrame(instance, "Detail sections collapsed.");
+    expect(instance.lastFrame()).toContain("Evidence Excerpts (collapsed)");
+
+    instance.stdin.write("z");
+    await waitForFrame(instance, "Fold prefix");
+    instance.stdin.write("a");
+    await waitForFrame(instance, "Detail sections expanded.");
+    expect(instance.lastFrame()).toContain("manual review required");
+    expect(instance.lastFrame()).not.toContain("> za");
+    instance.unmount();
+  });
+
   it("keeps full ids and governed commands inside the command palette", () => {
     const output = renderToString(
       React.createElement(TuiInkFrame, {
