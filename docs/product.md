@@ -169,11 +169,13 @@ alter run behavior, or invoke external services. Startup splash is explicit:
 `--splash` prints a short prelude before the interactive Ink frame, so the live
 frame does not need a delayed splash-removal repaint; `--no-splash` suppresses
 it.
-The persistent side navigation keeps Work, Runs, View, Graph, Tasks, Memory,
-Team, and Help one key away at normal and wide widths. The bottom chrome is
-split into composer, hotkey, and status bands; narrow terminals keep compact
-focus keys in the side navigation instead of rendering a duplicate tab row. The
-empty-composer hotkey band uses one reference-aligned row:
+The persistent side navigation keeps Work, Graph, Runs, Review, Tasks, Memory,
+Team, and Help one key away at normal and wide widths. Tab and Shift+Tab follow
+that same visible order, so keyboard focus matches the side navigation. The
+framed Workbench columns keep a terminal-derived height across focus switches.
+The bottom chrome is split into composer, hotkey, and status bands; narrow
+terminals keep compact focus keys in the side navigation instead of rendering a
+duplicate tab row. The empty-composer hotkey band uses one reference-aligned row:
 `up/down/j/k move | Enter/o detail | >/< fold | za all fold | O all open | ?
 help | / palette`. When a detail overlay is open, the right panel labels
 `[x] close`, and `x` closes detail before it can exit the TUI.
@@ -238,7 +240,7 @@ status or structured tool durations; those remain unavailable until adapters
 persist them as structured evidence.
 The TUI composer is prompt-first while editing: printable lowercase keys append
 to the prompt from any focus, uppercase tab shortcuts switch
-Work/Runs/View/Graph/Tasks/Memory/Team, `/team` opens the Team roles view
+Work/Graph/Runs/Review/Tasks/Memory/Team, `/team` opens the Team roles view
 without submitting a prompt, `Enter` submits non-command prompts when a
 submission callback is available, `Esc` clears the in-progress prompt, and
 empty-composer `Enter` does not switch panes. `Tab` remains available for focus
@@ -304,11 +306,17 @@ state can appear without a manual keypress. Active-run refreshes stay
 responsive, idle refreshes use a slower cadence, and refreshes with no
 renderable read-model change are ignored to avoid unnecessary full-screen
 redraws. New conversation or active-run output anchors Work back to the bottom.
+Moving the selected Work block with Up/Down or `j`/`k` adjusts the Work scroll
+offset when the selection crosses the visible top or bottom edge, so the
+selected conversation stays visible without a separate manual scroll step. If
+the selected conversation is taller than the visible Work viewport, the TUI
+keeps the selected frame header visible instead of trying to fit the whole
+conversation in one screen.
 TaskRunner persists run events as they are produced, so running boxes can show
 live progress from the local evidence store instead of waiting for final run
 completion. The conversation can scroll back by
 rendered line from Work focus, Runs and Tasks panes expand on taller terminals,
-uppercase focus keys switch Work/Runs/View/Graph/Tasks/Memory/Team when the
+uppercase focus keys switch Work/Graph/Runs/Review/Tasks/Memory/Team when the
 composer is empty, and the Review reject shortcut is uppercase `R` so
 vim-style `j` remains navigation rather than an audit write.
 When the graph has no selected RoleCall, the TUI command hint and command

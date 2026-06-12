@@ -682,8 +682,9 @@ metadata; no executor backend, database table, daemon, or desktop behavior is
 added for the TUI.
 Terminal polish is also contained in the CLI renderer. It compacts identifiers,
 renders the Work view as a conversation flow plus bounded active-run boxes,
-moves Work/Runs/View/Graph/Tasks/Memory/Team/Help into the persistent side
-navigation when width allows, renders a single reference-aligned hotkey band
+moves Work/Graph/Runs/Review/Tasks/Memory/Team/Help into the persistent side
+navigation when width allows, keeps Tab and Shift+Tab aligned to that visible
+navigation order, renders a single reference-aligned hotkey band
 and focus-specific status band
 below the composer, uses width-aware footer labels so narrow terminals keep
 primary keys readable, and uses Ink components for terminal layout instead of
@@ -691,7 +692,9 @@ hand-wrapped string panels. Full current-context CLI commands stay in Palette, f
 detail panes, or explicit command-print status messages rather than permanent
 footer chrome. Work layout budgets are calculated from terminal width/height
 after reserving fixed chrome rows for the header, warnings/status, attention
-strip, composer, tabs, and status bar: conversation rows are sliced after
+strip, composer, tabs, and status bar; framed Workbench columns receive a
+terminal-derived fixed height so switching focus does not resize the side,
+main, or detail columns. Conversation rows are sliced after
 renderer-side display-width-aware wrapping has repeated structural prefixes,
 so CJK/full-width text and long Markdown/path/code tokens do not fall through
 to Ink truncation. Active-run boxes switch to a compact four-line variant only
@@ -804,7 +807,7 @@ test IO object omits stdin. This keeps `agent-hub tui` interactive in a real
 terminal while preserving deterministic `--once` and non-TTY smoke renders.
 Composer editing is handled in the Ink component state before shortcut
 dispatch: printable lowercase keys update the composer from any focus,
-uppercase tab shortcuts switch Work/Runs/View/Graph/Tasks/Memory/Team,
+uppercase tab shortcuts switch Work/Graph/Runs/Review/Tasks/Memory/Team,
 `/team` clears the composer and switches to the Team view, slash-only `/` opens
 the palette, `Enter` submits other non-empty composer text, empty-composer
 `Enter` opens selected detail, `Esc` clears
@@ -847,8 +850,14 @@ remain single-flight while their callback is in flight. Prompt submission
 callbacks are expected to return after local enqueue/start work, leaving active
 agent execution to the CLI background turn and read-model polling. Scrollable
 conversation state is line-based and re-anchors to the bottom when new
-conversation or active-run output appears. Active-run selection and
-terminal-height list windows remain local Ink state, while selected runs,
+conversation or active-run output appears. Work block selection uses the same
+current-block validation as the renderer and adjusts the scroll offset when
+Up/Down or `j`/`k` would move the selected block outside the visible Work
+window; the renderer then clamps the viewport from actual rendered line ranges
+so wrapped long messages keep the selected frame header visible. Manual
+PageUp/PageDown/Home/End scrolling clears that selection anchor. Active-run
+selection and terminal-height list windows remain local Ink
+state, while selected runs,
 tasks, and RoleCalls continue to resolve through the existing read-model
 summaries.
 The command hint helper falls back from an absent selected RoleCall to

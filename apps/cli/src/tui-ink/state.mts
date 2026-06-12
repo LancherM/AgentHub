@@ -34,6 +34,7 @@ export interface TuiInkState {
   selectedTaskId?: string;
   selectedWorkBlockIndex: number;
   selectedWorkBlockId?: string;
+  workSelectionAnchor: boolean;
   selectedMemoryItemIndex: number;
   selectedMemoryItemId?: string;
   selectedTeamRoleIndex: number;
@@ -114,9 +115,9 @@ export type TuiInkKey =
 
 export const focusModes: TuiInkFocus[] = [
   "work",
+  "graph",
   "runs",
   "review",
-  "graph",
   "tasks",
   "memory",
   "team",
@@ -130,6 +131,7 @@ export function createInitialInkState(composer = ""): TuiInkState {
     selectedRoleCallIndex: 0,
     selectedTaskIndex: 0,
     selectedWorkBlockIndex: 0,
+    workSelectionAnchor: false,
     selectedMemoryItemIndex: 0,
     selectedTeamRoleIndex: 0,
     selectedActiveRunIndex: 0,
@@ -172,6 +174,7 @@ export function reduceInkState(
   const next: TuiInkState = {
     ...state,
     selectedWorkBlockIndex: state.selectedWorkBlockIndex ?? 0,
+    workSelectionAnchor: state.workSelectionAnchor ?? false,
     selectedMemoryItemIndex: state.selectedMemoryItemIndex ?? 0,
     selectedTeamRoleIndex: state.selectedTeamRoleIndex ?? 0,
     detailVisible: state.detailVisible ?? false,
@@ -611,18 +614,25 @@ function moveSelection(
     return;
   }
   if (state.focus === "work") {
+    const blocks = workBlocksForSelection(model);
     if (key === "page_up" || key === "page_down" || key === "home" || key === "end") {
-      moveConversationScroll(state, key, conversationLineCount(model.conversation));
+      moveConversationScroll(state, key, workSelectionLineCount(blocks, selectedWorkBlockIndex(model, state)));
+      state.workSelectionAnchor = false;
       return;
     }
-    const blocks = workBlocksForSelection(model);
+    const currentIndex = selectedWorkBlockIndex(model, state);
     const nextIndex = nextSelectionIndex(
-      selectedWorkBlockIndex(model, state),
+      currentIndex,
       delta,
       blocks.length
     );
+    if (nextIndex === currentIndex) {
+      return;
+    }
     state.selectedWorkBlockIndex = nextIndex;
     state.selectedWorkBlockId = blocks[nextIndex]?.id;
+    state.workSelectionAnchor = true;
+    ensureSelectedWorkBlockVisible(state, blocks, nextIndex);
     resetDetailScroll(state);
     return;
   }
@@ -714,74 +724,171 @@ function resetDetailScroll(state: TuiInkState): void {
   state.detailScrollOffset = 0;
 }
 
-function conversationLineCount(entries: TuiConversationEntry[]): number {
-  let count = 0;
-  let previousEntry: TuiConversationEntry | undefined;
-  for (const entry of entries) {
-    if (previousEntry) {
-      count += 1;
-      if (conversationGapLabel(previousEntry.timestamp, entry.timestamp)) {
-        count += 1;
-      }
-    }
-    count += conversationEntryLineCount(entry);
-    previousEntry = entry;
+function workBlocksForSelection(model: TuiCurrentContextModel): TuiWorkBlock[] {
+  const expectedIds = [
+    ...model.conversation.map((entry) => entry.id),
+    ...model.activeRuns.map((run) => `active-run:${run.runId}`)
+  ];
+  if (
+    model.workBlocks &&
+    model.workBlocks.length === expectedIds.length &&
+    expectedIds.every((id, index) => model.workBlocks[index]?.id === id)
+  ) {
+    return model.workBlocks;
   }
-  return count;
+  return [
+    ...model.conversation.map((entry) => fallbackSelectionConversationWorkBlock(entry)),
+    ...model.activeRuns.map((run) => fallbackSelectionActiveRunWorkBlock(run))
+  ];
 }
 
-function conversationEntryLineCount(entry: TuiConversationEntry): number {
-  if (entry.type === "delegation") {
+function fallbackSelectionConversationWorkBlock(entry: TuiConversationEntry): TuiWorkBlock {
+  const messageLines = Array.isArray(entry.outputLines)
+    ? entry.outputLines
+    : (entry.content ?? "").split(/\r?\n/).filter(Boolean);
+  return {
+    id: entry.id,
+    sourceId: entry.id,
+    sourceKind: "conversation",
+    type: entry.type,
+    runId: entry.runId,
+    roleCallId: entry.roleCallId,
+    timestamp: entry.timestamp,
+    elapsedLabel: entry.elapsedLabel,
+    usageLabel: entry.usageLabel,
+    speaker: entry.displayHandle ? `@${entry.displayHandle}` : entry.agent ? `@${entry.agent}` : entry.author,
+    title: entry.content ?? entry.outputLines?.[0] ?? entry.statusLabel ?? entry.type,
+    statusIcon: entry.type === "review_pending" ? "△" : entry.type === "agent_failed" ? "✗" : "●",
+    statusLabel: entry.statusLabel,
+    statusTone: entry.type === "review_pending" ? "warning" : entry.type === "agent_failed" ? "danger" : "normal",
+    messageLines,
+    toolSummaryLines: [],
+    fileRefs: [],
+    commandLines: [],
+    artifactLines: [],
+    evidenceLines: []
+  } as TuiWorkBlock;
+}
+
+function fallbackSelectionActiveRunWorkBlock(
+  run: TuiCurrentContextModel["activeRuns"][number]
+): TuiWorkBlock {
+  return {
+    id: `active-run:${run.runId}`,
+    sourceId: run.runId,
+    sourceKind: "active_run",
+    type: "active_run",
+    runId: run.runId,
+    timestamp: run.startedAt,
+    elapsedLabel: run.elapsedLabel,
+    usageLabel: run.usageLabel,
+    speaker: run.displayHandle ? `@${run.displayHandle}` : `@${run.agent}`,
+    title: run.title,
+    statusIcon: "●",
+    statusLabel: "running",
+    statusTone: "info",
+    messageLines: run.outputLines,
+    toolSummaryLines: [],
+    fileRefs: [],
+    commandLines: [],
+    artifactLines: [],
+    evidenceLines: []
+  } as TuiWorkBlock;
+}
+
+function workSelectionLineCount(
+  blocks: TuiWorkBlock[],
+  selectedIndex: number
+): number {
+  return workBlockLineRanges(blocks, selectedIndex).totalLines;
+}
+
+function ensureSelectedWorkBlockVisible(
+  state: TuiInkState,
+  blocks: TuiWorkBlock[],
+  selectedIndex: number
+): void {
+  if (blocks.length === 0) {
+    state.conversationScrollOffset = 0;
+    return;
+  }
+  const ranges = workBlockLineRanges(blocks, selectedIndex);
+  const selectedRange = ranges.items[selectedIndex];
+  if (!selectedRange) {
+    return;
+  }
+  const maxOffset = Math.max(0, ranges.totalLines - defaultConversationWindowSize);
+  const maxStart = Math.max(0, ranges.totalLines - defaultConversationWindowSize);
+  let visibleStart = Math.max(
+    0,
+    ranges.totalLines - defaultConversationWindowSize - state.conversationScrollOffset
+  );
+  visibleStart = Math.min(visibleStart, maxStart);
+
+  if (selectedRange.start < visibleStart) {
+    visibleStart = selectedRange.start;
+  } else if (selectedRange.end > visibleStart + defaultConversationWindowSize) {
+    visibleStart = selectedRange.end - defaultConversationWindowSize;
+  }
+
+  const boundedStart = Math.min(Math.max(visibleStart, 0), maxStart);
+  state.conversationScrollOffset = Math.min(
+    Math.max(ranges.totalLines - defaultConversationWindowSize - boundedStart, 0),
+    maxOffset
+  );
+}
+
+function workBlockLineRanges(
+  blocks: TuiWorkBlock[],
+  selectedIndex: number
+): { items: Array<{ start: number; end: number }>; totalLines: number } {
+  const items: Array<{ start: number; end: number }> = [];
+  let cursor = 0;
+  for (let index = 0; index < blocks.length; index += 1) {
+    const lineCount = workBlockSelectionLineCount(blocks[index], index === selectedIndex);
+    items.push({ start: cursor, end: cursor + lineCount });
+    cursor += lineCount;
+  }
+  return { items, totalLines: cursor };
+}
+
+function workBlockSelectionLineCount(block: TuiWorkBlock | undefined, selected: boolean): number {
+  if (!block) {
     return 1;
   }
-  const contentLines = Array.isArray(entry.outputLines)
-    ? entry.outputLines.length
-    : textLineCount(entry.content);
-  if (
-    entry.type === "agent_completed" ||
-    entry.type === "agent_failed" ||
-    entry.type === "review_pending"
-  ) {
-    return 1 +
-      Math.max(1, contentLines) +
-      (entry.verificationLine ? 1 : 0) +
-      (entry.riskLine ? 1 : 0) +
-      (entry.inlineDiff ? inlineDiffLineCount(entry.inlineDiff.mode, entry.inlineDiff.lines.length) : 0) +
-      (entry.type === "review_pending" ? 1 : 0) +
-      (entry.suggestions?.length ?? 0);
+  const bodyLines =
+    workBlockAffordanceLineCount(block) +
+    Math.max(1, Array.isArray(block.messageLines) ? block.messageLines.length : 1);
+  return bodyLines + (selected ? 2 : 1);
+}
+
+function workBlockAffordanceLineCount(block: TuiWorkBlock): number {
+  let count = 0;
+  if ([block.elapsedLabel, block.usageLabel].some(Boolean)) {
+    count += 1;
   }
-  return 1 + Math.max(1, contentLines);
-}
-
-function conversationGapLabel(previousTimestamp: string, timestamp: string): boolean {
-  const previous = Date.parse(previousTimestamp);
-  const current = Date.parse(timestamp);
-  return Number.isFinite(previous) &&
-    Number.isFinite(current) &&
-    current - previous >= 5 * 60 * 1000;
-}
-
-function inlineDiffLineCount(mode: "inline" | "summary", lineCount: number): number {
-  return mode === "summary" ? 2 : lineCount + 2;
-}
-
-function textLineCount(content: string | undefined): number {
-  return (content ?? "")
-    .split(/\r?\n/)
-    .map((value) => value.trim())
-    .filter(Boolean)
-    .length;
-}
-
-function workBlocksForSelection(model: TuiCurrentContextModel): TuiWorkBlock[] {
-  return model.workBlocks ?? [
-    ...model.conversation.map((entry) => ({
-      id: entry.id
-    } as TuiWorkBlock)),
-    ...model.activeRuns.map((run) => ({
-      id: `active-run:${run.runId}`
-    } as TuiWorkBlock))
-  ];
+  if ((block.toolSummaryLines?.length ?? 0) > 0) {
+    count += 1;
+  }
+  if ((block.fileRefs?.length ?? 0) > 0) {
+    count += 1;
+  }
+  if ((block.commandLines?.length ?? 0) > 0) {
+    count += 1;
+  }
+  if ((block.artifactLines?.length ?? 0) > 0) {
+    count += 1;
+  }
+  if ((block.evidenceLines?.length ?? 0) > 0) {
+    count += 1;
+  }
+  if (block.inlineDiff) {
+    count += 1 + Math.min(block.inlineDiff.lines.length, 5);
+  }
+  if (block.type === "agent_completed" || block.type === "review_pending") {
+    count += 1;
+  }
+  return count;
 }
 
 function toggleSelectedRoleCallCollapse(
