@@ -660,6 +660,7 @@ function buildTuiFailureModel(input: TuiFailureModelInput): TuiCurrentContextMod
     },
     conversation: [],
     activeRuns: [],
+    workBlocks: [],
     transcript: [],
     runs: [],
     roleCalls: {

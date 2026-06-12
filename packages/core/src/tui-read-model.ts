@@ -97,6 +97,7 @@ export interface TuiCurrentContextModel {
   context: TuiContextSummary;
   conversation: TuiConversationEntry[];
   activeRuns: TuiActiveRunBox[];
+  workBlocks: TuiWorkBlock[];
   transcript: TuiTranscriptMessage[];
   runs: TuiRunSummary[];
   roleCalls: TuiRoleCallGraphSummary;
@@ -213,6 +214,30 @@ export interface TuiActiveRunBox {
   usageLabel?: string;
   usage?: TuiRunUsageSummary;
   outputLines: string[];
+}
+
+export type TuiWorkBlockType = TuiConversationEntryType | "active_run";
+
+export interface TuiWorkBlock {
+  id: string;
+  sourceId: string;
+  sourceKind: "conversation" | "active_run";
+  type: TuiWorkBlockType;
+  runId?: string;
+  roleCallId?: string;
+  timestamp?: string;
+  speaker: string;
+  title: string;
+  statusIcon: string;
+  statusLabel?: string;
+  statusTone: "normal" | "success" | "warning" | "danger" | "info";
+  messageLines: string[];
+  toolSummaryLines: string[];
+  fileRefs: string[];
+  commandLines: string[];
+  artifactLines: string[];
+  evidenceLines: string[];
+  inlineDiff?: TuiInlineDiffSummary;
 }
 
 export interface TuiContextSummary {
@@ -584,6 +609,7 @@ export async function buildTuiCurrentContextModel(
     runDisplayHandles,
     limit: Math.max(input.maxMessages ?? defaultLimits.messages, defaultLimits.messages)
   });
+  const workBlocks = buildWorkBlocks(conversation, activeRuns);
   const roleCallSummary: TuiRoleCallGraphSummary = {
     nodes: visibleRoleCallNodes,
     todos: summarizeTodos(roleTodos, input.maxTodos ?? defaultLimits.todos),
@@ -628,6 +654,7 @@ export async function buildTuiCurrentContextModel(
     },
     conversation,
     activeRuns,
+    workBlocks,
     transcript: summarizeTranscript(messages, input.maxMessages ?? defaultLimits.messages),
     runs: boundedRuns,
     roleCalls: roleCallSummary,
@@ -637,8 +664,7 @@ export async function buildTuiCurrentContextModel(
     memory: memorySummary,
     skills: skillsSummary,
     selectionDetails: buildSelectionDetails({
-      conversation,
-      activeRuns,
+      workBlocks,
       runs: boundedRuns,
       roleCalls: visibleRoleCallNodes,
       tasks: taskSummaries,
@@ -1114,6 +1140,173 @@ function withLatestConversationSuggestions(
       ? { ...entry, suggestions: suggestionsForConversationEntry(entry) }
       : entry
   );
+}
+
+function buildWorkBlocks(
+  conversation: TuiConversationEntry[],
+  activeRuns: TuiActiveRunBox[]
+): TuiWorkBlock[] {
+  return [
+    ...conversation.map(conversationWorkBlock),
+    ...activeRuns.map(activeRunWorkBlock)
+  ];
+}
+
+function conversationWorkBlock(entry: TuiConversationEntry): TuiWorkBlock {
+  const messageLines = detailLines(entry.outputLines ?? entry.content);
+  const fileRefs = extractFileRefs([
+    ...messageLines,
+    ...(entry.inlineDiff?.lines.map((line) => line.text) ?? [])
+  ]);
+  const commandLines = inferCommandLines(messageLines);
+  const toolSummaryLines = inferToolSummaryLines(messageLines);
+  const evidenceLines = [
+    entry.verificationLine,
+    entry.riskLine,
+    entry.inlineDiff ? `diff ${entry.inlineDiff.summary}` : undefined
+  ].filter((value): value is string => Boolean(value));
+  const status = conversationWorkBlockStatus(entry);
+  return {
+    id: entry.id,
+    sourceId: entry.id,
+    sourceKind: "conversation",
+    type: entry.type,
+    runId: entry.runId,
+    roleCallId: entry.roleCallId,
+    timestamp: entry.timestamp,
+    speaker: conversationEntrySpeaker(entry),
+    title: conversationDetailTitle(entry),
+    statusIcon: status.icon,
+    statusLabel: entry.statusLabel,
+    statusTone: status.tone,
+    messageLines,
+    toolSummaryLines,
+    fileRefs,
+    commandLines,
+    artifactLines: [],
+    evidenceLines,
+    inlineDiff: entry.inlineDiff
+  };
+}
+
+function activeRunWorkBlock(run: TuiActiveRunBox): TuiWorkBlock {
+  const messageLines = detailLines(run.outputLines);
+  return {
+    id: `active-run:${run.runId}`,
+    sourceId: run.runId,
+    sourceKind: "active_run",
+    type: "active_run",
+    runId: run.runId,
+    timestamp: run.startedAt,
+    speaker: run.displayHandle ? `@${run.displayHandle}` : `@${run.agent}`,
+    title: run.title,
+    statusIcon: "●",
+    statusLabel: "running",
+    statusTone: "info",
+    messageLines,
+    toolSummaryLines: inferToolSummaryLines(messageLines),
+    fileRefs: extractFileRefs(messageLines),
+    commandLines: inferCommandLines(messageLines),
+    artifactLines: [],
+    evidenceLines: [
+      run.elapsedLabel ? `elapsed ${run.elapsedLabel}` : undefined,
+      run.usageLabel ? `usage ${run.usageLabel}` : undefined
+    ].filter((value): value is string => Boolean(value))
+  };
+}
+
+function conversationEntrySpeaker(entry: TuiConversationEntry): string {
+  if (entry.displayHandle) {
+    return `@${entry.displayHandle}`;
+  }
+  if (entry.agent) {
+    return `@${entry.agent}`;
+  }
+  return entry.author;
+}
+
+function conversationWorkBlockStatus(entry: TuiConversationEntry): {
+  icon: string;
+  tone: TuiWorkBlock["statusTone"];
+} {
+  if (entry.type === "agent_completed") {
+    return { icon: "✓", tone: "success" };
+  }
+  if (entry.type === "agent_failed") {
+    return { icon: "✗", tone: "danger" };
+  }
+  if (entry.type === "review_pending") {
+    return { icon: "△", tone: "warning" };
+  }
+  if (entry.type === "delegation") {
+    return { icon: "→", tone: "info" };
+  }
+  return { icon: "●", tone: "normal" };
+}
+
+function extractFileRefs(lines: string[]): string[] {
+  const refs = new Set<string>();
+  const pathPattern = /((?:\.{1,2}\/|\/)?(?:[\w.-]+\/)+[\w.-]+\.[A-Za-z0-9_-]+(?::\d+(?::\d+)?)?|[\w.-]+\.(?:[cm]?[tj]sx?|json|md|css|scss|html|py|rs|go|ya?ml|toml)(?::\d+(?::\d+)?)?)/g;
+  for (const line of lines) {
+    let match: RegExpExecArray | null;
+    while ((match = pathPattern.exec(line)) !== null) {
+      refs.add(normalizeFileRef(match[0]));
+      if (refs.size >= 8) {
+        return [...refs];
+      }
+    }
+  }
+  return [...refs];
+}
+
+function normalizeFileRef(value: string): string {
+  return value.replace(/^[ab]\//, "");
+}
+
+function inferCommandLines(lines: string[]): string[] {
+  return dedupeStrings(
+    lines
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0 && isCommandLikeLine(line))
+      .slice(0, 8)
+  );
+}
+
+function inferToolSummaryLines(lines: string[]): string[] {
+  return dedupeStrings(
+    lines
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0 && isInferredToolLine(line))
+      .map((line) => `inferred: ${truncate(line, defaultLimits.contentChars)}`)
+      .slice(0, 8)
+  );
+}
+
+function isCommandLikeLine(value: string): boolean {
+  const trimmed = value.replace(/^[>$]\s*/, "");
+  return /^(?:agent-hub|codex|claude|git|node|npm|npx|pnpm|tsx|tsc|vitest|rg|sed|cat)\b/.test(trimmed);
+}
+
+function isInferredToolLine(value: string): boolean {
+  const normalized = value.replace(/^[>$]\s*/, "");
+  return (
+    isCommandLikeLine(normalized) ||
+    /^(?:reading|read|editing|edited|writing|wrote|running|searching|inspecting|opened|applying|applied)\b/i.test(normalized) ||
+    /^(?:read_file|write_file|grep|rg|sed|cat|apply_patch)\b/i.test(normalized)
+  );
+}
+
+function dedupeStrings(values: string[]): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const value of values) {
+    if (seen.has(value)) {
+      continue;
+    }
+    seen.add(value);
+    result.push(value);
+  }
+  return result;
 }
 
 function findLastIndex<T>(values: T[], predicate: (value: T) => boolean): number {
@@ -1827,8 +2020,7 @@ function summarizeSkills(input: {
 }
 
 function buildSelectionDetails(input: {
-  conversation: TuiConversationEntry[];
-  activeRuns: TuiActiveRunBox[];
+  workBlocks: TuiWorkBlock[];
   runs: TuiRunSummary[];
   roleCalls: TuiRoleCallNodeSummary[];
   tasks: TuiTaskSummary[];
@@ -1837,10 +2029,7 @@ function buildSelectionDetails(input: {
   skills: TuiSkillsSummary;
 }): TuiSelectionDetails {
   return {
-    workBlocks: [
-      ...input.conversation.map((entry) => workBlockDetail(entry)),
-      ...input.activeRuns.map((run) => activeRunWorkBlockDetail(run))
-    ],
+    workBlocks: input.workBlocks.map((block) => workBlockDetail(block)),
     runs: input.runs.map((run) => runSelectionDetail(run)),
     roleCalls: input.roleCalls.map((call) => roleCallSelectionDetail(call)),
     tasks: input.tasks.map((task) => taskSelectionDetail(input.team.projectId, task)),
@@ -1849,63 +2038,110 @@ function buildSelectionDetails(input: {
   };
 }
 
-function workBlockDetail(entry: TuiConversationEntry): TuiSelectionDetail {
+function workBlockDetail(block: TuiWorkBlock): TuiSelectionDetail {
   const commands = [
-    ...(entry.runId
+    ...(block.runId
       ? [
-          `agent-hub runs show ${entry.runId}`,
-          `agent-hub runs diff ${entry.runId} --stat`
+          `agent-hub runs show ${block.runId}`,
+          ...(block.sourceKind === "active_run"
+            ? []
+            : [`agent-hub runs diff ${block.runId} --stat`])
         ]
       : []),
-    ...(entry.roleCallId ? [`agent-hub role-calls show ${entry.roleCallId}`] : [])
+    ...(block.roleCallId ? [`agent-hub role-calls show ${block.roleCallId}`] : [])
   ];
   return {
-    id: entry.id,
+    id: block.id,
     kind: "work_block",
-    title: conversationDetailTitle(entry),
-    subtitle: entry.statusLabel,
+    title: block.title,
+    subtitle: block.statusLabel,
     sections: [
       {
         id: "message",
         title: "Message",
-        lines: detailLines(entry.outputLines ?? entry.content)
+        lines: block.messageLines
       },
-      unavailableDetailSection("tool-calls", "Tool Calls", "structured tool-call rows"),
-      ...(entry.verificationLine || entry.riskLine
+      ...(block.toolSummaryLines.length > 0
+        ? [
+            {
+              id: "tool-calls",
+              title: "Tool Calls",
+              tone: "info" as const,
+              lines: [
+                "structured durations/status are not available; these rows are inferred from visible output",
+                ...block.toolSummaryLines
+              ],
+              collapsedByDefault: true
+            }
+          ]
+        : [unavailableDetailSection("tool-calls", "Tool Calls", "structured tool-call rows")]),
+      ...(block.commandLines.length > 0
+        ? [
+            {
+              id: "commands",
+              title: "Commands",
+              tone: "info" as const,
+              lines: block.commandLines,
+              collapsedByDefault: true
+            }
+          ]
+        : []),
+      ...(block.fileRefs.length > 0
+        ? [
+            {
+              id: "file-refs",
+              title: "File Refs",
+              lines: block.fileRefs,
+              collapsedByDefault: true
+            }
+          ]
+        : []),
+      ...(block.evidenceLines.length > 0
         ? [
             {
               id: "evidence",
               title: "Evidence",
-              tone: entry.riskLine ? "warning" as const : "success" as const,
-              lines: [
-                entry.verificationLine,
-                entry.riskLine
-              ].filter((value): value is string => Boolean(value))
+              tone: block.statusTone === "danger" || block.statusTone === "warning"
+                ? block.statusTone
+                : "success" as const,
+              lines: block.evidenceLines
             }
           ]
-        : [])
-    ],
-    commands,
-    actions: detailActions(commands)
-  };
-}
-
-function activeRunWorkBlockDetail(run: TuiActiveRunBox): TuiSelectionDetail {
-  const commands = [`agent-hub runs show ${run.runId}`];
-  return {
-    id: `active-run:${run.runId}`,
-    kind: "work_block",
-    title: run.title,
-    subtitle: "running",
-    sections: [
-      {
-        id: "live-output",
-        title: "Live Output",
-        tone: "info",
-        lines: detailLines(run.outputLines)
-      },
-      unavailableDetailSection("tool-calls", "Tool Calls", "structured live tool-call status"),
-      unavailableDetailSection("artifacts", "Artifacts", "pending artifact rows")
+        : []),
+      ...(block.inlineDiff
+        ? [
+            {
+              id: "inline-diff",
+              title: "Inline Diff",
+              tone: "info" as const,
+              lines: inlineDiffDetailLines(block.inlineDiff),
+              collapsedByDefault: block.inlineDiff.mode === "summary"
+            },
+            ...(block.inlineDiff.mode === "inline"
+              ? [
+                  {
+                    id: "fix-snippet",
+                    title: "Fix Snippet",
+                    tone: "info" as const,
+                    lines: block.inlineDiff.lines
+                      .filter((line) => line.kind === "add" || line.kind === "delete")
+                      .map((line) => line.text),
+                    collapsedByDefault: true
+                  }
+                ]
+              : [])
+          ]
+        : []),
+      ...(block.artifactLines.length > 0
+        ? [
+            {
+              id: "artifacts",
+              title: "Artifacts",
+              lines: block.artifactLines,
+              collapsedByDefault: true
+            }
+          ]
+        : [unavailableDetailSection("artifacts", "Artifacts", "artifact rows")])
     ],
     commands,
     actions: detailActions(commands)
@@ -2237,6 +2473,16 @@ function detailLines(value: string[] | string | undefined): string[] {
     .map((line) => truncate(line.trim(), defaultLimits.contentChars))
     .filter(Boolean);
   return lines.length > 0 ? lines : ["(empty)"];
+}
+
+function inlineDiffDetailLines(diff: TuiInlineDiffSummary): string[] {
+  if (diff.mode === "summary") {
+    return [diff.summary];
+  }
+  return [
+    diff.summary,
+    ...diff.lines.map((line) => line.text)
+  ];
 }
 
 function unavailableRoleExecutorCommandsForTask(

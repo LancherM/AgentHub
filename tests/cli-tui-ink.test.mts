@@ -51,6 +51,44 @@ const baseModel = {
     }
   ],
   activeRuns: [],
+  workBlocks: [
+    {
+      id: "message:message_1",
+      sourceId: "message:message_1",
+      sourceKind: "conversation",
+      type: "user_message",
+      timestamp: "2026-05-29T12:00:00.000Z",
+      speaker: "user",
+      title: "user message",
+      statusIcon: "●",
+      statusLabel: undefined,
+      statusTone: "normal",
+      messageLines: ["Check the TUI shell."],
+      toolSummaryLines: [],
+      fileRefs: [],
+      commandLines: [],
+      artifactLines: [],
+      evidenceLines: []
+    },
+    {
+      id: "review-pending:run_27984312-fc9a-46bf-9ccf-c06997187091",
+      sourceId: "review-pending:run_27984312-fc9a-46bf-9ccf-c06997187091",
+      sourceKind: "conversation",
+      type: "review_pending",
+      timestamp: "2026-05-29T12:05:00.000Z",
+      speaker: "@codex",
+      title: "@codex run_27984312-fc9a-46bf-9ccf-c06997187091",
+      statusIcon: "△",
+      statusLabel: "awaiting review",
+      statusTone: "warning",
+      messageLines: ["awaiting review - open [V]iew for details"],
+      toolSummaryLines: [],
+      fileRefs: [],
+      commandLines: [],
+      artifactLines: [],
+      evidenceLines: []
+    }
+  ],
   runs: [
     {
       id: "run_27984312-fc9a-46bf-9ccf-c06997187091",
@@ -991,6 +1029,140 @@ describe("Ink TUI renderer", () => {
     expect(output).toContain("┃   const message = \"ok\"; // comment");
     expect(output).toContain("── 6m later ──");
     expect(output).not.toContain("more lines");
+  });
+
+  it("renders V3 Work blocks with selected metadata and detail evidence", () => {
+    const model = {
+      ...baseModel,
+      conversation: [
+        {
+          id: "message:v3-user",
+          type: "user_message",
+          timestamp: "2026-05-29T12:00:00.000Z",
+          author: "user",
+          content: "请检查 apps/cli/src/tui-ink/App.mts:1216 并保留完整输出。"
+        },
+        {
+          id: "run:v3-block",
+          type: "agent_completed",
+          timestamp: "2026-05-29T12:04:00.000Z",
+          author: "@implementer",
+          displayHandle: "implementer",
+          agent: "codex",
+          runId: "v3-block",
+          statusLabel: "completed",
+          outputLines: [
+            "read_file apps/cli/src/tui-ink/App.mts",
+            "rg \"ConversationFlow\" apps/cli/src/tui-ink/App.mts",
+            "```ts",
+            "const block = \"保持完整输出\";",
+            "```"
+          ],
+          verificationLine: "verification passed (2 checks)",
+          inlineDiff: inlineDiffFixture()
+        }
+      ],
+      activeRuns: [],
+      workBlocks: [
+        {
+          id: "message:v3-user",
+          sourceId: "message:v3-user",
+          sourceKind: "conversation",
+          type: "user_message",
+          timestamp: "2026-05-29T12:00:00.000Z",
+          speaker: "user",
+          title: "user message",
+          statusIcon: "●",
+          statusTone: "normal",
+          messageLines: ["请检查 apps/cli/src/tui-ink/App.mts:1216 并保留完整输出。"],
+          toolSummaryLines: [],
+          fileRefs: ["apps/cli/src/tui-ink/App.mts:1216"],
+          commandLines: [],
+          artifactLines: [],
+          evidenceLines: []
+        },
+        {
+          id: "run:v3-block",
+          sourceId: "run:v3-block",
+          sourceKind: "conversation",
+          type: "agent_completed",
+          timestamp: "2026-05-29T12:04:00.000Z",
+          speaker: "@implementer",
+          title: "@implementer v3-block",
+          statusIcon: "✓",
+          statusLabel: "completed",
+          statusTone: "success",
+          messageLines: [
+            "read_file apps/cli/src/tui-ink/App.mts",
+            "rg \"ConversationFlow\" apps/cli/src/tui-ink/App.mts",
+            "```ts",
+            "const block = \"保持完整输出\";",
+            "```"
+          ],
+          toolSummaryLines: [
+            "inferred: read_file apps/cli/src/tui-ink/App.mts",
+            "inferred: rg \"ConversationFlow\" apps/cli/src/tui-ink/App.mts"
+          ],
+          fileRefs: ["apps/cli/src/tui-ink/App.mts"],
+          commandLines: ["rg \"ConversationFlow\" apps/cli/src/tui-ink/App.mts"],
+          artifactLines: [],
+          evidenceLines: ["verification passed (2 checks)", "diff (+1/-1 in 1 files)"],
+          inlineDiff: inlineDiffFixture()
+        }
+      ],
+      selectionDetails: {
+        ...baseModel.selectionDetails,
+        workBlocks: [
+          {
+            id: "message:v3-user",
+            kind: "work_block",
+            title: "user message",
+            sections: [
+              { id: "message", title: "Message", lines: ["请检查 apps/cli/src/tui-ink/App.mts:1216 并保留完整输出。"] }
+            ],
+            commands: [],
+            actions: []
+          },
+          {
+            id: "run:v3-block",
+            kind: "work_block",
+            title: "@implementer v3-block",
+            subtitle: "completed",
+            sections: [
+              { id: "message", title: "Message", lines: ["read_file apps/cli/src/tui-ink/App.mts"] },
+              {
+                id: "tool-calls",
+                title: "Tool Calls",
+                lines: ["structured durations/status are not available; these rows are inferred from visible output"]
+              },
+              { id: "file-refs", title: "File Refs", lines: ["apps/cli/src/tui-ink/App.mts"] },
+              { id: "inline-diff", title: "Inline Diff", lines: ["(+1/-1 in 1 files)"] },
+              { id: "fix-snippet", title: "Fix Snippet", lines: ["-const mode = \"old\";", "+const mode = \"new\";"] }
+            ],
+            commands: ["agent-hub runs show v3-block"],
+            actions: [{ key: "p", label: "Prepare Command", kind: "prepare_command" }]
+          }
+        ]
+      }
+    };
+    const state = reduceInkState(createInitialInkState(), "down", model);
+    const output = renderToString(
+      React.createElement(TuiInkFrame, {
+        model,
+        state,
+        terminal: { columns: 120, rows: 40 }
+      }),
+      { columns: 120 }
+    );
+
+    expect(state.selectedWorkBlockId).toBe("run:v3-block");
+    expect(output).toContain("> ┃ @implementer v3-block ✓ completed");
+    expect(output).toContain("> tools inferred 2 | files apps/cli/src/tui-ink/App.mts | commands 1");
+    expect(output).toContain("保持完整输出");
+    expect(output).toContain("Tool Calls");
+    expect(output).toContain("File Refs");
+    expect(output).toContain("Fix Snippet");
+    expect(output.split("\n").every((value) => value.length <= 120)).toBe(true);
   });
 
   it("renders quick reply suggestions and hides them while typing", () => {

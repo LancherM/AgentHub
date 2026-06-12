@@ -4,7 +4,8 @@ import type {
   TuiCurrentContextModel,
   TuiRoleCallNodeSummary,
   TuiRunSummary,
-  TuiTaskSummary
+  TuiTaskSummary,
+  TuiWorkBlock
 } from "@agent-hub/core";
 
 const defaultListWindowSize = 8;
@@ -411,6 +412,17 @@ export function selectedTeamRoleIndex(
   );
 }
 
+export function selectedWorkBlockIndex(
+  model: TuiCurrentContextModel,
+  state: TuiInkState
+): number {
+  return selectedIndexById(
+    workBlocksForSelection(model),
+    state.selectedWorkBlockId,
+    state.selectedWorkBlockIndex
+  );
+}
+
 export function selectedReviewRunId(
   model: TuiCurrentContextModel,
   state: TuiInkState
@@ -537,7 +549,18 @@ function moveSelection(
     return;
   }
   if (state.focus === "work") {
-    moveConversationScroll(state, key, conversationLineCount(model.conversation));
+    if (key === "page_up" || key === "page_down" || key === "home" || key === "end") {
+      moveConversationScroll(state, key, conversationLineCount(model.conversation));
+      return;
+    }
+    const blocks = workBlocksForSelection(model);
+    const nextIndex = nextSelectionIndex(
+      selectedWorkBlockIndex(model, state),
+      delta,
+      blocks.length
+    );
+    state.selectedWorkBlockIndex = nextIndex;
+    state.selectedWorkBlockId = blocks[nextIndex]?.id;
     return;
   }
   if (state.focus === "team") {
@@ -646,6 +669,17 @@ function textLineCount(content: string | undefined): number {
     .map((value) => value.trim())
     .filter(Boolean)
     .length;
+}
+
+function workBlocksForSelection(model: TuiCurrentContextModel): TuiWorkBlock[] {
+  return model.workBlocks ?? [
+    ...model.conversation.map((entry) => ({
+      id: entry.id
+    } as TuiWorkBlock)),
+    ...model.activeRuns.map((run) => ({
+      id: `active-run:${run.runId}`
+    } as TuiWorkBlock))
+  ];
 }
 
 function toggleSelectedRoleCallCollapse(

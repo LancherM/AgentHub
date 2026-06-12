@@ -14,7 +14,8 @@ import type {
   TuiDetailSection,
   TuiInlineDiffSummary,
   TuiRunSummary,
-  TuiSelectionDetail
+  TuiSelectionDetail,
+  TuiWorkBlock
 } from "@agent-hub/core";
 import {
   compactId,
@@ -1317,7 +1318,7 @@ function sideNavItems(model: TuiCurrentContextModel): SideNavItem[] {
     {
       focus: "work",
       label: "Work",
-      count: String(model.conversation.length + model.activeRuns.length)
+      count: String(workBlocksForModel(model).length)
     },
     {
       focus: "graph",
@@ -1556,20 +1557,31 @@ function WorkView({
   feedbackByRunId
 }: TuiInkRenderProps): React.ReactElement {
   const chromeLineBudget = workChromeLineBudget(model, state);
+  const workBlocks = workBlocksForModel(model);
   const { collapsedBoxes, fullBoxes } = activeRunLayout(model.activeRuns, terminal, chromeLineBudget);
   const activeLineCost = activeRunLineCost(collapsedBoxes, fullBoxes, terminal, chromeLineBudget);
   const conversationLines = conversationWindowSize(terminal, activeLineCost, chromeLineBudget);
   return h(
     Box,
     { flexDirection: "column" },
-    h(ConversationFlow, { model, state, terminal, visibleLines: conversationLines, feedbackByRunId }),
+    h(ConversationFlow, { model, state, terminal, visibleLines: conversationLines, feedbackByRunId, workBlocks }),
     ...(collapsedBoxes.length > 0
       ? collapsedBoxes.map((box) =>
-          line(`${activeRunTitle(box, animationTick)} ...`, { color: activeRunColor(box) })
+          line(`${activeRunTitle(box, animationTick)} ...`, {
+            color: activeRunColor(box),
+            bold: isActiveRunSelected(workBlocks, state, box)
+          })
         )
       : []),
     ...fullBoxes.map((box) =>
-      h(ActiveRunBoxView, { key: box.runId, box, terminal, animationTick, chromeLineBudget })
+      h(ActiveRunBoxView, {
+        key: box.runId,
+        box,
+        terminal,
+        animationTick,
+        chromeLineBudget,
+        selected: isActiveRunSelected(workBlocks, state, box)
+      })
     )
   );
 }
@@ -1579,18 +1591,26 @@ function ConversationFlow({
   state,
   terminal,
   visibleLines,
-  feedbackByRunId
+  feedbackByRunId,
+  workBlocks
 }: {
   model: TuiCurrentContextModel;
   state: TuiInkState;
   terminal: TuiInkTerminalSize;
   visibleLines: number;
   feedbackByRunId: Partial<Record<string, RunFeedbackKind>>;
+  workBlocks: TuiWorkBlock[];
 }): React.ReactElement {
   if (model.conversation.length === 0) {
     return block(line("No messages in the current context.", { dimColor: true }));
   }
   const showSuggestions = state.composer.length === 0 && state.conversationScrollOffset === 0;
+  const blockBySourceId = new Map(
+    workBlocks
+      .filter((block) => block.sourceKind === "conversation")
+      .map((block) => [block.sourceId, block])
+  );
+  const selectedBlock = selectedWorkBlockFromBlocks(workBlocks, state);
   const renderedLines = conversationRenderItems(model.conversation).flatMap((item) =>
     item.kind === "review_group"
       ? [reviewPendingGroupLine(item.count)]
@@ -1598,7 +1618,14 @@ function ConversationFlow({
         ? [timeAnchorLine(item.label)]
         : item.kind === "separator"
           ? [conversationSeparatorLine()]
-          : conversationEntryLines(item.entry, feedbackByRunId, showSuggestions, terminal)
+          : conversationEntryLines(
+              item.entry,
+              feedbackByRunId,
+              showSuggestions,
+              terminal,
+              blockBySourceId.get(item.entry.id),
+              selectedBlock?.sourceKind === "conversation" && selectedBlock.sourceId === item.entry.id
+            )
   );
   const maxOffset = Math.max(0, renderedLines.length - visibleLines);
   const offsetFromBottom = Math.min(state.conversationScrollOffset, maxOffset);
@@ -1688,7 +1715,9 @@ function conversationEntryLines(
   entry: TuiConversationEntry,
   feedbackByRunId: Partial<Record<string, RunFeedbackKind>>,
   showSuggestions: boolean,
-  terminal: TuiInkTerminalSize
+  terminal: TuiInkTerminalSize,
+  workBlock: TuiWorkBlock | undefined,
+  selected: boolean
 ): React.ReactElement[] {
   if (entry.type === "agent_completed" || entry.type === "agent_failed") {
     const statusIcon = entry.type === "agent_failed" ? "✗" : "✓";
@@ -1699,8 +1728,10 @@ function conversationEntryLines(
         `${conversationEntryHandle(entry)} ${entry.runId ? compactId(entry.runId) : ""} ${statusIcon} ${entry.statusLabel ?? ""}`.trim(),
         entry,
         tone,
-        feedback
+        feedback,
+        selected
       ),
+      ...conversationBlockMetadataLines(workBlock, "┃   ", tone, terminal),
       ...conversationContentLines(entry.outputLines ?? entry.content, { prefix: "┃   ", agent: true, tone, keyPrefix: entry.id }, terminal),
       ...(entry.verificationLine
         ? conversationRichLines(`~ ${entry.verificationLine}`, { prefix: "┃   ", agent: true, tone }, terminal)
@@ -1720,8 +1751,10 @@ function conversationEntryLines(
         `${conversationEntryHandle(entry)} ${entry.runId ? compactId(entry.runId) : ""} △ ${entry.statusLabel ?? "awaiting review"}`.trim(),
         entry,
         tone,
-        feedback
+        feedback,
+        selected
       ),
+      ...conversationBlockMetadataLines(workBlock, "┃   ", tone, terminal),
       ...conversationContentLines(entry.outputLines ?? entry.content, { prefix: "┃   ", agent: true, tone, keyPrefix: entry.id }, terminal),
       ...(entry.verificationLine
         ? conversationRichLines(`~ ${entry.verificationLine}`, { prefix: "┃   ", agent: true, tone }, terminal)
@@ -1736,11 +1769,20 @@ function conversationEntryLines(
   }
   if (entry.type === "delegation") {
     return [
-      line(`  → delegated to @${entry.delegatedTo ?? "role"}: ${entry.delegationTask ?? entry.content ?? ""}`, { color: "cyan" })
+      line(`${selected ? "> " : "  "}→ delegated to @${entry.delegatedTo ?? "role"}: ${entry.delegationTask ?? entry.content ?? ""}`, {
+        color: "cyan",
+        bold: selected
+      }),
+      ...conversationBlockMetadataLines(workBlock, "    ", "cyan", terminal)
     ];
   }
   return [
-    line(`${entry.author} ${formatConversationTimestamp(entry.timestamp)}`.trim(), { dimColor: true }),
+    line(`${selected ? "> " : "  "}● ${entry.author} ${formatConversationTimestamp(entry.timestamp)}`.trim(), {
+      dimColor: !selected,
+      bold: selected,
+      color: selected ? "cyan" : undefined
+    }),
+    ...conversationBlockMetadataLines(workBlock, "  ", "cyan", terminal),
     ...conversationContentLines(entry.content, { prefix: "  ", agent: false, keyPrefix: entry.id }, terminal)
   ];
 }
@@ -1749,7 +1791,8 @@ function agentEntryHeaderLine(
   title: string,
   entry: TuiConversationEntry,
   tone: string,
-  feedback?: RunFeedbackKind
+  feedback?: RunFeedbackKind,
+  selected = false
 ): React.ReactElement {
   const metadata = [
     entry.elapsedLabel,
@@ -1765,6 +1808,7 @@ function agentEntryHeaderLine(
   return h(
     Text,
     { wrap: "truncate", backgroundColor },
+    h(Text, { color: selected ? "cyan" : undefined, bold: selected }, selected ? "> " : "  "),
     h(Text, { color: tone, bold: true }, "┃"),
     " ",
     h(Text, { color: tone, bold: true }, `${feedbackPrefix}${title}`),
@@ -1774,6 +1818,38 @@ function agentEntryHeaderLine(
         ]
       : [])
   );
+}
+
+function conversationBlockMetadataLines(
+  block: TuiWorkBlock | undefined,
+  prefix: string,
+  tone: string,
+  terminal: TuiInkTerminalSize
+): React.ReactElement[] {
+  if (!block) {
+    return [];
+  }
+  const parts = [
+    block.toolSummaryLines.length > 0
+      ? `tools inferred ${block.toolSummaryLines.length}`
+      : undefined,
+    block.fileRefs.length > 0
+      ? `files ${block.fileRefs.slice(0, 2).join(", ")}${block.fileRefs.length > 2 ? ` +${block.fileRefs.length - 2}` : ""}`
+      : undefined,
+    block.commandLines.length > 0
+      ? `commands ${block.commandLines.length}`
+      : undefined
+  ].filter((value): value is string => Boolean(value));
+  if (parts.length === 0) {
+    return [];
+  }
+  return conversationRichLines(`> ${parts.join(" | ")}`, {
+    prefix,
+    agent: prefix.startsWith("┃"),
+    tone,
+    dimColor: true,
+    key: `${block.id}-metadata`
+  }, terminal);
 }
 
 function conversationContentLines(
@@ -2054,16 +2130,116 @@ function conversationEntryHandle(entry: TuiConversationEntry): string {
   return entry.agent ? `@${entry.agent}` : entry.author;
 }
 
+function workBlocksForModel(model: TuiCurrentContextModel): TuiWorkBlock[] {
+  const expectedIds = [
+    ...model.conversation.map((entry) => entry.id),
+    ...model.activeRuns.map((run) => `active-run:${run.runId}`)
+  ];
+  if (
+    model.workBlocks &&
+    model.workBlocks.length === expectedIds.length &&
+    expectedIds.every((id, index) => model.workBlocks[index]?.id === id)
+  ) {
+    return model.workBlocks;
+  }
+  return [
+    ...model.conversation.map((entry) => fallbackConversationWorkBlock(entry)),
+    ...model.activeRuns.map((run) => fallbackActiveRunWorkBlock(run))
+  ];
+}
+
+function fallbackConversationWorkBlock(entry: TuiConversationEntry): TuiWorkBlock {
+  const messageLines = Array.isArray(entry.outputLines)
+    ? entry.outputLines
+    : (entry.content ?? "").split(/\r?\n/).filter(Boolean);
+  return {
+    id: entry.id,
+    sourceId: entry.id,
+    sourceKind: "conversation",
+    type: entry.type,
+    runId: entry.runId,
+    roleCallId: entry.roleCallId,
+    timestamp: entry.timestamp,
+    speaker: conversationEntryHandle(entry),
+    title: entry.runId ? `${conversationEntryHandle(entry)} ${entry.runId}` : entry.author,
+    statusIcon: entry.type === "agent_failed" ? "✗" : entry.type === "review_pending" ? "△" : entry.type === "delegation" ? "→" : "●",
+    statusLabel: entry.statusLabel,
+    statusTone: entry.type === "agent_failed" ? "danger" : entry.type === "review_pending" ? "warning" : "info",
+    messageLines,
+    toolSummaryLines: [],
+    fileRefs: [],
+    commandLines: [],
+    artifactLines: [],
+    evidenceLines: [
+      entry.verificationLine,
+      entry.riskLine
+    ].filter((value): value is string => Boolean(value)),
+    inlineDiff: entry.inlineDiff
+  };
+}
+
+function fallbackActiveRunWorkBlock(run: TuiActiveRunBox): TuiWorkBlock {
+  return {
+    id: `active-run:${run.runId}`,
+    sourceId: run.runId,
+    sourceKind: "active_run",
+    type: "active_run",
+    runId: run.runId,
+    timestamp: run.startedAt,
+    speaker: run.displayHandle ? `@${run.displayHandle}` : `@${run.agent}`,
+    title: run.title,
+    statusIcon: "●",
+    statusLabel: "running",
+    statusTone: "info",
+    messageLines: run.outputLines,
+    toolSummaryLines: [],
+    fileRefs: [],
+    commandLines: [],
+    artifactLines: [],
+    evidenceLines: []
+  };
+}
+
+function isActiveRunSelected(
+  workBlocks: TuiWorkBlock[],
+  state: TuiInkState,
+  box: TuiActiveRunBox
+): boolean {
+  const selected = selectedWorkBlockFromBlocks(workBlocks, state);
+  return selected?.sourceKind === "active_run" && selected.sourceId === box.runId;
+}
+
+function selectedWorkBlockFromBlocks(
+  workBlocks: TuiWorkBlock[],
+  state: TuiInkState
+): TuiWorkBlock | undefined {
+  if (state.selectedWorkBlockId) {
+    const selectedById = workBlocks.find((block) => block.id === state.selectedWorkBlockId);
+    if (selectedById) {
+      return selectedById;
+    }
+  }
+  if (workBlocks.length === 0) {
+    return undefined;
+  }
+  const index = Number.isFinite(state.selectedWorkBlockIndex)
+    ? Math.min(Math.max(state.selectedWorkBlockIndex, 0), workBlocks.length - 1)
+    : 0;
+  return workBlocks[index];
+}
+
 function ActiveRunBoxView({
   box,
   terminal,
   animationTick,
-  chromeLineBudget
+  chromeLineBudget,
+  selected = false
 }: {
   box: TuiActiveRunBox;
   terminal: TuiInkTerminalSize;
   animationTick: number;
   chromeLineBudget: number;
+  selected?: boolean;
 }): React.ReactElement {
   const width = activeRunBoxWidth(terminal);
   const innerWidth = Math.max(12, width - 2);
@@ -2083,7 +2259,7 @@ function ActiveRunBoxView({
   ];
   const progress = activeRunProgress(box.outputLines);
   return block(
-    line(top, { color }),
+    line(top, { color, bold: selected }),
     ...paddedLines.map((value) => line(`│ ${value.padEnd(innerWidth - 2)} │`, { color })),
     line(`│ ${activeRunFooter(progress, innerWidth - 2)} │`, { color }),
     line(`╰${"─".repeat(innerWidth)}╯`, { color })
@@ -3828,6 +4004,7 @@ function modelRenderSignature(model: TuiCurrentContextModel): string {
     context: model.context,
     conversation: model.conversation,
     activeRuns: model.activeRuns,
+    workBlocks: model.workBlocks,
     runs: model.runs,
     roleCalls: model.roleCalls,
     review: model.review,

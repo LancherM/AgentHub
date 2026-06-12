@@ -598,11 +598,19 @@ as presentation DTOs (`TuiSelectionDetail`, `TuiDetailSection`, and
 Work blocks, runs, RoleCalls, tasks, team roles, and memory governance; Ink only
 selects and renders those payloads from local state. `Enter` or empty-composer
 `o` opens detail, while `Esc` closes the detail overlay before returning focus.
+V3 Work blocks are also presentation DTOs in the same read model. Core derives
+`TuiWorkBlock` rows from the existing `conversation` and `activeRuns`
+projections, including stable ids, source kind, speaker, timestamp, status,
+message lines, conservative inferred tool summaries, file refs, command-like
+lines, evidence lines, and inline diff references. Ink renders selected Work
+rows and folded metadata from those DTOs, while detail sections for tools,
+commands, file refs, inline diffs, and fix snippets are built in core from the
+same persisted evidence.
 Several reference-screen features still require new read-model projections
 before they can be rendered truthfully: structured tool-call lifecycle rows,
-normalized block artifacts and evidence refs, memory proposal evidence
-excerpts, approved-memory writeback targets, role delegation matrices,
-selected role profiles, and audited memory action callbacks. Until those
+normalized block artifacts, memory proposal evidence excerpts,
+approved-memory writeback targets, role delegation matrices, selected role
+profiles, and audited memory action callbacks. Until those
 projections or callbacks exist, the renderer shows unavailable/disabled
 sections and command hints rather than fabricating data or reading lower-level
 stores directly.

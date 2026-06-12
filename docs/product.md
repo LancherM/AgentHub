@@ -181,6 +181,14 @@ letting Ink read lower-level stores. Unsupported evidence such as structured
 tool-call lifecycle rows, memory proposal excerpts, writeback targets, role
 delegation matrices, and audited memory action callbacks is rendered as
 unavailable or disabled with equivalent CLI commands instead of being faked.
+The Work surface also has a typed V3 block projection over existing
+conversation and active-run evidence. Blocks carry stable ids, speaker/time,
+status, full message lines, conservative inferred tool summaries, file refs,
+command-like lines, evidence lines, and inline diff references. The main Work
+stream renders selected rows with folded metadata while keeping completed agent
+output scrollable; the detail pane shows message text, inferred tools,
+commands, file refs, evidence, inline diff summaries, and fix snippets only
+when those fields come from persisted read-model evidence.
 The TUI composer is prompt-first while editing: printable lowercase keys append
 to the prompt from any focus, uppercase tab shortcuts switch
 Work/Runs/View/Graph/Tasks/Memory/Team, `/team` opens the Team roles view

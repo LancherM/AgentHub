@@ -85,6 +85,23 @@ describe("TUI current-context read model", () => {
       usageLabel: "42k tok",
       outputLines: ["adapter started", "verification started"]
     });
+    expect(model.workBlocks.map((block) => block.id)).toEqual([
+      "message:message_1",
+      "delegation:call_deferred",
+      "delegation:call_failed",
+      "delegation:call_running",
+      "delegation:call_succeeded",
+      "delegation:call_waiting_approval",
+      "delegation:call_waiting_context",
+      "review-pending:run_done",
+      "active-run:run_active"
+    ]);
+    expect(model.workBlocks.find((block) => block.id === "active-run:run_active")).toMatchObject({
+      sourceKind: "active_run",
+      speaker: "@reviewer",
+      statusIcon: "●",
+      messageLines: ["adapter started", "verification started"]
+    });
     expect(model.conversation.map((entry) => entry.id)).toEqual([
       "message:message_1",
       "delegation:call_deferred",
@@ -696,6 +713,24 @@ describe("TUI current-context read model", () => {
     expect(model.review.evidence.inlineDiff?.mode).toBe("inline");
     expect(model.conversation.find((entry) => entry.id === "review-pending:run_diff")?.inlineDiff?.mode)
       .toBe("inline");
+    expect(model.workBlocks.find((block) => block.id === "review-pending:run_diff")).toMatchObject({
+      fileRefs: ["src/auth.ts"],
+      evidenceLines: expect.arrayContaining(["diff (+1/-1 in 1 files)"]),
+      inlineDiff: expect.objectContaining({ mode: "inline" })
+    });
+    expect(model.selectionDetails.workBlocks.find((detail) => detail.id === "review-pending:run_diff"))
+      .toMatchObject({
+        sections: expect.arrayContaining([
+          expect.objectContaining({ id: "inline-diff" }),
+          expect.objectContaining({
+            id: "fix-snippet",
+            lines: [
+              "-const mode = \"old\";",
+              "+const mode = \"new\";"
+            ]
+          })
+        ])
+      });
   });
 
   it("redacts sensitive git diffs from inline TUI review evidence", async () => {

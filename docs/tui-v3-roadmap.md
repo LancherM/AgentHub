@@ -1,6 +1,6 @@
 # TUI V3 Roadmap
 
-Status: implementation in progress; V3-1 and V3-2 implemented
+Status: implementation in progress; V3-1 through V3-3 implemented
 Last updated: 2026-06-12
 
 This roadmap defines the next major terminal UI refactor for Agent Hub. It is
@@ -75,8 +75,9 @@ The current code already supports these foundations:
 
 - Ink renderer boundary under `apps/cli/src/tui-ink`.
 - Core TUI read model under `packages/core/src/tui-read-model.ts`.
-- Current-context fields for `conversation`, `activeRuns`, transcript, runs,
-  RoleCalls, review, tasks, team, memory, skills, and warnings.
+- Current-context fields for `conversation`, `activeRuns`, typed Work blocks,
+  transcript, runs, RoleCalls, review, tasks, team, memory, skills, and
+  warnings.
 - Work conversation flow plus bounded active-run boxes.
 - Display-width-aware wrapping for mixed CJK/code/path output.
 - Team and Memory focus modes as simple read-model summary panes.
@@ -91,15 +92,15 @@ The reference UI requires functionality that is only partially supported:
   but the current renderer does not use a stable left rail across all views.
 - The right detail panel is not a generic selected-object contract. Current
   views render details inline and inconsistently.
-- Work blocks do not have a typed `blockId`/`selectedBlock` model. Selection is
-  mostly run/RoleCall/task-oriented.
-- Tool calls are not yet represented as structured TUI objects with name,
-  status, duration, file, command, and fold state. Current active output is a
-  filtered text stream.
-- Per-block artifacts, command lists, fix snippets, and evidence refs are not
-  normalized in the read model. Some evidence exists in run artifacts,
-  verification results, risk reports, review summaries, and run events, but it
-  is not projected as a single detail payload.
+- Work blocks now have a typed presentation model with stable ids, speaker,
+  timestamp, status, message lines, inferred tool summaries, file refs,
+  command lines, evidence lines, and inline diff references. Structured
+  tool-call lifecycle data such as exact status and duration remains
+  unavailable unless adapters persist it.
+- Per-block artifacts are still limited by the current read model. Commands,
+  file refs, evidence refs, inline diff summaries, and fix snippets are
+  projected only when existing conversation, active-run, or diff evidence can
+  support them.
 - Live run detail can show output tails and elapsed labels, but does not yet
   expose a typed live tool-call table or queued/running/completed tool status.
 - Memory is currently a summary plus commands. It does not expose proposal
@@ -256,6 +257,8 @@ Acceptance:
 - Selection does not jump during polling refresh.
 
 ### Phase V3-3: Work Conversation Blocks
+
+Status: implemented.
 
 Goal: match the Work reference surface.
 
