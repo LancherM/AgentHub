@@ -631,9 +631,9 @@ message lines, conservative inferred tool summaries, file refs, command-like
 lines, evidence lines, and inline diff references. Ink renders selected Work
 blocks through a dedicated block-list renderer with a title row, time gutter,
 speaker column, status token column, selected-block frame, folded metadata
-affordances, quick replies, dense pending-review collapse, and bounded
-active-run tails. Detail sections for tools, commands, file refs, inline diffs,
-and fix snippets are built in core from the same persisted evidence.
+affordances, dense pending-review collapse, and bounded active-run tails. Detail
+sections for tools, commands, file refs, inline diffs, and fix snippets are
+built in core from the same persisted evidence.
 For active-run Work blocks, core builds a live detail section from the same
 polling evidence already used by active run boxes: speaker, running state,
 started timestamp, elapsed/usage labels, spinner state, streaming output tail,
@@ -749,13 +749,9 @@ conversation projection with their agent-facing output,
 verification/risk summaries, and a final View-pane review hint. Terminal runs
 without changed files render as completed output instead of awaiting review.
 The Work view remains prompt-first, and printable keys do not trigger audit
-mutations.
-Quick replies are derived in the core TUI read model for only the latest visible
-agent-result conversation entry. They are prompt templates, not actions:
-`1`/`2`/`3` route through the same CLI `submitPrompt` callback used by manual
-composer submissions, and they are disabled as soon as the composer contains
-text or the Work conversation is scrolled away from the bottom. The `C`
-shortcut only prepares a continuation prompt in local Ink state.
+mutations. Numeric keys remain composer input because the TUI no longer renders
+quick-reply prompt templates. The `C` shortcut only prepares a continuation
+prompt in local Ink state.
 Inline diff display is also a read-model projection over existing `git_diff`
 run artifacts or run metadata. Small diffs with five or fewer changed lines are
 projected into bounded file/add/delete/context lines; larger diffs expose only

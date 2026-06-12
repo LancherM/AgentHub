@@ -1897,8 +1897,8 @@ describe("Ink TUI renderer", () => {
     expect(output.split("\n").every((value) => value.length <= 120)).toBe(true);
   });
 
-  it("renders quick reply suggestions and hides them while typing", () => {
-    const model = modelWithSuggestions();
+  it("does not render quick reply suggestions", () => {
+    const model = modelWithFailedRun();
     const idleOutput = renderToString(
       React.createElement(TuiInkFrame, {
         model,
@@ -1907,19 +1907,11 @@ describe("Ink TUI renderer", () => {
       }),
       { columns: 100 }
     );
-    const typingOutput = renderToString(
-      React.createElement(TuiInkFrame, {
-        model,
-        state: createInitialInkState("draft"),
-        terminal: { columns: 100, rows: 32 }
-      }),
-      { columns: 100 }
-    );
 
-    expect(idleOutput).toContain("[1] Run more tests");
-    expect(idleOutput).toContain("[2] Fix verification");
-    expect(idleOutput).toContain("[3] Continue");
-    expect(typingOutput).not.toContain("[1] Run more tests");
+    expect(idleOutput).toContain("verification failed");
+    expect(idleOutput).not.toContain("[1] Run more tests");
+    expect(idleOutput).not.toContain("[2] Fix verification");
+    expect(idleOutput).not.toContain("[3] Continue");
   });
 
   it("renders inline diff projections and collapses dense pending-review groups", () => {
@@ -2852,9 +2844,9 @@ describe("Ink TUI renderer", () => {
     instance.unmount();
   });
 
-  it("submits visible quick replies through the normal prompt callback", async () => {
+  it("keeps numeric quick-reply keys as composer input", async () => {
     const submissions = [];
-    const model = modelWithSuggestions();
+    const model = modelWithFailedRun();
     const instance = render(
       React.createElement(TuiInkApp, {
         model,
@@ -2863,19 +2855,15 @@ describe("Ink TUI renderer", () => {
         interactive: true,
         submitPrompt: async (input) => {
           submissions.push(input);
-          return { ok: true, message: "Suggestion submitted.", model };
+          return { ok: true, message: "Submitted prompt.", model };
         }
       })
     );
 
     instance.stdin.write("1");
-    await waitForFrame(instance, "Suggestion submitted.");
+    await waitForFrame(instance, "> 1");
 
-    expect(submissions).toEqual([
-      expect.objectContaining({
-        prompt: "Run more targeted tests for run run_suggest and summarize the failures."
-      })
-    ]);
+    expect(submissions).toEqual([]);
     instance.unmount();
   });
 
@@ -2883,7 +2871,7 @@ describe("Ink TUI renderer", () => {
     const submissions = [];
     const instance = render(
       React.createElement(TuiInkApp, {
-        model: modelWithSuggestions(),
+        model: modelWithFailedRun(),
         state: createInitialInkState("draft"),
         terminal: { columns: 120, rows: 40 },
         interactive: true,
@@ -3392,7 +3380,7 @@ function modelWithActiveRun() {
   };
 }
 
-function modelWithSuggestions() {
+function modelWithFailedRun() {
   return {
     ...baseModel,
     conversation: [
@@ -3405,24 +3393,7 @@ function modelWithSuggestions() {
         runId: "run_suggest",
         statusLabel: "failed",
         outputLines: ["tests failed"],
-        verificationLine: "verification failed (1 checks: pnpm test)",
-        suggestions: [
-          {
-            key: "1",
-            label: "Run more tests",
-            prompt: "Run more targeted tests for run run_suggest and summarize the failures."
-          },
-          {
-            key: "2",
-            label: "Fix verification",
-            prompt: "Fix the verification issues from run run_suggest, then report what changed."
-          },
-          {
-            key: "3",
-            label: "Continue",
-            prompt: "Continue from run run_suggest with the selected agent."
-          }
-        ]
+        verificationLine: "verification failed (1 checks: pnpm test)"
       }
     ],
     activeRuns: []

@@ -9,7 +9,6 @@ import {
 import type {
   TuiActiveRunBox,
   TuiConversationEntry,
-  TuiConversationSuggestion,
   TuiCurrentContextModel,
   TuiDetailSection,
   TuiInlineDiffSummary,
@@ -35,7 +34,6 @@ import {
   selectedTask,
   selectedTaskIndex,
   unavailableRoleExecutorCommands,
-  visibleConversationSuggestions,
   visibleRoleCalls,
   selectedMemoryItemIndex,
   selectedRoleCallIndex,
@@ -345,14 +343,6 @@ export function TuiInkApp(props: TuiInkAppProps): React.ReactElement {
     await submitPromptText(prompt, currentState, "Submitting prompt...");
   };
 
-  const submitSuggestion = async (suggestion: TuiConversationSuggestion) => {
-    await submitPromptText(
-      suggestion.prompt,
-      stateRef.current,
-      `Submitting suggestion: ${suggestion.label}...`
-    );
-  };
-
   const submitPromptText = async (
     prompt: string,
     currentState: TuiInkState,
@@ -624,15 +614,6 @@ export function TuiInkApp(props: TuiInkAppProps): React.ReactElement {
         updateStateNow((current) =>
           moveAgentCompletionSelection(modelRef.current, current, isDownInput(input, key) ? 1 : -1)
         );
-        return;
-      }
-      const suggestion = suggestionForInput(input, modelRef.current, currentState);
-      if (suggestion) {
-        if (isBusy) {
-          showBusyInputMessage();
-          return;
-        }
-        void submitSuggestion(suggestion);
         return;
       }
       if (input === "C" && currentState.focus === "work" && currentState.composer.length === 0) {
@@ -1868,11 +1849,6 @@ function WorkBlockList({
     renderedLines.push(...lines);
     blockRanges.push({ id: item.block.id, start, end: renderedLines.length });
   }
-  renderedLines.push(
-    ...visibleConversationSuggestions(model, state).map((suggestion) =>
-      line(`  [${suggestion.key}] ${suggestion.label}`, { color: "cyan", dimColor: true })
-    )
-  );
   const bodyLines = Math.max(1, visibleLines - 1);
   const maxStart = Math.max(0, renderedLines.length - bodyLines);
   const offsetFromBottom = Math.min(state.conversationScrollOffset, maxStart);
@@ -2164,7 +2140,6 @@ function ConversationFlow({
   if (model.conversation.length === 0) {
     return block(line("No messages in the current context.", { dimColor: true }));
   }
-  const showSuggestions = state.composer.length === 0 && state.conversationScrollOffset === 0;
   const blockBySourceId = new Map(
     workBlocks
       .filter((block) => block.sourceKind === "conversation")
@@ -2181,7 +2156,6 @@ function ConversationFlow({
           : conversationEntryLines(
               item.entry,
               feedbackByRunId,
-              showSuggestions,
               terminal,
               blockBySourceId.get(item.entry.id),
               selectedBlock?.sourceKind === "conversation" && selectedBlock.sourceId === item.entry.id
@@ -2274,7 +2248,6 @@ function reviewPendingGroupLine(count: number): React.ReactElement {
 function conversationEntryLines(
   entry: TuiConversationEntry,
   feedbackByRunId: Partial<Record<string, RunFeedbackKind>>,
-  showSuggestions: boolean,
   terminal: TuiInkTerminalSize,
   workBlock: TuiWorkBlock | undefined,
   selected: boolean
@@ -2299,8 +2272,7 @@ function conversationEntryLines(
       ...(entry.riskLine
         ? conversationRichLines(`⚠ ${entry.riskLine}`, { prefix: "┃   ", agent: true, tone, color: "yellow" }, terminal)
         : []),
-      ...inlineDiffLines(entry.inlineDiff, "┃   ", entry.id, terminal),
-      ...conversationSuggestionLines(entry, showSuggestions, tone, terminal)
+      ...inlineDiffLines(entry.inlineDiff, "┃   ", entry.id, terminal)
     ];
   }
   if (entry.type === "review_pending") {
@@ -2323,8 +2295,7 @@ function conversationEntryLines(
         ? conversationRichLines(`⚠ ${entry.riskLine}`, { prefix: "┃   ", agent: true, tone, color: "yellow" }, terminal)
         : []),
       ...inlineDiffLines(entry.inlineDiff, "┃   ", entry.id, terminal),
-      ...conversationRichLines(`△ ${entry.content ?? "open [V]iew for details"}`, { prefix: "┃   ", agent: true, tone, color: "yellow" }, terminal),
-      ...conversationSuggestionLines(entry, showSuggestions, tone, terminal)
+      ...conversationRichLines(`△ ${entry.content ?? "open [V]iew for details"}`, { prefix: "┃   ", agent: true, tone, color: "yellow" }, terminal)
     ];
   }
   if (entry.type === "delegation") {
@@ -2445,26 +2416,6 @@ function conversationContentLines(
     }
     return rendered;
   });
-}
-
-function conversationSuggestionLines(
-  entry: TuiConversationEntry,
-  showSuggestions: boolean,
-  tone: string,
-  terminal: TuiInkTerminalSize
-): React.ReactElement[] {
-  if (!showSuggestions || !entry.suggestions || entry.suggestions.length === 0) {
-    return [];
-  }
-  return entry.suggestions.flatMap((suggestion) =>
-    conversationRichLines(`[${suggestion.key}] ${suggestion.label}`, {
-      prefix: "┃   ",
-      agent: true,
-      tone,
-      dimColor: true,
-      key: `${entry.id}-suggestion-${suggestion.key}`
-    }, terminal)
-  );
 }
 
 function inlineDiffLines(
@@ -3678,8 +3629,7 @@ function conversationSearchDocuments(entries: TuiConversationEntry[]): SearchMat
       ...(entry.outputLines ?? []),
       entry.verificationLine,
       entry.riskLine,
-      ...(entry.inlineDiff?.lines.map((lineItem) => lineItem.text) ?? []),
-      ...(entry.suggestions?.map((suggestion) => suggestion.label) ?? [])
+      ...(entry.inlineDiff?.lines.map((lineItem) => lineItem.text) ?? [])
     ].filter((value): value is string => Boolean(value));
     return values.map((text) => ({ source, text }));
   });
@@ -4360,18 +4310,6 @@ function formatConversationTimestamp(value: string): string {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
-}
-
-function suggestionForInput(
-  input: string,
-  model: TuiCurrentContextModel,
-  state: TuiInkState
-): TuiConversationSuggestion | undefined {
-  if (input !== "1" && input !== "2" && input !== "3") {
-    return undefined;
-  }
-  return visibleConversationSuggestions(model, state)
-    .find((suggestion) => suggestion.key === input);
 }
 
 function openSearchState(state: TuiInkState): TuiInkState {

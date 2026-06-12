@@ -1,6 +1,5 @@
 import type {
   TuiConversationEntry,
-  TuiConversationSuggestion,
   TuiCurrentContextModel,
   TuiDetailSection,
   TuiRoleCallNodeSummary,
@@ -516,24 +515,6 @@ export function selectedPendingReviewRun(
     return undefined;
   }
   return pending[Math.min(Math.max(state.selectedActiveRunIndex, 0), pending.length - 1)];
-}
-
-export function visibleConversationSuggestions(
-  model: TuiCurrentContextModel,
-  state: TuiInkState
-): TuiConversationSuggestion[] {
-  if (
-    state.focus !== "work" ||
-    state.composer.length > 0 ||
-    state.conversationScrollOffset !== 0
-  ) {
-    return [];
-  }
-  const entry = findLast(
-    model.conversation,
-    (item) => (item.suggestions?.length ?? 0) > 0
-  );
-  return entry?.suggestions ?? [];
 }
 
 export function commandHintForFocus(
