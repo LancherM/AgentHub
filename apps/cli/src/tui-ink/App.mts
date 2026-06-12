@@ -9,7 +9,6 @@ import {
 import type {
   TuiActiveRunBox,
   TuiConversationEntry,
-  TuiConversationSuggestion,
   TuiCurrentContextModel,
   TuiDetailSection,
   TuiInlineDiffSummary,
@@ -35,7 +34,6 @@ import {
   selectedTask,
   selectedTaskIndex,
   unavailableRoleExecutorCommands,
-  visibleConversationSuggestions,
   visibleRoleCalls,
   selectedMemoryItemIndex,
   selectedRoleCallIndex,
@@ -345,14 +343,6 @@ export function TuiInkApp(props: TuiInkAppProps): React.ReactElement {
     await submitPromptText(prompt, currentState, "Submitting prompt...");
   };
 
-  const submitSuggestion = async (suggestion: TuiConversationSuggestion) => {
-    await submitPromptText(
-      suggestion.prompt,
-      stateRef.current,
-      `Submitting suggestion: ${suggestion.label}...`
-    );
-  };
-
   const submitPromptText = async (
     prompt: string,
     currentState: TuiInkState,
@@ -624,15 +614,6 @@ export function TuiInkApp(props: TuiInkAppProps): React.ReactElement {
         updateStateNow((current) =>
           moveAgentCompletionSelection(modelRef.current, current, isDownInput(input, key) ? 1 : -1)
         );
-        return;
-      }
-      const suggestion = suggestionForInput(input, modelRef.current, currentState);
-      if (suggestion) {
-        if (isBusy) {
-          showBusyInputMessage();
-          return;
-        }
-        void submitSuggestion(suggestion);
         return;
       }
       if (input === "C" && currentState.focus === "work" && currentState.composer.length === 0) {
@@ -1868,11 +1849,6 @@ function WorkBlockList({
     renderedLines.push(...lines);
     blockRanges.push({ id: item.block.id, start, end: renderedLines.length });
   }
-  renderedLines.push(
-    ...visibleConversationSuggestions(model, state).map((suggestion) =>
-      line(`  [${suggestion.key}] ${suggestion.label}`, { color: "cyan", dimColor: true })
-    )
-  );
   const bodyLines = Math.max(1, visibleLines - 1);
   const maxStart = Math.max(0, renderedLines.length - bodyLines);
   const offsetFromBottom = Math.min(state.conversationScrollOffset, maxStart);
@@ -2144,327 +2120,6 @@ function workBlockBodyColor(value: string, fallback: string | undefined): string
     return "cyan";
   }
   return fallback;
-}
-
-function ConversationFlow({
-  model,
-  state,
-  terminal,
-  visibleLines,
-  feedbackByRunId,
-  workBlocks
-}: {
-  model: TuiCurrentContextModel;
-  state: TuiInkState;
-  terminal: TuiInkTerminalSize;
-  visibleLines: number;
-  feedbackByRunId: Partial<Record<string, RunFeedbackKind>>;
-  workBlocks: TuiWorkBlock[];
-}): React.ReactElement {
-  if (model.conversation.length === 0) {
-    return block(line("No messages in the current context.", { dimColor: true }));
-  }
-  const showSuggestions = state.composer.length === 0 && state.conversationScrollOffset === 0;
-  const blockBySourceId = new Map(
-    workBlocks
-      .filter((block) => block.sourceKind === "conversation")
-      .map((block) => [block.sourceId, block])
-  );
-  const selectedBlock = selectedWorkBlockFromBlocks(workBlocks, state);
-  const renderedLines = conversationRenderItems(model.conversation).flatMap((item) =>
-    item.kind === "review_group"
-      ? [reviewPendingGroupLine(item.count)]
-      : item.kind === "time_anchor"
-        ? [timeAnchorLine(item.label)]
-        : item.kind === "separator"
-          ? [conversationSeparatorLine()]
-          : conversationEntryLines(
-              item.entry,
-              feedbackByRunId,
-              showSuggestions,
-              terminal,
-              blockBySourceId.get(item.entry.id),
-              selectedBlock?.sourceKind === "conversation" && selectedBlock.sourceId === item.entry.id
-            )
-  );
-  const maxOffset = Math.max(0, renderedLines.length - visibleLines);
-  const offsetFromBottom = Math.min(state.conversationScrollOffset, maxOffset);
-  const start = Math.max(0, renderedLines.length - visibleLines - offsetFromBottom);
-  const visible = renderedLines.slice(start, start + visibleLines);
-  return block(
-    ...visible
-  );
-}
-
-type ConversationRenderItem =
-  | { kind: "entry"; entry: TuiConversationEntry }
-  | { kind: "review_group"; count: number }
-  | { kind: "separator" }
-  | { kind: "time_anchor"; label: string };
-
-function conversationRenderItems(entries: TuiConversationEntry[]): ConversationRenderItem[] {
-  const items: ConversationRenderItem[] = [];
-  let previousEntry: TuiConversationEntry | undefined;
-  for (let index = 0; index < entries.length; index += 1) {
-    const entry = entries[index];
-    appendConversationBoundary(items, previousEntry, entry);
-    if (entry.type !== "review_pending") {
-      items.push({ kind: "entry", entry });
-      previousEntry = entry;
-      continue;
-    }
-    const group: TuiConversationEntry[] = [];
-    while (entries[index]?.type === "review_pending") {
-      group.push(entries[index]);
-      index += 1;
-    }
-    index -= 1;
-    if (group.length > 3) {
-      items.push({ kind: "review_group", count: group.length });
-    } else {
-      items.push(...group.map((value) => ({ kind: "entry" as const, entry: value })));
-    }
-    previousEntry = group.at(-1) ?? entry;
-  }
-  return items;
-}
-
-function appendConversationBoundary(
-  items: ConversationRenderItem[],
-  previousEntry: TuiConversationEntry | undefined,
-  entry: TuiConversationEntry
-): void {
-  if (!previousEntry) {
-    return;
-  }
-  items.push({ kind: "separator" });
-  const label = conversationGapLabel(previousEntry.timestamp, entry.timestamp);
-  if (label) {
-    items.push({ kind: "time_anchor", label });
-  }
-}
-
-function conversationSeparatorLine(): React.ReactElement {
-  return line("  " + "─".repeat(28), { dimColor: true });
-}
-
-function timeAnchorLine(label: string): React.ReactElement {
-  return line(`  ── ${label} ──`, { dimColor: true });
-}
-
-function conversationGapLabel(previousTimestamp: string, timestamp: string): string | undefined {
-  const previous = Date.parse(previousTimestamp);
-  const current = Date.parse(timestamp);
-  if (!Number.isFinite(previous) || !Number.isFinite(current)) {
-    return undefined;
-  }
-  const deltaMs = current - previous;
-  if (deltaMs < 5 * 60 * 1000) {
-    return undefined;
-  }
-  return `${formatDuration(deltaMs)} later`;
-}
-
-function reviewPendingGroupLine(count: number): React.ReactElement {
-  return line(`┃ △ ${count} pending reviews collapsed — [V]iew review queue`, {
-    color: "yellow"
-  });
-}
-
-function conversationEntryLines(
-  entry: TuiConversationEntry,
-  feedbackByRunId: Partial<Record<string, RunFeedbackKind>>,
-  showSuggestions: boolean,
-  terminal: TuiInkTerminalSize,
-  workBlock: TuiWorkBlock | undefined,
-  selected: boolean
-): React.ReactElement[] {
-  if (entry.type === "agent_completed" || entry.type === "agent_failed") {
-    const statusIcon = entry.type === "agent_failed" ? "✗" : "✓";
-    const tone = entry.type === "agent_failed" ? "red" : "cyan";
-    const feedback = entry.runId ? feedbackByRunId[entry.runId] : undefined;
-    return [
-      agentEntryHeaderLine(
-        `${conversationEntryHandle(entry)} ${entry.runId ? compactId(entry.runId) : ""} ${statusIcon} ${entry.statusLabel ?? ""}`.trim(),
-        entry,
-        tone,
-        feedback,
-        selected
-      ),
-      ...conversationBlockMetadataLines(workBlock, "┃   ", tone, terminal),
-      ...conversationContentLines(entry.outputLines ?? entry.content, { prefix: "┃   ", agent: true, tone, keyPrefix: entry.id }, terminal),
-      ...(entry.verificationLine
-        ? conversationRichLines(`~ ${entry.verificationLine}`, { prefix: "┃   ", agent: true, tone }, terminal)
-        : []),
-      ...(entry.riskLine
-        ? conversationRichLines(`⚠ ${entry.riskLine}`, { prefix: "┃   ", agent: true, tone, color: "yellow" }, terminal)
-        : []),
-      ...inlineDiffLines(entry.inlineDiff, "┃   ", entry.id, terminal),
-      ...conversationSuggestionLines(entry, showSuggestions, tone, terminal)
-    ];
-  }
-  if (entry.type === "review_pending") {
-    const tone = "yellow";
-    const feedback = entry.runId ? feedbackByRunId[entry.runId] : undefined;
-    return [
-      agentEntryHeaderLine(
-        `${conversationEntryHandle(entry)} ${entry.runId ? compactId(entry.runId) : ""} △ ${entry.statusLabel ?? "awaiting review"}`.trim(),
-        entry,
-        tone,
-        feedback,
-        selected
-      ),
-      ...conversationBlockMetadataLines(workBlock, "┃   ", tone, terminal),
-      ...conversationContentLines(entry.outputLines ?? entry.content, { prefix: "┃   ", agent: true, tone, keyPrefix: entry.id }, terminal),
-      ...(entry.verificationLine
-        ? conversationRichLines(`~ ${entry.verificationLine}`, { prefix: "┃   ", agent: true, tone }, terminal)
-        : []),
-      ...(entry.riskLine
-        ? conversationRichLines(`⚠ ${entry.riskLine}`, { prefix: "┃   ", agent: true, tone, color: "yellow" }, terminal)
-        : []),
-      ...inlineDiffLines(entry.inlineDiff, "┃   ", entry.id, terminal),
-      ...conversationRichLines(`△ ${entry.content ?? "open [V]iew for details"}`, { prefix: "┃   ", agent: true, tone, color: "yellow" }, terminal),
-      ...conversationSuggestionLines(entry, showSuggestions, tone, terminal)
-    ];
-  }
-  if (entry.type === "delegation") {
-    return [
-      line(`${selected ? "> " : "  "}→ delegated to @${entry.delegatedTo ?? "role"}: ${entry.delegationTask ?? entry.content ?? ""}`, {
-        color: "cyan",
-        bold: selected
-      }),
-      ...conversationBlockMetadataLines(workBlock, "    ", "cyan", terminal)
-    ];
-  }
-  return [
-    line(`${selected ? "> " : "  "}● ${entry.author} ${formatConversationTimestamp(entry.timestamp)}`.trim(), {
-      dimColor: !selected,
-      bold: selected,
-      color: selected ? "cyan" : undefined
-    }),
-    ...conversationBlockMetadataLines(workBlock, "  ", "cyan", terminal),
-    ...conversationContentLines(entry.content, { prefix: "  ", agent: false, keyPrefix: entry.id }, terminal)
-  ];
-}
-
-function agentEntryHeaderLine(
-  title: string,
-  entry: TuiConversationEntry,
-  tone: string,
-  feedback?: RunFeedbackKind,
-  selected = false
-): React.ReactElement {
-  const metadata = [
-    entry.elapsedLabel,
-    entry.usageLabel,
-    formatConversationTimestamp(entry.timestamp)
-  ].filter((value): value is string => Boolean(value));
-  const backgroundColor = feedback === "success"
-    ? "green"
-    : feedback === "failure"
-      ? "red"
-      : undefined;
-  const feedbackPrefix = feedback === "failure" ? "!! " : "";
-  return h(
-    Text,
-    { wrap: "truncate", backgroundColor },
-    h(Text, { color: selected ? "cyan" : undefined, bold: selected }, selected ? "> " : "  "),
-    h(Text, { color: tone, bold: true }, "┃"),
-    " ",
-    h(Text, { color: tone, bold: true }, `${feedbackPrefix}${title}`),
-    ...(metadata.length > 0
-      ? [
-          h(Text, { key: "metadata", dimColor: true }, `  ${metadata.join("  ")}`)
-        ]
-      : [])
-  );
-}
-
-function conversationBlockMetadataLines(
-  block: TuiWorkBlock | undefined,
-  prefix: string,
-  tone: string,
-  terminal: TuiInkTerminalSize
-): React.ReactElement[] {
-  if (!block) {
-    return [];
-  }
-  const parts = [
-    block.toolSummaryLines.length > 0
-      ? `tools inferred ${block.toolSummaryLines.length}`
-      : undefined,
-    block.fileRefs.length > 0
-      ? `files ${block.fileRefs.slice(0, 2).join(", ")}${block.fileRefs.length > 2 ? ` +${block.fileRefs.length - 2}` : ""}`
-      : undefined,
-    block.commandLines.length > 0
-      ? `commands ${block.commandLines.length}`
-      : undefined
-  ].filter((value): value is string => Boolean(value));
-  if (parts.length === 0) {
-    return [];
-  }
-  return conversationRichLines(`> ${parts.join(" | ")}`, {
-    prefix,
-    agent: prefix.startsWith("┃"),
-    tone,
-    dimColor: true,
-    key: `${block.id}-metadata`
-  }, terminal);
-}
-
-function conversationContentLines(
-  content: string[] | string | undefined,
-  options: {
-    prefix: string;
-    agent: boolean;
-    tone?: string;
-    keyPrefix: string;
-  },
-  terminal: TuiInkTerminalSize
-): React.ReactElement[] {
-  const lines = Array.isArray(content)
-    ? content
-    : (content ?? "")
-        .split(/\r?\n/)
-        .map((value) => value.trim())
-        .filter(Boolean);
-  const visible = lines.length > 0 ? lines : ["(empty)"];
-  let inCodeBlock = false;
-  return visible.flatMap((value, index) => {
-    const trimmed = value.trim();
-    const isFence = trimmed.startsWith("```");
-    const renderAsCode = inCodeBlock && !isFence;
-    const rendered = conversationRichLines(value, {
-      ...options,
-      key: `${options.keyPrefix}-content-${index}`,
-      code: renderAsCode || isFence,
-      codeFence: isFence
-    }, terminal);
-    if (isFence) {
-      inCodeBlock = !inCodeBlock;
-    }
-    return rendered;
-  });
-}
-
-function conversationSuggestionLines(
-  entry: TuiConversationEntry,
-  showSuggestions: boolean,
-  tone: string,
-  terminal: TuiInkTerminalSize
-): React.ReactElement[] {
-  if (!showSuggestions || !entry.suggestions || entry.suggestions.length === 0) {
-    return [];
-  }
-  return entry.suggestions.flatMap((suggestion) =>
-    conversationRichLines(`[${suggestion.key}] ${suggestion.label}`, {
-      prefix: "┃   ",
-      agent: true,
-      tone,
-      dimColor: true,
-      key: `${entry.id}-suggestion-${suggestion.key}`
-    }, terminal)
-  );
 }
 
 function inlineDiffLines(
@@ -3678,8 +3333,7 @@ function conversationSearchDocuments(entries: TuiConversationEntry[]): SearchMat
       ...(entry.outputLines ?? []),
       entry.verificationLine,
       entry.riskLine,
-      ...(entry.inlineDiff?.lines.map((lineItem) => lineItem.text) ?? []),
-      ...(entry.suggestions?.map((suggestion) => suggestion.label) ?? [])
+      ...(entry.inlineDiff?.lines.map((lineItem) => lineItem.text) ?? [])
     ].filter((value): value is string => Boolean(value));
     return values.map((text) => ({ source, text }));
   });
@@ -4360,18 +4014,6 @@ function formatConversationTimestamp(value: string): string {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
-}
-
-function suggestionForInput(
-  input: string,
-  model: TuiCurrentContextModel,
-  state: TuiInkState
-): TuiConversationSuggestion | undefined {
-  if (input !== "1" && input !== "2" && input !== "3") {
-    return undefined;
-  }
-  return visibleConversationSuggestions(model, state)
-    .find((suggestion) => suggestion.key === input);
 }
 
 function openSearchState(state: TuiInkState): TuiInkState {

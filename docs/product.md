@@ -133,13 +133,9 @@ newest wrapped lines visible and adds an omitted-line marker when the full box
 would crowd out the Work conversation. Completion and failure state is shown
 through refreshed read-model rows rather than timed renderer flashes, so the
 terminal does not repaint only to clear decorative feedback.
-When the latest agent result is visible and the composer is empty, Work may show
-two or three dim quick replies such as running more tests, fixing verification,
-reviewing risk, continuing, or fixing similar issues. Pressing `1`, `2`, or `3`
-submits the selected suggestion through the same prompt callback as manual
-composer text; numeric keys remain normal text while the composer is non-empty.
-Typing hides suggestions, and `C` prepares a continuation prompt without
-submitting it.
+Work does not render numeric quick replies for agent results. `1`, `2`, and
+`3` remain normal composer input, while `C` still prepares a continuation
+prompt without submitting it.
 Small run diffs are projected directly into Work when the collected git diff
 has five or fewer changed lines; file/hunk headers are dim, additions are
 green, deletions are red, and context stays plain. The Ink renderer wraps these

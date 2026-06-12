@@ -735,7 +735,7 @@ describe("TUI current-context read model", () => {
     });
   });
 
-  it("adds quick reply suggestions only to the latest agent result", async () => {
+  it("does not add quick reply suggestions to agent results", async () => {
     const runtime = createCliRuntime({ storageMode: "memory" });
     await runtime.projectRepository.create({
       id: "project_suggestions",
@@ -807,14 +807,66 @@ describe("TUI current-context read model", () => {
       threadId: "thread_suggestions"
     });
 
-    expect(model.conversation.find((entry) => entry.id === "run:run_older")?.suggestions)
-      .toBeUndefined();
-    expect(model.conversation.find((entry) => entry.id === "run:run_newer")?.suggestions)
-      .toEqual([
-        expect.objectContaining({ key: "1", label: "Run more tests" }),
-        expect.objectContaining({ key: "2", label: "Fix verification" }),
-        expect.objectContaining({ key: "3", label: "Review changes" })
-      ]);
+    const older = model.conversation.find((entry) => entry.id === "run:run_older");
+    const newer = model.conversation.find((entry) => entry.id === "run:run_newer");
+
+    expect(older).toBeDefined();
+    expect(newer).toBeDefined();
+    expect(Object.prototype.hasOwnProperty.call(older ?? {}, "suggestions")).toBe(false);
+    expect(Object.prototype.hasOwnProperty.call(newer ?? {}, "suggestions")).toBe(false);
+  });
+
+  it("does not add low-signal quick replies to a clean latest agent result", async () => {
+    const runtime = createCliRuntime({ storageMode: "memory" });
+    await runtime.projectRepository.create({
+      id: "project_clean_suggestions",
+      name: "Clean Suggestions",
+      rootPath: "/tmp/clean-suggestions",
+      createdAt: now,
+      updatedAt: now
+    });
+    await runtime.conversationThreadRepository.create({
+      id: "thread_clean_suggestions",
+      projectId: "project_clean_suggestions",
+      title: "Clean Suggestions",
+      createdAt: now,
+      updatedAt: now
+    });
+    await runtime.taskRepository.create({
+      id: "task_clean_suggestions",
+      projectId: "project_clean_suggestions",
+      title: "Clean result",
+      metadata: { threadId: "thread_clean_suggestions" },
+      status: "completed",
+      createdAt: now,
+      updatedAt: now
+    });
+    await runtime.taskRunRepository.create({
+      id: "run_clean",
+      taskId: "task_clean_suggestions",
+      agentKind: "codex",
+      status: "succeeded",
+      startedAt: "2026-05-29T10:01:00.000Z",
+      completedAt: "2026-05-29T10:02:00.000Z",
+      createdAt: "2026-05-29T10:01:00.000Z",
+      updatedAt: "2026-05-29T10:02:00.000Z"
+    });
+    await runtime.runEventRepository.createMany([
+      event("event_clean", "run_clean", 0, "message", "done")
+    ]);
+    await runtime.verificationResultRepository.create(
+      verification("verification_clean", "run_clean", "pnpm test", "passed")
+    );
+
+    const model = await buildTuiCurrentContextModel(runtime, {
+      projectId: "project_clean_suggestions",
+      threadId: "thread_clean_suggestions"
+    });
+
+    const clean = model.conversation.find((entry) => entry.id === "run:run_clean");
+
+    expect(clean).toBeDefined();
+    expect(Object.prototype.hasOwnProperty.call(clean ?? {}, "suggestions")).toBe(false);
   });
 
   it("projects small git diffs into inline TUI review evidence", async () => {
