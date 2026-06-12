@@ -2,13 +2,17 @@ import type {
   TuiConversationEntry,
   TuiConversationSuggestion,
   TuiCurrentContextModel,
+  TuiDetailSection,
   TuiRoleCallNodeSummary,
   TuiRunSummary,
-  TuiTaskSummary
+  TuiSelectionDetail,
+  TuiTaskSummary,
+  TuiWorkBlock
 } from "@agent-hub/core";
 
 const defaultListWindowSize = 8;
 const defaultConversationWindowSize = 8;
+const defaultDetailWindowSize = 16;
 
 export type TuiInkFocus =
   | "work"
@@ -28,9 +32,20 @@ export interface TuiInkState {
   selectedRoleCallId?: string;
   selectedTaskIndex: number;
   selectedTaskId?: string;
+  selectedWorkBlockIndex: number;
+  selectedWorkBlockId?: string;
+  selectedMemoryItemIndex: number;
+  selectedMemoryItemId?: string;
+  selectedTeamRoleIndex: number;
+  selectedTeamRoleId?: string;
   selectedActiveRunIndex: number;
   hideCompletedRoleCalls: boolean;
   collapsedRoleCallIds: string[];
+  collapsedDetailSectionIds: string[];
+  expandedDetailSectionIds: string[];
+  foldPrefixPending: boolean;
+  detailVisible: boolean;
+  detailScrollOffset: number;
   scrollOffsets: {
     runs: number;
     roleCalls: number;
@@ -87,6 +102,13 @@ export type TuiInkKey =
   | "cancel"
   | "accept_review"
   | "reject_review"
+  | "open_detail"
+  | "close_detail"
+  | "fold_prefix"
+  | "cancel_fold_prefix"
+  | "toggle_detail_sections"
+  | "collapse_detail_sections"
+  | "expand_detail_sections"
   | "print_commands"
   | "palette";
 
@@ -107,9 +129,17 @@ export function createInitialInkState(composer = ""): TuiInkState {
     selectedRunIndex: 0,
     selectedRoleCallIndex: 0,
     selectedTaskIndex: 0,
+    selectedWorkBlockIndex: 0,
+    selectedMemoryItemIndex: 0,
+    selectedTeamRoleIndex: 0,
     selectedActiveRunIndex: 0,
     hideCompletedRoleCalls: false,
     collapsedRoleCallIds: [],
+    collapsedDetailSectionIds: [],
+    expandedDetailSectionIds: [],
+    foldPrefixPending: false,
+    detailVisible: false,
+    detailScrollOffset: 0,
     scrollOffsets: {
       runs: 0,
       roleCalls: 0,
@@ -141,17 +171,27 @@ export function reduceInkState(
 ): TuiInkState {
   const next: TuiInkState = {
     ...state,
-    collapsedRoleCallIds: [...state.collapsedRoleCallIds],
-    composerHistory: [...state.composerHistory],
+    selectedWorkBlockIndex: state.selectedWorkBlockIndex ?? 0,
+    selectedMemoryItemIndex: state.selectedMemoryItemIndex ?? 0,
+    selectedTeamRoleIndex: state.selectedTeamRoleIndex ?? 0,
+    detailVisible: state.detailVisible ?? false,
+    detailScrollOffset: Math.max(0, state.detailScrollOffset ?? 0),
+    collapsedRoleCallIds: [...(state.collapsedRoleCallIds ?? [])],
+    collapsedDetailSectionIds: [...(state.collapsedDetailSectionIds ?? [])],
+    expandedDetailSectionIds: [...(state.expandedDetailSectionIds ?? [])],
+    foldPrefixPending: false,
+    composerHistory: [...(state.composerHistory ?? [])],
     statusMessage: undefined
   };
 
   if (key === "tab" || key === "shift_tab") {
     next.focus = nextFocus(state.focus, key === "tab" ? 1 : -1);
+    resetDetailScroll(next);
     return next;
   }
   if (key === "help") {
     next.focus = next.focus === "help" ? "work" : "help";
+    resetDetailScroll(next);
     return next;
   }
   if (key === "work" || key === "graph" || key === "runs" || key === "tasks") {
@@ -159,6 +199,7 @@ export function reduceInkState(
     next.commandPaletteOpen = false;
     next.searchOpen = false;
     next.timelineOpen = false;
+    resetDetailScroll(next);
     return next;
   }
   if (key === "team") {
@@ -167,6 +208,7 @@ export function reduceInkState(
     next.searchOpen = false;
     next.timelineOpen = false;
     next.statusMessage = "Team roles shown.";
+    resetDetailScroll(next);
     return next;
   }
   if (key === "review") {
@@ -181,6 +223,7 @@ export function reduceInkState(
     next.commandPaletteOpen = false;
     next.searchOpen = false;
     next.timelineOpen = false;
+    resetDetailScroll(next);
     return next;
   }
   if (key === "memory") {
@@ -188,11 +231,13 @@ export function reduceInkState(
     next.commandPaletteOpen = false;
     next.searchOpen = false;
     next.timelineOpen = false;
+    resetDetailScroll(next);
     return next;
   }
   if (key === "skills") {
     next.focus = "memory";
     next.statusMessage = "Skills are shown with memory and context indicators.";
+    resetDetailScroll(next);
     return next;
   }
   if (key === "hide_done") {
@@ -233,6 +278,31 @@ export function reduceInkState(
       "Cancellation is unavailable for this CLI TUI context; use the owning run service when supported.";
     return next;
   }
+  if (key === "open_detail" || key === "enter") {
+    next.detailVisible = true;
+    resetDetailScroll(next);
+    next.statusMessage = "Detail opened.";
+    return next;
+  }
+  if (key === "close_detail") {
+    next.detailVisible = false;
+    resetDetailScroll(next);
+    next.statusMessage = "Detail closed.";
+    return next;
+  }
+  if (key === "fold_prefix") {
+    next.foldPrefixPending = true;
+    next.statusMessage = "Fold prefix: press a to toggle detail sections.";
+    return next;
+  }
+  if (key === "cancel_fold_prefix") {
+    next.statusMessage = "Fold prefix cancelled.";
+    return next;
+  }
+  if (key === "toggle_detail_sections" || key === "collapse_detail_sections" || key === "expand_detail_sections") {
+    updateDetailSectionFolds(next, model, key);
+    return next;
+  }
   if (key === "accept_review" || key === "reject_review") {
     next.focus = "review";
     next.statusMessage = "Review decision shortcut is available for the selected run.";
@@ -269,6 +339,11 @@ export function reduceInkState(
       next.statusMessage = "Timeline hidden.";
       return next;
     }
+    if (next.detailVisible) {
+      next.detailVisible = false;
+      next.statusMessage = "Detail closed.";
+      return next;
+    }
     if (next.focus === "review" && next.reviewDiffExpanded) {
       next.reviewDiffExpanded = false;
       next.statusMessage = "Review diff collapsed.";
@@ -278,10 +353,14 @@ export function reduceInkState(
     next.focus = "work";
     return next;
   }
-  if (key === "enter") {
-    return next;
-  }
   if (key === "up" || key === "down" || key === "page_up" || key === "page_down" || key === "home" || key === "end") {
+    if (
+      next.detailVisible &&
+      (key === "page_up" || key === "page_down" || key === "home" || key === "end")
+    ) {
+      moveDetailScroll(next, key, selectedDetailLineCount(model, next));
+      return next;
+    }
     moveSelection(next, key, model);
     return next;
   }
@@ -368,6 +447,39 @@ export function selectedTaskIndex(
     model.tasks,
     state.selectedTaskId,
     state.selectedTaskIndex
+  );
+}
+
+export function selectedTeamRoleIndex(
+  model: TuiCurrentContextModel,
+  state: TuiInkState
+): number {
+  return selectedIndexById(
+    model.team.roles,
+    state.selectedTeamRoleId,
+    state.selectedTeamRoleIndex
+  );
+}
+
+export function selectedMemoryItemIndex(
+  model: TuiCurrentContextModel,
+  state: TuiInkState
+): number {
+  return selectedIndexById(
+    model.memory.rows,
+    state.selectedMemoryItemId,
+    state.selectedMemoryItemIndex
+  );
+}
+
+export function selectedWorkBlockIndex(
+  model: TuiCurrentContextModel,
+  state: TuiInkState
+): number {
+  return selectedIndexById(
+    workBlocksForSelection(model),
+    state.selectedWorkBlockId,
+    state.selectedWorkBlockIndex
   );
 }
 
@@ -476,6 +588,7 @@ function moveSelection(
     const nextIndex = nextSelectionIndex(selectedRunIndex(model, state), delta, model.runs.length);
     state.selectedRunIndex = nextIndex;
     state.selectedRunId = model.runs[nextIndex]?.id;
+    resetDetailScroll(state);
     state.scrollOffsets.runs = ensureVisible(
       state.scrollOffsets.runs,
       nextIndex,
@@ -488,6 +601,7 @@ function moveSelection(
     const nextIndex = nextSelectionIndex(selectedTaskIndex(model, state), delta, model.tasks.length);
     state.selectedTaskIndex = nextIndex;
     state.selectedTaskId = model.tasks[nextIndex]?.id;
+    resetDetailScroll(state);
     state.scrollOffsets.tasks = ensureVisible(
       state.scrollOffsets.tasks,
       nextIndex,
@@ -497,10 +611,44 @@ function moveSelection(
     return;
   }
   if (state.focus === "work") {
-    moveConversationScroll(state, key, conversationLineCount(model.conversation));
+    if (key === "page_up" || key === "page_down" || key === "home" || key === "end") {
+      moveConversationScroll(state, key, conversationLineCount(model.conversation));
+      return;
+    }
+    const blocks = workBlocksForSelection(model);
+    const nextIndex = nextSelectionIndex(
+      selectedWorkBlockIndex(model, state),
+      delta,
+      blocks.length
+    );
+    state.selectedWorkBlockIndex = nextIndex;
+    state.selectedWorkBlockId = blocks[nextIndex]?.id;
+    resetDetailScroll(state);
     return;
   }
-  if (state.focus === "team" || state.focus === "memory" || state.focus === "help") {
+  if (state.focus === "team") {
+    const nextIndex = nextSelectionIndex(
+      selectedTeamRoleIndex(model, state),
+      delta,
+      model.team.roles.length
+    );
+    state.selectedTeamRoleIndex = nextIndex;
+    state.selectedTeamRoleId = model.team.roles[nextIndex]?.id;
+    resetDetailScroll(state);
+    return;
+  }
+  if (state.focus === "memory") {
+    const nextIndex = nextSelectionIndex(
+      selectedMemoryItemIndex(model, state),
+      delta,
+      model.memory.rows.length
+    );
+    state.selectedMemoryItemIndex = nextIndex;
+    state.selectedMemoryItemId = model.memory.rows[nextIndex]?.id;
+    resetDetailScroll(state);
+    return;
+  }
+  if (state.focus === "help") {
     return;
   }
   const nodes = visibleRoleCalls(model, state);
@@ -510,12 +658,35 @@ function moveSelection(
     nodes.length
   );
   state.selectedRoleCallId = nodes[state.selectedRoleCallIndex]?.id;
+  resetDetailScroll(state);
   state.scrollOffsets.roleCalls = ensureVisible(
     state.scrollOffsets.roleCalls,
     state.selectedRoleCallIndex,
     defaultListWindowSize,
     nodes.length
   );
+}
+
+function moveDetailScroll(
+  state: TuiInkState,
+  key: "page_up" | "page_down" | "home" | "end",
+  detailLineLength: number
+): void {
+  const maxOffset = Math.max(0, detailLineLength - defaultDetailWindowSize);
+  if (key === "home") {
+    state.detailScrollOffset = 0;
+  } else if (key === "end") {
+    state.detailScrollOffset = maxOffset;
+  } else {
+    const delta = key === "page_down" ? defaultDetailWindowSize : -defaultDetailWindowSize;
+    state.detailScrollOffset = Math.min(
+      Math.max(state.detailScrollOffset + delta, 0),
+      maxOffset
+    );
+  }
+  state.statusMessage = maxOffset === 0
+    ? "Detail fits without paging."
+    : `Detail lines ${state.detailScrollOffset + 1}-${Math.min(state.detailScrollOffset + defaultDetailWindowSize, detailLineLength)} of ${detailLineLength}.`;
 }
 
 function moveConversationScroll(
@@ -537,6 +708,10 @@ function moveConversationScroll(
     Math.max(state.conversationScrollOffset + delta, 0),
     maxOffset
   );
+}
+
+function resetDetailScroll(state: TuiInkState): void {
+  state.detailScrollOffset = 0;
 }
 
 function conversationLineCount(entries: TuiConversationEntry[]): number {
@@ -598,6 +773,17 @@ function textLineCount(content: string | undefined): number {
     .length;
 }
 
+function workBlocksForSelection(model: TuiCurrentContextModel): TuiWorkBlock[] {
+  return model.workBlocks ?? [
+    ...model.conversation.map((entry) => ({
+      id: entry.id
+    } as TuiWorkBlock)),
+    ...model.activeRuns.map((run) => ({
+      id: `active-run:${run.runId}`
+    } as TuiWorkBlock))
+  ];
+}
+
 function toggleSelectedRoleCallCollapse(
   state: TuiInkState,
   model: TuiCurrentContextModel,
@@ -616,6 +802,120 @@ function toggleSelectedRoleCallCollapse(
     state.statusMessage = `Expanded ${selected.id}.`;
   }
   state.collapsedRoleCallIds = [...collapsed];
+}
+
+function updateDetailSectionFolds(
+  state: TuiInkState,
+  model: TuiCurrentContextModel,
+  key: "toggle_detail_sections" | "collapse_detail_sections" | "expand_detail_sections"
+): void {
+  const sections = selectedDetailSections(model, state);
+  if (sections.length === 0) {
+    state.statusMessage = "No detail sections are available to fold.";
+    return;
+  }
+  resetDetailScroll(state);
+  if (key === "collapse_detail_sections") {
+    state.collapsedDetailSectionIds = sections.map((section) => section.id);
+    state.expandedDetailSectionIds = state.expandedDetailSectionIds.filter(
+      (id) => !sections.some((section) => section.id === id)
+    );
+    state.statusMessage = "Detail sections collapsed.";
+    return;
+  }
+  if (key === "expand_detail_sections") {
+    const ids = new Set([...state.expandedDetailSectionIds, ...sections.map((section) => section.id)]);
+    state.expandedDetailSectionIds = [...ids];
+    state.collapsedDetailSectionIds = state.collapsedDetailSectionIds.filter(
+      (id) => !sections.some((section) => section.id === id)
+    );
+    state.statusMessage = "Detail sections expanded.";
+    return;
+  }
+  const anyCollapsed = sections.some((section) => detailSectionCollapsed(section, state));
+  updateDetailSectionFolds(
+    state,
+    model,
+    anyCollapsed ? "expand_detail_sections" : "collapse_detail_sections"
+  );
+}
+
+function selectedDetailSections(
+  model: TuiCurrentContextModel,
+  state: TuiInkState
+): TuiDetailSection[] {
+  return selectedDetail(model, state)?.sections ?? [];
+}
+
+function selectedDetailLineCount(
+  model: TuiCurrentContextModel,
+  state: TuiInkState
+): number {
+  const detail = selectedDetail(model, state);
+  if (!detail) {
+    return 2;
+  }
+  return 2 +
+    detail.sections.reduce((count, section) => {
+      if (detailSectionCollapsed(section, state)) {
+        return count + 1;
+      }
+      return count + 1 + Math.max(1, section.lines.length);
+    }, 0) +
+    (detail.commands.length > 0 ? 1 + detail.commands.length : 0) +
+    (detail.actions.length > 0 ? 1 + detail.actions.length : 0);
+}
+
+function selectedDetail(
+  model: TuiCurrentContextModel,
+  state: TuiInkState
+): TuiSelectionDetail | undefined {
+  const details = model.selectionDetails;
+  if (state.focus === "runs") {
+    const run = selectedRun(model, state);
+    return run ? details.runs.find((detail) => detail.id === run.id) : undefined;
+  }
+  if (state.focus === "review") {
+    if (model.review.kind === "run" && model.review.selectedId) {
+      return details.runs.find((detail) => detail.id === model.review.selectedId);
+    }
+    if (model.review.kind === "role_call" && model.review.selectedId) {
+      return details.roleCalls.find((detail) => detail.id === model.review.selectedId);
+    }
+    return undefined;
+  }
+  if (state.focus === "graph") {
+    const call = selectedRoleCall(model, state);
+    return call ? details.roleCalls.find((detail) => detail.id === call.id) : undefined;
+  }
+  if (state.focus === "tasks") {
+    const task = selectedTask(model, state);
+    return task ? details.tasks.find((detail) => detail.id === task.id) : undefined;
+  }
+  if (state.focus === "team") {
+    const role = model.team.roles[selectedTeamRoleIndex(model, state)];
+    return role ? details.teamRoles.find((detail) => detail.id === role.id) : undefined;
+  }
+  if (state.focus === "memory") {
+    const rowDetails = details.memoryRows;
+    if (rowDetails.length === 0) {
+      return details.memory;
+    }
+    return rowDetails[selectedIndexById(rowDetails, state.selectedMemoryItemId, state.selectedMemoryItemIndex)] ?? rowDetails[0];
+  }
+  if (state.focus === "work") {
+    const workDetails = details.workBlocks;
+    return workDetails[selectedIndexById(workDetails, state.selectedWorkBlockId, state.selectedWorkBlockIndex)] ?? workDetails.at(-1);
+  }
+  return undefined;
+}
+
+function detailSectionCollapsed(section: TuiDetailSection, state: TuiInkState): boolean {
+  if (state.collapsedDetailSectionIds.includes(section.id)) {
+    return true;
+  }
+  return section.collapsedByDefault === true &&
+    !state.expandedDetailSectionIds.includes(section.id);
 }
 
 function applyContinuePrompt(
@@ -742,13 +1042,14 @@ function transcriptScrollDelta(
 }
 
 function nextSelectionIndex(current: number, delta: number, length: number): number {
+  const safeCurrent = Number.isFinite(current) ? current : 0;
   if (delta === Number.NEGATIVE_INFINITY) {
     return 0;
   }
   if (delta === Number.POSITIVE_INFINITY) {
     return Math.max(0, length - 1);
   }
-  return clampIndex(current + delta, length);
+  return clampIndex(safeCurrent + delta, length);
 }
 
 function ensureVisible(
@@ -773,7 +1074,8 @@ function boundedIndex(index: number, length: number): number {
   if (length <= 0) {
     return 0;
   }
-  return Math.min(Math.max(index, 0), length - 1);
+  const safeIndex = Number.isFinite(index) ? index : 0;
+  return Math.min(Math.max(safeIndex, 0), length - 1);
 }
 
 function clampIndex(index: number, length: number): number {

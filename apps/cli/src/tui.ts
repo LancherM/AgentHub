@@ -4,6 +4,7 @@ import { pathToFileURL } from "node:url";
 import {
   buildTuiCurrentContextModel,
   defaultAgentKind,
+  emptyTuiSelectionDetails,
   parseAgentKindAlias,
   type AgentKind,
   type ConversationThread,
@@ -659,6 +660,7 @@ function buildTuiFailureModel(input: TuiFailureModelInput): TuiCurrentContextMod
     },
     conversation: [],
     activeRuns: [],
+    workBlocks: [],
     transcript: [],
     runs: [],
     roleCalls: {
@@ -694,6 +696,8 @@ function buildTuiFailureModel(input: TuiFailureModelInput): TuiCurrentContextMod
     team: {
       projectId: input.modelInput.projectId,
       roles: [],
+      delegationMatrixRows: [],
+      recentRoleCalls: [],
       counts: {
         total: 0,
         enabled: 0,
@@ -709,6 +713,7 @@ function buildTuiFailureModel(input: TuiFailureModelInput): TuiCurrentContextMod
     memory: {
       projectId: input.modelInput.projectId,
       counts: { proposed: 0, approved: 0, rejected: 0, retired: 0 },
+      rows: [],
       command: input.modelInput.projectId
         ? `agent-hub memory list --project-id ${input.modelInput.projectId}`
         : undefined,
@@ -724,6 +729,7 @@ function buildTuiFailureModel(input: TuiFailureModelInput): TuiCurrentContextMod
       selected: [],
       available: []
     },
+    selectionDetails: emptyTuiSelectionDetails(),
     warnings
   };
 }

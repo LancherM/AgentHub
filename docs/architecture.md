@@ -584,6 +584,79 @@ and Tasks focus modes are still
 read-model projections over existing task, run, RoleCall, RoleTodo,
 verification, risk, metadata, and artifact repositories; they do not introduce
 new persistence or raw log/diff rendering.
+The V3 TUI plan in `docs/tui-v3-roadmap.md` keeps the same boundary while
+introducing a shared shell frame, selected-object detail contract, and
+table/detail primitives for Work, Memory, and Team. `TuiInkFrame` composes a
+shared shell with branded metadata header, persistent side navigation at normal
+and wide widths, framed main/detail regions, a wide-width detail rail,
+medium/narrow detail overlay, composer, hotkey band, and bottom status band.
+That shell passes
+column-adjusted terminal dimensions into the existing view renderers and does
+not add storage access or persistence.
+The selected-object detail contract lives in `packages/core/src/tui-read-model.ts`
+as presentation DTOs (`TuiSelectionDetail`, `TuiDetailSection`, and
+`TuiDetailAction`). Core builds detail payloads from existing summary data for
+Work blocks, runs, RoleCalls, tasks, team roles, and memory governance; Ink only
+selects and renders those payloads from local state. `Enter` or empty-composer
+`o` opens detail, while `Esc` closes the detail overlay before returning focus.
+The renderer maps the selected payload to view-specific panel titles, keeps a
+local detail scroll offset for PageUp/PageDown/Home/End, renders stable section
+ordering and divider rows, and derives a `Controls` section from
+`TuiDetailAction` disabled state. Unavailable sections remain read-model data;
+Ink only styles them as empty slots and does not query lower-level stores to
+fill them.
+Memory governance uses the same boundary: core projects `MemoryItem` records
+into bounded `TuiMemoryRow` DTOs with lifecycle status, category, confidence,
+source run/task ids, evidence excerpts from stored metadata, writeback target
+when present, and safe source/approval commands. Ink renders the table and
+selected-row detail only. The Memory focus renders its reference inbox,
+selected evidence excerpt table, approved-memory index, and static
+view/status/confidence/search control labels from those DTOs. Approve, reject,
+edit, and open-source controls stay disabled unless a future audited IPC or CLI
+callback is explicitly wired.
+Team operations also stay in the read-model layer. Core enriches resolved
+preset, overridden, and custom `WorkgroupRole` records with current RoleCall
+and run evidence, producing role rows, delegation matrix rows, recent RoleCall
+summaries, active/recent call counts, derived recent failures, context and
+approval policy detail, metadata-backed verification commands/limits when
+present, and read-only list/executor commands. Ink renders those DTOs as a
+local-only role workbench with a dense roles table, Recent RoleCalls table,
+width-aware delegation matrix grid or row fallback, and selected Role Profile
+detail; it does not create a new role persistence surface or mutate role
+configuration directly.
+V3 Work blocks are also presentation DTOs in the same read model. Core derives
+`TuiWorkBlock` rows from the existing `conversation` and `activeRuns`
+projections, including stable ids, source kind, speaker, timestamp, status,
+message lines, conservative inferred tool summaries, file refs, command-like
+lines, evidence lines, and inline diff references. Ink renders selected Work
+blocks through a dedicated block-list renderer with a title row, time gutter,
+speaker column, status token column, selected-block frame, folded metadata
+affordances, quick replies, dense pending-review collapse, and bounded
+active-run tails. Detail sections for tools, commands, file refs, inline diffs,
+and fix snippets are built in core from the same persisted evidence.
+For active-run Work blocks, core builds a live detail section from the same
+polling evidence already used by active run boxes: speaker, running state,
+started timestamp, elapsed/usage labels, spinner state, streaming output tail,
+inferred tool text, inferred active commands, and pending-artifact
+placeholders. The command section explicitly says queued/running command status
+is unavailable unless persisted evidence provides it; no socket, daemon, or
+direct adapter channel is added.
+Several reference-screen features still require new read-model projections
+before they can be rendered truthfully: structured tool-call lifecycle rows,
+normalized block artifacts, memory proposal evidence excerpts,
+approved-memory writeback targets, role delegation matrices, selected role
+profiles, and audited memory action callbacks. Until those
+projections or callbacks exist, the renderer shows unavailable/disabled
+sections and command hints rather than fabricating data or reading lower-level
+stores directly.
+The reference fidelity follow-up in `docs/tui-v3-reference-gap-roadmap.md`
+keeps the same architecture and narrows the remaining work to composition:
+framed shell chrome, a dedicated Work block list renderer, view-specific
+scrollable detail panels, Memory inbox bands, Team matrix/profile layout, and
+deterministic visual fixtures. These composition slices are implemented inside
+`apps/cli/src/tui-ink`, local state, and renderer tests; the follow-up should
+not add new persistence or renderer-side data access merely to satisfy the
+mockup.
 RoleCall loop controls reuse the core convergence helper plus TUI risk
 summaries. The CLI renderer can prepare an explicit continuation prompt, but it
 does not run an autonomous background loop or add a daemon.
@@ -609,11 +682,12 @@ metadata; no executor backend, database table, daemon, or desktop behavior is
 added for the TUI.
 Terminal polish is also contained in the CLI renderer. It compacts identifiers,
 renders the Work view as a conversation flow plus bounded active-run boxes,
-moves the shortcut-labelled Work/Runs/View/Graph/Tasks/Memory/Team/Help tabs
-below the composer, renders a focus-specific shortcut hint as the bottom line,
-uses width-aware tab/footer labels so narrow terminals keep primary keys
-readable, and uses Ink components for terminal layout instead of hand-wrapped
-string panels. Full current-context CLI commands stay in Palette, focused
+moves Work/Runs/View/Graph/Tasks/Memory/Team/Help into the persistent side
+navigation when width allows, renders a single reference-aligned hotkey band
+and focus-specific status band
+below the composer, uses width-aware footer labels so narrow terminals keep
+primary keys readable, and uses Ink components for terminal layout instead of
+hand-wrapped string panels. Full current-context CLI commands stay in Palette, focused
 detail panes, or explicit command-print status messages rather than permanent
 footer chrome. Work layout budgets are calculated from terminal width/height
 after reserving fixed chrome rows for the header, warnings/status, attention
@@ -693,8 +767,21 @@ Search and command-palette input are local Ink state. Conversation search reads
 only the rendered read-model text already present in memory, highlights matches,
 and never mutates composer contents. Palette filtering is fuzzy over safe focus
 items and existing CLI command hints; `Enter` either changes TUI focus or copies
-a command hint into the composer for explicit user submission. It never invokes
-shell commands directly.
+a command hint into the composer for explicit user submission. `:` opens the
+same palette directly, while a slash-only `/` composer command opens it without
+submitting a prompt and without stealing `/search`, `/timeline`, `/notify`, or
+`/team`. It never invokes shell commands directly.
+Detail fold state is also local Ink state. The renderer tracks collapsed and
+explicitly expanded detail section ids so default-collapsed evidence, tool,
+snippet, verification, limit, and recent-failure sections can be expanded with
+`Space`, `>`, `O`, or `za`, and collapsed with `<` or another toggle. This fold
+state is not persisted and does not change the core read model. Detail value
+lines are hard-wrapped in the renderer with the existing display-width-aware
+terminal helper, preserving the `|   ` detail prefix across wrapped CJK text,
+long ids, paths, policy text, and unavailable-placeholder messages. When a
+detail overlay is open, the renderer labels `[x] close` and routes empty-
+composer `x` to local detail close before considering process exit; this does
+not mutate the read model or run evidence.
 Notifications, timeline, and splash remain CLI renderer concerns.
 `/notify` toggles an in-memory flag for the current Ink session; when enabled,
 the renderer may write only terminal escape output (bell plus OSC 9) after a
@@ -718,8 +805,9 @@ terminal while preserving deterministic `--once` and non-TTY smoke renders.
 Composer editing is handled in the Ink component state before shortcut
 dispatch: printable lowercase keys update the composer from any focus,
 uppercase tab shortcuts switch Work/Runs/View/Graph/Tasks/Memory/Team,
-`/team` clears the composer and switches to the Team view, `Enter` submits
-other non-empty composer text, empty-composer `Enter` is a no-op, `Esc` clears
+`/team` clears the composer and switches to the Team view, slash-only `/` opens
+the palette, `Enter` submits other non-empty composer text, empty-composer
+`Enter` opens selected detail, `Esc` clears
 composer text or returns auxiliary panes to Work, and `Tab` remains a
 focus-navigation key unless an active `@` completion token is open. The composer
 tracks a cursor offset for left/right, Home/End, Backspace/Delete, and
@@ -802,3 +890,18 @@ attention summaries, warning hygiene, stale active-run presentation, and copy
 consistency. It does not introduce new persistence, a server, background
 execution, renderer-side shell access, automatic review acceptance, memory
 approval, apply, merge, push, or pull request creation.
+The V3 TUI refactor plan is documented in `docs/tui-v3-roadmap.md`. It proposes
+the next shared shell and detail contract before changing Work, Memory, or Team
+behavior. Its local implementation prompt companion is
+`docs/tui-v3-implementation-prompts.md`; that prompt pack is intentionally kept
+under the ignored implementation-prompt convention unless the user explicitly
+asks to publish it.
+The V3 reference-gap follow-up is tracked in
+`docs/tui-v3-reference-gap-roadmap.md`; its first implemented slice keeps the
+Ink/read-model boundary while aligning the shell frame with the reference
+console chrome through a branded header, framed nav/main/detail panels, and
+separate composer, hotkey, and status bands.
+The reference-gap follow-up is documented in
+`docs/tui-v3-reference-gap-roadmap.md`, with local prompts in
+`docs/tui-v3-reference-gap-implementation-prompts.md` under the same ignored
+implementation-prompt convention.

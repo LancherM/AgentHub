@@ -26,19 +26,71 @@ describe("TUI current-context read model", () => {
     expect(model.runs).toEqual([]);
     expect(model.roleCalls.counts.total).toBe(0);
     expect(model.review.kind).toBe("none");
+    expect(model.selectionDetails).toMatchObject({
+      workBlocks: [],
+      runs: [],
+      roleCalls: [],
+      tasks: [],
+      teamRoles: expect.arrayContaining([
+        expect.objectContaining({ kind: "team_role", title: "@engineer" })
+      ]),
+      memory: {
+        kind: "memory",
+        title: "Memory Governance"
+      }
+    });
     expect(model.memory.counts).toEqual({
       proposed: 0,
       approved: 0,
       rejected: 0,
       retired: 0
     });
+    expect(model.memory.rows).toEqual([]);
     expect(model.warnings).toEqual([
       "thread missing_thread not found",
       "project missing_project not found"
     ]);
+    expect(model.selectionDetails.memory.sections).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "proposal-rows",
+          lines: ["not available in current read model"]
+        }),
+        expect.objectContaining({
+          id: "evidence",
+          lines: ["proposal evidence rows not available in current read model"]
+        }),
+        expect.objectContaining({
+          id: "writeback",
+          lines: ["context-store target path not available in current read model"],
+          collapsedByDefault: true
+        }),
+        expect.objectContaining({
+          id: "related",
+          tone: "warning",
+          lines: ["related skills/memory joins not available in current read model"],
+          collapsedByDefault: true
+        })
+      ])
+    );
+    expect(model.selectionDetails.teamRoles.find((detail) => detail.id === "preset:engineer")?.sections)
+      .toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            id: "delegation",
+            lines: ["role-call initiation policy not configured"],
+            collapsedByDefault: true
+          }),
+          expect.objectContaining({
+            id: "recent-role-calls",
+            lines: ["not available in current read model"],
+            collapsedByDefault: true
+          })
+        ])
+      );
   });
 
-  it("summarizes transcript, runs, RoleCalls, tasks, memory, and skills in stable order", async () => {
+  it("summarizes transcript, runs, RoleCalls, tasks, team, memory, and skills in stable order", async () => {
     const runtime = createCliRuntime({ storageMode: "memory" });
     await seedCurrentContext(runtime);
 
@@ -71,6 +123,23 @@ describe("TUI current-context read model", () => {
       elapsedLabel: "1m",
       usageLabel: "42k tok",
       outputLines: ["adapter started", "verification started"]
+    });
+    expect(model.workBlocks.map((block) => block.id)).toEqual([
+      "message:message_1",
+      "delegation:call_deferred",
+      "delegation:call_failed",
+      "delegation:call_running",
+      "delegation:call_succeeded",
+      "delegation:call_waiting_approval",
+      "delegation:call_waiting_context",
+      "review-pending:run_done",
+      "active-run:run_active"
+    ]);
+    expect(model.workBlocks.find((block) => block.id === "active-run:run_active")).toMatchObject({
+      sourceKind: "active_run",
+      speaker: "@reviewer",
+      statusIcon: "●",
+      messageLines: ["adapter started", "verification started"]
     });
     expect(model.conversation.map((entry) => entry.id)).toEqual([
       "message:message_1",
@@ -143,11 +212,134 @@ describe("TUI current-context read model", () => {
       reserved: 0
     });
     expect(model.team.command).toBe("agent-hub team roles list --project-id project_1");
+    expect(model.team.roles.find((role) => role.handle === "engineer")).toMatchObject({
+      purpose: "Implement local code changes through the coding agent path.",
+      activeCallCount: 1,
+      recentCallCount: 6,
+      nextAction: "monitor 1 active call",
+      contextPolicy: expect.objectContaining({
+        scope: "current_thread_and_project_context",
+        includeApprovedMemory: true
+      }),
+      delegation: expect.objectContaining({
+        canInitiate: false,
+        unavailableReason: "role-call initiation policy not configured"
+      })
+    });
+    expect(model.team.roles.find((role) => role.handle === "engineer")?.recentFailures).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("call_failed failed")
+      ])
+    );
+    expect(model.team.recentRoleCalls.map((call) => call.id)).toEqual([
+      "call_running",
+      "call_waiting_approval",
+      "call_waiting_context",
+      "call_failed",
+      "call_deferred",
+      "call_succeeded"
+    ]);
+    expect(model.team.delegationMatrixRows.find((row) => row.callerRole === "engineer")).toMatchObject({
+      status: "unavailable",
+      summary: "role-call initiation policy not configured"
+    });
     expect(model.memory.counts).toEqual({
       proposed: 2,
       approved: 1,
       rejected: 1,
       retired: 0
+    });
+    expect(model.memory.rows.map((row) => row.id)).toEqual([
+      "memory_2",
+      "memory_1",
+      "memory_3",
+      "memory_4"
+    ]);
+    expect(model.memory.rows[0]).toMatchObject({
+      id: "memory_2",
+      category: "workflow_rule",
+      status: "proposed",
+      confidence: "high",
+      sourceRunId: "run_done",
+      sourceTaskId: "task_1",
+      summary: "Keep memory approval explicit.",
+      recommendedAction: "review explicitly",
+      evidenceExcerptLines: ["pnpm test passed", "risk low"],
+      writebackTarget: "memory/approved.md",
+      sourceCommands: expect.arrayContaining([
+        "agent-hub runs show run_done",
+        "agent-hub task history --task-id task_1"
+      ])
+    });
+    expect(model.selectionDetails.runs.find((detail) => detail.id === "run_done")).toMatchObject({
+      kind: "run",
+      title: "Review retained-run cleanup",
+      commands: expect.arrayContaining(["agent-hub runs show run_done"])
+    });
+    expect(model.selectionDetails.roleCalls.find((detail) => detail.id === "call_waiting_approval")).toMatchObject({
+      kind: "role_call",
+      title: "@engineer -> @reviewer",
+      sections: expect.arrayContaining([
+        expect.objectContaining({ id: "evidence" })
+      ])
+    });
+    expect(model.selectionDetails.tasks[0]).toMatchObject({
+      kind: "task",
+      commands: expect.arrayContaining(["agent-hub task history --task-id task_1"])
+    });
+    expect(model.selectionDetails.teamRoles.find((detail) => detail.id === "preset:engineer")).toMatchObject({
+      kind: "team_role",
+      title: "@engineer",
+      commands: expect.arrayContaining([
+        "agent-hub team roles list --project-id project_1",
+        "agent-hub team roles executor --project-id project_1 --role engineer"
+      ]),
+      sections: expect.arrayContaining([
+        expect.objectContaining({ id: "mission-boundaries" }),
+        expect.objectContaining({ id: "allowed-tools" }),
+        expect.objectContaining({ id: "context-policy" }),
+        expect.objectContaining({ id: "delegation" }),
+        expect.objectContaining({ id: "recent-failures" }),
+        expect.objectContaining({ id: "recent-role-calls" })
+      ])
+    });
+    expect(model.selectionDetails.memory).toMatchObject({
+      kind: "memory",
+      title: "Memory Governance",
+      commands: expect.arrayContaining([
+        "agent-hub memory list --project-id project_1",
+        "agent-hub memory approve --memory-id <memory-id>",
+        "agent-hub memory reject --memory-id <memory-id>"
+      ]),
+      sections: expect.arrayContaining([
+        expect.objectContaining({ id: "proposal-rows" }),
+        expect.objectContaining({ id: "selected-proposal" }),
+        expect.objectContaining({ id: "writeback" })
+      ])
+    });
+    expect(model.selectionDetails.memoryRows.find((detail) => detail.id === "memory_2")).toMatchObject({
+      kind: "memory",
+      title: "Keep memory approval explicit.",
+      subtitle: "proposed workflow_rule",
+      commands: expect.arrayContaining([
+        "agent-hub memory approve --memory-id memory_2",
+        "agent-hub memory reject --memory-id memory_2",
+        "agent-hub runs show run_done"
+      ]),
+      sections: expect.arrayContaining([
+        expect.objectContaining({ id: "memory" }),
+        expect.objectContaining({ id: "why" }),
+        expect.objectContaining({ id: "evidence", lines: ["pnpm test passed", "risk low"] }),
+        expect.objectContaining({ id: "writeback", lines: ["memory/approved.md"] }),
+        expect.objectContaining({ id: "related" }),
+        expect.objectContaining({ id: "source-commands" })
+      ]),
+      actions: expect.arrayContaining([
+        expect.objectContaining({ key: "a", disabledReason: expect.any(String) }),
+        expect.objectContaining({ key: "R", disabledReason: expect.any(String) }),
+        expect.objectContaining({ key: "e", disabledReason: expect.any(String) }),
+        expect.objectContaining({ key: "o", disabledReason: expect.any(String) })
+      ])
     });
     expect(model.skills.selected.map((skill) => `${skill.scope}:${skill.id}`)).toEqual([
       "project:reviewer-checklist",
@@ -330,6 +522,31 @@ describe("TUI current-context read model", () => {
     expect(model.activeRuns[0]?.outputLines.join("\n")).not.toContain("Using `");
     expect(model.activeRuns[0]?.outputLines.join("\n")).not.toContain("codex_memories_write");
     expect(model.activeRuns[0]?.outputLines.join("\n")).not.toContain("codex_models_manager");
+    expect(model.selectionDetails.workBlocks.find((detail) => detail.id === "active-run:run_live"))
+      .toMatchObject({
+        sections: expect.arrayContaining([
+          expect.objectContaining({
+            id: "live-run",
+            lines: expect.arrayContaining([
+              "speaker @codex",
+              "state running",
+              "started 2026-05-29T10:00:00.000Z",
+              "elapsed 0s",
+              "spinner active"
+            ])
+          }),
+          expect.objectContaining({
+            id: "streaming-output",
+            title: "Streaming Output Tail",
+            lines: ["stderr: waiting for network"]
+          }),
+          expect.objectContaining({
+            id: "active-commands",
+            lines: ["queued/running command status not available in current read model"]
+          }),
+          expect.objectContaining({ id: "pending-artifacts" })
+        ])
+      });
   });
 
   it("uses a thinking placeholder until observable agent output exists", async () => {
@@ -416,7 +633,7 @@ describe("TUI current-context read model", () => {
         "run_long_output",
         0,
         "message",
-        `first line\n  ${longLine}`,
+        `first line\n  ${longLine}\npnpm test tests/auth.test.ts`,
         { assistantOutput: true }
       )
     ]);
@@ -428,9 +645,28 @@ describe("TUI current-context read model", () => {
 
     expect(model.activeRuns[0]?.outputLines).toEqual([
       "first line",
-      `  ${longLine}`
+      `  ${longLine}`,
+      "pnpm test tests/auth.test.ts"
     ]);
     expect(model.activeRuns[0]?.outputLines.join("\n")).not.toContain("...");
+    expect(model.workBlocks.find((block) => block.id === "active-run:run_long_output")).toMatchObject({
+      commandLines: ["pnpm test tests/auth.test.ts"],
+      toolSummaryLines: expect.arrayContaining([
+        "inferred: pnpm test tests/auth.test.ts"
+      ])
+    });
+    expect(model.selectionDetails.workBlocks.find((detail) => detail.id === "active-run:run_long_output"))
+      .toMatchObject({
+        sections: expect.arrayContaining([
+          expect.objectContaining({
+            id: "active-commands",
+            lines: expect.arrayContaining([
+              "queued/running command status is not available; commands are inferred from visible output",
+              "pnpm test tests/auth.test.ts"
+            ])
+          })
+        ])
+      });
   });
 
   it("adds elapsed and usage labels for terminal run conversation entries", async () => {
@@ -657,6 +893,24 @@ describe("TUI current-context read model", () => {
     expect(model.review.evidence.inlineDiff?.mode).toBe("inline");
     expect(model.conversation.find((entry) => entry.id === "review-pending:run_diff")?.inlineDiff?.mode)
       .toBe("inline");
+    expect(model.workBlocks.find((block) => block.id === "review-pending:run_diff")).toMatchObject({
+      fileRefs: ["src/auth.ts"],
+      evidenceLines: expect.arrayContaining(["diff (+1/-1 in 1 files)"]),
+      inlineDiff: expect.objectContaining({ mode: "inline" })
+    });
+    expect(model.selectionDetails.workBlocks.find((detail) => detail.id === "review-pending:run_diff"))
+      .toMatchObject({
+        sections: expect.arrayContaining([
+          expect.objectContaining({ id: "inline-diff" }),
+          expect.objectContaining({
+            id: "fix-snippet",
+            lines: [
+              "-const mode = \"old\";",
+              "+const mode = \"new\";"
+            ]
+          })
+        ])
+      });
   });
 
   it("redacts sensitive git diffs from inline TUI review evidence", async () => {
@@ -979,9 +1233,18 @@ async function seedCurrentContext(runtime: ReturnType<typeof createCliRuntime>) 
     projectId: "project_1",
     category: "workflow_rule",
     status: "proposed",
-    content: "Keep memory approval explicit.",
+    content: "Keep memory approval explicit.\nApprove only after review.",
+    metadata: {
+      sourceRunId: "run_done",
+      sourceTaskId: "task_1",
+      sourceKind: "verification",
+      generatedBy: "task_runner",
+      confidence: "high",
+      evidence: ["pnpm test passed", "risk low"],
+      writebackPath: "memory/approved.md"
+    },
     createdAt: now,
-    updatedAt: now
+    updatedAt: "2026-05-29T10:04:00.000Z"
   });
   await runtime.memoryItemRepository.create({
     id: "memory_3",

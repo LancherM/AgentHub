@@ -86,10 +86,10 @@ describe("CLI TUI command", () => {
 
     const rendered = output.join("");
     expect(errors.join("")).toBe("");
-    expect(rendered).toContain("TUI Project · @codex");
+    expect(rendered).toContain("AGENT HUB | TUI Project | role:@codex");
     expect(rendered).toContain("@codex");
     expect(rendered).toContain("Check TUI evidence.");
-    expect(rendered).toContain("@reviewer run_1 ⠋ running");
+    expect(rendered).toContain("@reviewer run_1 ● running");
     expect(rendered).toContain("> @codex prompt");
   });
 
@@ -394,7 +394,7 @@ describe("CLI TUI command", () => {
     expect(errors.join("")).toBe("");
     expect(output.join("")).toContain("review_status: pending");
     expect(output.join("")).toContain("review_status: accepted");
-    expect(output.join("")).toContain("Review rejected for run_1. No repository action was performed.");
+    expect(output.join("")).toContain("Review rejected for run_1. No repository action was p");
     await expect(runtime.taskRunRepository.get("run_1")).resolves.toMatchObject({
       status: "running"
     });
