@@ -170,15 +170,17 @@ focuses on footer command hierarchy, narrow-terminal layout, attention/next
 action summaries, warning hygiene, stale active-run signals, and copy/help
 consistency.
 The next TUI refactor is tracked in `docs/tui-v3-roadmap.md`. Its first runtime
-slice keeps the current Ink/read-model boundary while moving the TUI into a
-shared shell frame: header, persistent side navigation at normal and wide
-widths, main workflow surface, placeholder detail rail at wide widths,
-composer, tab map, and bottom shortcut/status chrome. The detail rail is
-intentionally empty until the V3 selection/detail read-model contract lands.
-The plan explicitly marks bottom-layer gaps such as generic detail payloads,
-structured tool-call events, memory proposal evidence rows, delegation
-matrices, role profiles, and audited memory action callbacks so later
-implementation phases do not fake unsupported evidence.
+slices keep the current Ink/read-model boundary while moving the TUI into a
+shared shell frame and selected-object detail contract. The shell includes the
+header, persistent side navigation at normal and wide widths, main workflow
+surface, wide detail rail, medium/narrow detail overlay, composer, tab map, and
+bottom shortcut/status chrome. The core read model now exposes presentation
+detail payloads for Work blocks, runs, RoleCalls, tasks, team roles, and memory
+governance; `Enter` or empty-composer `o` opens the selected detail without
+letting Ink read lower-level stores. Unsupported evidence such as structured
+tool-call lifecycle rows, memory proposal excerpts, writeback targets, role
+delegation matrices, and audited memory action callbacks is rendered as
+unavailable or disabled with equivalent CLI commands instead of being faked.
 The TUI composer is prompt-first while editing: printable lowercase keys append
 to the prompt from any focus, uppercase tab shortcuts switch
 Work/Runs/View/Graph/Tasks/Memory/Team, `/team` opens the Team roles view

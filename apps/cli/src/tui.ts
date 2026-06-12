@@ -4,6 +4,7 @@ import { pathToFileURL } from "node:url";
 import {
   buildTuiCurrentContextModel,
   defaultAgentKind,
+  emptyTuiSelectionDetails,
   parseAgentKindAlias,
   type AgentKind,
   type ConversationThread,
@@ -724,6 +725,7 @@ function buildTuiFailureModel(input: TuiFailureModelInput): TuiCurrentContextMod
       selected: [],
       available: []
     },
+    selectionDetails: emptyTuiSelectionDetails(),
     warnings
   };
 }

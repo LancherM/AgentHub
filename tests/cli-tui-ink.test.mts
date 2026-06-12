@@ -166,6 +166,74 @@ const baseModel = {
     selected: [{ id: "typescript-safety", name: "TypeScript Safety", scope: "global" }],
     available: []
   },
+  selectionDetails: {
+    workBlocks: [
+      {
+        id: "message:message_1",
+        kind: "work_block",
+        title: "user message",
+        sections: [{ id: "message", title: "Message", lines: ["Check the TUI shell."] }],
+        commands: [],
+        actions: []
+      },
+      {
+        id: "review-pending:run_27984312-fc9a-46bf-9ccf-c06997187091",
+        kind: "work_block",
+        title: "@codex run_27984312",
+        subtitle: "awaiting review",
+        sections: [{ id: "message", title: "Message", lines: ["awaiting review - open [V]iew for details"] }],
+        commands: ["agent-hub runs show run_27984312-fc9a-46bf-9ccf-c06997187091"],
+        actions: [{ key: "p", label: "Prepare Command", kind: "prepare_command" }]
+      }
+    ],
+    runs: [
+      {
+        id: "run_27984312-fc9a-46bf-9ccf-c06997187091",
+        kind: "run",
+        title: "Check TUI shell",
+        subtitle: "@codex succeeded",
+        sections: [
+          { id: "run", title: "Run", lines: ["status succeeded", "stage succeeded"] },
+          { id: "evidence", title: "Evidence", tone: "danger", lines: ["risk blocking: No changed files were collected."] }
+        ],
+        commands: [
+          "agent-hub runs show run_27984312-fc9a-46bf-9ccf-c06997187091",
+          "agent-hub runs diff run_27984312-fc9a-46bf-9ccf-c06997187091 --stat"
+        ],
+        actions: [{ key: "V", label: "Open Review", kind: "focus" }]
+      }
+    ],
+    roleCalls: [],
+    tasks: [],
+    teamRoles: [
+      {
+        id: "preset:engineer",
+        kind: "team_role",
+        title: "@engineer",
+        subtitle: "Engineer",
+        sections: [{ id: "role", title: "Role", lines: ["enabled yes", "executor codex"] }],
+        commands: ["agent-hub team roles list --project-id project_1"],
+        actions: [{ key: "p", label: "Prepare Command", kind: "prepare_command" }]
+      },
+      {
+        id: "preset:reviewer",
+        kind: "team_role",
+        title: "@reviewer",
+        subtitle: "Reviewer",
+        sections: [{ id: "role", title: "Role", lines: ["enabled yes", "executor human reserved"] }],
+        commands: ["agent-hub team roles list --project-id project_1"],
+        actions: [{ key: "p", label: "Prepare Command", kind: "prepare_command" }]
+      }
+    ],
+    memory: {
+      id: "memory:project_1",
+      kind: "memory",
+      title: "Memory Governance",
+      sections: [{ id: "counts", title: "Counts", lines: ["proposed 1", "approved 1"] }],
+      commands: ["agent-hub memory list --project-id project_1"],
+      actions: [{ key: "p", label: "Prepare Command", kind: "prepare_command" }]
+    }
+  },
   warnings: []
 };
 
@@ -250,11 +318,58 @@ describe("Ink TUI renderer", () => {
 
       if (item.detail) {
         expect(output).toContain("Block Detail");
-        expect(output).toContain("No detail selected");
+        expect(output).toContain("user message");
+        expect(output).toContain("Check the TUI shell.");
       } else {
         expect(output).not.toContain("Block Detail");
       }
     }
+  });
+
+  it("opens selected-object detail in the medium shell without direct data access", () => {
+    const state = reduceInkState(
+      { ...createInitialInkState(), focus: "runs" },
+      "enter",
+      baseModel
+    );
+    const openedWithO = reduceInkState(createInitialInkState(), "open_detail", baseModel);
+    const output = renderToString(
+      React.createElement(TuiInkFrame, {
+        model: baseModel,
+        state,
+        terminal: { columns: 80, rows: 24 }
+      }),
+      { columns: 80 }
+    );
+
+    expect(state.detailVisible).toBe(true);
+    expect(openedWithO.detailVisible).toBe(true);
+    expect(output).toContain("Block Detail");
+    expect(output).toContain("Check TUI shell");
+    expect(output).toContain("status succeeded");
+    expect(output).toContain("agent-hub runs show run_27984312");
+    expect(output).not.toContain("No detail selected");
+  });
+
+  it("keeps team detail selection stable by selected id", () => {
+    const teamState = reduceInkState(
+      { ...createInitialInkState(), focus: "team", detailVisible: true },
+      "down",
+      baseModel
+    );
+    const output = renderToString(
+      React.createElement(TuiInkFrame, {
+        model: baseModel,
+        state: teamState,
+        terminal: { columns: 80, rows: 24 }
+      }),
+      { columns: 80 }
+    );
+
+    expect(teamState.selectedTeamRoleId).toBe("preset:reviewer");
+    expect(output).toContain("@reviewer");
+    expect(output).toContain("executor human reserved");
+    expect(output).not.toContain("@engineer");
   });
 
   it("renders attention items in priority order and narrows to the highest item", () => {

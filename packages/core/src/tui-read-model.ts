@@ -105,7 +105,67 @@ export interface TuiCurrentContextModel {
   team: TuiTeamSummary;
   memory: TuiMemorySummary;
   skills: TuiSkillsSummary;
+  selectionDetails: TuiSelectionDetails;
   warnings: string[];
+}
+
+export interface TuiSelectionDetails {
+  workBlocks: TuiSelectionDetail[];
+  runs: TuiSelectionDetail[];
+  roleCalls: TuiSelectionDetail[];
+  tasks: TuiSelectionDetail[];
+  teamRoles: TuiSelectionDetail[];
+  memory: TuiSelectionDetail;
+}
+
+export interface TuiSelectionDetail {
+  id: string;
+  kind: "work_block" | "run" | "role_call" | "memory" | "team_role" | "task";
+  title: string;
+  subtitle?: string;
+  sections: TuiDetailSection[];
+  commands: string[];
+  actions: TuiDetailAction[];
+}
+
+export interface TuiDetailSection {
+  id: string;
+  title: string;
+  tone?: "normal" | "success" | "warning" | "danger" | "info";
+  lines: string[];
+  collapsedByDefault?: boolean;
+}
+
+export interface TuiDetailAction {
+  key: string;
+  label: string;
+  kind: "focus" | "prepare_command" | "callback";
+  disabledReason?: string;
+}
+
+export function emptyTuiSelectionDetails(): TuiSelectionDetails {
+  return {
+    workBlocks: [],
+    runs: [],
+    roleCalls: [],
+    tasks: [],
+    teamRoles: [],
+    memory: {
+      id: "memory:none",
+      kind: "memory",
+      title: "Memory Governance",
+      sections: [
+        {
+          id: "unavailable",
+          title: "Unavailable",
+          tone: "warning",
+          lines: ["not available in current read model"]
+        }
+      ],
+      commands: [],
+      actions: []
+    }
+  };
 }
 
 export type TuiConversationEntryType =
@@ -524,6 +584,36 @@ export async function buildTuiCurrentContextModel(
     runDisplayHandles,
     limit: Math.max(input.maxMessages ?? defaultLimits.messages, defaultLimits.messages)
   });
+  const roleCallSummary: TuiRoleCallGraphSummary = {
+    nodes: visibleRoleCallNodes,
+    todos: summarizeTodos(roleTodos, input.maxTodos ?? defaultLimits.todos),
+    counts: countRoleCalls(roleCallNodes, visibleRoleCallNodes.length),
+    loop: summarizeLoop(roleCalls, boundedRuns, {
+      iteration: input.iteration ?? 0,
+      maxIterations: input.maxIterations
+    })
+  };
+  const review = selectReviewSummary(
+    input,
+    boundedRuns,
+    visibleRoleCallNodes,
+    input.selectedRoleCallId,
+    input.selectedRunId
+  );
+  const taskSummaries = summarizeTasks(
+    contextTasks,
+    roleTodos,
+    roleCalls,
+    input.maxTasks ?? defaultLimits.tasks
+  );
+  const memorySummary = summarizeMemory(projectId, memory);
+  const skillsSummary = summarizeSkills({
+    skills,
+    projectId,
+    selectedSkillReferences: input.selectedSkillReferences ?? [],
+    maxSkills: input.maxSkills ?? defaultLimits.skills,
+    contextMode: input.contextMode ?? "runtime_injection"
+  });
 
   return {
     context: {
@@ -540,36 +630,21 @@ export async function buildTuiCurrentContextModel(
     activeRuns,
     transcript: summarizeTranscript(messages, input.maxMessages ?? defaultLimits.messages),
     runs: boundedRuns,
-    roleCalls: {
-      nodes: visibleRoleCallNodes,
-      todos: summarizeTodos(roleTodos, input.maxTodos ?? defaultLimits.todos),
-      counts: countRoleCalls(roleCallNodes, visibleRoleCallNodes.length),
-      loop: summarizeLoop(roleCalls, boundedRuns, {
-        iteration: input.iteration ?? 0,
-        maxIterations: input.maxIterations
-      })
-    },
-    review: selectReviewSummary(
-      input,
-      boundedRuns,
-      visibleRoleCallNodes,
-      input.selectedRoleCallId,
-      input.selectedRunId
-    ),
-    tasks: summarizeTasks(
-      contextTasks,
-      roleTodos,
-      roleCalls,
-      input.maxTasks ?? defaultLimits.tasks
-    ),
+    roleCalls: roleCallSummary,
+    review,
+    tasks: taskSummaries,
     team: teamResult.summary,
-    memory: summarizeMemory(projectId, memory),
-    skills: summarizeSkills({
-      skills,
-      projectId,
-      selectedSkillReferences: input.selectedSkillReferences ?? [],
-      maxSkills: input.maxSkills ?? defaultLimits.skills,
-      contextMode: input.contextMode ?? "runtime_injection"
+    memory: memorySummary,
+    skills: skillsSummary,
+    selectionDetails: buildSelectionDetails({
+      conversation,
+      activeRuns,
+      runs: boundedRuns,
+      roleCalls: visibleRoleCallNodes,
+      tasks: taskSummaries,
+      team: teamResult.summary,
+      memory: memorySummary,
+      skills: skillsSummary
     }),
     warnings
   };
@@ -1749,6 +1824,431 @@ function summarizeSkills(input: {
     selected: summaries.filter((skill) => skill.selected).slice(0, input.maxSkills),
     available: summaries.slice(0, input.maxSkills)
   };
+}
+
+function buildSelectionDetails(input: {
+  conversation: TuiConversationEntry[];
+  activeRuns: TuiActiveRunBox[];
+  runs: TuiRunSummary[];
+  roleCalls: TuiRoleCallNodeSummary[];
+  tasks: TuiTaskSummary[];
+  team: TuiTeamSummary;
+  memory: TuiMemorySummary;
+  skills: TuiSkillsSummary;
+}): TuiSelectionDetails {
+  return {
+    workBlocks: [
+      ...input.conversation.map((entry) => workBlockDetail(entry)),
+      ...input.activeRuns.map((run) => activeRunWorkBlockDetail(run))
+    ],
+    runs: input.runs.map((run) => runSelectionDetail(run)),
+    roleCalls: input.roleCalls.map((call) => roleCallSelectionDetail(call)),
+    tasks: input.tasks.map((task) => taskSelectionDetail(input.team.projectId, task)),
+    teamRoles: input.team.roles.map((role) => teamRoleSelectionDetail(input.team, role)),
+    memory: memorySelectionDetail(input.memory, input.skills)
+  };
+}
+
+function workBlockDetail(entry: TuiConversationEntry): TuiSelectionDetail {
+  const commands = [
+    ...(entry.runId
+      ? [
+          `agent-hub runs show ${entry.runId}`,
+          `agent-hub runs diff ${entry.runId} --stat`
+        ]
+      : []),
+    ...(entry.roleCallId ? [`agent-hub role-calls show ${entry.roleCallId}`] : [])
+  ];
+  return {
+    id: entry.id,
+    kind: "work_block",
+    title: conversationDetailTitle(entry),
+    subtitle: entry.statusLabel,
+    sections: [
+      {
+        id: "message",
+        title: "Message",
+        lines: detailLines(entry.outputLines ?? entry.content)
+      },
+      unavailableDetailSection("tool-calls", "Tool Calls", "structured tool-call rows"),
+      ...(entry.verificationLine || entry.riskLine
+        ? [
+            {
+              id: "evidence",
+              title: "Evidence",
+              tone: entry.riskLine ? "warning" as const : "success" as const,
+              lines: [
+                entry.verificationLine,
+                entry.riskLine
+              ].filter((value): value is string => Boolean(value))
+            }
+          ]
+        : [])
+    ],
+    commands,
+    actions: detailActions(commands)
+  };
+}
+
+function activeRunWorkBlockDetail(run: TuiActiveRunBox): TuiSelectionDetail {
+  const commands = [`agent-hub runs show ${run.runId}`];
+  return {
+    id: `active-run:${run.runId}`,
+    kind: "work_block",
+    title: run.title,
+    subtitle: "running",
+    sections: [
+      {
+        id: "live-output",
+        title: "Live Output",
+        tone: "info",
+        lines: detailLines(run.outputLines)
+      },
+      unavailableDetailSection("tool-calls", "Tool Calls", "structured live tool-call status"),
+      unavailableDetailSection("artifacts", "Artifacts", "pending artifact rows")
+    ],
+    commands,
+    actions: detailActions(commands)
+  };
+}
+
+function runSelectionDetail(run: TuiRunSummary): TuiSelectionDetail {
+  return {
+    id: run.id,
+    kind: "run",
+    title: run.taskTitle ?? run.taskId,
+    subtitle: `@${run.roleHandle ?? run.agentKind} ${run.status}`,
+    sections: [
+      {
+        id: "run",
+        title: "Run",
+        tone: run.status === "failed" ? "danger" : run.status === "succeeded" ? "success" : "info",
+        lines: [
+          `id ${run.id}`,
+          `agent ${run.agentKind}`,
+          run.roleHandle ? `role @${run.roleHandle}` : undefined,
+          `status ${run.status}`,
+          `stage ${run.stage}`,
+          run.startedAt ? `started ${run.startedAt}` : undefined,
+          run.completedAt ? `completed ${run.completedAt}` : undefined,
+          `updated ${run.updatedAt}`,
+          `retained worktree ${run.retainedWorktree ? "yes" : "no"}`,
+          run.usageLabel ? `usage ${run.usageLabel}` : undefined
+        ].filter((value): value is string => Boolean(value))
+      },
+      evidenceDetailSection(run.evidence),
+      {
+        id: "review",
+        title: "Review",
+        tone: run.reviewDecision.status === "rejected"
+          ? "danger"
+          : run.reviewDecision.status === "accepted"
+            ? "success"
+            : "warning",
+        lines: [
+          `status ${run.reviewDecision.status}`,
+          run.reviewDecision.reason ? `reason ${run.reviewDecision.reason}` : undefined,
+          run.reviewDecision.acceptedAt ? `accepted ${run.reviewDecision.acceptedAt}` : undefined,
+          run.reviewDecision.rejectedAt ? `rejected ${run.reviewDecision.rejectedAt}` : undefined
+        ].filter((value): value is string => Boolean(value))
+      }
+    ],
+    commands: run.commands,
+    actions: [
+      { key: "V", label: "Open Review", kind: "focus" },
+      ...detailActions(run.commands)
+    ]
+  };
+}
+
+function roleCallSelectionDetail(call: TuiRoleCallNodeSummary): TuiSelectionDetail {
+  const commands = [
+    `agent-hub role-calls show ${call.id}`,
+    ...(call.linkedRunId ? [`agent-hub runs show ${call.linkedRunId}`] : [])
+  ];
+  return {
+    id: call.id,
+    kind: "role_call",
+    title: `@${call.callerRole} -> @${call.calleeRole}`,
+    subtitle: call.statusLabel,
+    sections: [
+      {
+        id: "role-call",
+        title: "RoleCall",
+        tone: call.status === "failed" ? "danger" : terminalRoleCallStatuses.has(call.status) ? "success" : "info",
+        lines: [
+          `id ${call.id}`,
+          `task ${call.task}`,
+          `status ${call.statusLabel}`,
+          `priority ${call.priority}`,
+          `depth ${call.depth}`,
+          call.parentRoleCallId ? `parent ${call.parentRoleCallId}` : undefined,
+          call.linkedRunId ? `linked run ${call.linkedRunId}` : undefined,
+          call.todoId ? `todo ${call.todoId}` : undefined
+        ].filter((value): value is string => Boolean(value))
+      },
+      evidenceDetailSection(call.evidence)
+    ],
+    commands,
+    actions: [
+      { key: "G", label: "Open Graph", kind: "focus" },
+      ...detailActions(commands)
+    ]
+  };
+}
+
+function taskSelectionDetail(
+  projectId: string | undefined,
+  task: TuiTaskSummary
+): TuiSelectionDetail {
+  const recoveryCommands = unavailableRoleExecutorCommandsForTask(projectId, task);
+  const commands = [
+    `agent-hub task history --task-id ${task.id}`,
+    ...recoveryCommands
+  ];
+  return {
+    id: task.id,
+    kind: "task",
+    title: task.title,
+    subtitle: task.status,
+    sections: [
+      {
+        id: "task",
+        title: "Task",
+        lines: [
+          `id ${task.id}`,
+          `status ${task.status}`,
+          `updated ${task.updatedAt}`,
+          `assignments ${task.executableAssignmentCount}/${task.assignmentCount} executable`,
+          task.nextAction ? `next ${task.nextAction}` : undefined
+        ].filter((value): value is string => Boolean(value))
+      },
+      {
+        id: "assignments",
+        title: "Assignments",
+        lines: task.assignments.length > 0
+          ? task.assignments.map((assignment) =>
+              `${assignment.label} ${assignment.status}${assignment.runId ? ` run ${assignment.runId}` : ""}`
+            )
+          : ["not available in current read model"]
+      },
+      {
+        id: "follow-ups",
+        title: "Follow-ups",
+        lines: task.followUps.length > 0 ? task.followUps : ["not available in current read model"],
+        collapsedByDefault: task.followUps.length === 0
+      }
+    ],
+    commands,
+    actions: detailActions(commands)
+  };
+}
+
+function teamRoleSelectionDetail(
+  team: TuiTeamSummary,
+  role: TuiTeamRoleSummary
+): TuiSelectionDetail {
+  const commands = team.command ? [team.command] : [];
+  return {
+    id: role.id,
+    kind: "team_role",
+    title: `@${role.handle}`,
+    subtitle: role.displayName,
+    sections: [
+      {
+        id: "role",
+        title: "Role",
+        tone: role.enabled ? "success" : "warning",
+        lines: [
+          `display ${role.displayName}`,
+          `source ${role.source}`,
+          `enabled ${role.enabled ? "yes" : "no"}`,
+          role.defaultRoom ? `default room ${role.defaultRoom}` : undefined,
+          `capabilities ${role.capabilitySummary}`
+        ].filter((value): value is string => Boolean(value))
+      },
+      {
+        id: "executor",
+        title: "Executor",
+        tone: role.executorRunnable ? "success" : "warning",
+        lines: [
+          `kind ${role.executorKind}`,
+          `label ${role.executorLabel}`,
+          `runnable ${role.executorRunnable ? "yes" : "no"}`,
+          role.unavailableReason ? `unavailable ${role.unavailableReason}` : undefined
+        ].filter((value): value is string => Boolean(value))
+      },
+      {
+        id: "skills",
+        title: "Default Skills",
+        lines: role.defaultSkillReferences.length > 0
+          ? role.defaultSkillReferences.map(formatSkillReference)
+          : ["not available in current read model"],
+        collapsedByDefault: role.defaultSkillReferences.length === 0
+      },
+      unavailableDetailSection("delegation", "Delegation Matrix", "normalized policy matrix")
+    ],
+    commands,
+    actions: detailActions(commands)
+  };
+}
+
+function formatSkillReference(reference: TuiTeamRoleSummary["defaultSkillReferences"][number]): string {
+  return reference.scope ? `${reference.scope}:${reference.id}` : reference.id;
+}
+
+function memorySelectionDetail(
+  memory: TuiMemorySummary,
+  skills: TuiSkillsSummary
+): TuiSelectionDetail {
+  const commands = memory.approvalCommands.length > 0
+    ? memory.approvalCommands
+    : memory.command
+      ? [memory.command]
+      : [];
+  return {
+    id: memory.projectId ? `memory:${memory.projectId}` : "memory:none",
+    kind: "memory",
+    title: "Memory Governance",
+    subtitle: memory.projectId,
+    sections: [
+      {
+        id: "counts",
+        title: "Counts",
+        lines: [
+          `proposed ${memory.counts.proposed}`,
+          `approved ${memory.counts.approved}`,
+          `rejected ${memory.counts.rejected}`,
+          `retired ${memory.counts.retired}`
+        ]
+      },
+      {
+        id: "source",
+        title: "Approved Source",
+        lines: [
+          memory.approvedSource,
+          memory.approvalReminder,
+          `runtime ${skills.contextMode}`
+        ]
+      },
+      unavailableDetailSection("evidence", "Evidence Excerpts", "proposal evidence rows"),
+      unavailableDetailSection("writeback", "Writeback Target", "context-store target path")
+    ],
+    commands,
+    actions: [
+      ...detailActions(commands),
+      {
+        key: "a",
+        label: "Approve",
+        kind: "callback",
+        disabledReason: "not available in TUI; use the listed CLI command"
+      },
+      {
+        key: "r",
+        label: "Reject",
+        kind: "callback",
+        disabledReason: "not available in TUI; use the listed CLI command"
+      }
+    ]
+  };
+}
+
+function conversationDetailTitle(entry: TuiConversationEntry): string {
+  if (entry.type === "user_message") {
+    return `${entry.author} message`;
+  }
+  if (entry.type === "delegation") {
+    return `Delegation to @${entry.delegatedTo ?? "role"}`;
+  }
+  return `${entry.author} ${entry.runId ?? entry.type}`;
+}
+
+function evidenceDetailSection(evidence: TuiEvidenceSummary): TuiDetailSection {
+  const lines = evidenceDetailLines(evidence);
+  return {
+    id: "evidence",
+    title: "Evidence",
+    tone: evidence.risk?.level === "blocking" || evidence.risk?.level === "high"
+      ? "danger"
+      : evidence.risk?.level === "medium"
+        ? "warning"
+        : "info",
+    lines: lines.length > 0 ? lines : ["not available in current read model"]
+  };
+}
+
+function evidenceDetailLines(evidence: TuiEvidenceSummary): string[] {
+  return [
+    evidence.linkedRunId ? `linked run ${evidence.linkedRunId}` : undefined,
+    evidence.latestEvent ? `latest ${evidence.latestEvent}` : undefined,
+    evidence.resultSummary ? `result ${evidence.resultSummary}` : undefined,
+    evidence.waitingReason ? `waiting ${evidence.waitingReason}` : undefined,
+    evidence.checks
+      ? `checks passed ${evidence.checks.passed} failed ${evidence.checks.failed} skipped ${evidence.checks.skipped}`
+      : undefined,
+    evidence.checks && evidence.checks.failedNames.length > 0
+      ? `failed checks ${evidence.checks.failedNames.join(", ")}`
+      : undefined,
+    evidence.risk
+      ? `risk ${evidence.risk.level}${evidence.risk.primaryReason ? `: ${evidence.risk.primaryReason}` : ""}`
+      : undefined,
+    evidence.diff
+      ? `diff files ${evidence.diff.changedFiles} +${evidence.diff.insertions ?? 0} -${evidence.diff.deletions ?? 0}`
+      : undefined
+  ].filter((value): value is string => Boolean(value));
+}
+
+function unavailableDetailSection(
+  id: string,
+  title: string,
+  missing: string
+): TuiDetailSection {
+  return {
+    id,
+    title,
+    tone: "warning",
+    lines: [`${missing} not available in current read model`],
+    collapsedByDefault: true
+  };
+}
+
+function detailActions(commands: string[]): TuiDetailAction[] {
+  if (commands.length === 0) {
+    return [];
+  }
+  return [
+    {
+      key: "p",
+      label: "Prepare Command",
+      kind: "prepare_command"
+    }
+  ];
+}
+
+function detailLines(value: string[] | string | undefined): string[] {
+  if (Array.isArray(value)) {
+    return value.length > 0 ? value.map((line) => truncate(line, defaultLimits.contentChars)) : ["(empty)"];
+  }
+  if (!value) {
+    return ["(empty)"];
+  }
+  const lines = value
+    .split(/\r?\n/)
+    .map((line) => truncate(line.trim(), defaultLimits.contentChars))
+    .filter(Boolean);
+  return lines.length > 0 ? lines : ["(empty)"];
+}
+
+function unavailableRoleExecutorCommandsForTask(
+  projectId: string | undefined,
+  task: TuiTaskSummary
+): string[] {
+  if (!projectId) {
+    return [];
+  }
+  return task.assignments
+    .filter((assignment) => !assignment.executable && assignment.role)
+    .map((assignment) => `agent-hub team roles executor --project-id ${projectId} --role ${assignment.role}`);
 }
 
 function summarizeLoop(

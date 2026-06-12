@@ -28,9 +28,16 @@ export interface TuiInkState {
   selectedRoleCallId?: string;
   selectedTaskIndex: number;
   selectedTaskId?: string;
+  selectedWorkBlockIndex: number;
+  selectedWorkBlockId?: string;
+  selectedMemoryItemId?: string;
+  selectedTeamRoleIndex: number;
+  selectedTeamRoleId?: string;
   selectedActiveRunIndex: number;
   hideCompletedRoleCalls: boolean;
   collapsedRoleCallIds: string[];
+  collapsedDetailSectionIds: string[];
+  detailVisible: boolean;
   scrollOffsets: {
     runs: number;
     roleCalls: number;
@@ -87,6 +94,8 @@ export type TuiInkKey =
   | "cancel"
   | "accept_review"
   | "reject_review"
+  | "open_detail"
+  | "close_detail"
   | "print_commands"
   | "palette";
 
@@ -107,9 +116,13 @@ export function createInitialInkState(composer = ""): TuiInkState {
     selectedRunIndex: 0,
     selectedRoleCallIndex: 0,
     selectedTaskIndex: 0,
+    selectedWorkBlockIndex: 0,
+    selectedTeamRoleIndex: 0,
     selectedActiveRunIndex: 0,
     hideCompletedRoleCalls: false,
     collapsedRoleCallIds: [],
+    collapsedDetailSectionIds: [],
+    detailVisible: false,
     scrollOffsets: {
       runs: 0,
       roleCalls: 0,
@@ -141,8 +154,12 @@ export function reduceInkState(
 ): TuiInkState {
   const next: TuiInkState = {
     ...state,
-    collapsedRoleCallIds: [...state.collapsedRoleCallIds],
-    composerHistory: [...state.composerHistory],
+    selectedWorkBlockIndex: state.selectedWorkBlockIndex ?? 0,
+    selectedTeamRoleIndex: state.selectedTeamRoleIndex ?? 0,
+    detailVisible: state.detailVisible ?? false,
+    collapsedRoleCallIds: [...(state.collapsedRoleCallIds ?? [])],
+    collapsedDetailSectionIds: [...(state.collapsedDetailSectionIds ?? [])],
+    composerHistory: [...(state.composerHistory ?? [])],
     statusMessage: undefined
   };
 
@@ -233,6 +250,16 @@ export function reduceInkState(
       "Cancellation is unavailable for this CLI TUI context; use the owning run service when supported.";
     return next;
   }
+  if (key === "open_detail" || key === "enter") {
+    next.detailVisible = true;
+    next.statusMessage = "Detail opened.";
+    return next;
+  }
+  if (key === "close_detail") {
+    next.detailVisible = false;
+    next.statusMessage = "Detail closed.";
+    return next;
+  }
   if (key === "accept_review" || key === "reject_review") {
     next.focus = "review";
     next.statusMessage = "Review decision shortcut is available for the selected run.";
@@ -269,6 +296,11 @@ export function reduceInkState(
       next.statusMessage = "Timeline hidden.";
       return next;
     }
+    if (next.detailVisible) {
+      next.detailVisible = false;
+      next.statusMessage = "Detail closed.";
+      return next;
+    }
     if (next.focus === "review" && next.reviewDiffExpanded) {
       next.reviewDiffExpanded = false;
       next.statusMessage = "Review diff collapsed.";
@@ -276,9 +308,6 @@ export function reduceInkState(
     }
     next.commandPaletteOpen = false;
     next.focus = "work";
-    return next;
-  }
-  if (key === "enter") {
     return next;
   }
   if (key === "up" || key === "down" || key === "page_up" || key === "page_down" || key === "home" || key === "end") {
@@ -368,6 +397,17 @@ export function selectedTaskIndex(
     model.tasks,
     state.selectedTaskId,
     state.selectedTaskIndex
+  );
+}
+
+export function selectedTeamRoleIndex(
+  model: TuiCurrentContextModel,
+  state: TuiInkState
+): number {
+  return selectedIndexById(
+    model.team.roles,
+    state.selectedTeamRoleId,
+    state.selectedTeamRoleIndex
   );
 }
 
@@ -500,7 +540,17 @@ function moveSelection(
     moveConversationScroll(state, key, conversationLineCount(model.conversation));
     return;
   }
-  if (state.focus === "team" || state.focus === "memory" || state.focus === "help") {
+  if (state.focus === "team") {
+    const nextIndex = nextSelectionIndex(
+      selectedTeamRoleIndex(model, state),
+      delta,
+      model.team.roles.length
+    );
+    state.selectedTeamRoleIndex = nextIndex;
+    state.selectedTeamRoleId = model.team.roles[nextIndex]?.id;
+    return;
+  }
+  if (state.focus === "memory" || state.focus === "help") {
     return;
   }
   const nodes = visibleRoleCalls(model, state);
@@ -742,13 +792,14 @@ function transcriptScrollDelta(
 }
 
 function nextSelectionIndex(current: number, delta: number, length: number): number {
+  const safeCurrent = Number.isFinite(current) ? current : 0;
   if (delta === Number.NEGATIVE_INFINITY) {
     return 0;
   }
   if (delta === Number.POSITIVE_INFINITY) {
     return Math.max(0, length - 1);
   }
-  return clampIndex(current + delta, length);
+  return clampIndex(safeCurrent + delta, length);
 }
 
 function ensureVisible(
@@ -773,7 +824,8 @@ function boundedIndex(index: number, length: number): number {
   if (length <= 0) {
     return 0;
   }
-  return Math.min(Math.max(index, 0), length - 1);
+  const safeIndex = Number.isFinite(index) ? index : 0;
+  return Math.min(Math.max(safeIndex, 0), length - 1);
 }
 
 function clampIndex(index: number, length: number): number {

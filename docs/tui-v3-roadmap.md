@@ -1,6 +1,6 @@
 # TUI V3 Roadmap
 
-Status: proposed
+Status: implementation in progress; V3-1 and V3-2 implemented
 Last updated: 2026-06-12
 
 This roadmap defines the next major terminal UI refactor for Agent Hub. It is
@@ -209,6 +209,8 @@ Acceptance:
 
 ### Phase V3-1: Unified Shell Frame
 
+Status: implemented.
+
 Goal: make all focus modes share the reference shell.
 
 Scope:
@@ -231,6 +233,8 @@ Acceptance:
 - No renderer direct access to local stores or shell is introduced.
 
 ### Phase V3-2: Selection And Detail Contract
+
+Status: implemented.
 
 Goal: add a common detail model before rebuilding individual views.
 

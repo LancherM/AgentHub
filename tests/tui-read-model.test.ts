@@ -26,6 +26,19 @@ describe("TUI current-context read model", () => {
     expect(model.runs).toEqual([]);
     expect(model.roleCalls.counts.total).toBe(0);
     expect(model.review.kind).toBe("none");
+    expect(model.selectionDetails).toMatchObject({
+      workBlocks: [],
+      runs: [],
+      roleCalls: [],
+      tasks: [],
+      teamRoles: expect.arrayContaining([
+        expect.objectContaining({ kind: "team_role", title: "@engineer" })
+      ]),
+      memory: {
+        kind: "memory",
+        title: "Memory Governance"
+      }
+    });
     expect(model.memory.counts).toEqual({
       proposed: 0,
       approved: 0,
@@ -148,6 +161,32 @@ describe("TUI current-context read model", () => {
       approved: 1,
       rejected: 1,
       retired: 0
+    });
+    expect(model.selectionDetails.runs.find((detail) => detail.id === "run_done")).toMatchObject({
+      kind: "run",
+      title: "Review retained-run cleanup",
+      commands: expect.arrayContaining(["agent-hub runs show run_done"])
+    });
+    expect(model.selectionDetails.roleCalls.find((detail) => detail.id === "call_waiting_approval")).toMatchObject({
+      kind: "role_call",
+      title: "@engineer -> @reviewer",
+      sections: expect.arrayContaining([
+        expect.objectContaining({ id: "evidence" })
+      ])
+    });
+    expect(model.selectionDetails.tasks[0]).toMatchObject({
+      kind: "task",
+      commands: expect.arrayContaining(["agent-hub task history --task-id task_1"])
+    });
+    expect(model.selectionDetails.teamRoles.find((detail) => detail.id === "preset:engineer")).toMatchObject({
+      kind: "team_role",
+      title: "@engineer",
+      commands: ["agent-hub team roles list --project-id project_1"]
+    });
+    expect(model.selectionDetails.memory).toMatchObject({
+      kind: "memory",
+      title: "Memory Governance",
+      commands: expect.arrayContaining(["agent-hub memory list --project-id project_1"])
     });
     expect(model.skills.selected.map((skill) => `${skill.scope}:${skill.id}`)).toEqual([
       "project:reviewer-checklist",

@@ -11,8 +11,10 @@ import type {
   TuiConversationEntry,
   TuiConversationSuggestion,
   TuiCurrentContextModel,
+  TuiDetailSection,
   TuiInlineDiffSummary,
-  TuiRunSummary
+  TuiRunSummary,
+  TuiSelectionDetail
 } from "@agent-hub/core";
 import {
   compactId,
@@ -34,6 +36,7 @@ import {
   visibleConversationSuggestions,
   visibleRoleCalls,
   selectedRoleCallIndex,
+  selectedTeamRoleIndex,
   type TuiInkFocus,
   type TuiInkKey,
   type TuiInkState
@@ -1210,6 +1213,9 @@ function WorkbenchLayout(props: TuiInkRenderProps): React.ReactElement {
   const { model, state, terminal } = props;
   const layout = workbenchLayoutSpec(terminal);
   if (layout.navWidth === 0) {
+    if (state.detailVisible) {
+      return h(DetailPane, { model, state, width: terminal.columns });
+    }
     return h(MainView, props);
   }
 
@@ -1217,6 +1223,7 @@ function WorkbenchLayout(props: TuiInkRenderProps): React.ReactElement {
     ...terminal,
     columns: layout.mainWidth
   };
+  const showInlineDetail = state.detailVisible && layout.detailWidth === 0;
   return h(
     Box,
     { flexDirection: "row", width: terminal.columns },
@@ -1224,7 +1231,9 @@ function WorkbenchLayout(props: TuiInkRenderProps): React.ReactElement {
     h(
       Box,
       { flexDirection: "column", width: layout.mainWidth, flexShrink: 1 },
-      h(MainView, { ...props, terminal: mainTerminal })
+      showInlineDetail
+        ? h(DetailPane, { model, state, width: layout.mainWidth })
+        : h(MainView, { ...props, terminal: mainTerminal })
     ),
     ...(layout.detailWidth > 0
       ? [h(DetailPane, { model, state, width: layout.detailWidth })]
@@ -1357,75 +1366,145 @@ function DetailPane({
   state: TuiInkState;
   width: number;
 }): React.ReactElement {
-  const selectedLabel = detailPlaceholderSelection(model, state);
-  const lines = [
-    "Block Detail",
-    "",
-    selectedLabel,
-    "No detail selected",
-    "Not available in",
-    "current read model."
-  ];
+  const detail = selectedDetail(model, state);
+  if (!detail) {
+    return h(
+      Box,
+      { flexDirection: "column", width, flexShrink: 0 },
+      line(truncateText("Block Detail", width), { color: "cyan", bold: true }),
+      line(truncateText("| No detail selected", width), { dimColor: true }),
+      line(truncateText("| not available in current read model", width), { dimColor: true })
+    );
+  }
+
   return h(
     Box,
     { flexDirection: "column", width, flexShrink: 0 },
-    ...lines.map((value, index) =>
-      line(index === 0 ? truncateText(value, width) : truncateText(`| ${value}`, width), {
-        color: index === 0 ? "cyan" : undefined,
-        bold: index === 0,
-        dimColor: index > 1
-      })
-    )
+    line(truncateText("Block Detail", width), { color: "cyan", bold: true }),
+    line(truncateText(`| ${detail.title}`, width), { bold: true }),
+    ...(detail.subtitle ? [line(truncateText(`| ${detail.subtitle}`, width), { dimColor: true })] : []),
+    ...detail.sections.flatMap((section) => detailSectionLines(section, state, width)),
+    ...(detail.commands.length > 0
+      ? [
+          line(truncateText("| Commands", width), { color: "cyan" }),
+          ...detail.commands.slice(0, 4).map((command) =>
+            line(truncateText(`| ${command}`, width), { dimColor: true })
+          )
+        ]
+      : []),
+    ...(detail.actions.length > 0
+      ? [
+          line(truncateText("| Actions", width), { color: "cyan" }),
+          ...detail.actions.slice(0, 4).map((action) =>
+            line(truncateText(`| ${action.key} ${action.label}${action.disabledReason ? ` (${action.disabledReason})` : ""}`, width), {
+              dimColor: Boolean(action.disabledReason)
+            })
+          )
+        ]
+      : [])
   );
 }
 
-function detailPlaceholderSelection(
+function detailSectionLines(
+  section: TuiDetailSection,
+  state: TuiInkState,
+  width: number
+): React.ReactElement[] {
+  const collapsedIds = state.collapsedDetailSectionIds ?? [];
+  const collapsed = collapsedIds.includes(section.id) || section.collapsedByDefault === true;
+  const title = collapsed ? `| ${section.title} (collapsed)` : `| ${section.title}`;
+  const color = detailToneColor(section.tone);
+  if (collapsed) {
+    return [line(truncateText(title, width), { color, dimColor: true })];
+  }
+  return [
+    line(truncateText(title, width), { color }),
+    ...section.lines.slice(0, 6).map((value) =>
+      line(truncateText(`|   ${value}`, width), { dimColor: section.tone === "normal" })
+    )
+  ];
+}
+
+function detailToneColor(tone: TuiDetailSection["tone"]): string | undefined {
+  if (tone === "success") {
+    return "green";
+  }
+  if (tone === "warning") {
+    return "yellow";
+  }
+  if (tone === "danger") {
+    return "red";
+  }
+  if (tone === "info") {
+    return "cyan";
+  }
+  return undefined;
+}
+
+function selectedDetail(
   model: TuiCurrentContextModel,
   state: TuiInkState
-): string {
+): TuiSelectionDetail | undefined {
+  const details = model.selectionDetails;
   if (state.focus === "runs") {
     const run = selectedRun(model, state);
-    return run ? `Selected run ${compactId(run.id)}` : "Selected run unavailable";
+    return run ? details.runs.find((detail) => detail.id === run.id) : undefined;
   }
   if (state.focus === "review") {
-    return model.review.selectedId
-      ? `Selected review ${compactId(model.review.selectedId)}`
-      : "Selected review unavailable";
+    if (model.review.kind === "run" && model.review.selectedId) {
+      return details.runs.find((detail) => detail.id === model.review.selectedId);
+    }
+    if (model.review.kind === "role_call" && model.review.selectedId) {
+      return details.roleCalls.find((detail) => detail.id === model.review.selectedId);
+    }
+    return undefined;
   }
   if (state.focus === "graph") {
     const roleCall = visibleRoleCalls(model, state)[selectedRoleCallIndex(model, state)];
-    return roleCall ? `Selected call ${compactId(roleCall.id)}` : "Selected call unavailable";
+    return roleCall ? details.roleCalls.find((detail) => detail.id === roleCall.id) : undefined;
   }
   if (state.focus === "tasks") {
     const task = selectedTask(model, state);
-    return task ? `Selected task ${compactId(task.id)}` : "Selected task unavailable";
+    return task ? details.tasks.find((detail) => detail.id === task.id) : undefined;
   }
-  return `${focusLabel(state.focus)} focus`;
+  if (state.focus === "team") {
+    const role = model.team.roles[selectedTeamRoleIndex(model, state)];
+    return role ? details.teamRoles.find((detail) => detail.id === role.id) : undefined;
+  }
+  if (state.focus === "memory") {
+    return details.memory;
+  }
+  if (state.focus === "work") {
+    return selectedWorkBlockDetail(model, state);
+  }
+  return undefined;
 }
 
-function focusLabel(focus: TuiInkFocus): string {
-  if (focus === "work") {
-    return "Work";
+function selectedWorkBlockDetail(
+  model: TuiCurrentContextModel,
+  state: TuiInkState
+): TuiSelectionDetail | undefined {
+  const details = model.selectionDetails.workBlocks;
+  const index = selectedDetailIndexById(details, state.selectedWorkBlockId, state.selectedWorkBlockIndex);
+  return details[index] ?? details.at(-1);
+}
+
+function selectedDetailIndexById(
+  items: Array<{ id: string }>,
+  selectedId: string | undefined,
+  fallbackIndex: number
+): number {
+  if (items.length === 0) {
+    return 0;
   }
-  if (focus === "runs") {
-    return "Runs";
+  if (selectedId) {
+    const index = items.findIndex((item) => item.id === selectedId);
+    if (index >= 0) {
+      return index;
+    }
   }
-  if (focus === "review") {
-    return "Review";
-  }
-  if (focus === "graph") {
-    return "Graph";
-  }
-  if (focus === "tasks") {
-    return "Tasks";
-  }
-  if (focus === "memory") {
-    return "Memory";
-  }
-  if (focus === "team") {
-    return "Team";
-  }
-  return "Help";
+  const safeFallback = Number.isFinite(fallbackIndex) ? fallbackIndex : 0;
+  return Math.min(Math.max(safeFallback, 0), items.length - 1);
 }
 
 function MainView(props: TuiInkRenderProps): React.ReactElement {
@@ -3367,6 +3446,9 @@ function keyToAction(input: string, key: Key, focus: string): TuiInkKey | undefi
   if (input === "?") {
     return "help";
   }
+  if (input === "o") {
+    return "open_detail";
+  }
   if (input === "W") {
     return "work";
   }
@@ -3420,6 +3502,9 @@ function isDirectFocusAction(action: TuiInkKey): boolean {
 }
 
 function isImmediateEmptyComposerAction(action: TuiInkKey, focus: TuiInkFocus): boolean {
+  if (action === "open_detail") {
+    return true;
+  }
   if (isDirectFocusAction(action)) {
     return true;
   }
@@ -3750,6 +3835,7 @@ function modelRenderSignature(model: TuiCurrentContextModel): string {
     team: model.team,
     memory: model.memory,
     skills: model.skills,
+    selectionDetails: model.selectionDetails,
     warnings: model.warnings
   });
 }
