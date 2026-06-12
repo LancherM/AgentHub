@@ -713,6 +713,10 @@ export function TuiInkApp(props: TuiInkAppProps): React.ReactElement {
         updateStateNow(deleteComposerCharacterAfterCursor);
         return;
       }
+      if (input === "x" && currentState.composer.length === 0 && currentState.detailVisible) {
+        applyKey("close_detail");
+        return;
+      }
       if ((input === "x" || input === "q") && currentState.composer.length === 0) {
         app.exit();
         return;
@@ -1412,11 +1416,12 @@ function DetailPane({
 }): React.ReactElement {
   const detail = selectedDetail(model, state);
   const title = detailPaneTitle(model, state, detail);
+  const titleText = state.detailVisible ? `${title} [x] close` : title;
   if (!detail) {
     return h(
       Box,
       { flexDirection: "column", width, flexShrink: 0 },
-      line(truncateText(title, width), { color: "cyan", bold: true }),
+      line(truncateText(titleText, width), { color: "cyan", bold: true }),
       line(truncateText("| Empty Slot", width), { color: "yellow" }),
       line(truncateText("|   empty slot - no selected detail is available in the current read model", width), {
         dimColor: true
@@ -1432,7 +1437,7 @@ function DetailPane({
   return h(
     Box,
     { flexDirection: "column", width, flexShrink: 0 },
-    line(truncateText(title, width), { color: "cyan", bold: true }),
+    line(truncateText(titleText, width), { color: "cyan", bold: true }),
     ...visibleLines,
     ...(maxOffset > 0
       ? [
@@ -3702,7 +3707,7 @@ function StatusBar({
 
 function focusStatusMetric(model: TuiCurrentContextModel, state: TuiInkState): string {
   if (state.focus === "work") {
-    return `${workBlocksForModel(model).length} blocks`;
+    return `${workBlocksForModel(model).length} blocks | conversation`;
   }
   if (state.focus === "runs") {
     return `${model.runs.length} runs`;
@@ -3717,10 +3722,10 @@ function focusStatusMetric(model: TuiCurrentContextModel, state: TuiInkState): s
     return `${model.tasks.length} tasks`;
   }
   if (state.focus === "memory") {
-    return `${model.memory.rows.length} proposals`;
+    return `${model.memory.rows.length} proposals | inbox`;
   }
   if (state.focus === "team") {
-    return `${model.team.roles.length} roles`;
+    return `${model.team.roles.length} roles | local-only`;
   }
   return "ready";
 }
@@ -3835,66 +3840,6 @@ function contextualShortcutHint(state: TuiInkState, columns: number): string {
       return "keys: enter submit | tab complete | esc clear | ctrl+c exit";
     }
     return "keys: enter submit | ctrl+o newline | tab complete/focus | esc clear | ctrl+c exit";
-  }
-  if (state.detailVisible) {
-    if (columns < 56) {
-      return "keys: PgUp/PgDn detail | Esc";
-    }
-    if (columns < 84) {
-      return "keys: PgUp/PgDn detail | Home/End | Esc close | x exit";
-    }
-    return "keys: PageUp/PageDown detail | Home/End jump | Up/Down select | Esc close | >/< fold";
-  }
-  if (state.focus === "runs") {
-    if (columns < 56) {
-      return "keys: Up/Down | V review | p cmd | Esc";
-    }
-    return "keys: Up/Down select | V review | p command | Esc back | x exit";
-  }
-  if (state.focus === "review") {
-    if (columns < 56) {
-      return "keys: a accept | R reject | Esc";
-    }
-    if (columns < 84) {
-      return "keys: Enter diff | a accept | R reject | Esc back";
-    }
-    return "keys: Up/Down select | Enter/Space diff | a accept | R reject | s compare | Esc back";
-  }
-  if (state.focus === "graph") {
-    if (columns < 56) {
-      return "keys: Up/Down | arrows | p cmd | Esc";
-    }
-    return "keys: Up/Down select | Left collapse | Right expand | h hide done | p command | Esc back";
-  }
-  if (state.focus === "tasks") {
-    if (columns < 56) {
-      return "keys: Up/Down | p cmd | Esc";
-    }
-    return "keys: Up/Down select | p command | Esc back";
-  }
-  if (state.focus === "memory") {
-    if (columns < 56) {
-      return "keys: Up/Down | Enter | : cmd | Esc";
-    }
-    return "keys: Up/Down select | Enter detail | p command | : palette | Esc back";
-  }
-  if (state.focus === "team") {
-    if (columns < 56) {
-      return "keys: Up/Down | Enter | p cmd | Esc";
-    }
-    return "keys: Up/Down select | Enter detail | p command | : palette | Esc back";
-  }
-  if (state.focus === "help") {
-    if (columns < 56) {
-      return "keys: W work | Esc | x";
-    }
-    return "keys: W work | Tab focus | Esc back | x exit";
-  }
-  if (columns < 56) {
-    return "keys: type | W/R/V/G/T/M/E | : | ? | x";
-  }
-  if (columns < 84) {
-    return "keys: type prompt | W/R/V/G/T/M/E | C continue | : palette | ? help | x exit";
   }
   return "keys: up/down/j/k move | Enter/o detail | >/< fold | za all fold | O all open | ? help | / palette";
 }

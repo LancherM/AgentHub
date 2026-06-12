@@ -172,7 +172,11 @@ it.
 The persistent side navigation keeps Work, Runs, View, Graph, Tasks, Memory,
 Team, and Help one key away at normal and wide widths. The bottom chrome is
 split into composer, hotkey, and status bands; narrow terminals keep compact
-focus keys in the hotkey band instead of rendering a duplicate tab row.
+focus keys in the side navigation instead of rendering a duplicate tab row. The
+empty-composer hotkey band uses one reference-aligned row:
+`up/down/j/k move | Enter/o detail | >/< fold | za all fold | O all open | ?
+help | / palette`. When a detail overlay is open, the right panel labels
+`[x] close`, and `x` closes detail before it can exit the TUI.
 One-shot TUI renders (`--once`) are intended for quick smoke checks and return
 to the shell after printing the current workbench. Normal `agent-hub tui`
 launches stay open when stdin/stdout are an interactive terminal with raw-mode
@@ -224,7 +228,7 @@ supplied terminal mockups more closely. The framed shell chrome and branded
 header metadata, dedicated Work block renderer, view-specific scrollable
 detail panel, Memory reference inbox, Team reference workbench, and
 deterministic reference fixture coverage are implemented; remaining slices
-focus on interaction polish. It does not
+focus on follow-up polish beyond the reference-gap implementation prompts. It does not
 relax the local read-model boundary or permit fabricated evidence.
 Selected active-run Work blocks expose a live detail view over the same polling
 read model: speaker, running state, started time, elapsed label, spinner state,

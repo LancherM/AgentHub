@@ -683,7 +683,8 @@ added for the TUI.
 Terminal polish is also contained in the CLI renderer. It compacts identifiers,
 renders the Work view as a conversation flow plus bounded active-run boxes,
 moves Work/Runs/View/Graph/Tasks/Memory/Team/Help into the persistent side
-navigation when width allows, renders focus-specific hotkey and status bands
+navigation when width allows, renders a single reference-aligned hotkey band
+and focus-specific status band
 below the composer, uses width-aware footer labels so narrow terminals keep
 primary keys readable, and uses Ink components for terminal layout instead of
 hand-wrapped string panels. Full current-context CLI commands stay in Palette, focused
@@ -777,7 +778,10 @@ snippet, verification, limit, and recent-failure sections can be expanded with
 state is not persisted and does not change the core read model. Detail value
 lines are hard-wrapped in the renderer with the existing display-width-aware
 terminal helper, preserving the `|   ` detail prefix across wrapped CJK text,
-long ids, paths, policy text, and unavailable-placeholder messages.
+long ids, paths, policy text, and unavailable-placeholder messages. When a
+detail overlay is open, the renderer labels `[x] close` and routes empty-
+composer `x` to local detail close before considering process exit; this does
+not mutate the read model or run evidence.
 Notifications, timeline, and splash remain CLI renderer concerns.
 `/notify` toggles an in-memory flag for the current Ink session; when enabled,
 the renderer may write only terminal escape output (bell plus OSC 9) after a

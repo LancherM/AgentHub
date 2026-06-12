@@ -553,11 +553,11 @@ describe("Ink TUI renderer", () => {
     expect(output).toContain("| △");
     expect(output).toContain("open [V]iew for details");
     expect(output).not.toContain("checks 0/0/1");
-    expect(output).toContain("C continue");
+    expect(output).toContain("up/down/j/k move");
     expect(output).toContain("send @codex  thread Review (#review)  context runtime");
     expect(output).toContain("> @codex prompt");
     expect(output.indexOf("> @codex prompt")).toBeLessThan(output.indexOf("keys:"));
-    expect(output).toContain("W/R/V/G/T/M/E");
+    expect(output).toContain("Enter/o detail");
     expect(output).not.toContain("[E]am");
     expect(output).not.toContain("Runs + Review");
     expect(output).not.toContain("-- more hidden --");
@@ -576,7 +576,7 @@ describe("Ink TUI renderer", () => {
       .split("\n")
       .find((value) => value.startsWith("keys:"));
 
-    expect(output).toContain("keys: type | W/R/V/G/T/M/E | : | ? | x");
+    expect(output).toContain("keys: up/down/j/k move");
     expect(output).toContain("Work: 2 blocks");
     expect(output).not.toContain("[E]am");
     expect(output).not.toContain("agent-hub team roles list --project-id project_1");
@@ -608,7 +608,7 @@ describe("Ink TUI renderer", () => {
       expect(output).toContain("Check the TUI shell.");
       expect(output).toContain("> @codex prompt");
       expect(output).toContain("keys:");
-      expect(output).toContain(item.columns < 84 ? "W/R/V/G/T/M/E" : "Enter/o detail");
+      expect(output).toContain("up/down/j/k move");
       expect(lines.every((value) => value.length <= item.columns)).toBe(true);
 
       if (item.nav) {
@@ -647,6 +647,7 @@ describe("Ink TUI renderer", () => {
     expect(state.detailVisible).toBe(true);
     expect(openedWithO.detailVisible).toBe(true);
     expect(output).toContain("Final Report Detail");
+    expect(output).toContain("[x] close");
     expect(output).toContain("Check TUI shell");
     expect(output).toContain("status succeeded");
     expect(output).toContain("agent-hub runs show run_27984312");
@@ -688,6 +689,25 @@ describe("Ink TUI renderer", () => {
     expect(output).toContain("detail line 12");
     expect(output).toContain("scroll ");
     expect(output).not.toContain("detail line 00");
+  });
+
+  it("closes open detail with x instead of exiting the interactive TUI", async () => {
+    const instance = render(
+      React.createElement(TuiInkApp, {
+        model: baseModel,
+        state: { ...createInitialInkState(), detailVisible: true },
+        terminal: { columns: 120, rows: 40 },
+        interactive: true
+      })
+    );
+
+    await waitForFrame(instance, "[x] close");
+    instance.stdin.write("x");
+    await waitForFrame(instance, "Detail closed.");
+
+    expect(instance.lastFrame()).toContain("> @codex prompt");
+    expect(instance.lastFrame()).not.toContain("[x] close");
+    instance.unmount();
   });
 
   it("keeps team detail selection stable by selected id", () => {
@@ -1260,7 +1280,7 @@ describe("Ink TUI renderer", () => {
 
       expect(output).toContain("> @codex prompt");
       expect(output).toContain("keys:");
-      expect(output).toContain(columns < 84 ? "W/R/V/G/T/M/E" : "Enter/o detail");
+      expect(output).toContain("up/down/j/k move");
       expect(lines.some((value) => value.startsWith(" this deliberately"))).toBe(false);
       expect(lines.every((value) => value.length <= columns)).toBe(true);
     }
