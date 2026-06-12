@@ -308,7 +308,10 @@ renderable read-model change are ignored to avoid unnecessary full-screen
 redraws. New conversation or active-run output anchors Work back to the bottom.
 Moving the selected Work block with Up/Down or `j`/`k` adjusts the Work scroll
 offset when the selection crosses the visible top or bottom edge, so the
-selected conversation stays visible without a separate manual scroll step.
+selected conversation stays visible without a separate manual scroll step. If
+the selected conversation is taller than the visible Work viewport, the TUI
+keeps the selected frame header visible instead of trying to fit the whole
+conversation in one screen.
 TaskRunner persists run events as they are produced, so running boxes can show
 live progress from the local evidence store instead of waiting for final run
 completion. The conversation can scroll back by

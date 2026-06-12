@@ -1850,31 +1850,70 @@ function WorkBlockList({
     );
   }
   const selectedBlock = selectedWorkBlockFromBlocks(workBlocks, state);
-  const renderedLines = [
-    ...workBlockRenderItems(workBlocks).flatMap((item) =>
-      item.kind === "review_group"
-        ? [line(`△ ${item.count} pending reviews collapsed - [V]iew review queue`, { color: "yellow" })]
-        : workBlockLines({
-            block: item.block,
-            selected: item.block.id === selectedBlock?.id,
-            terminal,
-            animationTick,
-            feedback: item.block.runId ? feedbackByRunId[item.block.runId] : undefined
-          })
-    ),
+  const renderedLines: React.ReactElement[] = [];
+  const blockRanges: WorkBlockLineRange[] = [];
+  for (const item of workBlockRenderItems(workBlocks)) {
+    if (item.kind === "review_group") {
+      renderedLines.push(line(`△ ${item.count} pending reviews collapsed - [V]iew review queue`, { color: "yellow" }));
+      continue;
+    }
+    const start = renderedLines.length;
+    const lines = workBlockLines({
+      block: item.block,
+      selected: item.block.id === selectedBlock?.id,
+      terminal,
+      animationTick,
+      feedback: item.block.runId ? feedbackByRunId[item.block.runId] : undefined
+    });
+    renderedLines.push(...lines);
+    blockRanges.push({ id: item.block.id, start, end: renderedLines.length });
+  }
+  renderedLines.push(
     ...visibleConversationSuggestions(model, state).map((suggestion) =>
       line(`  [${suggestion.key}] ${suggestion.label}`, { color: "cyan", dimColor: true })
     )
-  ];
+  );
   const bodyLines = Math.max(1, visibleLines - 1);
-  const maxOffset = Math.max(0, renderedLines.length - bodyLines);
-  const offsetFromBottom = Math.min(state.conversationScrollOffset, maxOffset);
-  const start = Math.max(0, renderedLines.length - bodyLines - offsetFromBottom);
+  const maxStart = Math.max(0, renderedLines.length - bodyLines);
+  const offsetFromBottom = Math.min(state.conversationScrollOffset, maxStart);
+  const requestedStart = Math.max(0, renderedLines.length - bodyLines - offsetFromBottom);
+  const selectedRange = state.workSelectionAnchor && selectedBlock
+    ? blockRanges.find((range) => range.id === selectedBlock.id)
+    : undefined;
+  const start = visibleWorkBlockStart(requestedStart, bodyLines, maxStart, selectedRange);
   const visible = renderedLines.slice(start, start + bodyLines);
   return block(
     line(workBlockTitleText(model, state), { color: "cyan", bold: true }),
     ...visible
   );
+}
+
+interface WorkBlockLineRange {
+  id: string;
+  start: number;
+  end: number;
+}
+
+function visibleWorkBlockStart(
+  requestedStart: number,
+  bodyLines: number,
+  maxStart: number,
+  selectedRange: WorkBlockLineRange | undefined
+): number {
+  let start = Math.min(Math.max(requestedStart, 0), maxStart);
+  if (!selectedRange) {
+    return start;
+  }
+  const selectedLineCount = selectedRange.end - selectedRange.start;
+  if (selectedLineCount >= bodyLines) {
+    return Math.min(Math.max(selectedRange.start, 0), maxStart);
+  }
+  if (selectedRange.start < start) {
+    start = selectedRange.start;
+  } else if (selectedRange.end > start + bodyLines) {
+    start = selectedRange.end - bodyLines;
+  }
+  return Math.min(Math.max(start, 0), maxStart);
 }
 
 type WorkBlockRenderItem =

@@ -853,7 +853,10 @@ conversation state is line-based and re-anchors to the bottom when new
 conversation or active-run output appears. Work block selection uses the same
 current-block validation as the renderer and adjusts the scroll offset when
 Up/Down or `j`/`k` would move the selected block outside the visible Work
-window. Active-run selection and terminal-height list windows remain local Ink
+window; the renderer then clamps the viewport from actual rendered line ranges
+so wrapped long messages keep the selected frame header visible. Manual
+PageUp/PageDown/Home/End scrolling clears that selection anchor. Active-run
+selection and terminal-height list windows remain local Ink
 state, while selected runs,
 tasks, and RoleCalls continue to resolve through the existing read-model
 summaries.

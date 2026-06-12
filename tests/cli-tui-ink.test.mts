@@ -2677,6 +2677,58 @@ describe("Ink TUI renderer", () => {
     expect(downwardOutput).toContain("Work block 10");
   });
 
+  it("does not move the Work viewport when navigation is already at an edge", () => {
+    const model = modelWithWorkBlocks(6);
+    const bottomState = {
+      ...createInitialInkState(),
+      selectedWorkBlockIndex: 5,
+      selectedWorkBlockId: "message:block-5",
+      conversationScrollOffset: 3
+    };
+    const nextBottomState = reduceInkState(bottomState, "down", model);
+    const topState = {
+      ...createInitialInkState(),
+      selectedWorkBlockIndex: 0,
+      selectedWorkBlockId: "message:block-0",
+      conversationScrollOffset: 4
+    };
+    const nextTopState = reduceInkState(topState, "up", model);
+
+    expect(nextBottomState.selectedWorkBlockId).toBe("message:block-5");
+    expect(nextBottomState.conversationScrollOffset).toBe(3);
+    expect(nextTopState.selectedWorkBlockId).toBe("message:block-0");
+    expect(nextTopState.conversationScrollOffset).toBe(4);
+  });
+
+  it("keeps the selected frame visible for long Work blocks", () => {
+    const model = modelWithWorkBlocks(6, {
+      longIndex: 3,
+      longLines: Array.from({ length: 18 }, (_value, index) =>
+        `Long selected Work block line ${index} with enough text to wrap across the terminal viewport.`
+      )
+    });
+    let state = {
+      ...createInitialInkState(),
+      selectedWorkBlockIndex: 4,
+      selectedWorkBlockId: "message:block-4",
+      conversationScrollOffset: 0
+    };
+
+    state = reduceInkState(state, "up", model);
+    const output = renderToString(
+      React.createElement(TuiInkFrame, {
+        model,
+        state,
+        terminal: { columns: 78, rows: 18 }
+      }),
+      { columns: 78 }
+    );
+
+    expect(state.selectedWorkBlockId).toBe("message:block-3");
+    expect(output).toContain("╭─ 12:03:00 user user_message ●");
+    expect(output).toContain("Long selected Work block line 0");
+  });
+
   it("polls the read model while interactive", async () => {
     const polledModel = modelWithRuns(["run_polled01"]);
     const instance = render(
@@ -3279,7 +3331,7 @@ function modelWithTranscript(count) {
   };
 }
 
-function modelWithWorkBlocks(count) {
+function modelWithWorkBlocks(count, options = {}) {
   const workBlocks = Array.from({ length: count }, (_value, index) => ({
     id: `message:block-${index}`,
     sourceId: `message:block-${index}`,
@@ -3291,7 +3343,9 @@ function modelWithWorkBlocks(count) {
     statusIcon: "●",
     statusLabel: undefined,
     statusTone: "normal",
-    messageLines: [`Work block ${index}`],
+    messageLines: index === options.longIndex && Array.isArray(options.longLines)
+      ? options.longLines
+      : [`Work block ${index}`],
     toolSummaryLines: [],
     fileRefs: [],
     commandLines: [],

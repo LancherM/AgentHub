@@ -34,6 +34,7 @@ export interface TuiInkState {
   selectedTaskId?: string;
   selectedWorkBlockIndex: number;
   selectedWorkBlockId?: string;
+  workSelectionAnchor: boolean;
   selectedMemoryItemIndex: number;
   selectedMemoryItemId?: string;
   selectedTeamRoleIndex: number;
@@ -130,6 +131,7 @@ export function createInitialInkState(composer = ""): TuiInkState {
     selectedRoleCallIndex: 0,
     selectedTaskIndex: 0,
     selectedWorkBlockIndex: 0,
+    workSelectionAnchor: false,
     selectedMemoryItemIndex: 0,
     selectedTeamRoleIndex: 0,
     selectedActiveRunIndex: 0,
@@ -172,6 +174,7 @@ export function reduceInkState(
   const next: TuiInkState = {
     ...state,
     selectedWorkBlockIndex: state.selectedWorkBlockIndex ?? 0,
+    workSelectionAnchor: state.workSelectionAnchor ?? false,
     selectedMemoryItemIndex: state.selectedMemoryItemIndex ?? 0,
     selectedTeamRoleIndex: state.selectedTeamRoleIndex ?? 0,
     detailVisible: state.detailVisible ?? false,
@@ -614,15 +617,21 @@ function moveSelection(
     const blocks = workBlocksForSelection(model);
     if (key === "page_up" || key === "page_down" || key === "home" || key === "end") {
       moveConversationScroll(state, key, workSelectionLineCount(blocks, selectedWorkBlockIndex(model, state)));
+      state.workSelectionAnchor = false;
       return;
     }
+    const currentIndex = selectedWorkBlockIndex(model, state);
     const nextIndex = nextSelectionIndex(
-      selectedWorkBlockIndex(model, state),
+      currentIndex,
       delta,
       blocks.length
     );
+    if (nextIndex === currentIndex) {
+      return;
+    }
     state.selectedWorkBlockIndex = nextIndex;
     state.selectedWorkBlockId = blocks[nextIndex]?.id;
+    state.workSelectionAnchor = true;
     ensureSelectedWorkBlockVisible(state, blocks, nextIndex);
     resetDetailScroll(state);
     return;
