@@ -192,9 +192,45 @@ const baseModel = {
   },
   memory: {
     projectId: "project_1",
-    counts: { proposed: 1, approved: 1, rejected: 0 },
+    counts: { proposed: 1, approved: 1, rejected: 0, retired: 0 },
+    rows: [
+      {
+        id: "memory_proposed",
+        projectId: "project_1",
+        category: "workflow_rule",
+        status: "proposed",
+        confidence: "high",
+        sourceRunId: "run_27984312-fc9a-46bf-9ccf-c06997187091",
+        sourceTaskId: "task_1",
+        summary: "Keep memory approval explicit.",
+        updatedAt: "2026-05-29T12:05:00.000Z",
+        recommendedAction: "review explicitly",
+        evidenceExcerptLines: ["manual review required", "approved memory is injected at runtime"],
+        writebackTarget: "memory/approved.md",
+        sourceCommands: [
+          "agent-hub runs show run_27984312-fc9a-46bf-9ccf-c06997187091",
+          "agent-hub task history --task-id task_1"
+        ]
+      },
+      {
+        id: "memory_approved",
+        projectId: "project_1",
+        category: "project_fact",
+        status: "approved",
+        sourceTaskId: "task_1",
+        summary: "Runtime injection is the default context mode.",
+        updatedAt: "2026-05-29T12:02:00.000Z",
+        recommendedAction: "injected at runtime",
+        evidenceExcerptLines: [],
+        sourceCommands: ["agent-hub task history --task-id task_1"]
+      }
+    ],
     command: "agent-hub memory list --project-id project_1",
-    approvalCommands: ["agent-hub memory list --project-id project_1"],
+    approvalCommands: [
+      "agent-hub memory list --project-id project_1",
+      "agent-hub memory approve --memory-id <memory-id>",
+      "agent-hub memory reject --memory-id <memory-id>"
+    ],
     approvedSource: "Agent Hub context store",
     approvalReminder: "Memory approval is explicit."
   },
@@ -243,6 +279,91 @@ const baseModel = {
     ],
     roleCalls: [],
     tasks: [],
+    memoryRows: [
+      {
+        id: "memory_proposed",
+        kind: "memory",
+        title: "Keep memory approval explicit.",
+        subtitle: "proposed workflow_rule",
+        sections: [
+          {
+            id: "memory",
+            title: "Memory Text",
+            lines: [
+              "Keep memory approval explicit.",
+              "category workflow_rule",
+              "status proposed",
+              "confidence high",
+              "updated 2026-05-29T12:05:00.000Z"
+            ]
+          },
+          { id: "why", title: "Why It Matters", lines: ["recommended action review explicitly"] },
+          {
+            id: "evidence",
+            title: "Evidence Excerpts",
+            lines: ["manual review required", "approved memory is injected at runtime"]
+          },
+          { id: "writeback", title: "Writeback Target", lines: ["memory/approved.md"] },
+          {
+            id: "related",
+            title: "Related Skills And Memory",
+            lines: ["related skills/memory joins not available in current read model"]
+          },
+          {
+            id: "source-commands",
+            title: "Source Commands",
+            lines: [
+              "agent-hub runs show run_27984312-fc9a-46bf-9ccf-c06997187091",
+              "agent-hub task history --task-id task_1"
+            ]
+          }
+        ],
+        commands: [
+          "agent-hub memory list --project-id project_1",
+          "agent-hub memory approve --memory-id memory_proposed",
+          "agent-hub memory reject --memory-id memory_proposed",
+          "agent-hub runs show run_27984312-fc9a-46bf-9ccf-c06997187091",
+          "agent-hub task history --task-id task_1"
+        ],
+        actions: [
+          { key: "p", label: "Prepare Command", kind: "prepare_command" },
+          { key: "a", label: "Approve", kind: "callback", disabledReason: "not available in TUI; use the listed CLI command" },
+          { key: "r", label: "Reject", kind: "callback", disabledReason: "not available in TUI; use the listed CLI command" },
+          { key: "e", label: "Edit", kind: "callback", disabledReason: "not available in TUI; editing requires a separate audited callback" }
+        ]
+      },
+      {
+        id: "memory_approved",
+        kind: "memory",
+        title: "Runtime injection is the default context mode.",
+        subtitle: "approved project_fact",
+        sections: [
+          {
+            id: "memory",
+            title: "Memory Text",
+            lines: [
+              "Runtime injection is the default context mode.",
+              "category project_fact",
+              "status approved",
+              "updated 2026-05-29T12:02:00.000Z"
+            ]
+          },
+          { id: "why", title: "Why It Matters", lines: ["recommended action injected at runtime"] },
+          {
+            id: "source-commands",
+            title: "Source Commands",
+            lines: ["agent-hub task history --task-id task_1"]
+          }
+        ],
+        commands: [
+          "agent-hub memory list --project-id project_1",
+          "agent-hub memory approve --memory-id memory_approved",
+          "agent-hub memory reject --memory-id memory_approved",
+          "agent-hub task history --task-id task_1"
+        ],
+        actions: [{ key: "p", label: "Prepare Command", kind: "prepare_command" }]
+      }
+    ],
     teamRoles: [
       {
         id: "preset:engineer",
@@ -410,6 +531,33 @@ describe("Ink TUI renderer", () => {
     expect(output).not.toContain("@engineer");
   });
 
+  it("renders Memory governance rows with selected proposal detail", () => {
+    const memoryState = reduceInkState(
+      { ...createInitialInkState(), focus: "memory", detailVisible: true },
+      "down",
+      baseModel
+    );
+    const output = renderToString(
+      React.createElement(TuiInkFrame, {
+        model: baseModel,
+        state: memoryState,
+        terminal: { columns: 120, rows: 36 }
+      }),
+      { columns: 120 }
+    );
+
+    expect(memoryState.selectedMemoryItemId).toBe("memory_approved");
+    expect(output).toContain("Memory Governance");
+    expect(output).toContain("status   category");
+    expect(output).toContain("proposed workflow_rule");
+    expect(output).toContain("approved project_fact");
+    expect(output).toContain("▌ approved");
+    expect(output).toContain("Runtime injection is the d...");
+    expect(output).toContain("recommended action injecte...");
+    expect(output).toContain("agent-hub memory approve --m...");
+    expect(output.split("\n").every((value) => value.length <= 120)).toBe(true);
+  });
+
   it("renders attention items in priority order and narrows to the highest item", () => {
     const wideOutput = renderToString(
       React.createElement(TuiInkFrame, {
@@ -486,7 +634,7 @@ describe("Ink TUI renderer", () => {
           },
           memory: {
             ...baseModel.memory,
-            counts: { proposed: 0, approved: 1, rejected: 0 }
+            counts: { proposed: 0, approved: 1, rejected: 0, retired: 0 }
           }
         },
         state: createInitialInkState(),
@@ -537,7 +685,7 @@ describe("Ink TUI renderer", () => {
           },
           memory: {
             ...baseModel.memory,
-            counts: { proposed: 0, approved: 1, rejected: 0 }
+            counts: { proposed: 0, approved: 1, rejected: 0, retired: 0 }
           }
         },
         state: createInitialInkState(),
@@ -779,7 +927,7 @@ describe("Ink TUI renderer", () => {
       },
       memory: {
         ...baseModel.memory,
-        counts: { proposed: 0, approved: 1, rejected: 0 }
+        counts: { proposed: 0, approved: 1, rejected: 0, retired: 0 }
       },
       activeRuns: [
         {

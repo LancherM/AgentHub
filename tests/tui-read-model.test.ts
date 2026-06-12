@@ -45,6 +45,7 @@ describe("TUI current-context read model", () => {
       rejected: 0,
       retired: 0
     });
+    expect(model.memory.rows).toEqual([]);
     expect(model.warnings).toEqual([
       "thread missing_thread not found",
       "project missing_project not found"
@@ -179,6 +180,28 @@ describe("TUI current-context read model", () => {
       rejected: 1,
       retired: 0
     });
+    expect(model.memory.rows.map((row) => row.id)).toEqual([
+      "memory_2",
+      "memory_1",
+      "memory_3",
+      "memory_4"
+    ]);
+    expect(model.memory.rows[0]).toMatchObject({
+      id: "memory_2",
+      category: "workflow_rule",
+      status: "proposed",
+      confidence: "high",
+      sourceRunId: "run_done",
+      sourceTaskId: "task_1",
+      summary: "Keep memory approval explicit.",
+      recommendedAction: "review explicitly",
+      evidenceExcerptLines: ["pnpm test passed", "risk low"],
+      writebackTarget: "memory/approved.md",
+      sourceCommands: expect.arrayContaining([
+        "agent-hub runs show run_done",
+        "agent-hub task history --task-id task_1"
+      ])
+    });
     expect(model.selectionDetails.runs.find((detail) => detail.id === "run_done")).toMatchObject({
       kind: "run",
       title: "Review retained-run cleanup",
@@ -203,7 +226,39 @@ describe("TUI current-context read model", () => {
     expect(model.selectionDetails.memory).toMatchObject({
       kind: "memory",
       title: "Memory Governance",
-      commands: expect.arrayContaining(["agent-hub memory list --project-id project_1"])
+      commands: expect.arrayContaining([
+        "agent-hub memory list --project-id project_1",
+        "agent-hub memory approve --memory-id <memory-id>",
+        "agent-hub memory reject --memory-id <memory-id>"
+      ]),
+      sections: expect.arrayContaining([
+        expect.objectContaining({ id: "proposal-rows" }),
+        expect.objectContaining({ id: "selected-proposal" }),
+        expect.objectContaining({ id: "writeback" })
+      ])
+    });
+    expect(model.selectionDetails.memoryRows.find((detail) => detail.id === "memory_2")).toMatchObject({
+      kind: "memory",
+      title: "Keep memory approval explicit.",
+      subtitle: "proposed workflow_rule",
+      commands: expect.arrayContaining([
+        "agent-hub memory approve --memory-id memory_2",
+        "agent-hub memory reject --memory-id memory_2",
+        "agent-hub runs show run_done"
+      ]),
+      sections: expect.arrayContaining([
+        expect.objectContaining({ id: "memory" }),
+        expect.objectContaining({ id: "why" }),
+        expect.objectContaining({ id: "evidence", lines: ["pnpm test passed", "risk low"] }),
+        expect.objectContaining({ id: "writeback", lines: ["memory/approved.md"] }),
+        expect.objectContaining({ id: "related" }),
+        expect.objectContaining({ id: "source-commands" })
+      ]),
+      actions: expect.arrayContaining([
+        expect.objectContaining({ key: "a", disabledReason: expect.any(String) }),
+        expect.objectContaining({ key: "r", disabledReason: expect.any(String) }),
+        expect.objectContaining({ key: "e", disabledReason: expect.any(String) })
+      ])
     });
     expect(model.skills.selected.map((skill) => `${skill.scope}:${skill.id}`)).toEqual([
       "project:reviewer-checklist",
@@ -1097,9 +1152,18 @@ async function seedCurrentContext(runtime: ReturnType<typeof createCliRuntime>) 
     projectId: "project_1",
     category: "workflow_rule",
     status: "proposed",
-    content: "Keep memory approval explicit.",
+    content: "Keep memory approval explicit.\nApprove only after review.",
+    metadata: {
+      sourceRunId: "run_done",
+      sourceTaskId: "task_1",
+      sourceKind: "verification",
+      generatedBy: "task_runner",
+      confidence: "high",
+      evidence: ["pnpm test passed", "risk low"],
+      writebackPath: "memory/approved.md"
+    },
     createdAt: now,
-    updatedAt: now
+    updatedAt: "2026-05-29T10:04:00.000Z"
   });
   await runtime.memoryItemRepository.create({
     id: "memory_3",

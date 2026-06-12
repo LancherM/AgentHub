@@ -31,6 +31,7 @@ export interface TuiInkState {
   selectedTaskId?: string;
   selectedWorkBlockIndex: number;
   selectedWorkBlockId?: string;
+  selectedMemoryItemIndex: number;
   selectedMemoryItemId?: string;
   selectedTeamRoleIndex: number;
   selectedTeamRoleId?: string;
@@ -118,6 +119,7 @@ export function createInitialInkState(composer = ""): TuiInkState {
     selectedRoleCallIndex: 0,
     selectedTaskIndex: 0,
     selectedWorkBlockIndex: 0,
+    selectedMemoryItemIndex: 0,
     selectedTeamRoleIndex: 0,
     selectedActiveRunIndex: 0,
     hideCompletedRoleCalls: false,
@@ -156,6 +158,7 @@ export function reduceInkState(
   const next: TuiInkState = {
     ...state,
     selectedWorkBlockIndex: state.selectedWorkBlockIndex ?? 0,
+    selectedMemoryItemIndex: state.selectedMemoryItemIndex ?? 0,
     selectedTeamRoleIndex: state.selectedTeamRoleIndex ?? 0,
     detailVisible: state.detailVisible ?? false,
     collapsedRoleCallIds: [...(state.collapsedRoleCallIds ?? [])],
@@ -412,6 +415,17 @@ export function selectedTeamRoleIndex(
   );
 }
 
+export function selectedMemoryItemIndex(
+  model: TuiCurrentContextModel,
+  state: TuiInkState
+): number {
+  return selectedIndexById(
+    model.memory.rows,
+    state.selectedMemoryItemId,
+    state.selectedMemoryItemIndex
+  );
+}
+
 export function selectedWorkBlockIndex(
   model: TuiCurrentContextModel,
   state: TuiInkState
@@ -573,7 +587,17 @@ function moveSelection(
     state.selectedTeamRoleId = model.team.roles[nextIndex]?.id;
     return;
   }
-  if (state.focus === "memory" || state.focus === "help") {
+  if (state.focus === "memory") {
+    const nextIndex = nextSelectionIndex(
+      selectedMemoryItemIndex(model, state),
+      delta,
+      model.memory.rows.length
+    );
+    state.selectedMemoryItemIndex = nextIndex;
+    state.selectedMemoryItemId = model.memory.rows[nextIndex]?.id;
+    return;
+  }
+  if (state.focus === "help") {
     return;
   }
   const nodes = visibleRoleCalls(model, state);

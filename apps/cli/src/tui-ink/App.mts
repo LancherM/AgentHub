@@ -13,6 +13,7 @@ import type {
   TuiCurrentContextModel,
   TuiDetailSection,
   TuiInlineDiffSummary,
+  TuiMemoryRow,
   TuiRunSummary,
   TuiSelectionDetail,
   TuiWorkBlock
@@ -36,6 +37,7 @@ import {
   unavailableRoleExecutorCommands,
   visibleConversationSuggestions,
   visibleRoleCalls,
+  selectedMemoryItemIndex,
   selectedRoleCallIndex,
   selectedTeamRoleIndex,
   type TuiInkFocus,
@@ -1473,7 +1475,7 @@ function selectedDetail(
     return role ? details.teamRoles.find((detail) => detail.id === role.id) : undefined;
   }
   if (state.focus === "memory") {
-    return details.memory;
+    return selectedMemoryDetail(model, state);
   }
   if (state.focus === "work") {
     return selectedWorkBlockDetail(model, state);
@@ -1488,6 +1490,18 @@ function selectedWorkBlockDetail(
   const details = model.selectionDetails.workBlocks;
   const index = selectedDetailIndexById(details, state.selectedWorkBlockId, state.selectedWorkBlockIndex);
   return details[index] ?? details.at(-1);
+}
+
+function selectedMemoryDetail(
+  model: TuiCurrentContextModel,
+  state: TuiInkState
+): TuiSelectionDetail | undefined {
+  const details = model.selectionDetails.memoryRows;
+  if (details.length === 0) {
+    return model.selectionDetails.memory;
+  }
+  const index = selectedDetailIndexById(details, state.selectedMemoryItemId, state.selectedMemoryItemIndex);
+  return details[index] ?? details[0];
 }
 
 function selectedDetailIndexById(
@@ -1538,7 +1552,7 @@ function MainView(props: TuiInkRenderProps): React.ReactElement {
     return h(TasksPane, { model, state, terminal });
   }
   if (state.focus === "memory") {
-    return h(MemoryPane, { model });
+    return h(MemoryPane, { model, state });
   }
   return h(WorkView, {
     model,
@@ -2593,7 +2607,13 @@ function teamExecutorLabel(role: TuiCurrentContextModel["team"]["roles"][number]
   return adapter ? `runs with ${adapter}` : "agent ready";
 }
 
-function MemoryPane({ model }: { model: TuiCurrentContextModel }): React.ReactElement {
+function MemoryPane({
+  model,
+  state
+}: {
+  model: TuiCurrentContextModel;
+  state: TuiInkState;
+}): React.ReactElement {
   const selectedSkills =
     model.skills.selected.length === 0
       ? "none"
@@ -2602,11 +2622,21 @@ function MemoryPane({ model }: { model: TuiCurrentContextModel }): React.ReactEl
     model.skills.available.length === 0
       ? "none"
       : model.skills.available.map((skill) => `${skill.scope}:${skill.id}`).join(", ");
+  const selectedIndex = selectedMemoryItemIndex(model, state);
+  const rows = model.memory.rows.slice(0, 8);
   return h(
     Pane,
-    { title: "Memory + Skills" },
-    line(`proposed ${model.memory.counts.proposed} approved ${model.memory.counts.approved} rejected ${model.memory.counts.rejected}`),
-    line(`approved memory ${model.memory.approvedSource}`),
+    { title: "Memory Governance" },
+    line(`proposed ${model.memory.counts.proposed} approved ${model.memory.counts.approved} rejected ${model.memory.counts.rejected} retired ${model.memory.counts.retired}`),
+    line("status   category        conf   source        updated              action"),
+    ...(rows.length > 0
+      ? rows.map((row, index) => memoryRowLine(row, index === selectedIndex))
+      : [line("no memory proposals in current context", { dimColor: true })]),
+    ...(model.memory.rows.length > rows.length
+      ? [line(`${model.memory.rows.length - rows.length} more memory rows hidden`, { dimColor: true })]
+      : []),
+    line(""),
+    line(`approved source ${model.memory.approvedSource}`),
     line(`reminder ${model.memory.approvalReminder}`),
     line(`command ${model.memory.command ?? "register a project before listing memory"}`),
     ...model.memory.approvalCommands.map((command) => line(command, { dimColor: true })),
@@ -2616,6 +2646,40 @@ function MemoryPane({ model }: { model: TuiCurrentContextModel }): React.ReactEl
     line(`skill source ${model.skills.runtimeSource}`),
     line(`context ${contextModeLabel(model.skills.contextMode)}`)
   );
+}
+
+function memoryRowLine(row: TuiMemoryRow, selected: boolean): React.ReactElement {
+  const marker = selected ? "▌" : " ";
+  const confidence = row.confidence ?? "-";
+  const source = row.sourceRunId ? compactId(row.sourceRunId) : row.sourceTaskId ? compactId(row.sourceTaskId) : "-";
+  const updated = row.updatedAt.replace("T", " ").replace(/\.\d{3}Z$/, "Z");
+  const text = [
+    marker,
+    row.status.padEnd(8),
+    row.category.padEnd(15),
+    confidence.padEnd(6),
+    source.padEnd(13),
+    updated.padEnd(20),
+    row.recommendedAction,
+    truncateText(row.summary, 48)
+  ].join(" ");
+  return line(text, {
+    color: memoryStatusColor(row.status),
+    inverse: selected
+  });
+}
+
+function memoryStatusColor(status: TuiMemoryRow["status"]): string | undefined {
+  if (status === "approved") {
+    return "green";
+  }
+  if (status === "proposed") {
+    return "yellow";
+  }
+  if (status === "rejected") {
+    return "red";
+  }
+  return undefined;
 }
 
 function CommandPalette({
@@ -3109,9 +3173,9 @@ function contextualShortcutHint(state: TuiInkState, columns: number): string {
   }
   if (state.focus === "memory") {
     if (columns < 56) {
-      return "keys: s skills | : cmd | Esc";
+      return "keys: Up/Down | Enter | : cmd | Esc";
     }
-    return "keys: s skills | p command | : palette | Esc back";
+    return "keys: Up/Down select | Enter detail | p command | : palette | Esc back";
   }
   if (state.focus === "team") {
     if (columns < 56) {

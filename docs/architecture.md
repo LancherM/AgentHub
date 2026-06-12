@@ -598,6 +598,12 @@ as presentation DTOs (`TuiSelectionDetail`, `TuiDetailSection`, and
 Work blocks, runs, RoleCalls, tasks, team roles, and memory governance; Ink only
 selects and renders those payloads from local state. `Enter` or empty-composer
 `o` opens detail, while `Esc` closes the detail overlay before returning focus.
+Memory governance uses the same boundary: core projects `MemoryItem` records
+into bounded `TuiMemoryRow` DTOs with lifecycle status, category, confidence,
+source run/task ids, evidence excerpts from stored metadata, writeback target
+when present, and safe source/approval commands. Ink renders the table and
+selected-row detail only; approve/reject/edit controls stay disabled unless a
+future audited IPC or CLI callback is explicitly wired.
 V3 Work blocks are also presentation DTOs in the same read model. Core derives
 `TuiWorkBlock` rows from the existing `conversation` and `activeRuns`
 projections, including stable ids, source kind, speaker, timestamp, status,

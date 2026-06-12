@@ -1,6 +1,6 @@
 # TUI V3 Roadmap
 
-Status: implementation in progress; V3-1 through V3-4 implemented
+Status: implementation in progress; V3-1 through V3-5 implemented
 Last updated: 2026-06-12
 
 This roadmap defines the next major terminal UI refactor for Agent Hub. It is
@@ -80,7 +80,8 @@ The current code already supports these foundations:
   warnings.
 - Work conversation flow plus bounded active-run boxes.
 - Display-width-aware wrapping for mixed CJK/code/path output.
-- Team and Memory focus modes as simple read-model summary panes.
+- Team focus mode as a simple read-model summary pane, and Memory focus mode
+  as a proposal governance table with selected-row detail.
 - Command palette, search, timeline, composer history, mention completion, and
   non-blocking interactive prompt submission.
 - Read-model polling over persisted local evidence; no renderer direct access
@@ -106,9 +107,11 @@ The reference UI requires functionality that is only partially supported:
   inferred active commands, and pending-artifact placeholders. It still does
   not expose typed tool-call lifecycle rows or queued/running command status
   unless those become persisted evidence.
-- Memory is currently a summary plus commands. It does not expose proposal
-  rows, selected proposal detail, evidence excerpts, related skills, writeback
-  targets, or editable action state in the TUI model.
+- Memory now exposes bounded proposal rows with category, lifecycle status,
+  confidence, source run/task, summary, update time, recommended action,
+  evidence excerpts, writeback target when stored, source commands, and
+  selected-row details. Related skills/memory joins and editable action state
+  remain unavailable.
 - Team is currently a role summary list. It does not expose a delegation matrix,
   selected role profile, allowed tools, verification commands, limits, recent
   failures, or next action as first-class TUI fields.
@@ -321,6 +324,11 @@ Acceptance:
 
 Goal: replace the Memory summary pane with proposal governance.
 
+Status: implemented. The read model now emits bounded `TuiMemoryRow` records
+and selected-row detail payloads; the Ink Memory pane renders the rows with
+status coloring, source/update/action columns, and safe CLI commands. Direct
+approve/reject/edit callbacks remain disabled until audited local actions exist.
+
 Scope:
 
 - Extend the read model with memory proposal rows: id, category, status,
@@ -343,7 +351,7 @@ Unsupported data to call out:
 
 Acceptance:
 
-- Proposed, approved, rejected, and stale rows render distinctly.
+- Proposed, approved, rejected, and retired/stale audit rows render distinctly.
 - The TUI never implies memory has been approved unless the local lifecycle
   record says so.
 

@@ -15,6 +15,7 @@ import type {
   ConversationMessage,
   ConversationThread,
   JsonObject,
+  MemoryItem,
   MemoryStatus,
   Project,
   RiskLevel,
@@ -116,6 +117,7 @@ export interface TuiSelectionDetails {
   roleCalls: TuiSelectionDetail[];
   tasks: TuiSelectionDetail[];
   teamRoles: TuiSelectionDetail[];
+  memoryRows: TuiSelectionDetail[];
   memory: TuiSelectionDetail;
 }
 
@@ -151,6 +153,7 @@ export function emptyTuiSelectionDetails(): TuiSelectionDetails {
     roleCalls: [],
     tasks: [],
     teamRoles: [],
+    memoryRows: [],
     memory: {
       id: "memory:none",
       kind: "memory",
@@ -445,10 +448,27 @@ export interface TuiTeamRoleSummary {
 export interface TuiMemorySummary {
   projectId?: string;
   counts: Record<MemoryStatus, number>;
+  rows: TuiMemoryRow[];
   command?: string;
   approvalCommands: string[];
   approvedSource: string;
   approvalReminder: string;
+}
+
+export interface TuiMemoryRow {
+  id: string;
+  projectId: string;
+  category: MemoryItem["category"];
+  status: MemoryStatus;
+  confidence?: string;
+  sourceRunId?: string;
+  sourceTaskId?: string;
+  summary: string;
+  updatedAt: string;
+  recommendedAction: string;
+  evidenceExcerptLines: string[];
+  writebackTarget?: string;
+  sourceCommands: string[];
 }
 
 export interface TuiSkillsSummary {
@@ -1966,7 +1986,7 @@ function summarizeTasks(
 
 function summarizeMemory(
   projectId: string | undefined,
-  items: { status: MemoryStatus }[]
+  items: MemoryItem[]
 ): TuiMemorySummary {
   const counts: Record<MemoryStatus, number> = {
     proposed: 0,
@@ -1980,17 +2000,105 @@ function summarizeMemory(
   return {
     projectId,
     counts,
+    rows: summarizeMemoryRows(items, 12),
     command: projectId ? `agent-hub memory list --project-id ${projectId}` : undefined,
     approvalCommands: projectId
       ? [
           `agent-hub memory list --project-id ${projectId}`,
-          "agent-hub memory approve <memory-id>",
-          "agent-hub memory reject <memory-id>"
+          "agent-hub memory approve --memory-id <memory-id>",
+          "agent-hub memory reject --memory-id <memory-id>"
         ]
       : [],
     approvedSource: "Agent Hub context store; approved memory is injected at runtime.",
     approvalReminder: "Memory approval remains an explicit CLI action."
   };
+}
+
+function summarizeMemoryRows(items: MemoryItem[], limit: number): TuiMemoryRow[] {
+  return [...items]
+    .sort(compareMemoryItems)
+    .slice(0, limit)
+    .map(memoryRow);
+}
+
+function compareMemoryItems(left: MemoryItem, right: MemoryItem): number {
+  const statusDelta = memoryStatusRank(left.status) - memoryStatusRank(right.status);
+  if (statusDelta !== 0) {
+    return statusDelta;
+  }
+  return right.updatedAt.localeCompare(left.updatedAt);
+}
+
+function memoryStatusRank(status: MemoryStatus): number {
+  const order: MemoryStatus[] = ["proposed", "approved", "rejected", "retired"];
+  const index = order.indexOf(status);
+  return index === -1 ? order.length : index;
+}
+
+function memoryRow(item: MemoryItem): TuiMemoryRow {
+  const sourceRunId = metadataString(item.metadata, "sourceRunId");
+  const sourceTaskId = metadataString(item.metadata, "sourceTaskId") ?? item.taskId;
+  const sourceCommands = [
+    sourceRunId ? `agent-hub runs show ${sourceRunId}` : undefined,
+    sourceTaskId ? `agent-hub task history --task-id ${sourceTaskId}` : undefined
+  ].filter((value): value is string => Boolean(value));
+  return {
+    id: item.id,
+    projectId: item.projectId,
+    category: item.category,
+    status: item.status,
+    confidence: metadataString(item.metadata, "confidence"),
+    sourceRunId,
+    sourceTaskId,
+    summary: truncate(firstMeaningfulLine(item.content), defaultLimits.contentChars),
+    updatedAt: item.updatedAt,
+    recommendedAction: recommendedMemoryAction(item.status),
+    evidenceExcerptLines: memoryEvidenceExcerptLines(item.metadata),
+    writebackTarget:
+      metadataString(item.metadata, "writebackPath") ??
+      stringValue(objectValue(item.metadata, "autoApproval"), "writebackPath"),
+    sourceCommands
+  };
+}
+
+function firstMeaningfulLine(value: string): string {
+  return value
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .find((line) => line.length > 0) ?? "(empty memory)";
+}
+
+function recommendedMemoryAction(status: MemoryStatus): string {
+  if (status === "proposed") {
+    return "review explicitly";
+  }
+  if (status === "approved") {
+    return "injected at runtime";
+  }
+  if (status === "rejected") {
+    return "ignored";
+  }
+  return "retained for audit";
+}
+
+function memoryEvidenceExcerptLines(metadata: JsonObject | undefined): string[] {
+  const evidence = arrayValue(metadata, "evidence")
+    ?? arrayValue(metadata, "evidenceExcerpts")
+    ?? arrayValue(metadata, "evidenceLines");
+  const lines = evidence
+    ? evidence
+        .filter((value): value is string => typeof value === "string")
+        .map((line) => truncate(line.trim(), defaultLimits.contentChars))
+        .filter(Boolean)
+    : [];
+  const singleEvidence =
+    metadataString(metadata, "evidence") ??
+    metadataString(metadata, "why") ??
+    metadataString(metadata, "reason");
+  if (singleEvidence) {
+    lines.unshift(truncate(singleEvidence, defaultLimits.contentChars));
+  }
+  return dedupeStrings(lines).slice(0, 6);
 }
 
 function summarizeSkills(input: {
@@ -2040,6 +2148,7 @@ function buildSelectionDetails(input: {
     roleCalls: input.roleCalls.map((call) => roleCallSelectionDetail(call)),
     tasks: input.tasks.map((task) => taskSelectionDetail(input.team.projectId, task)),
     teamRoles: input.team.roles.map((role) => teamRoleSelectionDetail(input.team, role)),
+    memoryRows: input.memory.rows.map((row) => memoryRowSelectionDetail(row)),
     memory: memorySelectionDetail(input.memory, input.skills)
   };
 }
@@ -2406,8 +2515,35 @@ function memorySelectionDetail(
           `runtime ${skills.contextMode}`
         ]
       },
-      unavailableDetailSection("evidence", "Evidence Excerpts", "proposal evidence rows"),
-      unavailableDetailSection("writeback", "Writeback Target", "context-store target path")
+      {
+        id: "proposal-rows",
+        title: "Proposal Rows",
+        lines: memory.rows.length > 0
+          ? memory.rows.map((row) => memoryRowLine(row))
+          : ["not available in current read model"]
+      },
+      {
+        id: "selected-proposal",
+        title: "Selected Proposal",
+        lines: memory.rows[0] ? memoryRowDetailLines(memory.rows[0]) : ["not available in current read model"]
+      },
+      {
+        id: "evidence",
+        title: "Evidence Excerpts",
+        lines: memory.rows[0]?.evidenceExcerptLines.length
+          ? memory.rows[0].evidenceExcerptLines
+          : ["proposal evidence rows not available in current read model"],
+        collapsedByDefault: memory.rows[0]?.evidenceExcerptLines.length === 0
+      },
+      {
+        id: "writeback",
+        title: "Writeback Target",
+        lines: memory.rows[0]?.writebackTarget
+          ? [memory.rows[0].writebackTarget]
+          : ["context-store target path not available in current read model"],
+        collapsedByDefault: !memory.rows[0]?.writebackTarget
+      },
+      unavailableDetailSection("related", "Related Skills And Memory", "related skills/memory joins")
     ],
     commands,
     actions: [
@@ -2426,6 +2562,105 @@ function memorySelectionDetail(
       }
     ]
   };
+}
+
+function memoryRowSelectionDetail(row: TuiMemoryRow): TuiSelectionDetail {
+  const commands = [
+    `agent-hub memory list --project-id ${row.projectId}`,
+    `agent-hub memory approve --memory-id ${row.id}`,
+    `agent-hub memory reject --memory-id ${row.id}`,
+    ...row.sourceCommands
+  ];
+  return {
+    id: row.id,
+    kind: "memory",
+    title: row.summary,
+    subtitle: `${row.status} ${row.category}`,
+    sections: [
+      {
+        id: "memory",
+        title: "Memory Text",
+        lines: [
+          row.summary,
+          `category ${row.category}`,
+          `status ${row.status}`,
+          row.confidence ? `confidence ${row.confidence}` : undefined,
+          `updated ${row.updatedAt}`
+        ].filter((value): value is string => Boolean(value))
+      },
+      {
+        id: "why",
+        title: "Why It Matters",
+        lines: [`recommended action ${row.recommendedAction}`]
+      },
+      {
+        id: "evidence",
+        title: "Evidence Excerpts",
+        lines: row.evidenceExcerptLines.length > 0
+          ? row.evidenceExcerptLines
+          : ["proposal evidence rows not available in current read model"],
+        collapsedByDefault: row.evidenceExcerptLines.length === 0
+      },
+      {
+        id: "writeback",
+        title: "Writeback Target",
+        lines: row.writebackTarget
+          ? [row.writebackTarget]
+          : ["context-store target path not available in current read model"],
+        collapsedByDefault: !row.writebackTarget
+      },
+      unavailableDetailSection("related", "Related Skills And Memory", "related skills/memory joins"),
+      {
+        id: "source-commands",
+        title: "Source Commands",
+        lines: row.sourceCommands.length > 0 ? row.sourceCommands : ["not available in current read model"],
+        collapsedByDefault: row.sourceCommands.length === 0
+      }
+    ],
+    commands,
+    actions: [
+      ...detailActions(commands),
+      {
+        key: "a",
+        label: "Approve",
+        kind: "callback",
+        disabledReason: "not available in TUI; use the listed CLI command"
+      },
+      {
+        key: "r",
+        label: "Reject",
+        kind: "callback",
+        disabledReason: "not available in TUI; use the listed CLI command"
+      },
+      {
+        key: "e",
+        label: "Edit",
+        kind: "callback",
+        disabledReason: "not available in TUI; editing requires a separate audited callback"
+      }
+    ]
+  };
+}
+
+function memoryRowLine(row: TuiMemoryRow): string {
+  const confidence = row.confidence ? ` conf ${row.confidence}` : "";
+  const source = row.sourceRunId ? ` run ${row.sourceRunId}` : row.sourceTaskId ? ` task ${row.sourceTaskId}` : "";
+  return `${row.status} ${row.category}${confidence}${source} ${row.summary}`;
+}
+
+function memoryRowDetailLines(row: TuiMemoryRow): string[] {
+  return [
+    `id ${row.id}`,
+    `category ${row.category}`,
+    `status ${row.status}`,
+    row.confidence ? `confidence ${row.confidence}` : undefined,
+    row.sourceRunId ? `source run ${row.sourceRunId}` : undefined,
+    row.sourceTaskId ? `source task ${row.sourceTaskId}` : undefined,
+    `updated ${row.updatedAt}`,
+    `recommended action ${row.recommendedAction}`,
+    `memory ${row.summary}`,
+    ...row.sourceCommands.map((command) => `command ${command}`)
+  ].filter((value): value is string => Boolean(value));
 }
 
 function conversationDetailTitle(entry: TuiConversationEntry): string {

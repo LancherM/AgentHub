@@ -711,6 +711,7 @@ function buildTuiFailureModel(input: TuiFailureModelInput): TuiCurrentContextMod
     memory: {
       projectId: input.modelInput.projectId,
       counts: { proposed: 0, approved: 0, rejected: 0, retired: 0 },
+      rows: [],
       command: input.modelInput.projectId
         ? `agent-hub memory list --project-id ${input.modelInput.projectId}`
         : undefined,

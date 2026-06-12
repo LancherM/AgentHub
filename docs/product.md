@@ -54,9 +54,13 @@ TUI review shortcuts. These decisions create local `review_decision` artifacts
 only; they do not apply files, alter run status, merge, push, approve memory,
 clean worktrees, or delete branches.
 The Memory focus mode is a governance indicator, not a browser: it shows
-proposed/approved/rejected counts, the approved-memory source, explicit
-approval/rejection command hints, selected skills, available skill identifiers,
-and the current context delivery mode.
+proposed/approved/rejected/retired counts, a bounded proposal table with
+category, status, confidence, source run/task, update time, and recommended
+action, selected-row evidence/writeback/source-command detail, the
+approved-memory source, explicit approval/rejection command hints, selected
+skills, available skill identifiers, and the current context delivery mode.
+Approve/reject/edit actions are shown as disabled governed controls until
+audited local callbacks exist; the TUI renders equivalent CLI commands instead.
 The Team read-model pane is available from the default tab cycle, the `Team`
 tab label, the uppercase `E` focus shortcut, typing `/team` in the composer,
 or the command palette. It shows the current project's resolved preset,
