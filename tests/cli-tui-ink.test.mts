@@ -216,6 +216,47 @@ describe("Ink TUI renderer", () => {
     expect(footerLine?.length ?? 0).toBeLessThanOrEqual(48);
   });
 
+  it("renders the V3 shell frame coherently at wide, normal, and narrow sizes", () => {
+    const cases = [
+      { columns: 120, rows: 36, nav: true, detail: true },
+      { columns: 80, rows: 24, nav: true, detail: false },
+      { columns: 48, rows: 20, nav: false, detail: false }
+    ];
+
+    for (const item of cases) {
+      const output = renderToString(
+        React.createElement(TuiInkFrame, {
+          model: baseModel,
+          state: createInitialInkState(),
+          terminal: { columns: item.columns, rows: item.rows }
+        }),
+        { columns: item.columns }
+      );
+      const lines = output.split("\n");
+
+      expect(output).toContain("TUI Project · @codex");
+      expect(output).toContain("Check the TUI shell.");
+      expect(output).toContain("> @codex prompt");
+      expect(output).toContain("keys:");
+      expect(output).toContain(item.columns < 56 ? "W R V G T M Team ?" : item.columns < 84 ? "W Work" : "[W]ork");
+      expect(lines.every((value) => value.length <= item.columns)).toBe(true);
+
+      if (item.nav) {
+        expect(output).toContain("> Work 2");
+        expect(output).toContain("  Runs 1");
+      } else {
+        expect(output).not.toContain("> Work 2");
+      }
+
+      if (item.detail) {
+        expect(output).toContain("Block Detail");
+        expect(output).toContain("No detail selected");
+      } else {
+        expect(output).not.toContain("Block Detail");
+      }
+    }
+  });
+
   it("renders attention items in priority order and narrows to the highest item", () => {
     const wideOutput = renderToString(
       React.createElement(TuiInkFrame, {

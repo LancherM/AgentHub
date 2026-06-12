@@ -169,14 +169,16 @@ The current optimization plan is tracked in
 focuses on footer command hierarchy, narrow-terminal layout, attention/next
 action summaries, warning hygiene, stale active-run signals, and copy/help
 consistency.
-The next proposed TUI refactor is tracked in `docs/tui-v3-roadmap.md`. It keeps
-the current Ink/read-model boundary but moves toward a denser three-region
-terminal workbench: persistent side navigation, a main workflow surface, and a
-selected-object detail panel for Work, Memory, and Team. The plan explicitly
-marks bottom-layer gaps such as generic detail payloads, structured tool-call
-events, memory proposal evidence rows, delegation matrices, role profiles, and
-audited memory action callbacks so later implementation phases do not fake
-unsupported evidence.
+The next TUI refactor is tracked in `docs/tui-v3-roadmap.md`. Its first runtime
+slice keeps the current Ink/read-model boundary while moving the TUI into a
+shared shell frame: header, persistent side navigation at normal and wide
+widths, main workflow surface, placeholder detail rail at wide widths,
+composer, tab map, and bottom shortcut/status chrome. The detail rail is
+intentionally empty until the V3 selection/detail read-model contract lands.
+The plan explicitly marks bottom-layer gaps such as generic detail payloads,
+structured tool-call events, memory proposal evidence rows, delegation
+matrices, role profiles, and audited memory action callbacks so later
+implementation phases do not fake unsupported evidence.
 The TUI composer is prompt-first while editing: printable lowercase keys append
 to the prompt from any focus, uppercase tab shortcuts switch
 Work/Runs/View/Graph/Tasks/Memory/Team, `/team` opens the Team roles view

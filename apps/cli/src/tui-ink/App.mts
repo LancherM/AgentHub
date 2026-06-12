@@ -808,27 +808,55 @@ export function TuiInkFrame({
   badgeFlash: providedBadgeFlash = false,
   showSplash = false
 }: TuiInkFrameProps): React.ReactElement {
-  const width = terminal.columns;
   const effectiveFeedbackByRunId = {
     ...providedFeedbackByRunId
   };
   const attentionItems = attentionItemsForModel(model);
+  return h(ShellFrame, {
+    model,
+    state,
+    terminal,
+    animationTick: providedAnimationTick ?? 0,
+    feedbackByRunId: effectiveFeedbackByRunId,
+    badgeFlash: providedBadgeFlash,
+    showSplash,
+    attentionItems
+  });
+}
+
+interface ShellFrameProps extends TuiInkRenderProps {
+  badgeFlash: boolean;
+  showSplash: boolean;
+  attentionItems: AttentionItem[];
+}
+
+function ShellFrame({
+  model,
+  state,
+  terminal,
+  animationTick,
+  feedbackByRunId,
+  badgeFlash,
+  showSplash,
+  attentionItems
+}: ShellFrameProps): React.ReactElement {
+  const width = terminal.columns;
   return h(
     Box,
     { flexDirection: "column", width },
     ...(showSplash ? [h(SplashPane, { key: "splash" })] : []),
-    h(HeaderBar, { model, state, terminal, badgeFlash: providedBadgeFlash }),
+    h(HeaderBar, { model, state, terminal, badgeFlash }),
     ...model.warnings.map((warning) => line(`! ${warning}`, { color: "yellow" })),
     ...(state.statusMessage ? [line(`Status: ${state.statusMessage}`, { color: "green" })] : []),
     ...(attentionItems.length > 0
       ? [h(AttentionStrip, { items: attentionItems, terminal })]
       : []),
-    h(MainView, {
+    h(WorkbenchLayout, {
       model,
       state,
       terminal,
-      animationTick: providedAnimationTick ?? 0,
-      feedbackByRunId: effectiveFeedbackByRunId
+      animationTick,
+      feedbackByRunId
     }),
     h(Composer, { model, state }),
     h(FocusTabs, { state, terminal }),
@@ -1170,6 +1198,234 @@ interface TuiInkRenderProps {
   terminal: TuiInkTerminalSize;
   animationTick: number;
   feedbackByRunId: Partial<Record<string, RunFeedbackKind>>;
+}
+
+interface WorkbenchLayoutSpec {
+  navWidth: number;
+  mainWidth: number;
+  detailWidth: number;
+}
+
+function WorkbenchLayout(props: TuiInkRenderProps): React.ReactElement {
+  const { model, state, terminal } = props;
+  const layout = workbenchLayoutSpec(terminal);
+  if (layout.navWidth === 0) {
+    return h(MainView, props);
+  }
+
+  const mainTerminal = {
+    ...terminal,
+    columns: layout.mainWidth
+  };
+  return h(
+    Box,
+    { flexDirection: "row", width: terminal.columns },
+    h(SideNav, { model, state, width: layout.navWidth }),
+    h(
+      Box,
+      { flexDirection: "column", width: layout.mainWidth, flexShrink: 1 },
+      h(MainView, { ...props, terminal: mainTerminal })
+    ),
+    ...(layout.detailWidth > 0
+      ? [h(DetailPane, { model, state, width: layout.detailWidth })]
+      : [])
+  );
+}
+
+function workbenchLayoutSpec(terminal: TuiInkTerminalSize): WorkbenchLayoutSpec {
+  if (terminal.columns < 80) {
+    return {
+      navWidth: 0,
+      mainWidth: terminal.columns,
+      detailWidth: 0
+    };
+  }
+
+  const detailWidth = terminal.columns >= 112
+    ? Math.min(36, Math.max(28, Math.floor(terminal.columns * 0.28)))
+    : 0;
+  const navWidth = terminal.columns >= 96 ? 14 : 11;
+  const mainWidth = Math.max(24, terminal.columns - navWidth - detailWidth);
+  return {
+    navWidth,
+    mainWidth,
+    detailWidth
+  };
+}
+
+function SideNav({
+  model,
+  state,
+  width
+}: {
+  model: TuiCurrentContextModel;
+  state: TuiInkState;
+  width: number;
+}): React.ReactElement {
+  return h(
+    Box,
+    { flexDirection: "column", width, flexShrink: 0 },
+    ...sideNavItems(model).map((item) =>
+      h(SideNavItemLine, {
+        key: item.focus,
+        active: item.focus === state.focus,
+        item,
+        width
+      })
+    )
+  );
+}
+
+interface SideNavItem {
+  focus: TuiInkFocus;
+  label: string;
+  count?: string;
+}
+
+function SideNavItemLine({
+  active,
+  item,
+  width
+}: {
+  active: boolean;
+  item: SideNavItem;
+  width: number;
+}): React.ReactElement {
+  const marker = active ? ">" : " ";
+  const count = item.count ? ` ${item.count}` : "";
+  const text = truncateText(`${marker} ${item.label}${count}`, Math.max(1, width - 1));
+  return h(
+    Text,
+    { wrap: "truncate", color: active ? "cyan" : undefined, inverse: active },
+    text.padEnd(Math.max(1, width - 1)),
+    " "
+  );
+}
+
+function sideNavItems(model: TuiCurrentContextModel): SideNavItem[] {
+  const pendingReviewCount = model.runs.filter((run) => run.reviewDecision.status === "pending").length;
+  return [
+    {
+      focus: "work",
+      label: "Work",
+      count: String(model.conversation.length + model.activeRuns.length)
+    },
+    {
+      focus: "graph",
+      label: "Graph",
+      count: String(model.roleCalls.counts.visible ?? model.roleCalls.counts.total)
+    },
+    {
+      focus: "runs",
+      label: "Runs",
+      count: String(model.runs.length)
+    },
+    {
+      focus: "review",
+      label: "Review",
+      count: String(pendingReviewCount)
+    },
+    {
+      focus: "tasks",
+      label: "Tasks",
+      count: String(model.tasks.length)
+    },
+    {
+      focus: "memory",
+      label: "Memory",
+      count: String(model.memory.counts.proposed ?? 0)
+    },
+    {
+      focus: "team",
+      label: "Team",
+      count: String(model.team.counts.enabled ?? model.team.roles.length)
+    },
+    {
+      focus: "help",
+      label: "Help",
+      count: "?"
+    }
+  ];
+}
+
+function DetailPane({
+  model,
+  state,
+  width
+}: {
+  model: TuiCurrentContextModel;
+  state: TuiInkState;
+  width: number;
+}): React.ReactElement {
+  const selectedLabel = detailPlaceholderSelection(model, state);
+  const lines = [
+    "Block Detail",
+    "",
+    selectedLabel,
+    "No detail selected",
+    "Not available in",
+    "current read model."
+  ];
+  return h(
+    Box,
+    { flexDirection: "column", width, flexShrink: 0 },
+    ...lines.map((value, index) =>
+      line(index === 0 ? truncateText(value, width) : truncateText(`| ${value}`, width), {
+        color: index === 0 ? "cyan" : undefined,
+        bold: index === 0,
+        dimColor: index > 1
+      })
+    )
+  );
+}
+
+function detailPlaceholderSelection(
+  model: TuiCurrentContextModel,
+  state: TuiInkState
+): string {
+  if (state.focus === "runs") {
+    const run = selectedRun(model, state);
+    return run ? `Selected run ${compactId(run.id)}` : "Selected run unavailable";
+  }
+  if (state.focus === "review") {
+    return model.review.selectedId
+      ? `Selected review ${compactId(model.review.selectedId)}`
+      : "Selected review unavailable";
+  }
+  if (state.focus === "graph") {
+    const roleCall = visibleRoleCalls(model, state)[selectedRoleCallIndex(model, state)];
+    return roleCall ? `Selected call ${compactId(roleCall.id)}` : "Selected call unavailable";
+  }
+  if (state.focus === "tasks") {
+    const task = selectedTask(model, state);
+    return task ? `Selected task ${compactId(task.id)}` : "Selected task unavailable";
+  }
+  return `${focusLabel(state.focus)} focus`;
+}
+
+function focusLabel(focus: TuiInkFocus): string {
+  if (focus === "work") {
+    return "Work";
+  }
+  if (focus === "runs") {
+    return "Runs";
+  }
+  if (focus === "review") {
+    return "Review";
+  }
+  if (focus === "graph") {
+    return "Graph";
+  }
+  if (focus === "tasks") {
+    return "Tasks";
+  }
+  if (focus === "memory") {
+    return "Memory";
+  }
+  if (focus === "team") {
+    return "Team";
+  }
+  return "Help";
 }
 
 function MainView(props: TuiInkRenderProps): React.ReactElement {

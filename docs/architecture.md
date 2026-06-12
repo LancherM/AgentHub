@@ -584,16 +584,21 @@ and Tasks focus modes are still
 read-model projections over existing task, run, RoleCall, RoleTodo,
 verification, risk, metadata, and artifact repositories; they do not introduce
 new persistence or raw log/diff rendering.
-The proposed V3 TUI plan in `docs/tui-v3-roadmap.md` keeps the same boundary
-while introducing a shared shell frame, selected-object detail contract, and
-table/detail primitives for Work, Memory, and Team. Several reference-screen
-features require new read-model projections before they can be rendered
-truthfully: structured tool-call lifecycle rows, normalized block artifacts and
-evidence refs, memory proposal evidence excerpts, approved-memory writeback
-targets, role delegation matrices, selected role profiles, and audited memory
-action callbacks. Until those projections or callbacks exist, the renderer
-must show unavailable/command-hint sections rather than fabricating data or
-reading lower-level stores directly.
+The V3 TUI plan in `docs/tui-v3-roadmap.md` keeps the same boundary while
+introducing a shared shell frame, selected-object detail contract, and
+table/detail primitives for Work, Memory, and Team. The first runtime slice is
+renderer-only: `TuiInkFrame` composes a shared shell with header, persistent
+side navigation at normal and wide widths, the existing main view, a wide-width
+placeholder detail rail, composer, tab map, and bottom shortcut/status chrome.
+That shell passes column-adjusted terminal dimensions into the existing view
+renderers and does not add storage access, callbacks, or selection semantics.
+Several reference-screen features still require new read-model projections
+before they can be rendered truthfully: structured tool-call lifecycle rows,
+normalized block artifacts and evidence refs, memory proposal evidence
+excerpts, approved-memory writeback targets, role delegation matrices,
+selected role profiles, and audited memory action callbacks. Until those
+projections or callbacks exist, the renderer must show unavailable/command-hint
+sections rather than fabricating data or reading lower-level stores directly.
 RoleCall loop controls reuse the core convergence helper plus TUI risk
 summaries. The CLI renderer can prepare an explicit continuation prompt, but it
 does not run an autonomous background loop or add a daemon.
