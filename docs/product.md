@@ -160,8 +160,10 @@ shelling out from the renderer. The first supported set includes `/help`,
 `/search <text>`, `/timeline`, `/notify on|off`, `/team`, `/runs`, `/review`,
 `/memory`, `/memory auto status|on|off|safe`, `/tasks`, `/clear`, `/exit`, and
 `/quit`. Slash command suggestions appear while typing and `Tab` accepts the
-selected completion. `/use pm` changes the default composer target for future
-prompts; an explicit `@role` mention on a prompt still wins for that prompt.
+selected completion. Suggestion rows participate in the same terminal row
+budget as the composer, so Work content yields space before the prompt footer
+overflows. `/use pm` changes the default composer target for future prompts; an
+explicit `@role` mention on a prompt still wins for that prompt.
 `/clear` clears the terminal and creates a new isolated custom room with no
 prior room messages, so subsequent prompts use a fresh session thread while
 remaining inside the same local project. `/memory auto on|off|safe` changes the

@@ -775,13 +775,15 @@ submitting a prompt and without stealing `/search`, `/timeline`, `/notify`, or
 command list plus enabled agent/team-role handles already present in the read
 model; `Tab` accepts the selected suggestion. Pure UI slash commands such as
 `/help`, `/agents`, `/search`, `/timeline`, `/notify`, and focus switches are
-handled in Ink state. Commands that need persistence or project/thread state
-cross the CLI callback boundary: `/use` updates the active TUI default target,
-`/room` switches the active thread, `/clear` asks the CLI layer to create a new
-custom session room and then clears the terminal, and `/memory auto
-status|on|off|safe` loads or saves the project memory automation policy through
-the same settings repository used by CLI/desktop settings. The renderer never
-invokes shell commands directly.
+handled in Ink state. Slash and agent completion rows are included in the shell
+chrome budget before sizing Work content, so active suggestions cannot push the
+composer/footer past the terminal row budget. Commands that need persistence or
+project/thread state cross the CLI callback boundary: `/use` updates the active
+TUI default target, `/room` switches the active thread, `/clear` asks the CLI
+layer to create a new custom session room and then clears the terminal, and
+`/memory auto status|on|off|safe` loads or saves the project memory automation
+policy through the same settings repository used by CLI/desktop settings. The
+renderer never invokes shell commands directly.
 Detail fold state is also local Ink state. The renderer tracks collapsed and
 explicitly expanded detail section ids so default-collapsed evidence, tool,
 snippet, verification, limit, and recent-failure sections can be expanded with

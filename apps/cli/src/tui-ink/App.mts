@@ -3997,9 +3997,10 @@ function shellChromeLineBudget(
 
 function composerLineBudget(model: TuiCurrentContextModel, state: TuiInkState): number {
   const previewLines = 1;
-  const completionLines = agentCompletionForState(model, state) ? 1 : 0;
+  const slashCompletionLines = slashCompletionForState(model, state) ? 1 : 0;
+  const agentCompletionLines = agentCompletionForState(model, state) ? 1 : 0;
   const inputLines = state.composer ? state.composer.split("\n").length : 1;
-  return previewLines + completionLines + inputLines;
+  return previewLines + slashCompletionLines + agentCompletionLines + inputLines;
 }
 
 function minimumWorkConversationRows(terminal: TuiInkTerminalSize): number {
