@@ -292,6 +292,8 @@ Implemented commands:
 - `agent-hub team roles list`
 - `agent-hub team roles show`
 - `agent-hub team roles save`
+- `agent-hub team roles import`
+- `agent-hub team roles export`
 - `agent-hub team roles executor`
 - `agent-hub role-calls list`
 - `agent-hub role-calls show`
@@ -307,10 +309,14 @@ Implemented commands:
 - `agent-hub reviews accept`
 - `agent-hub reviews reject`
 - `agent-hub compare`
+- `agent-hub memory automation evaluate`
+- `agent-hub memory policy show`
+- `agent-hub memory policy set`
 - `agent-hub memory list`
 - `agent-hub memory propose`
 - `agent-hub memory approve`
 - `agent-hub memory reject`
+- `agent-hub memory retire`
 
 ### apps/desktop
 
@@ -679,12 +685,16 @@ Every skill must include:
 
 Memory must be conservative.
 
-Do not automatically promote memory.
+Do not automatically promote memory by default. Automatic approval is allowed
+only when a project has explicitly opted into a bounded local memory automation
+policy, and only after verification, risk, duplicate, category, and per-run
+policy gates pass.
 
 Memory lifecycle:
 
 - `proposed -> approved -> injected into future task briefs`
 - `proposed -> rejected -> ignored`
+- `approved -> retired -> excluded from future task briefs`
 
 Memory categories:
 

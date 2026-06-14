@@ -1,6 +1,6 @@
 # Product
 
-Last audited against `origin/main` at `9f00576` on 2026-06-10.
+Last audited against `origin/main` at `baaa8b1` on 2026-06-14.
 
 Agent Hub is a local-first, CLI-first tool for orchestrating coding agents on a
 developer machine. It manages local projects, task briefs, context packs,
@@ -499,8 +499,9 @@ The current CLI exposes these command groups:
 - Terminal workbench: `tui` opens a keyboard-first read-only view over the
   current thread or room context, with focus modes for work, RoleCalls, runs,
   review, tasks, memory, and help.
-- Team roles: `team roles list`, `team roles show`, `team roles save`, and
-  `team roles executor`. Saved roles can reference default skills with
+- Team roles: `team roles list`, `team roles show`, `team roles save`,
+  `team roles import`, `team roles export`, and `team roles executor`.
+  Saved roles can reference default skills with
   `--skill [scope:]id`, and custom RoleCall fan-out is configured with
   `--can-call-role`, `--role-call-target`, `--role-call-capability`, and
   `--role-call-intent`.
@@ -511,7 +512,8 @@ The current CLI exposes these command groups:
 - RoleCall audit: `role-calls list`, `role-calls show`, `role-todos list`, and
   `role-events list`, each with JSON output where useful for local scripts.
 - Memory and comparison: `memory list`, `memory propose`, `memory approve`,
-  `memory reject`, and `compare`.
+  `memory reject`, `memory retire`, `memory policy show|set`,
+  `memory automation evaluate`, and `compare`.
 
 The CLI command dispatcher is backed by a single route registry that defines
 command patterns, aliases, help usage lines, and handler callbacks together.
