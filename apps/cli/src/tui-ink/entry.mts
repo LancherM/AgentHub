@@ -3,6 +3,8 @@ import type { TuiCurrentContextModel } from "@agent-hub/core";
 import type {
   TuiInkReviewInput,
   TuiInkReviewResult,
+  TuiInkSlashInput,
+  TuiInkSlashResult,
   TuiInkSubmitInput,
   TuiInkSubmitResult,
   TuiInkTerminalSize
@@ -27,6 +29,7 @@ export interface RunInkTuiInput {
   loadModel?: (state: TuiInkState) => Promise<TuiCurrentContextModel>;
   submitPrompt?: (input: TuiInkSubmitInput) => Promise<TuiInkSubmitResult>;
   recordReviewDecision?: (input: TuiInkReviewInput) => Promise<TuiInkReviewResult>;
+  executeSlashCommand?: (input: TuiInkSlashInput) => Promise<TuiInkSlashResult>;
 }
 
 export async function runInkTui(input: RunInkTuiInput): Promise<void> {
@@ -58,6 +61,8 @@ export async function runInkTui(input: RunInkTuiInput): Promise<void> {
       loadModel: input.loadModel,
       submitPrompt: input.submitPrompt,
       recordReviewDecision: input.recordReviewDecision,
+      executeSlashCommand: input.executeSlashCommand,
+      clearTerminal: () => input.io.stdout.write("\x1b[2J\x1b[H"),
       showSplash: false,
       notify: (message) => {
         input.io.stdout.write(terminalNotificationSequence(message));

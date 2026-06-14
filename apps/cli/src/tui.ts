@@ -3,16 +3,26 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import {
   buildTuiCurrentContextModel,
+  createId,
   defaultAgentKind,
   emptyTuiSelectionDetails,
+  isAgentKindEnabled,
+  nowIso,
   parseAgentKindAlias,
+  validateConversationThread,
+  validateMemoryAutomationPolicy,
   type AgentKind,
   type ConversationThread,
+  type MemoryAutomationPolicy,
   type ProjectRepository,
   type TuiCurrentContextInput,
   type TuiCurrentContextModel,
   type TuiReadModelRepositories
 } from "@agent-hub/core";
+import {
+  loadProjectMemoryAutomationPolicy,
+  saveProjectMemoryAutomationPolicy
+} from "@agent-hub/task-runner";
 
 export interface TuiCliIO {
   stdin?: NodeJS.ReadableStream;
@@ -78,6 +88,29 @@ export type TuiReviewDecisionRecorder = (
   input: TuiReviewDecisionInput
 ) => Promise<TuiReviewDecisionResult>;
 
+export interface TuiSlashCommandInput {
+  command: string;
+  projectId?: string;
+  threadId?: string;
+  selectedTarget?: string;
+}
+
+export interface TuiSlashCommandResult {
+  ok: boolean;
+  message: string;
+  projectId?: string;
+  threadId?: string;
+  roomHandle?: string;
+  selectedAgent?: AgentKind;
+  selectedTarget?: string;
+  clearScreen?: boolean;
+  model?: TuiCurrentContextModel;
+}
+
+export type TuiSlashCommandExecutor = (
+  input: TuiSlashCommandInput
+) => Promise<TuiSlashCommandResult>;
+
 export type TuiFocusMode =
   | "work"
   | "graph"
@@ -113,12 +146,14 @@ export interface TuiShellState {
   searchMatchIndex: number;
   notifyEnabled: boolean;
   timelineOpen: boolean;
+  selectedTarget?: string;
   composer: string;
   composerCursorPosition: number;
   composerHistory: string[];
   composerHistoryIndex?: number;
   composerHistoryDraft: string;
   agentCompletionIndex: number;
+  slashCompletionIndex: number;
   commandPaletteOpen: boolean;
   paletteQuery: string;
   paletteSelectedIndex: number;
@@ -180,6 +215,7 @@ interface InkTuiEntry {
       message: string;
       model?: TuiCurrentContextModel;
     }>;
+    executeSlashCommand?: (input: TuiSlashCommandInput) => Promise<TuiSlashCommandResult>;
   }): Promise<void>;
 }
 
@@ -201,6 +237,8 @@ export async function runTuiCommand(options: RunTuiCommandOptions): Promise<numb
     parsed.agentKind ??
     options.selectedAgent ??
     defaultAgentKind({ env: process.env, debug: parsed.debug || options.debug });
+  let activeSelectedAgent = selectedAgent;
+  let activeRoomRef = parsed.roomRef;
   let launch: TuiLaunchContext;
   try {
     launch = await resolveTuiLaunchContext({
@@ -229,8 +267,8 @@ export async function runTuiCommand(options: RunTuiCommandOptions): Promise<numb
       projectRoot: options.projectRoot,
       projectId: launch.projectId,
       threadId: launch.threadId,
-      roomRef: parsed.roomRef,
-      selectedAgent,
+      roomRef: activeRoomRef,
+      selectedAgent: activeSelectedAgent,
       debug: parsed.debug || options.debug === true,
       dryRun: parsed.dryRun,
       retainOnFailure: parsed.retainOnFailure,
@@ -243,7 +281,7 @@ export async function runTuiCommand(options: RunTuiCommandOptions): Promise<numb
       warnings: launch.warnings
     };
     state.composer = "";
-    state.statusMessage = submitStatusMessage(submission, selectedAgent);
+    state.statusMessage = submitStatusMessage(submission, activeSelectedAgent);
     if (!submission.ok) {
       options.io.stderr.write(`error: ${submission.message}\n`);
     }
@@ -306,8 +344,8 @@ export async function runTuiCommand(options: RunTuiCommandOptions): Promise<numb
             projectRoot: options.projectRoot,
             projectId: input.projectId ?? activeModelInput.projectId,
             threadId: input.threadId ?? activeModelInput.threadId,
-            roomRef: parsed.roomRef,
-            selectedAgent,
+            roomRef: activeRoomRef,
+            selectedAgent: activeSelectedAgent,
             debug: parsed.debug || options.debug === true,
             dryRun: parsed.dryRun,
             retainOnFailure: parsed.retainOnFailure,
@@ -321,7 +359,7 @@ export async function runTuiCommand(options: RunTuiCommandOptions): Promise<numb
           };
           return {
             ok: submission.ok,
-            message: submitStatusMessage(submission, selectedAgent),
+            message: submitStatusMessage(submission, activeSelectedAgent),
             model: await buildRenderableTuiModel({
               runtime: options.runtime,
               modelInput: activeModelInput,
@@ -347,8 +385,37 @@ export async function runTuiCommand(options: RunTuiCommandOptions): Promise<numb
               projectRoot: options.projectRoot
             })
           };
-        }
-      : undefined
+      }
+      : undefined,
+    executeSlashCommand: async (input) => {
+      const result = await executeTuiSlashCommand({
+        input,
+        runtime: options.runtime,
+        projectRoot: options.projectRoot,
+        debug: parsed.debug || options.debug === true,
+        modelInput: activeModelInput,
+        launchWarnings: launch.warnings
+      });
+      activeModelInput = {
+        ...activeModelInput,
+        projectId: result.projectId ?? activeModelInput.projectId,
+        threadId: result.threadId ?? activeModelInput.threadId,
+        selectedAgent: result.selectedAgent ?? activeModelInput.selectedAgent
+      };
+      if (result.selectedAgent) {
+        activeSelectedAgent = result.selectedAgent;
+      }
+      activeRoomRef = result.roomHandle ?? activeRoomRef;
+      return {
+        ...result,
+        model: result.model ?? await buildRenderableTuiModel({
+          runtime: options.runtime,
+          modelInput: activeModelInput,
+          launchWarnings: launch.warnings,
+          projectRoot: options.projectRoot
+        })
+      };
+    }
   });
   return 0;
 }
@@ -405,11 +472,13 @@ export function createInitialTuiShellState(composer = ""): TuiShellState {
     searchMatchIndex: 0,
     notifyEnabled: false,
     timelineOpen: false,
+    selectedTarget: undefined,
     composer,
     composerCursorPosition: composer.length,
     composerHistory: [],
     composerHistoryDraft: "",
     agentCompletionIndex: 0,
+    slashCompletionIndex: 0,
     commandPaletteOpen: false,
     paletteQuery: "",
     paletteSelectedIndex: 0
@@ -445,6 +514,7 @@ async function renderInkTui(input: {
     message: string;
     model?: TuiCurrentContextModel;
   }>;
+  executeSlashCommand?: (input: TuiSlashCommandInput) => Promise<TuiSlashCommandResult>;
   showSplash?: boolean;
 }): Promise<void> {
   const entry = await loadInkTuiEntry();
@@ -464,9 +534,10 @@ async function renderInkTui(input: {
         },
         launchWarnings: input.launchWarnings,
         projectRoot: input.projectRoot
-      }),
+    }),
     submitPrompt: input.submitPrompt,
-    recordReviewDecision: input.recordReviewDecision
+    recordReviewDecision: input.recordReviewDecision,
+    executeSlashCommand: input.executeSlashCommand
   });
 }
 
@@ -757,6 +828,328 @@ async function findRoomThread(
   return threads.find(
     (thread) => thread.id === roomRef || roomHandleForThread(thread) === stripHash(roomRef)
   );
+}
+
+export async function executeTuiSlashCommand(input: {
+  input: TuiSlashCommandInput;
+  runtime: TuiCliRuntime;
+  projectRoot: string;
+  debug: boolean;
+  modelInput: TuiCurrentContextInput;
+  launchWarnings: string[];
+}): Promise<TuiSlashCommandResult> {
+  const [command, ...args] = splitSlashCommand(input.input.command);
+  if (!command) {
+    return {
+      ok: false,
+      message: "Slash command is empty."
+    };
+  }
+  if (command === "/use") {
+    return executeTuiUseCommand(input, args);
+  }
+  if (command === "/room") {
+    return executeTuiRoomCommand(input, args);
+  }
+  if (command === "/clear") {
+    return executeTuiClearCommand(input);
+  }
+  if (command === "/context") {
+    return executeTuiContextCommand(input);
+  }
+  if (command === "/memory") {
+    return executeTuiMemoryCommand(input, args);
+  }
+  return {
+    ok: false,
+    message: `Unknown slash command ${command}.`
+  };
+}
+
+async function executeTuiUseCommand(
+  input: {
+    input: TuiSlashCommandInput;
+    runtime: TuiCliRuntime;
+    projectRoot: string;
+    debug: boolean;
+    modelInput: TuiCurrentContextInput;
+    launchWarnings: string[];
+  },
+  args: string[]
+): Promise<TuiSlashCommandResult> {
+  const rawTarget = args[0];
+  if (!rawTarget) {
+    return {
+      ok: false,
+      message: "/use requires a target."
+    };
+  }
+  const target = normalizeSlashTarget(rawTarget);
+  if (target === "default") {
+    const selectedAgent = defaultAgentKind({ env: process.env, debug: input.debug });
+    return {
+      ok: true,
+      message: `Default target set to @${selectedAgent}.`,
+      selectedAgent,
+      selectedTarget: selectedAgent
+    };
+  }
+
+  const agent = parseEnabledSlashAgent(target, input.debug);
+  if (agent) {
+    return {
+      ok: true,
+      message: `Default target set to @${agent}.`,
+      selectedAgent: agent,
+      selectedTarget: agent
+    };
+  }
+
+  const model = await buildRenderableTuiModel({
+    runtime: input.runtime,
+    modelInput: input.modelInput,
+    launchWarnings: input.launchWarnings,
+    projectRoot: input.projectRoot
+  });
+  const role = model.team.roles.find((entry) => entry.enabled && entry.handle === target);
+  if (!role) {
+    return {
+      ok: false,
+      message: `Unknown target @${target}. Use /agents to inspect available targets.`
+    };
+  }
+  return {
+    ok: true,
+    message: `Default target set to @${role.handle}.`,
+    selectedTarget: role.handle
+  };
+}
+
+async function executeTuiRoomCommand(
+  input: {
+    input: TuiSlashCommandInput;
+    runtime: TuiCliRuntime;
+    modelInput: TuiCurrentContextInput;
+  },
+  args: string[]
+): Promise<TuiSlashCommandResult> {
+  const roomRef = args[0];
+  const projectId = input.input.projectId ?? input.modelInput.projectId;
+  if (!projectId) {
+    return {
+      ok: false,
+      message: "Register or select a project before switching rooms."
+    };
+  }
+  if (!roomRef) {
+    return {
+      ok: false,
+      message: "/room requires a room handle or thread id."
+    };
+  }
+  const room = await findRoomThread(input.runtime, projectId, roomRef);
+  if (!room) {
+    return {
+      ok: false,
+      message: `Room ${roomRef} was not found.`
+    };
+  }
+  return {
+    ok: true,
+    message: `Using room #${roomHandleForThread(room) ?? room.id}.`,
+    projectId,
+    threadId: room.id,
+    roomHandle: roomHandleForThread(room) ?? room.id,
+    selectedTarget: input.input.selectedTarget
+  };
+}
+
+async function executeTuiClearCommand(input: {
+  input: TuiSlashCommandInput;
+  runtime: TuiCliRuntime;
+  modelInput: TuiCurrentContextInput;
+}): Promise<TuiSlashCommandResult> {
+  const projectId = input.input.projectId ?? input.modelInput.projectId;
+  if (!projectId) {
+    return {
+      ok: false,
+      message: "Register or select a project before starting a new session room."
+    };
+  }
+  const thread = await createTuiSessionRoom(input.runtime, projectId);
+  const roomHandle = roomHandleForThread(thread);
+  return {
+    ok: true,
+    message: `Screen cleared. Started isolated room #${roomHandle ?? thread.id}.`,
+    projectId,
+    threadId: thread.id,
+    roomHandle,
+    selectedTarget: input.input.selectedTarget,
+    clearScreen: true
+  };
+}
+
+async function executeTuiContextCommand(input: {
+  input: TuiSlashCommandInput;
+  runtime: TuiCliRuntime;
+  projectRoot: string;
+  modelInput: TuiCurrentContextInput;
+  launchWarnings: string[];
+}): Promise<TuiSlashCommandResult> {
+  const model = await buildRenderableTuiModel({
+    runtime: input.runtime,
+    modelInput: input.modelInput,
+    launchWarnings: input.launchWarnings,
+    projectRoot: input.projectRoot
+  });
+  const room = model.context.roomHandle ? `#${model.context.roomHandle}` : "none";
+  const thread = model.context.threadId ?? "none";
+  const project = model.context.projectId ?? "unregistered";
+  const target = input.input.selectedTarget ?? model.context.selectedAgent ?? "agent";
+  return {
+    ok: true,
+    message: `project ${project}; room ${room}; thread ${thread}; target @${target}; context ${model.context.contextMode}.`
+  };
+}
+
+async function executeTuiMemoryCommand(
+  input: {
+    input: TuiSlashCommandInput;
+    runtime: TuiCliRuntime;
+    modelInput: TuiCurrentContextInput;
+  },
+  args: string[]
+): Promise<TuiSlashCommandResult> {
+  const projectId = input.input.projectId ?? input.modelInput.projectId;
+  if (!projectId) {
+    return {
+      ok: false,
+      message: "Register or select a project before changing memory automation."
+    };
+  }
+  if (!input.runtime.settingsRepository) {
+    return {
+      ok: false,
+      message: "Memory automation settings are unavailable in this TUI runtime."
+    };
+  }
+  if (args[0] !== "auto") {
+    return {
+      ok: false,
+      message: "/memory supports: /memory auto status|on|off|safe."
+    };
+  }
+  const action = args[1] ?? "status";
+  const current = await loadProjectMemoryAutomationPolicy(
+    { settingsRepository: input.runtime.settingsRepository },
+    projectId
+  );
+  if (action === "status") {
+    return {
+      ok: true,
+      message: `Memory auto mode is ${current.mode}.`
+    };
+  }
+  const nextMode = memoryAutoModeForAction(action);
+  if (!nextMode) {
+    return {
+      ok: false,
+      message: "/memory auto supports status, on, off, or safe."
+    };
+  }
+  const policy = validateMemoryAutomationPolicy({
+    ...current,
+    mode: nextMode
+  } satisfies MemoryAutomationPolicy);
+  const saved = await saveProjectMemoryAutomationPolicy(
+    { settingsRepository: input.runtime.settingsRepository },
+    {
+      projectId,
+      policy,
+      updatedAt: nowIso()
+    }
+  );
+  return {
+    ok: true,
+    message: `Memory auto mode set to ${saved.mode}.`
+  };
+}
+
+async function createTuiSessionRoom(
+  runtime: TuiCliRuntime,
+  projectId: string
+): Promise<ConversationThread> {
+  const handle = await nextTuiSessionHandle(runtime, projectId);
+  const now = nowIso();
+  return runtime.conversationThreadRepository.create(
+    validateConversationThread({
+      id: createId("thread"),
+      projectId,
+      title: `Session ${new Date(now).toISOString().slice(0, 19).replace("T", " ")}`,
+      metadata: {
+        source: "tui",
+        roomType: "custom",
+        roomHandle: handle,
+        description: "Isolated TUI session room created by /clear."
+      },
+      createdAt: now,
+      updatedAt: now
+    })
+  );
+}
+
+async function nextTuiSessionHandle(
+  runtime: TuiCliRuntime,
+  projectId: string
+): Promise<string> {
+  const existing = new Set(
+    (await runtime.conversationThreadRepository.list(projectId))
+      .map((thread) => roomHandleForThread(thread))
+      .filter((value): value is string => Boolean(value))
+  );
+  const base = `session-${Date.now().toString(36)}`;
+  if (!existing.has(base)) {
+    return base;
+  }
+  for (let index = 2; index < 100; index += 1) {
+    const candidate = `${base}-${index}`;
+    if (!existing.has(candidate)) {
+      return candidate;
+    }
+  }
+  throw new Error("could not allocate a unique session room handle");
+}
+
+function splitSlashCommand(command: string): string[] {
+  return command.trim().split(/\s+/).filter(Boolean).map((part, index) =>
+    index === 0 ? part.toLowerCase() : part
+  );
+}
+
+function normalizeSlashTarget(value: string): string {
+  return stripHash(value).replace(/^@/, "").trim().toLowerCase();
+}
+
+function parseEnabledSlashAgent(value: string, debug: boolean): AgentKind | undefined {
+  try {
+    const agent = parseAgentKindAlias(value);
+    return isAgentKindEnabled(agent, { env: process.env, debug }) ? agent : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function memoryAutoModeForAction(action: string): MemoryAutomationPolicy["mode"] | undefined {
+  if (action === "on") {
+    return "auto_after_review_accept";
+  }
+  if (action === "safe" || action === "success" || action === "on-success") {
+    return "auto_safe_on_success";
+  }
+  if (action === "off") {
+    return "suggest_only";
+  }
+  return undefined;
 }
 
 async function safeSubmitPrompt(
