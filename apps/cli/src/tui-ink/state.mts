@@ -59,12 +59,14 @@ export interface TuiInkState {
   searchMatchIndex: number;
   notifyEnabled: boolean;
   timelineOpen: boolean;
+  selectedTarget?: string;
   composer: string;
   composerCursorPosition: number;
   composerHistory: string[];
   composerHistoryIndex?: number;
   composerHistoryDraft: string;
   agentCompletionIndex: number;
+  slashCompletionIndex: number;
   commandPaletteOpen: boolean;
   paletteQuery: string;
   paletteSelectedIndex: number;
@@ -154,11 +156,13 @@ export function createInitialInkState(composer = ""): TuiInkState {
     searchMatchIndex: 0,
     notifyEnabled: false,
     timelineOpen: false,
+    selectedTarget: undefined,
     composer,
     composerCursorPosition: composer.length,
     composerHistory: [],
     composerHistoryDraft: "",
     agentCompletionIndex: 0,
+    slashCompletionIndex: 0,
     commandPaletteOpen: false,
     paletteQuery: "",
     paletteSelectedIndex: 0

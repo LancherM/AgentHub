@@ -2205,6 +2205,11 @@ describe("Ink TUI renderer", () => {
       expect(output).toContain("/search");
       expect(output).toContain("/timeline");
       expect(output).toContain("/notify");
+      expect(output).toContain("/use <target>");
+      expect(output).toContain("/memory auto");
+      if (columns >= 80) {
+        expect(output).toContain("/clear session");
+      }
       expect(output).toContain("review:");
       expect(output).toContain("prompt:");
       expect(lines.every((value) => value.length <= columns)).toBe(true);
@@ -2923,6 +2928,156 @@ describe("Ink TUI renderer", () => {
 
     expect(instance.lastFrame()).toContain("> @engineer");
     expect(instance.lastFrame()).toContain("send @engineer  thread Review (#review)");
+    instance.unmount();
+  });
+
+  it("renders slash command suggestions and accepts slash completion", async () => {
+    const output = renderToString(
+      React.createElement(TuiInkFrame, {
+        model: baseModel,
+        state: createInitialInkState("/mem"),
+        terminal: { columns: 120, rows: 40 }
+      }),
+      { columns: 120 }
+    );
+
+    expect(output).toContain("commands /memory");
+    expect(output).toContain("/memory auto status");
+
+    const instance = render(
+      React.createElement(TuiInkApp, {
+        model: baseModel,
+        state: createInitialInkState("/use e"),
+        terminal: { columns: 120, rows: 40 },
+        interactive: true
+      })
+    );
+
+    await waitForFrame(instance, "commands /use engineer");
+    instance.stdin.write("\t");
+    await waitForFrame(instance, "Selected /use engineer.");
+
+    expect(instance.lastFrame()).toContain("> /use engineer");
+    instance.unmount();
+  });
+
+  it("sets the default target with /use and prefixes role-targeted submissions", async () => {
+    const submissions = [];
+    const instance = render(
+      React.createElement(TuiInkApp, {
+        model: baseModel,
+        state: createInitialInkState(),
+        terminal: { columns: 120, rows: 40 },
+        interactive: true,
+        executeSlashCommand: async (input) => {
+          expect(input.command).toBe("/use engineer");
+          return {
+            ok: true,
+            message: "Default target set to @engineer.",
+            selectedTarget: "engineer",
+            model: baseModel
+          };
+        },
+        submitPrompt: async (input) => {
+          submissions.push(input);
+          return { ok: true, message: "Submitted prompt.", model: baseModel };
+        }
+      })
+    );
+
+    for (const character of "/use engineer") {
+      instance.stdin.write(character);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+    instance.stdin.write("\r");
+    await waitForFrame(instance, "Default target set to @engineer.");
+    expect(instance.lastFrame()).toContain("send @engineer");
+
+    for (const character of "implement this") {
+      instance.stdin.write(character);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+    instance.stdin.write("\r");
+    await waitForCondition(() => submissions.length === 1);
+
+    expect(submissions.map((submission) => submission.prompt)).toEqual([
+      "@engineer implement this"
+    ]);
+    instance.unmount();
+  });
+
+  it("preserves explicit mention targets over the /use default target", async () => {
+    const submissions = [];
+    const instance = render(
+      React.createElement(TuiInkApp, {
+        model: baseModel,
+        state: { ...createInitialInkState(), selectedTarget: "engineer" },
+        terminal: { columns: 120, rows: 40 },
+        interactive: true,
+        submitPrompt: async (input) => {
+          submissions.push(input);
+          return { ok: true, message: "Submitted prompt.", model: baseModel };
+        }
+      })
+    );
+
+    for (const character of "@reviewer check this") {
+      instance.stdin.write(character);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+    instance.stdin.write("\r");
+    await waitForCondition(() => submissions.length === 1);
+
+    expect(submissions.map((submission) => submission.prompt)).toEqual([
+      "@reviewer check this"
+    ]);
+    instance.unmount();
+  });
+
+  it("runs /clear through the slash command callback and clears the terminal", async () => {
+    let clearCount = 0;
+    const instance = render(
+      React.createElement(TuiInkApp, {
+        model: baseModel,
+        state: createInitialInkState(),
+        terminal: { columns: 120, rows: 40 },
+        interactive: true,
+        clearTerminal: () => {
+          clearCount += 1;
+        },
+        executeSlashCommand: async (input) => {
+          expect(input.command).toBe("/clear");
+          return {
+            ok: true,
+            message: "Screen cleared. Started isolated room #session-test.",
+            selectedTarget: input.selectedTarget,
+            clearScreen: true,
+            model: {
+              ...baseModel,
+              context: {
+                ...baseModel.context,
+                threadId: "thread_session",
+                threadTitle: "Session",
+                roomHandle: "session-test"
+              },
+              conversation: [],
+              transcript: [],
+              workBlocks: []
+            }
+          };
+        }
+      })
+    );
+
+    for (const character of "/clear") {
+      instance.stdin.write(character);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+    instance.stdin.write("\r");
+    await waitForFrame(instance, "Started isolated room #session-test.");
+
+    expect(clearCount).toBe(1);
+    expect(instance.lastFrame()).toContain("room:session-test");
     instance.unmount();
   });
 
