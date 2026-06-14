@@ -2961,6 +2961,192 @@ describe("Ink TUI renderer", () => {
     instance.unmount();
   });
 
+  it("moves through slash completion choices before accepting one", async () => {
+    const instance = render(
+      React.createElement(TuiInkApp, {
+        model: baseModel,
+        state: createInitialInkState("/use "),
+        terminal: { columns: 120, rows: 40 },
+        interactive: true
+      })
+    );
+
+    await waitForFrame(instance, "commands /use codex");
+    instance.stdin.write("\u001b[B");
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    instance.stdin.write("\t");
+    await waitForFrame(instance, "Selected /use claude-code.");
+
+    expect(instance.lastFrame()).toContain("> /use claude-code");
+    instance.unmount();
+  });
+
+  it("handles local slash commands without invoking the remote slash callback", async () => {
+    const remoteSlashCommands = [];
+    const instance = render(
+      React.createElement(TuiInkApp, {
+        model: baseModel,
+        state: createInitialInkState(),
+        terminal: { columns: 120, rows: 40 },
+        interactive: true,
+        executeSlashCommand: async (input) => {
+          remoteSlashCommands.push(input.command);
+          return { ok: true, message: "remote slash command ran", model: baseModel };
+        }
+      })
+    );
+
+    for (const character of "/help") {
+      instance.stdin.write(character);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+    instance.stdin.write("\r");
+    await waitForFrame(instance, "Help shown.");
+    expect(instance.lastFrame()).toContain("Help");
+
+    for (const character of "/agents") {
+      instance.stdin.write(character);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+    instance.stdin.write("\r");
+    await waitForFrame(instance, "Team roles shown.");
+    expect(instance.lastFrame()).toContain("Team Workbench");
+
+    for (const character of "/runs") {
+      instance.stdin.write(character);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+    instance.stdin.write("\r");
+    await waitForFrame(instance, "Runs shown.");
+    expect(instance.lastFrame()).toContain("Runs");
+
+    for (const character of "/memory") {
+      instance.stdin.write(character);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+    instance.stdin.write("\r");
+    await waitForFrame(instance, "Memory shown.");
+    expect(instance.lastFrame()).toContain("Memory Inbox");
+
+    expect(remoteSlashCommands).toEqual([]);
+    instance.unmount();
+  });
+
+  it("toggles local timeline and notification slash command state", async () => {
+    const instance = render(
+      React.createElement(TuiInkApp, {
+        model: baseModel,
+        state: createInitialInkState(),
+        terminal: { columns: 120, rows: 40 },
+        interactive: true
+      })
+    );
+
+    for (const character of "/timeline on") {
+      instance.stdin.write(character);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+    instance.stdin.write("\r");
+    await waitForFrame(instance, "Timeline shown.");
+    expect(instance.lastFrame()).toContain("timeline");
+
+    for (const character of "/timeline off") {
+      instance.stdin.write(character);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+    instance.stdin.write("\r");
+    await waitForFrame(instance, "Timeline hidden.");
+    expect(instance.lastFrame()).not.toContain("timeline  Timeline hidden.");
+
+    for (const character of "/notify on") {
+      instance.stdin.write(character);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+    instance.stdin.write("\r");
+    await waitForFrame(instance, "Completion notifications enabled.");
+    expect(instance.lastFrame()).toContain("notify on");
+
+    for (const character of "/notify off") {
+      instance.stdin.write(character);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+    instance.stdin.write("\r");
+    await waitForFrame(instance, "Completion notifications disabled.");
+    expect(instance.lastFrame()).toContain("notify off");
+    instance.unmount();
+  });
+
+  it("routes memory auto slash commands through the slash callback", async () => {
+    const remoteSlashCommands = [];
+    const instance = render(
+      React.createElement(TuiInkApp, {
+        model: baseModel,
+        state: createInitialInkState(),
+        terminal: { columns: 120, rows: 40 },
+        interactive: true,
+        executeSlashCommand: async (input) => {
+          remoteSlashCommands.push(input.command);
+          return {
+            ok: true,
+            message: "Memory auto mode is suggest_only.",
+            selectedTarget: input.selectedTarget,
+            model: baseModel
+          };
+        }
+      })
+    );
+
+    for (const character of "/memory auto status") {
+      instance.stdin.write(character);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+    instance.stdin.write("\r");
+    await waitForFrame(instance, "Memory auto mode is suggest_only.");
+
+    expect(remoteSlashCommands).toEqual(["/memory auto status"]);
+    expect(instance.lastFrame()).not.toContain("Memory shown.");
+    instance.unmount();
+  });
+
+  it("reports unavailable and failed remote slash commands in the composer status", async () => {
+    const unavailable = render(
+      React.createElement(TuiInkApp, {
+        model: baseModel,
+        state: createInitialInkState(),
+        terminal: { columns: 120, rows: 40 },
+        interactive: true
+      })
+    );
+
+    for (const character of "/clear") {
+      unavailable.stdin.write(character);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+    unavailable.stdin.write("\r");
+    await waitForFrame(unavailable, "Slash commands are unavailable.");
+    unavailable.unmount();
+
+    const failed = render(
+      React.createElement(TuiInkApp, {
+        model: baseModel,
+        state: createInitialInkState(),
+        terminal: { columns: 120, rows: 40 },
+        interactive: true,
+        executeSlashCommand: async () => {
+          throw new Error("slash failed");
+        }
+      })
+    );
+
+    for (const character of "/clear") {
+      failed.stdin.write(character);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+    failed.stdin.write("\r");
+    await waitForFrame(failed, "slash failed");
+    failed.unmount();
+  });
+
   it("sets the default target with /use and prefixes role-targeted submissions", async () => {
     const submissions = [];
     const instance = render(
