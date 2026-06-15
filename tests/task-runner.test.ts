@@ -43,6 +43,7 @@ import {
   InMemoryContextEvalEventRepository,
   InMemoryMemoryItemRepository,
   InMemoryPlanGraphRepository,
+  InMemoryTraceLinkRepository,
   planGraphIdForTaskVersion,
   plannerNodeIdForPlanGraph,
   planNodeIdForPlanGraph,
@@ -451,6 +452,52 @@ describe("task runner", () => {
           message: expect.stringContaining(
             planNodeIdForPlanGraph(manualGraph.id, "implement", 1)
           )
+        })
+      ])
+    );
+  });
+
+  it("links generated memory proposals back to the current PlanGraph node", async () => {
+    const projectRoot = await createTestDirectory("agent-hub-plan-memory-project");
+    const runRoot = await createTestDirectory("agent-hub-plan-memory-runs");
+    const traceLinkRepository = new InMemoryTraceLinkRepository();
+    const runner = new TaskRunner({
+      defaultRunRoot: runRoot,
+      workspaceManager: new TestWorkspaceManager(runRoot),
+      diffCollector: new StaticDiffCollector(),
+      verificationRunner: new VerificationRunner(new MockShellExecutor()),
+      traceLinkRepository,
+      idGenerator: new SequenceIdGenerator(),
+      clock: new FixedClock("2026-01-01T00:00:00.000Z")
+    });
+
+    const result = await runner.run({
+      projectRoot,
+      taskPrompt: "Implement memory-linked plan trace evidence",
+      agentKind: "fake",
+      taskId: "task_plan_memory",
+      verificationCommands: [
+        {
+          id: "unit",
+          label: "unit",
+          command: "pnpm",
+          args: ["test"]
+        }
+      ]
+    });
+
+    expect(result.status).toBe("succeeded");
+    const primaryNodeId = result.planGraph?.nodes.find((node) =>
+      node.execution.mode === "primary_run"
+    )?.id;
+    const rows = await traceLinkRepository.listByPlanGraphId(
+      result.planGraph?.id ?? ""
+    );
+    expect(rows.evidence).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          sourceType: "memory_proposal",
+          planNodeId: primaryNodeId
         })
       ])
     );

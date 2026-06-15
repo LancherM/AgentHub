@@ -699,6 +699,7 @@ class RepositoryRunService implements RunService {
       conversationThreadSummaryRepository:
         this.context.repositories.conversationThreadSummaryRepository,
       planGraphRepository: this.context.repositories.planGraphRepository,
+      traceLinkRepository: this.context.repositories.traceLinkRepository,
       contextIndexRepository,
       contextIndexRefresher: async (input: ContextIndexRefreshInput) =>
         rebuildStableContextIndex({

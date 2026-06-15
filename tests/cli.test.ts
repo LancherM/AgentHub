@@ -220,6 +220,15 @@ describe("CLI", () => {
     expect(traceJson.executionTrace.evidence).toEqual([
       expect.objectContaining({ sourceType: "task_run", sourceId: "run_0002" })
     ]);
+
+    output.length = 0;
+    await expect(
+      main(["reviews", "show", "run_0002"], io, projectRoot, runtime)
+    ).resolves.toBe(0);
+    const reviewText = output.join("");
+    expect(reviewText).toContain("review_status:");
+    expect(reviewText).toContain("plan_graph_id: plan_graph:task_0001:v1");
+    expect(reviewText).toContain("plan_deviations: 0");
     expect(errors.join("")).toBe("");
   });
 

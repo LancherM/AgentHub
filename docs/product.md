@@ -550,6 +550,17 @@ graph only after validation, and changes to required execution nodes require an
 explicit approval flag. Multi-TaskRun PlanNode fan-out scheduling and a
 dedicated desktop graph canvas are not implemented yet.
 
+Plan and trace evidence now feeds review governance without creating an
+automatic acceptance path. Risk reports can include plan-aware findings for
+proposed graphs, missing required verification nodes on changed-file runs,
+runs bound to nodes outside the active graph, required PlanNodes with failed
+verification evidence, non-primary nodes that produce changed files, and
+deviations projected by `ExecutionTraceGraph`. Successful plan-bound runs that
+generate memory proposals link those proposals back to the current PlanNode as
+trace evidence. `reviews show` remains read-only and now includes the active
+plan graph id plus a deviation summary so reviewers can inspect plan/trace
+exceptions before accepting or rejecting a run.
+
 ## CLI Surface
 
 The current CLI exposes these command groups:

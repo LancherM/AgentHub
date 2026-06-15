@@ -489,6 +489,18 @@ does not supersede the active graph on create. Activation revalidates same-task
 and version-increase rules, requires explicit approval when required execution
 nodes are added, removed, or changed, and then calls the repository
 supersession path so old graph versions remain readable.
+`packages/safety` consumes optional PlanGraph, current PlanNode, and
+ExecutionTraceGraph inputs when producing a RiskReport. Plan-aware findings are
+plain local risk findings: they can identify proposed graphs, missing required
+verification nodes for changed-file runs, plan binding mismatches, required
+PlanNodes with failed verification evidence, non-primary nodes that produce
+changed files, and deterministic deviations from the trace projection. These
+findings affect the existing risk level and acceptance recommendation but do
+not accept, reject, apply, merge, push, or clean up anything automatically.
+TaskRunner passes the active plan binding into risk generation and, after a
+successful plan-bound run creates memory proposals, writes `memory_proposal`
+trace evidence links back to the current PlanNode through the local trace-link
+repository.
 `packages/core/src/execution-trace-read-model.ts` builds the first deterministic
 `ExecutionTraceGraph` projection from local repositories only. It overlays base
 PlanGraph nodes and edges with stored trace links, generated primary TaskRun
@@ -497,6 +509,11 @@ simple failed-required-node and superseded-version deviations, and a synthetic
 legacy plan-unavailable node for tasks that have run evidence but no PlanGraph.
 The CLI `execution-trace show` command is read-only and delegates to this core
 projection instead of reconstructing state from transcript prose.
+The CLI `reviews show` command remains an audit/read command over review
+decision artifacts, but it now also calls the same execution-trace projection to
+print the active plan graph id and deterministic deviation summary for the run's
+task. Projection failures are displayed as unavailable rather than blocking the
+underlying review decision output.
 The TUI read model optionally attaches that same projection to
 `TuiCurrentContextModel.executionTrace` for the current task. The Ink Graph
 focus renders Overlay, Plan, and Trace modes from that read model only; it does

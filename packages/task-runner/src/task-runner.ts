@@ -122,6 +122,7 @@ import {
   InMemoryConversationThreadSummaryRepository,
   InMemoryContextEvalEventRepository,
   InMemoryPlanGraphRepository,
+  InMemoryTraceLinkRepository,
   InMemoryMemoryItemRepository,
   type ContextEvalEventRepository,
   type ConversationThreadSummaryRepository,
@@ -137,6 +138,7 @@ import {
   type SettingsRepository,
   type TaskRepository,
   type TaskRunRepository,
+  type TraceLinkRepository,
   type VerificationResultRepository
 } from "@agent-hub/core";
 import {
@@ -297,6 +299,7 @@ export interface TaskRunnerDependencies {
   conversationThreadSummaryRepository?: ConversationThreadSummaryRepository;
   contextEvalEventRepository?: ContextEvalEventRepository;
   planGraphRepository?: PlanGraphRepository;
+  traceLinkRepository?: TraceLinkRepository;
   planGraphPlanner?: PlanGraphPlanner;
   agentRegistry?: AgentRegistry;
   shellExecutor?: ShellExecutor;
@@ -379,6 +382,7 @@ export class TaskRunner {
   readonly conversationThreadSummaryRepository: ConversationThreadSummaryRepository;
   readonly contextEvalEventRepository: ContextEvalEventRepository;
   readonly planGraphRepository: PlanGraphRepository;
+  readonly traceLinkRepository: TraceLinkRepository;
   private readonly contextCompiler: ContextCompiler;
   private readonly hasCustomContextCompiler: boolean;
   private readonly contextFormatter: ContextFormatter;
@@ -433,6 +437,9 @@ export class TaskRunner {
     this.planGraphRepository =
       dependencies.planGraphRepository ??
       new InMemoryPlanGraphRepository();
+    this.traceLinkRepository =
+      dependencies.traceLinkRepository ??
+      new InMemoryTraceLinkRepository();
     this.planGraphPlanner =
       dependencies.planGraphPlanner ??
       createDeterministicPlanGraph;
@@ -1200,6 +1207,8 @@ export class TaskRunner {
         diff,
         verification,
         runEvents: events,
+        planGraph,
+        currentPlanNode: scheduledPlanNode?.node,
         createdAt: this.clock.now()
       });
     } catch (error) {
@@ -1483,7 +1492,7 @@ export class TaskRunner {
     }
     if (status === "succeeded") {
       try {
-        await generateMemoryProposalsFromCompletedRun(
+        const memoryProposals = await generateMemoryProposalsFromCompletedRun(
           {
             taskRunRepository: this.taskRunRepository,
             taskRepository: this.taskRepository,
@@ -1498,6 +1507,15 @@ export class TaskRunner {
             clock: this.clock
           }
         );
+        try {
+          await this.linkMemoryProposalsToPlanTrace({
+            memoryProposals,
+            planGraph,
+            scheduledPlanNode
+          });
+        } catch (error) {
+          warnings.push(`memory proposal trace linking failed: ${errorMessage(error)}`);
+        }
       } catch (error) {
         warnings.push(`memory proposal generation failed: ${errorMessage(error)}`);
       }
@@ -2064,6 +2082,27 @@ export class TaskRunner {
     await this.runEventRepository.createMany([
       toPersistedRunEvent(runId, event, sequence, this.clock, this.idGenerator)
     ]);
+  }
+
+  private async linkMemoryProposalsToPlanTrace(input: {
+    memoryProposals: Array<{ id: string; createdAt: string }>;
+    planGraph?: PlanGraph;
+    scheduledPlanNode?: ScheduledPlanNode;
+  }): Promise<void> {
+    if (!input.planGraph || !input.scheduledPlanNode) {
+      return;
+    }
+    for (const proposal of input.memoryProposals) {
+      await this.traceLinkRepository.linkEvidence({
+        id: this.idGenerator.nextId("trace_evidence"),
+        planGraphId: input.planGraph.id,
+        sourceType: "memory_proposal",
+        sourceId: proposal.id,
+        planNodeId: input.scheduledPlanNode.node.id,
+        summary: `Memory proposal ${proposal.id} generated from plan-bound run.`,
+        createdAt: proposal.createdAt
+      });
+    }
   }
 }
 

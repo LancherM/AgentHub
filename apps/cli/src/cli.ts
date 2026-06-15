@@ -373,6 +373,7 @@ export function createCliRuntime(
     conversationThreadSummaryRepository,
     contextEvalEventRepository,
     planGraphRepository,
+    traceLinkRepository,
     contextIndexRepository,
     contextIndexRefresher,
     codeGraphRepository
@@ -5151,7 +5152,12 @@ async function showReviewDecision(
     { runArtifactRepository: runtime.runArtifactRepository },
     runId
   );
-  io.stdout.write(renderReviewDecision(decision));
+  const trace = await buildReviewExecutionTrace(run.taskId, runtime);
+  io.stdout.write([
+    renderReviewDecision(decision).trimEnd(),
+    renderReviewTraceDeviations(trace).trimEnd(),
+    ""
+  ].filter(Boolean).join("\n"));
   return 0;
 }
 
@@ -5280,6 +5286,44 @@ function renderReviewDecision(decision: {
     `rejected_at: ${decision.rejectedAt ?? "none"}`,
     `reason: ${decision.reason ?? "none"}`,
     `message: ${decision.message ?? "none"}`,
+    ""
+  ].join("\n");
+}
+
+async function buildReviewExecutionTrace(
+  taskId: string,
+  runtime: CliRuntime
+): Promise<ExecutionTraceGraph | undefined> {
+  try {
+    return await buildExecutionTraceGraph(
+      {
+        planGraphRepository: runtime.planGraphRepository,
+        traceLinkRepository: runtime.traceLinkRepository,
+        taskRunRepository: runtime.taskRunRepository,
+        runMetadataRepository: runtime.runMetadataRepository,
+        roleCallRepository: runtime.roleCallRepository
+      },
+      { taskId }
+    );
+  } catch {
+    return undefined;
+  }
+}
+
+function renderReviewTraceDeviations(
+  trace: ExecutionTraceGraph | undefined
+): string {
+  if (!trace) {
+    return ["plan_deviations: unavailable", ""].join("\n");
+  }
+  return [
+    `plan_graph_id: ${trace.planGraphId}`,
+    `plan_deviations: ${trace.deviations.length}`,
+    ...(trace.deviations.length === 0
+      ? ["- none"]
+      : trace.deviations.map((deviation) =>
+          `- ${deviation.severity} ${deviation.type}: ${deviation.description}`
+        )),
     ""
   ].join("\n");
 }
