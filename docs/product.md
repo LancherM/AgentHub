@@ -526,9 +526,13 @@ RoleCall tool event, stores plan trace context on the RoleCall, creates a
 dynamic `role_call` trace node for accepted RoleCalls, and records a dynamic
 `task_run` trace node when the accepted executable RoleCall runs through
 TaskRunner. The callee run inherits the same PlanGraph and receives the source
-plan node plus dynamic trace node id in runtime context. Multi-TaskRun PlanNode
-fan-out scheduling, full execution-trace projection, and mode-aware TUI/Desktop
-graph rendering are not implemented yet.
+plan node plus dynamic trace node id in runtime context. A local
+`ExecutionTraceGraph` read model now projects the active PlanGraph, persisted
+trace nodes/edges/evidence, primary run bindings, RoleCall tool events, simple
+deterministic deviations, and legacy no-plan run evidence. The read-only
+`execution-trace show` CLI command exposes that projection by task id or
+PlanGraph id. Multi-TaskRun PlanNode fan-out scheduling and mode-aware
+TUI/Desktop graph rendering are not implemented yet.
 
 ## CLI Surface
 
@@ -542,6 +546,9 @@ The current CLI exposes these command groups:
   `plan-graphs show <plan-graph-id> [--json]`, and
   `plan-graphs validate <plan-graph-id>` expose deterministic planner output
   without scheduling or mutating runs.
+- Execution trace inspection: `execution-trace show --task-id <task-id>
+  [--json]` and `execution-trace show --plan-graph-id <plan-graph-id> [--json]`
+  expose the deterministic local trace projection without calling an agent.
 - Agent execution: `run --task ...`, ad-hoc `run "@codex ..."`,
   `run "@claude-code ..."`, `run event add`, and explicit continuation with
   `--continue-from-run` or `--continue-from-message`. Runs can select explicit

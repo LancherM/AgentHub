@@ -9,3 +9,4 @@ export * from "./workgroup-role-definitions";
 export * from "./tui-read-model";
 export * from "./storage";
 export * from "./plan-graph-planner";
+export * from "./execution-trace-read-model";

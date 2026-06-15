@@ -176,6 +176,50 @@ describe("CLI", () => {
     ]);
     expect(parsed.planGraph.nodes.find((node) => node.kind === "implement")?.execution.mode)
       .toBe("primary_run");
+
+    output.length = 0;
+    await expect(
+      main(
+        ["execution-trace", "show", "--task-id", "task_0001"],
+        io,
+        projectRoot,
+        runtime
+      )
+    ).resolves.toBe(0);
+    const traceText = output.join("");
+    expect(traceText).toContain("ExecutionTrace plan_graph:task_0001:v1");
+    expect(traceText).toContain("dynamic_nodes: 1");
+    expect(traceText).toContain("kind=task_run");
+
+    output.length = 0;
+    await expect(
+      main(
+        [
+          "execution-trace",
+          "show",
+          "--plan-graph-id",
+          "plan_graph:task_0001:v1",
+          "--json"
+        ],
+        io,
+        projectRoot,
+        runtime
+      )
+    ).resolves.toBe(0);
+    const traceJson = JSON.parse(output.join("")) as {
+      executionTrace: {
+        planGraphId: string;
+        dynamicNodes: Array<{ kind: string; sourceId: string }>;
+        evidence: Array<{ sourceType: string; sourceId: string }>;
+      };
+    };
+    expect(traceJson.executionTrace.planGraphId).toBe("plan_graph:task_0001:v1");
+    expect(traceJson.executionTrace.dynamicNodes).toEqual([
+      expect.objectContaining({ kind: "task_run", sourceId: "run_0002" })
+    ]);
+    expect(traceJson.executionTrace.evidence).toEqual([
+      expect.objectContaining({ sourceType: "task_run", sourceId: "run_0002" })
+    ]);
     expect(errors.join("")).toBe("");
   });
 

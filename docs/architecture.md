@@ -441,11 +441,11 @@ RoleCallEvents, RoleTodos, verification rows, risk reports, review artifacts,
 run metadata, RoleCall tool events, and plan/trace links instead of asking an
 LLM to reconstruct what happened.
 
-Until PlanGraph persistence lands, the TUI's Execution Trace surface is a
-compatibility projection over the existing RoleCall summary. Legacy tasks with
-runs or RoleCalls but no PlanGraph must stay readable through that path, and
-the renderer should avoid presenting RoleCalls as the complete future graph
-model.
+Until mode-aware Plan/Trace/Overlay rendering lands, the TUI's Execution Trace
+surface remains a compatibility projection over the existing RoleCall summary.
+Legacy tasks with runs or RoleCalls but no PlanGraph must stay readable through
+that path, and the renderer should avoid presenting RoleCalls as the complete
+future graph model.
 
 The shared `PlanGraph` and `ExecutionTraceGraph` DTO contracts now live in
 `packages/shared`, and `packages/core` validates planner-rooted DAG structure,
@@ -479,6 +479,14 @@ available for compatibility tests and legacy callers.
 PlanGraph and plan node instead of creating a new graph. RoleCall execution uses
 that path so callee runs inherit the source PlanGraph plus the dynamic trace
 node id created for the accepted RoleCall.
+`packages/core/src/execution-trace-read-model.ts` builds the first deterministic
+`ExecutionTraceGraph` projection from local repositories only. It overlays base
+PlanGraph nodes and edges with stored trace links, generated primary TaskRun
+trace nodes from run metadata, RoleCall tool event nodes, task-run evidence,
+simple failed-required-node and superseded-version deviations, and a synthetic
+legacy plan-unavailable node for tasks that have run evidence but no PlanGraph.
+The CLI `execution-trace show` command is read-only and delegates to this core
+projection instead of reconstructing state from transcript prose.
 
 This boundary should preserve the current TaskRunner and RoleCall ownership:
 

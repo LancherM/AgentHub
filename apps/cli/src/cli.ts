@@ -31,6 +31,7 @@ import {
   agentKinds,
   assertAgentKindEnabled,
   availableAgentKinds,
+  buildExecutionTraceGraph,
   defaultAgentKind,
   isAgentKindEnabled,
   memoryCategories,
@@ -71,6 +72,7 @@ import {
   type ConversationThreadSummary,
   type CodeGraphRepository,
   type ContextIndexRepository,
+  type ExecutionTraceGraph,
   type JsonObject,
   type MemoryCategory,
   type MemoryAutomationPolicy,
@@ -577,6 +579,14 @@ function cliCommandRoutes(debug: boolean): CliCommandRoute<CliCommandContext>[] 
       patterns: [["plan-graphs", "validate"]],
       usage: ["  agent-hub [--db <path>] plan-graphs validate <plan-graph-id>"],
       run: (args, context) => validatePlanGraphCommand(args, context.io, context.runtime)
+    },
+    {
+      patterns: [["execution-trace", "show"]],
+      usage: [
+        "  agent-hub [--db <path>] execution-trace show --task-id <task-id> [--json]",
+        "  agent-hub [--db <path>] execution-trace show --plan-graph-id <plan-graph-id> [--json]"
+      ],
+      run: (args, context) => showExecutionTrace(args, context.io, context.runtime)
     },
     {
       patterns: [["skills", "global", "create"]],
@@ -4556,6 +4566,87 @@ function renderPlanGraph(graph: PlanGraph): string {
           `- ${edge.from} -> ${edge.to} ${edge.type}${
             edge.label ? ` ${inlineText(edge.label)}` : ""
           }`
+        )),
+    ""
+  ].join("\n");
+}
+
+async function showExecutionTrace(
+  args: string[],
+  io: CliIO,
+  runtime: CliRuntime
+): Promise<number> {
+  try {
+    const parsed = parseExecutionTraceArgs(args);
+    const trace = await buildExecutionTraceGraph(
+      {
+        planGraphRepository: runtime.planGraphRepository,
+        traceLinkRepository: runtime.traceLinkRepository,
+        taskRunRepository: runtime.taskRunRepository,
+        runMetadataRepository: runtime.runMetadataRepository,
+        roleCallRepository: runtime.roleCallRepository
+      },
+      parsed
+    );
+    if (parsed.json) {
+      io.stdout.write(`${JSON.stringify({ executionTrace: trace }, null, 2)}\n`);
+      return 0;
+    }
+    io.stdout.write(renderExecutionTrace(trace));
+    return 0;
+  } catch (error) {
+    io.stderr.write(`error: ${error instanceof Error ? error.message : String(error)}\n`);
+    return 1;
+  }
+}
+
+function parseExecutionTraceArgs(args: string[]): {
+  taskId?: string;
+  planGraphId?: string;
+  json: boolean;
+} {
+  const taskId = optionalFlag(args, "--task-id");
+  const planGraphId = optionalFlag(args, "--plan-graph-id");
+  if (!taskId && !planGraphId) {
+    throw new Error("--task-id or --plan-graph-id is required");
+  }
+  if (taskId && planGraphId) {
+    throw new Error("--task-id and --plan-graph-id are mutually exclusive");
+  }
+  const allowedFlags = new Set(["--task-id", "--plan-graph-id", "--json"]);
+  const unknownFlag = args.find((arg) => arg.startsWith("--") && !allowedFlags.has(arg));
+  if (unknownFlag) {
+    throw new Error(`unknown option ${unknownFlag}`);
+  }
+  return {
+    ...(taskId ? { taskId } : {}),
+    ...(planGraphId ? { planGraphId } : {}),
+    json: args.includes("--json")
+  };
+}
+
+function renderExecutionTrace(trace: ExecutionTraceGraph): string {
+  return [
+    `ExecutionTrace ${trace.planGraphId}`,
+    `task_id: ${trace.taskId}`,
+    `plan_graph_version: ${trace.planGraphVersion}`,
+    `base_nodes: ${trace.baseNodes.length}`,
+    `dynamic_nodes: ${trace.dynamicNodes.length}`,
+    `dynamic_edges: ${trace.dynamicEdges.length}`,
+    `evidence: ${trace.evidence.length}`,
+    `deviations: ${trace.deviations.length}`,
+    "nodes:",
+    ...trace.baseNodes.map((node) =>
+      `- plan ${node.id} kind=${node.kind} role=${node.role} mode=${node.execution.mode} title=${inlineText(node.title)}`
+    ),
+    ...trace.dynamicNodes.map((node) =>
+      `- trace ${node.id} kind=${node.kind} status=${node.status} source=${node.sourceType ?? "none"}:${node.sourceId ?? "none"} title=${inlineText(node.title)}`
+    ),
+    "deviations:",
+    ...(trace.deviations.length === 0
+      ? ["- none"]
+      : trace.deviations.map((deviation) =>
+          `- ${deviation.type} ${deviation.severity} ${inlineText(deviation.description)}`
         )),
     ""
   ].join("\n");
