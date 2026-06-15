@@ -495,6 +495,16 @@ The injected `available_role_calls` directory advertises only targets that the
 caller can reach through that line-start `delegate` protocol, so custom roles
 with other intent types are not shown as shorthand-callable.
 
+PlanGraph and ExecutionTraceGraph are the planned next product layer for the
+Graph surface. Today Graph is driven by RoleCall evidence. The proposed design
+adds a pre-execution `PlanGraph` generated from the TaskBrief by a special
+local `@planner` role, then derives `ExecutionTraceGraph` deterministically from
+persisted runs, RoleCalls, events, verification, risk, diffs, artifacts, and
+deviations. This keeps the expected workflow separate from actual execution
+evidence while preserving RoleCalls as the dynamic delegation mechanism. The
+full product contract is tracked in
+`docs/plan-graph-execution-trace-product.md`.
+
 ## CLI Surface
 
 The current CLI exposes these command groups:

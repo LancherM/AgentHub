@@ -420,6 +420,35 @@ The flow is:
 CLI `role-calls`, `role-todos`, and `role-events` commands read the same local
 records and can output stable JSON for scripts.
 
+## Planned PlanGraph And Execution Trace Boundary
+
+`docs/plan-graph-execution-trace-product.md` defines the planned split between
+pre-execution planning and actual execution evidence. The architecture target is
+to add `PlanGraph` as a first-class local domain contract generated from the
+TaskBrief before adapter execution, while keeping `ExecutionTraceGraph` as a
+read model projected from existing durable evidence. Trace projection should
+read task runs, run events, artifacts, RoleCalls, RoleCallEvents, RoleTodos,
+verification rows, risk reports, review artifacts, and run metadata instead of
+asking an LLM to reconstruct what happened.
+
+This boundary should preserve the current TaskRunner and RoleCall ownership:
+
+- TaskRunner remains the only execution boundary for adapters and accepted
+  executable RoleCalls.
+- `@planner` is a special product role for plan creation, but the first
+  implementation may use a deterministic local planner backend while recording
+  planner ownership in persisted evidence.
+- Runtime injection should include the active PlanGraph, current plan node, and
+  allowed next nodes alongside the existing task brief, runtime context pack,
+  role metadata, and collaboration rules.
+- Runs and RoleCalls should link to `planGraphId` and `planNodeId` through
+  explicit metadata or first-class columns once query needs require them.
+- Plan amendments should create a new graph version rather than mutating old
+  plan evidence in place.
+- TUI and desktop Graph views should render Plan, Trace, and Overlay modes from
+  read models. Renderer code must not query SQLite or infer execution state
+  outside core/main-process services.
+
 ## Desktop IPC Boundary
 
 The desktop browser window is created with `nodeIntegration: false`,
