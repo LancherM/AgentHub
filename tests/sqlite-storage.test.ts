@@ -7,8 +7,12 @@ import { buildTypeScriptCodeGraphEntries } from "@agent-hub/task-runner";
 import type { RiskReport } from "@agent-hub/core";
 import {
   conservativePermissionSet,
+  planGraphIdForTaskVersion,
+  plannerNodeIdForPlanGraph,
+  planNodeIdForPlanGraph,
   presetWorkgroupRoles,
-  toWorkgroupRoleRunMetadata
+  toWorkgroupRoleRunMetadata,
+  type PlanGraph
 } from "@agent-hub/core";
 import {
   SQLITE_MIGRATIONS,
@@ -47,7 +51,7 @@ describe("SQLite storage", () => {
 
     await database.ensureInitialized();
 
-    expect(SQLITE_MIGRATIONS.at(-1)?.version).toBe(17);
+    expect(SQLITE_MIGRATIONS.at(-1)?.version).toBe(18);
     await expect(
       database.query<{ version: number }>(
         "SELECT version FROM schema_migrations ORDER BY version ASC;"
@@ -69,7 +73,8 @@ describe("SQLite storage", () => {
       { version: 14 },
       { version: 15 },
       { version: 16 },
-      { version: 17 }
+      { version: 17 },
+      { version: 18 }
     ]);
     await expect(
       database.query<{ name: string }>(
@@ -110,7 +115,14 @@ describe("SQLite storage", () => {
         { name: "context_eval_events" },
         { name: "context_text_fts" },
         { name: "skills" },
-        { name: "settings" }
+        { name: "settings" },
+        { name: "plan_graphs" },
+        { name: "plan_graph_nodes" },
+        { name: "plan_graph_edges" },
+        { name: "trace_nodes" },
+        { name: "trace_edges" },
+        { name: "trace_evidence_links" },
+        { name: "role_call_tool_events" }
       ])
     );
     await expect(database.query<{ journal_mode: string }>("PRAGMA journal_mode;"))
@@ -611,6 +623,126 @@ INSERT INTO context_eval_events (
     await expect(database.query<{ id: string }>("SELECT id FROM sample;"))
       .resolves.toEqual([{ id: "ok" }]);
     await database.close();
+  });
+
+  it("persists PlanGraphs, active versions, trace links, and RoleCall tool events", async () => {
+    const baseDirectory = await createTestDirectory("sqlite-plan-graphs");
+    const databasePath = path.join(baseDirectory, "agent-hub.sqlite");
+    const first = createSqliteRepositories({ databasePath });
+
+    await first.projectRepository.create({
+      id: "project_plan_graph",
+      name: "Plan Graph Project",
+      rootPath: path.join(baseDirectory, "source"),
+      createdAt,
+      updatedAt: createdAt
+    });
+    await first.taskRepository.create({
+      id: "task_plan_graph",
+      projectId: "project_plan_graph",
+      title: "Persist plan graph",
+      status: "open",
+      createdAt,
+      updatedAt: createdAt
+    });
+    await first.taskRunRepository.create({
+      id: "run_plan_graph",
+      taskId: "task_plan_graph",
+      agentKind: "fake",
+      status: "succeeded",
+      createdAt,
+      updatedAt: createdAt
+    });
+
+    const graph1 = sqlitePlanGraph("task_plan_graph", 1);
+    const graph2 = sqlitePlanGraph("task_plan_graph", 2);
+    const graph3 = sqlitePlanGraph("task_plan_graph", 3, "failed");
+    await first.planGraphRepository.create(graph1);
+    await first.planGraphRepository.create(graph2);
+    await expect(first.planGraphRepository.getActiveByTaskId("task_plan_graph"))
+      .resolves.toMatchObject({ id: graph2.id, status: "active" });
+    await expect(first.planGraphRepository.listByTaskId("task_plan_graph"))
+      .resolves.toMatchObject([
+        { id: graph1.id, status: "superseded" },
+        { id: graph2.id, status: "active" }
+      ]);
+
+    await first.planGraphRepository.create(graph3);
+    await first.planGraphRepository.supersede(graph2.id, graph3.id);
+    await expect(first.planGraphRepository.getActiveByTaskId("task_plan_graph"))
+      .resolves.toMatchObject({ id: graph3.id, status: "active" });
+
+    const implementNode = graph3.nodes.find((node) => node.kind === "implement");
+    if (!implementNode) {
+      throw new Error("missing implement node");
+    }
+    await first.traceLinkRepository.createNode({
+      id: "trace_node_plan_graph",
+      planGraphId: graph3.id,
+      kind: "task_run",
+      title: "PlanGraph run",
+      status: "completed",
+      sourcePlanNodeId: implementNode.id,
+      role: "engineer",
+      sourceType: "task_run",
+      sourceId: "run_plan_graph",
+      createdAt
+    });
+    await first.traceLinkRepository.createEdge({
+      id: "trace_edge_plan_graph",
+      planGraphId: graph3.id,
+      from: implementNode.id,
+      to: "trace_node_plan_graph",
+      type: "runtime",
+      label: "scheduled run"
+    });
+    await first.traceLinkRepository.linkEvidence({
+      id: "trace_evidence_plan_graph",
+      planGraphId: graph3.id,
+      sourceType: "task_run",
+      sourceId: "run_plan_graph",
+      planNodeId: implementNode.id,
+      traceNodeId: "trace_node_plan_graph",
+      summary: "PlanGraph trace evidence persisted.",
+      createdAt
+    });
+    await first.traceLinkRepository.createRoleCallToolEvent({
+      id: "role_call_tool_plan_graph",
+      planGraphId: graph3.id,
+      sourcePlanNodeId: implementNode.id,
+      sourceRunId: "run_plan_graph",
+      targetRole: "reviewer",
+      task: "Review persisted trace.",
+      status: "accepted",
+      createdTraceNodeIds: ["trace_node_plan_graph"],
+      createdAt,
+      updatedAt
+    });
+    await first.database.close();
+
+    const second = createSqliteRepositories({ databasePath });
+    await expect(second.planGraphRepository.get(graph3.id)).resolves.toMatchObject({
+      id: graph3.id,
+      taskId: graph3.taskId,
+      version: graph3.version,
+      status: "active",
+      plannerNodeId: graph3.plannerNodeId,
+      nodes: graph3.nodes,
+      edges: graph3.edges
+    });
+    await expect(second.traceLinkRepository.listByPlanGraphId(graph3.id))
+      .resolves.toMatchObject({
+        nodes: [{ id: "trace_node_plan_graph", sourcePlanNodeId: implementNode.id }],
+        edges: [{ id: "trace_edge_plan_graph", planGraphId: graph3.id }],
+        evidence: [{ id: "trace_evidence_plan_graph", planNodeId: implementNode.id }],
+        roleCallToolEvents: [
+          {
+            id: "role_call_tool_plan_graph",
+            createdTraceNodeIds: ["trace_node_plan_graph"]
+          }
+        ]
+      });
+    await second.database.close();
   });
 
   it("persists tasks, runs, status transitions, and run metadata across instances", async () => {
@@ -1688,7 +1820,8 @@ VALUES (
       { version: 14 },
       { version: 15 },
       { version: 16 },
-      { version: 17 }
+      { version: 17 },
+      { version: 18 }
     ]);
   });
 
@@ -1745,7 +1878,8 @@ VALUES (
       { version: 14 },
       { version: 15 },
       { version: 16 },
-      { version: 17 }
+      { version: 17 },
+      { version: 18 }
     ]);
     await expect(repositories.database.execute(`
 INSERT INTO tasks (id, project_id, title, status, created_at, updated_at)
@@ -1824,7 +1958,8 @@ VALUES ('message_summary_legacy', 'thread_summary_legacy', 0, 'user', 'text', 'P
       { version: 14 },
       { version: 15 },
       { version: 16 },
-      { version: 17 }
+      { version: 17 },
+      { version: 18 }
     ]);
   });
 
@@ -1863,7 +1998,8 @@ ALTER TABLE task_runs
       { version: 14 },
       { version: 15 },
       { version: 16 },
-      { version: 17 }
+      { version: 17 },
+      { version: 18 }
     ]);
     await expect(
       repositories.database.query<{ name: string }>(
@@ -2076,6 +2212,87 @@ function riskReport(): RiskReport {
     acceptanceRecommendation: "Accept if the changed files match the task intent.",
     findings: [],
     createdAt
+  };
+}
+
+function sqlitePlanGraph(
+  taskId: string,
+  version: number,
+  status: PlanGraph["status"] = "active"
+): PlanGraph {
+  const graphId = planGraphIdForTaskVersion(taskId, version);
+  const plannerId = plannerNodeIdForPlanGraph(graphId);
+  const researchId = planNodeIdForPlanGraph(graphId, "research", 1);
+  const implementId = planNodeIdForPlanGraph(graphId, "implement", 2);
+  const verifyId = planNodeIdForPlanGraph(graphId, "verify", 3);
+  return {
+    id: graphId,
+    taskId,
+    version,
+    status,
+    plannerNodeId: plannerId,
+    createdByRole: "planner",
+    createdAt,
+    nodes: [
+      {
+        id: plannerId,
+        kind: "planner",
+        title: "Create plan",
+        role: "planner",
+        instructions: "Create a local execution plan.",
+        acceptanceCriteria: ["Plan is valid."],
+        riskLevel: "low",
+        required: true,
+        execution: { mode: "system" },
+        outputPlanGraphId: graphId
+      },
+      {
+        id: researchId,
+        kind: "research",
+        title: "Inspect files",
+        role: "engineer",
+        instructions: "Inspect relevant files.",
+        acceptanceCriteria: ["Relevant files are known."],
+        riskLevel: "low",
+        required: true,
+        execution: {
+          mode: "primary_run",
+          expectedAdapter: "codex",
+          worktreePolicy: "isolated"
+        }
+      },
+      {
+        id: implementId,
+        kind: "implement",
+        title: "Implement",
+        role: "engineer",
+        instructions: "Implement the local change.",
+        acceptanceCriteria: ["Implementation evidence is linked."],
+        riskLevel: "medium",
+        required: true,
+        execution: {
+          mode: "primary_run",
+          expectedAdapter: "codex",
+          worktreePolicy: "isolated"
+        }
+      },
+      {
+        id: verifyId,
+        kind: "verify",
+        title: "Verify",
+        role: "reviewer",
+        instructions: "Inspect verification evidence.",
+        acceptanceCriteria: ["Verification evidence is linked."],
+        riskLevel: "low",
+        required: true,
+        execution: { mode: "manual" }
+      }
+    ],
+    edges: [
+      { from: plannerId, to: researchId, type: "primary" },
+      { from: researchId, to: implementId, type: "primary" },
+      { from: implementId, to: verifyId, type: "primary" }
+    ]
   };
 }
 

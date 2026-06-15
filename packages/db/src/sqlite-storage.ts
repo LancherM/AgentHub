@@ -12,10 +12,12 @@ import {
   validateContextEvalEvent,
   validateContextIndexEntry,
   validateMemoryItem,
+  validatePlanGraph,
   validateProject,
   validateRiskReport,
   validateRoleCall,
   validateRoleCallEvent,
+  validateRoleCallToolEvent,
   validateRoleCallStatusTransition,
   validateRoleTodo,
   validateRoleTodoStatusTransition,
@@ -47,12 +49,14 @@ import {
   normalizeSearchTerms,
   scoreCodeGraphEntry,
   type MemoryItem,
+  type PlanGraph,
   type Project,
   type RiskReport,
   type RiskLevel,
   type RoleCall,
   type RoleCallEvent,
   type RoleCallStatus,
+  type RoleCallToolEvent,
   type RoleTodo,
   type RoleTodoStatus,
   type RunArtifact,
@@ -64,6 +68,9 @@ import {
   type TaskRun,
   type TaskRunStatus,
   type TaskStatus,
+  type TraceEdge,
+  type TraceEvidence,
+  type TraceNode,
   type VerificationResult,
   type VerificationStatus
 } from "@agent-hub/core";
@@ -78,6 +85,7 @@ import {
   type ContextIndexRepository,
   type CodeGraphRepository,
   type MemoryItemRepository,
+  type PlanGraphRepository,
   type ProjectRepository,
   type RiskReportRepository,
   type RoleCallEventRepository,
@@ -94,6 +102,8 @@ import {
   type SkillRepository,
   type TaskRepository,
   type TaskRunRepository,
+  type TraceLinkRepository,
+  type TraceProjectionRows,
   type VerificationResultRepository
 } from "@agent-hub/core";
 
@@ -148,6 +158,8 @@ export interface SqliteRepositories {
   roleCallRepository: RoleCallRepository;
   roleCallEventRepository: RoleCallEventRepository;
   roleTodoRepository: RoleTodoRepository;
+  planGraphRepository: PlanGraphRepository;
+  traceLinkRepository: TraceLinkRepository;
 }
 
 export interface StableContextIndexRebuildInput {
@@ -1163,6 +1175,133 @@ CREATE INDEX IF NOT EXISTS idx_memory_items_status ON memory_items(status);
 CREATE INDEX IF NOT EXISTS idx_memory_items_project_status
   ON memory_items(project_id, status);
 `
+  },
+  {
+    version: 18,
+    sql: `
+CREATE TABLE IF NOT EXISTS plan_graphs (
+  id TEXT PRIMARY KEY,
+  task_id TEXT NOT NULL,
+  task_brief_artifact_id TEXT,
+  version INTEGER NOT NULL CHECK (version >= 1),
+  status TEXT NOT NULL CHECK (status IN ('active', 'superseded', 'failed')),
+  planner_node_id TEXT NOT NULL,
+  created_by_role TEXT NOT NULL CHECK (created_by_role = 'planner'),
+  created_at TEXT NOT NULL,
+  FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE,
+  FOREIGN KEY (task_brief_artifact_id) REFERENCES run_artifacts(id) ON DELETE SET NULL,
+  UNIQUE (task_id, version)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_plan_graphs_one_active
+  ON plan_graphs(task_id)
+  WHERE status = 'active';
+CREATE INDEX IF NOT EXISTS idx_plan_graphs_task_version
+  ON plan_graphs(task_id, version);
+
+CREATE TABLE IF NOT EXISTS plan_graph_nodes (
+  id TEXT NOT NULL,
+  plan_graph_id TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  title TEXT NOT NULL,
+  role TEXT NOT NULL,
+  instructions TEXT NOT NULL,
+  acceptance_criteria_json TEXT NOT NULL CHECK (json_valid(acceptance_criteria_json) AND json_type(acceptance_criteria_json) = 'array'),
+  risk_level TEXT NOT NULL CHECK (risk_level IN ('low', 'medium', 'high')),
+  required INTEGER NOT NULL CHECK (required IN (0, 1)),
+  execution_json TEXT NOT NULL CHECK (json_valid(execution_json) AND json_type(execution_json) = 'object'),
+  output_plan_graph_id TEXT,
+  position INTEGER NOT NULL CHECK (position >= 0),
+  PRIMARY KEY (plan_graph_id, id),
+  FOREIGN KEY (plan_graph_id) REFERENCES plan_graphs(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_plan_graph_nodes_graph_position
+  ON plan_graph_nodes(plan_graph_id, position);
+
+CREATE TABLE IF NOT EXISTS plan_graph_edges (
+  plan_graph_id TEXT NOT NULL,
+  position INTEGER NOT NULL CHECK (position >= 0),
+  from_node_id TEXT NOT NULL,
+  to_node_id TEXT NOT NULL,
+  type TEXT NOT NULL CHECK (type IN ('primary', 'parallel', 'optional', 'fallback')),
+  label TEXT,
+  PRIMARY KEY (plan_graph_id, position),
+  FOREIGN KEY (plan_graph_id) REFERENCES plan_graphs(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_plan_graph_edges_graph_position
+  ON plan_graph_edges(plan_graph_id, position);
+
+CREATE TABLE IF NOT EXISTS trace_nodes (
+  id TEXT PRIMARY KEY,
+  plan_graph_id TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  title TEXT NOT NULL,
+  status TEXT NOT NULL,
+  source_plan_node_id TEXT,
+  role TEXT,
+  source_type TEXT,
+  source_id TEXT,
+  created_at TEXT,
+  FOREIGN KEY (plan_graph_id) REFERENCES plan_graphs(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_trace_nodes_plan_graph
+  ON trace_nodes(plan_graph_id, id);
+CREATE INDEX IF NOT EXISTS idx_trace_nodes_source_plan
+  ON trace_nodes(source_plan_node_id);
+
+CREATE TABLE IF NOT EXISTS trace_edges (
+  id TEXT PRIMARY KEY,
+  plan_graph_id TEXT NOT NULL,
+  from_node_id TEXT NOT NULL,
+  to_node_id TEXT NOT NULL,
+  type TEXT NOT NULL CHECK (type IN ('plan', 'runtime', 'evidence', 'deviation')),
+  label TEXT,
+  FOREIGN KEY (plan_graph_id) REFERENCES plan_graphs(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_trace_edges_plan_graph
+  ON trace_edges(plan_graph_id, id);
+
+CREATE TABLE IF NOT EXISTS trace_evidence_links (
+  id TEXT PRIMARY KEY,
+  plan_graph_id TEXT NOT NULL,
+  source_type TEXT NOT NULL,
+  source_id TEXT NOT NULL,
+  plan_node_id TEXT,
+  trace_node_id TEXT,
+  summary TEXT,
+  created_at TEXT,
+  FOREIGN KEY (plan_graph_id) REFERENCES plan_graphs(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_trace_evidence_plan_graph
+  ON trace_evidence_links(plan_graph_id, id);
+CREATE INDEX IF NOT EXISTS idx_trace_evidence_source
+  ON trace_evidence_links(source_type, source_id);
+
+CREATE TABLE IF NOT EXISTS role_call_tool_events (
+  id TEXT PRIMARY KEY,
+  plan_graph_id TEXT NOT NULL,
+  source_plan_node_id TEXT NOT NULL,
+  source_run_id TEXT NOT NULL,
+  target_role TEXT NOT NULL,
+  task TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('requested', 'accepted', 'rejected', 'completed', 'failed')),
+  created_trace_node_ids_json TEXT NOT NULL CHECK (json_valid(created_trace_node_ids_json) AND json_type(created_trace_node_ids_json) = 'array'),
+  created_at TEXT NOT NULL,
+  updated_at TEXT,
+  FOREIGN KEY (plan_graph_id) REFERENCES plan_graphs(id) ON DELETE CASCADE,
+  FOREIGN KEY (source_run_id) REFERENCES task_runs(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_role_call_tool_events_plan_graph
+  ON role_call_tool_events(plan_graph_id, created_at, id);
+CREATE INDEX IF NOT EXISTS idx_role_call_tool_events_source_run
+  ON role_call_tool_events(source_run_id);
+`
   }
 ];
 
@@ -1196,7 +1335,9 @@ export function createSqliteRepositories(
     settingsRepository: new SQLiteSettingsRepository(database),
     roleCallRepository: new SQLiteRoleCallRepository(database),
     roleCallEventRepository: new SQLiteRoleCallEventRepository(database),
-    roleTodoRepository: new SQLiteRoleTodoRepository(database)
+    roleTodoRepository: new SQLiteRoleTodoRepository(database),
+    planGraphRepository: new SQLitePlanGraphRepository(database),
+    traceLinkRepository: new SQLiteTraceLinkRepository(database)
   };
 }
 
@@ -3304,6 +3445,420 @@ ORDER BY created_at ASC, id ASC;
   }
 }
 
+export class SQLitePlanGraphRepository implements PlanGraphRepository {
+  constructor(private readonly database: SqliteDatabase) {}
+
+  async create(graph: PlanGraph): Promise<PlanGraph> {
+    const validGraph = validatePlanGraph(graph);
+    const supersedeExisting = validGraph.status === "active"
+      ? `
+UPDATE plan_graphs
+SET status = 'superseded'
+WHERE task_id = ${sqlString(validGraph.taskId)}
+  AND status = 'active'
+  AND id <> ${sqlString(validGraph.id)};
+`
+      : "";
+    await this.database.execute(`
+BEGIN;
+${supersedeExisting}
+INSERT INTO plan_graphs (
+  id,
+  task_id,
+  task_brief_artifact_id,
+  version,
+  status,
+  planner_node_id,
+  created_by_role,
+  created_at
+) VALUES (
+  ${sqlString(validGraph.id)},
+  ${sqlString(validGraph.taskId)},
+  ${sqlNullableString(validGraph.taskBriefArtifactId)},
+  ${validGraph.version},
+  ${sqlString(validGraph.status)},
+  ${sqlString(validGraph.plannerNodeId)},
+  ${sqlString(validGraph.createdByRole)},
+  ${sqlString(validGraph.createdAt)}
+)
+ON CONFLICT(id) DO UPDATE SET
+  task_id = excluded.task_id,
+  task_brief_artifact_id = excluded.task_brief_artifact_id,
+  version = excluded.version,
+  status = excluded.status,
+  planner_node_id = excluded.planner_node_id,
+  created_by_role = excluded.created_by_role,
+  created_at = excluded.created_at;
+DELETE FROM plan_graph_edges WHERE plan_graph_id = ${sqlString(validGraph.id)};
+DELETE FROM plan_graph_nodes WHERE plan_graph_id = ${sqlString(validGraph.id)};
+${validGraph.nodes.map((node, index) => planGraphNodeInsertSql(validGraph.id, node, index)).join("\n")}
+${validGraph.edges.map((edge, index) => planGraphEdgeInsertSql(validGraph.id, edge, index)).join("\n")}
+COMMIT;
+`);
+    return clonePlanGraph(validGraph);
+  }
+
+  async get(id: string): Promise<PlanGraph | undefined> {
+    const rows = await this.database.query<PlanGraphRow>(`
+SELECT
+  id,
+  task_id AS taskId,
+  task_brief_artifact_id AS taskBriefArtifactId,
+  version,
+  status,
+  planner_node_id AS plannerNodeId,
+  created_by_role AS createdByRole,
+  created_at AS createdAt
+FROM plan_graphs
+WHERE id = ${sqlString(id)}
+LIMIT 1;
+`);
+    const row = rows[0];
+    if (!row) {
+      return undefined;
+    }
+    return this.graphFromRow(row);
+  }
+
+  async getActiveByTaskId(taskId: string): Promise<PlanGraph | undefined> {
+    const rows = await this.database.query<PlanGraphRow>(`
+SELECT
+  id,
+  task_id AS taskId,
+  task_brief_artifact_id AS taskBriefArtifactId,
+  version,
+  status,
+  planner_node_id AS plannerNodeId,
+  created_by_role AS createdByRole,
+  created_at AS createdAt
+FROM plan_graphs
+WHERE task_id = ${sqlString(taskId)}
+  AND status = 'active'
+LIMIT 1;
+`);
+    const row = rows[0];
+    if (!row) {
+      return undefined;
+    }
+    return this.graphFromRow(row);
+  }
+
+  async listByTaskId(taskId: string): Promise<PlanGraph[]> {
+    const rows = await this.database.query<PlanGraphRow>(`
+SELECT
+  id,
+  task_id AS taskId,
+  task_brief_artifact_id AS taskBriefArtifactId,
+  version,
+  status,
+  planner_node_id AS plannerNodeId,
+  created_by_role AS createdByRole,
+  created_at AS createdAt
+FROM plan_graphs
+WHERE task_id = ${sqlString(taskId)}
+ORDER BY version ASC, created_at ASC, id ASC;
+`);
+    const graphs: PlanGraph[] = [];
+    for (const row of rows) {
+      graphs.push(await this.graphFromRow(row));
+    }
+    return graphs;
+  }
+
+  async supersede(id: string, nextGraphId: string): Promise<PlanGraph> {
+    const current = await this.get(id);
+    if (!current) {
+      throw new Error(`plan graph ${id} not found`);
+    }
+    const next = await this.get(nextGraphId);
+    await this.database.execute(`
+BEGIN;
+UPDATE plan_graphs
+SET status = 'superseded'
+WHERE id = ${sqlString(id)};
+${next
+  ? `
+UPDATE plan_graphs
+SET status = 'superseded'
+WHERE task_id = ${sqlString(next.taskId)}
+  AND status = 'active'
+  AND id <> ${sqlString(next.id)};
+UPDATE plan_graphs
+SET status = 'active'
+WHERE id = ${sqlString(next.id)};
+`
+  : ""}
+COMMIT;
+`);
+    const updated = await this.get(id);
+    if (!updated) {
+      throw new Error(`plan graph ${id} not found after supersede`);
+    }
+    return updated;
+  }
+
+  private async graphFromRow(row: PlanGraphRow): Promise<PlanGraph> {
+    const [nodes, edges] = await Promise.all([
+      this.database.query<PlanGraphNodeRow>(`
+SELECT
+  id,
+  plan_graph_id AS planGraphId,
+  kind,
+  title,
+  role,
+  instructions,
+  acceptance_criteria_json AS acceptanceCriteriaJson,
+  risk_level AS riskLevel,
+  required,
+  execution_json AS executionJson,
+  output_plan_graph_id AS outputPlanGraphId,
+  position
+FROM plan_graph_nodes
+WHERE plan_graph_id = ${sqlString(row.id)}
+ORDER BY position ASC, id ASC;
+`),
+      this.database.query<PlanGraphEdgeRow>(`
+SELECT
+  plan_graph_id AS planGraphId,
+  position,
+  from_node_id AS fromNodeId,
+  to_node_id AS toNodeId,
+  type,
+  label
+FROM plan_graph_edges
+WHERE plan_graph_id = ${sqlString(row.id)}
+ORDER BY position ASC;
+`)
+    ]);
+    return validatePlanGraph({
+      id: row.id,
+      taskId: row.taskId,
+      taskBriefArtifactId: nullToUndefined(row.taskBriefArtifactId),
+      version: row.version,
+      status: row.status as PlanGraph["status"],
+      plannerNodeId: row.plannerNodeId,
+      createdByRole: "planner",
+      createdAt: row.createdAt,
+      nodes: nodes.map(planGraphNodeFromRow),
+      edges: edges.map(planGraphEdgeFromRow)
+    });
+  }
+}
+
+export class SQLiteTraceLinkRepository implements TraceLinkRepository {
+  constructor(private readonly database: SqliteDatabase) {}
+
+  async createNode(node: TraceNode): Promise<TraceNode> {
+    await this.database.execute(`
+INSERT INTO trace_nodes (
+  id,
+  plan_graph_id,
+  kind,
+  title,
+  status,
+  source_plan_node_id,
+  role,
+  source_type,
+  source_id,
+  created_at
+) VALUES (
+  ${sqlString(node.id)},
+  ${sqlString(node.planGraphId)},
+  ${sqlString(node.kind)},
+  ${sqlString(node.title)},
+  ${sqlString(node.status)},
+  ${sqlNullableString(node.sourcePlanNodeId)},
+  ${sqlNullableString(node.role)},
+  ${sqlNullableString(node.sourceType)},
+  ${sqlNullableString(node.sourceId)},
+  ${sqlNullableString(node.createdAt)}
+)
+ON CONFLICT(id) DO UPDATE SET
+  plan_graph_id = excluded.plan_graph_id,
+  kind = excluded.kind,
+  title = excluded.title,
+  status = excluded.status,
+  source_plan_node_id = excluded.source_plan_node_id,
+  role = excluded.role,
+  source_type = excluded.source_type,
+  source_id = excluded.source_id,
+  created_at = excluded.created_at;
+`);
+    return cloneTraceNode(node);
+  }
+
+  async createEdge(edge: TraceEdge): Promise<TraceEdge> {
+    await this.database.execute(`
+INSERT INTO trace_edges (
+  id,
+  plan_graph_id,
+  from_node_id,
+  to_node_id,
+  type,
+  label
+) VALUES (
+  ${sqlString(edge.id)},
+  ${sqlString(edge.planGraphId)},
+  ${sqlString(edge.from)},
+  ${sqlString(edge.to)},
+  ${sqlString(edge.type)},
+  ${sqlNullableString(edge.label)}
+)
+ON CONFLICT(id) DO UPDATE SET
+  plan_graph_id = excluded.plan_graph_id,
+  from_node_id = excluded.from_node_id,
+  to_node_id = excluded.to_node_id,
+  type = excluded.type,
+  label = excluded.label;
+`);
+    return cloneTraceEdge(edge);
+  }
+
+  async linkEvidence(link: TraceEvidence): Promise<TraceEvidence> {
+    await this.database.execute(`
+INSERT INTO trace_evidence_links (
+  id,
+  plan_graph_id,
+  source_type,
+  source_id,
+  plan_node_id,
+  trace_node_id,
+  summary,
+  created_at
+) VALUES (
+  ${sqlString(link.id)},
+  ${sqlString(link.planGraphId)},
+  ${sqlString(link.sourceType)},
+  ${sqlString(link.sourceId)},
+  ${sqlNullableString(link.planNodeId)},
+  ${sqlNullableString(link.traceNodeId)},
+  ${sqlNullableString(link.summary)},
+  ${sqlNullableString(link.createdAt)}
+)
+ON CONFLICT(id) DO UPDATE SET
+  plan_graph_id = excluded.plan_graph_id,
+  source_type = excluded.source_type,
+  source_id = excluded.source_id,
+  plan_node_id = excluded.plan_node_id,
+  trace_node_id = excluded.trace_node_id,
+  summary = excluded.summary,
+  created_at = excluded.created_at;
+`);
+    return cloneTraceEvidence(link);
+  }
+
+  async createRoleCallToolEvent(
+    event: RoleCallToolEvent
+  ): Promise<RoleCallToolEvent> {
+    const validEvent = validateRoleCallToolEvent(event);
+    await this.database.execute(`
+INSERT INTO role_call_tool_events (
+  id,
+  plan_graph_id,
+  source_plan_node_id,
+  source_run_id,
+  target_role,
+  task,
+  status,
+  created_trace_node_ids_json,
+  created_at,
+  updated_at
+) VALUES (
+  ${sqlString(validEvent.id)},
+  ${sqlString(validEvent.planGraphId)},
+  ${sqlString(validEvent.sourcePlanNodeId)},
+  ${sqlString(validEvent.sourceRunId)},
+  ${sqlString(validEvent.targetRole)},
+  ${sqlString(validEvent.task)},
+  ${sqlString(validEvent.status)},
+  ${sqlJson(validEvent.createdTraceNodeIds)},
+  ${sqlString(validEvent.createdAt)},
+  ${sqlNullableString(validEvent.updatedAt)}
+)
+ON CONFLICT(id) DO UPDATE SET
+  plan_graph_id = excluded.plan_graph_id,
+  source_plan_node_id = excluded.source_plan_node_id,
+  source_run_id = excluded.source_run_id,
+  target_role = excluded.target_role,
+  task = excluded.task,
+  status = excluded.status,
+  created_trace_node_ids_json = excluded.created_trace_node_ids_json,
+  created_at = excluded.created_at,
+  updated_at = excluded.updated_at;
+`);
+    return cloneRoleCallToolEvent(validEvent);
+  }
+
+  async listByPlanGraphId(planGraphId: string): Promise<TraceProjectionRows> {
+    const [nodeRows, edgeRows, evidenceRows, toolEventRows] = await Promise.all([
+      this.database.query<TraceNodeRow>(`
+SELECT
+  id,
+  plan_graph_id AS planGraphId,
+  kind,
+  title,
+  status,
+  source_plan_node_id AS sourcePlanNodeId,
+  role,
+  source_type AS sourceType,
+  source_id AS sourceId,
+  created_at AS createdAt
+FROM trace_nodes
+WHERE plan_graph_id = ${sqlString(planGraphId)}
+ORDER BY id ASC;
+`),
+      this.database.query<TraceEdgeRow>(`
+SELECT
+  id,
+  plan_graph_id AS planGraphId,
+  from_node_id AS fromNodeId,
+  to_node_id AS toNodeId,
+  type,
+  label
+FROM trace_edges
+WHERE plan_graph_id = ${sqlString(planGraphId)}
+ORDER BY id ASC;
+`),
+      this.database.query<TraceEvidenceRow>(`
+SELECT
+  id,
+  plan_graph_id AS planGraphId,
+  source_type AS sourceType,
+  source_id AS sourceId,
+  plan_node_id AS planNodeId,
+  trace_node_id AS traceNodeId,
+  summary,
+  created_at AS createdAt
+FROM trace_evidence_links
+WHERE plan_graph_id = ${sqlString(planGraphId)}
+ORDER BY id ASC;
+`),
+      this.database.query<RoleCallToolEventRow>(`
+SELECT
+  id,
+  plan_graph_id AS planGraphId,
+  source_plan_node_id AS sourcePlanNodeId,
+  source_run_id AS sourceRunId,
+  target_role AS targetRole,
+  task,
+  status,
+  created_trace_node_ids_json AS createdTraceNodeIdsJson,
+  created_at AS createdAt,
+  updated_at AS updatedAt
+FROM role_call_tool_events
+WHERE plan_graph_id = ${sqlString(planGraphId)}
+ORDER BY created_at ASC, id ASC;
+`)
+    ]);
+    return {
+      nodes: nodeRows.map(traceNodeFromRow),
+      edges: edgeRows.map(traceEdgeFromRow),
+      evidence: evidenceRows.map(traceEvidenceFromRow),
+      roleCallToolEvents: toolEventRows.map(roleCallToolEventFromRow)
+    };
+  }
+}
+
 interface ProjectRow extends Record<string, unknown> {
   id: string;
   name: string;
@@ -3594,6 +4149,87 @@ interface RoleTodoRow extends Record<string, unknown> {
   createdAt: string;
   updatedAt: string;
   completedAt: string | null;
+}
+
+interface PlanGraphRow extends Record<string, unknown> {
+  id: string;
+  taskId: string;
+  taskBriefArtifactId: string | null;
+  version: number;
+  status: string;
+  plannerNodeId: string;
+  createdByRole: string;
+  createdAt: string;
+}
+
+interface PlanGraphNodeRow extends Record<string, unknown> {
+  id: string;
+  planGraphId: string;
+  kind: string;
+  title: string;
+  role: string;
+  instructions: string;
+  acceptanceCriteriaJson: string;
+  riskLevel: string;
+  required: number;
+  executionJson: string;
+  outputPlanGraphId: string | null;
+  position: number;
+}
+
+interface PlanGraphEdgeRow extends Record<string, unknown> {
+  planGraphId: string;
+  position: number;
+  fromNodeId: string;
+  toNodeId: string;
+  type: string;
+  label: string | null;
+}
+
+interface TraceNodeRow extends Record<string, unknown> {
+  id: string;
+  planGraphId: string;
+  kind: string;
+  title: string;
+  status: string;
+  sourcePlanNodeId: string | null;
+  role: string | null;
+  sourceType: string | null;
+  sourceId: string | null;
+  createdAt: string | null;
+}
+
+interface TraceEdgeRow extends Record<string, unknown> {
+  id: string;
+  planGraphId: string;
+  fromNodeId: string;
+  toNodeId: string;
+  type: string;
+  label: string | null;
+}
+
+interface TraceEvidenceRow extends Record<string, unknown> {
+  id: string;
+  planGraphId: string;
+  sourceType: string;
+  sourceId: string;
+  planNodeId: string | null;
+  traceNodeId: string | null;
+  summary: string | null;
+  createdAt: string | null;
+}
+
+interface RoleCallToolEventRow extends Record<string, unknown> {
+  id: string;
+  planGraphId: string;
+  sourcePlanNodeId: string;
+  sourceRunId: string;
+  targetRole: string;
+  task: string;
+  status: string;
+  createdTraceNodeIdsJson: string;
+  createdAt: string;
+  updatedAt: string | null;
 }
 
 function projectFromRow(row: ProjectRow): Project {
@@ -3926,6 +4562,146 @@ function roleTodoFromRow(row: RoleTodoRow): RoleTodo {
     updatedAt: row.updatedAt,
     completedAt: nullToUndefined(row.completedAt)
   });
+}
+
+function planGraphNodeFromRow(row: PlanGraphNodeRow): PlanGraph["nodes"][number] {
+  const node = {
+    id: row.id,
+    kind: row.kind as PlanGraph["nodes"][number]["kind"],
+    title: row.title,
+    role: row.role,
+    instructions: row.instructions,
+    acceptanceCriteria: parseJson<string[]>(row.acceptanceCriteriaJson) ?? [],
+    riskLevel: row.riskLevel as PlanGraph["nodes"][number]["riskLevel"],
+    required: row.required === 1,
+    execution: parseJson(row.executionJson) as PlanGraph["nodes"][number]["execution"],
+    outputPlanGraphId: nullToUndefined(row.outputPlanGraphId)
+  };
+  if (node.kind !== "planner") {
+    delete (node as { outputPlanGraphId?: string }).outputPlanGraphId;
+  }
+  return node as PlanGraph["nodes"][number];
+}
+
+function planGraphEdgeFromRow(row: PlanGraphEdgeRow): PlanGraph["edges"][number] {
+  return {
+    from: row.fromNodeId,
+    to: row.toNodeId,
+    type: row.type as PlanGraph["edges"][number]["type"],
+    label: nullToUndefined(row.label)
+  };
+}
+
+function traceNodeFromRow(row: TraceNodeRow): TraceNode {
+  return {
+    id: row.id,
+    planGraphId: row.planGraphId,
+    kind: row.kind as TraceNode["kind"],
+    title: row.title,
+    status: row.status as TraceNode["status"],
+    sourcePlanNodeId: nullToUndefined(row.sourcePlanNodeId),
+    role: nullToUndefined(row.role),
+    sourceType: row.sourceType === null ? undefined : row.sourceType as TraceNode["sourceType"],
+    sourceId: nullToUndefined(row.sourceId),
+    createdAt: nullToUndefined(row.createdAt)
+  };
+}
+
+function traceEdgeFromRow(row: TraceEdgeRow): TraceEdge {
+  return {
+    id: row.id,
+    planGraphId: row.planGraphId,
+    from: row.fromNodeId,
+    to: row.toNodeId,
+    type: row.type as TraceEdge["type"],
+    label: nullToUndefined(row.label)
+  };
+}
+
+function traceEvidenceFromRow(row: TraceEvidenceRow): TraceEvidence {
+  return {
+    id: row.id,
+    planGraphId: row.planGraphId,
+    sourceType: row.sourceType as TraceEvidence["sourceType"],
+    sourceId: row.sourceId,
+    planNodeId: nullToUndefined(row.planNodeId),
+    traceNodeId: nullToUndefined(row.traceNodeId),
+    summary: nullToUndefined(row.summary),
+    createdAt: nullToUndefined(row.createdAt)
+  };
+}
+
+function roleCallToolEventFromRow(row: RoleCallToolEventRow): RoleCallToolEvent {
+  return validateRoleCallToolEvent({
+    id: row.id,
+    planGraphId: row.planGraphId,
+    sourcePlanNodeId: row.sourcePlanNodeId,
+    sourceRunId: row.sourceRunId,
+    targetRole: row.targetRole,
+    task: row.task,
+    status: row.status as RoleCallToolEvent["status"],
+    createdTraceNodeIds: parseJson<string[]>(row.createdTraceNodeIdsJson) ?? [],
+    createdAt: row.createdAt,
+    updatedAt: nullToUndefined(row.updatedAt)
+  });
+}
+
+function planGraphNodeInsertSql(
+  planGraphId: string,
+  node: PlanGraph["nodes"][number],
+  position: number
+): string {
+  return `
+INSERT INTO plan_graph_nodes (
+  id,
+  plan_graph_id,
+  kind,
+  title,
+  role,
+  instructions,
+  acceptance_criteria_json,
+  risk_level,
+  required,
+  execution_json,
+  output_plan_graph_id,
+  position
+) VALUES (
+  ${sqlString(node.id)},
+  ${sqlString(planGraphId)},
+  ${sqlString(node.kind)},
+  ${sqlString(node.title)},
+  ${sqlString(node.role)},
+  ${sqlString(node.instructions)},
+  ${sqlJson(node.acceptanceCriteria)},
+  ${sqlString(node.riskLevel)},
+  ${node.required ? 1 : 0},
+  ${sqlJson(node.execution)},
+  ${sqlNullableString(node.kind === "planner" ? (node as { outputPlanGraphId?: string }).outputPlanGraphId : undefined)},
+  ${position}
+);`;
+}
+
+function planGraphEdgeInsertSql(
+  planGraphId: string,
+  edge: PlanGraph["edges"][number],
+  position: number
+): string {
+  return `
+INSERT INTO plan_graph_edges (
+  plan_graph_id,
+  position,
+  from_node_id,
+  to_node_id,
+  type,
+  label
+) VALUES (
+  ${sqlString(planGraphId)},
+  ${position},
+  ${sqlString(edge.from)},
+  ${sqlString(edge.to)},
+  ${sqlString(edge.type)},
+  ${sqlNullableString(edge.label)}
+);`;
 }
 
 function conversationMessageInsertSql(message: ConversationMessage): string {
@@ -4275,6 +5051,26 @@ function cloneRoleCallEvent(event: RoleCallEvent): RoleCallEvent {
 
 function cloneRoleTodo(todo: RoleTodo): RoleTodo {
   return cloneJsonValue(todo) as RoleTodo;
+}
+
+function clonePlanGraph(graph: PlanGraph): PlanGraph {
+  return cloneJsonValue(graph) as PlanGraph;
+}
+
+function cloneTraceNode(node: TraceNode): TraceNode {
+  return cloneJsonValue(node) as TraceNode;
+}
+
+function cloneTraceEdge(edge: TraceEdge): TraceEdge {
+  return cloneJsonValue(edge) as TraceEdge;
+}
+
+function cloneTraceEvidence(evidence: TraceEvidence): TraceEvidence {
+  return cloneJsonValue(evidence) as TraceEvidence;
+}
+
+function cloneRoleCallToolEvent(event: RoleCallToolEvent): RoleCallToolEvent {
+  return cloneJsonValue(event) as RoleCallToolEvent;
 }
 
 function cloneJsonObject<T extends Record<string, unknown>>(value: T): T {

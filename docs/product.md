@@ -512,8 +512,10 @@ contract is tracked in
 `docs/plan-graph-execution-trace-product.md`.
 The shared domain contract and core validators for `PlanGraph`,
 `PlanNode`, `PlanEdge`, trace nodes, evidence links, deviations, and
-`ExecutionTraceGraph` are implemented. Persistence, deterministic planner
-creation, primary PlanNode scheduling, RoleCall tool-event links, and
+`ExecutionTraceGraph` are implemented. SQLite and in-memory repositories can
+persist PlanGraph versions, active graph lookup, dynamic trace nodes and edges,
+trace evidence links, and RoleCall tool events. Deterministic planner creation,
+primary PlanNode scheduling, runtime RoleCall tool-event production, and
 mode-aware TUI/Desktop graph rendering are not implemented yet.
 
 ## CLI Surface

@@ -31,6 +31,7 @@ import {
   roleCallDispositions,
   roleCallEventTypes,
   roleCallStatuses,
+  roleCallToolEventStatuses,
   roleExecutorKinds,
   roleIntentTypes,
   rolePriorities,
@@ -79,6 +80,7 @@ import {
   type RoleCallDecision,
   type RoleCallEvent,
   type RoleCallStatus,
+  type RoleCallToolEvent,
   type RoleDefinition,
   type RoleIntent,
   type RoleResult,
@@ -220,6 +222,7 @@ export function validateExecutionTraceGraph(
   validateTraceEdges(
     input.dynamicEdges,
     "executionTraceGraph.dynamicEdges",
+    input.planGraphId,
     new Set([...baseNodeIds, ...traceNodeIds]),
     issues
   );
@@ -240,6 +243,23 @@ export function validateExecutionTraceGraph(
     issues
   );
 
+  return finish(input, issues);
+}
+
+export function validateRoleCallToolEvent(
+  input: RoleCallToolEvent
+): RoleCallToolEvent {
+  const issues: string[] = [];
+  required(input.id, "roleCallToolEvent.id", issues);
+  required(input.planGraphId, "roleCallToolEvent.planGraphId", issues);
+  required(input.sourcePlanNodeId, "roleCallToolEvent.sourcePlanNodeId", issues);
+  required(input.sourceRunId, "roleCallToolEvent.sourceRunId", issues);
+  required(input.targetRole, "roleCallToolEvent.targetRole", issues);
+  required(input.task, "roleCallToolEvent.task", issues);
+  enumValue(input.status, roleCallToolEventStatuses, "roleCallToolEvent.status", issues);
+  stringArray(input.createdTraceNodeIds, "roleCallToolEvent.createdTraceNodeIds", issues);
+  timestamp(input.createdAt, "roleCallToolEvent.createdAt", issues);
+  optionalTimestamp(input.updatedAt, "roleCallToolEvent.updatedAt", issues);
   return finish(input, issues);
 }
 
@@ -1527,6 +1547,7 @@ function validateTraceNode(
 function validateTraceEdges(
   value: unknown,
   field: string,
+  planGraphId: string,
   nodeIds: Set<string>,
   issues: string[]
 ): void {
@@ -1540,6 +1561,10 @@ function validateTraceEdges(
       return;
     }
     required(edge.id, `${field}.${index}.id`, issues);
+    required(edge.planGraphId, `${field}.${index}.planGraphId`, issues);
+    if (edge.planGraphId !== planGraphId) {
+      issues.push(`${field}.${index}.planGraphId must match executionTraceGraph.planGraphId`);
+    }
     required(edge.from, `${field}.${index}.from`, issues);
     required(edge.to, `${field}.${index}.to`, issues);
     enumValue(edge.type, traceEdgeTypes, `${field}.${index}.type`, issues);

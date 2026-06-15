@@ -11,7 +11,9 @@ import {
   InMemoryConversationMessageRepository,
   InMemoryConversationThreadSummaryRepository,
   InMemoryConversationThreadRepository,
+  InMemoryPlanGraphRepository,
   InMemorySettingsRepository,
+  InMemoryTraceLinkRepository,
   InMemoryTaskRunRepository,
   createDefaultMemoryAutomationPolicy,
   nowIso,
@@ -170,6 +172,7 @@ function executionTraceFixture(): ExecutionTraceGraph {
     dynamicEdges: [
       {
         id: "trace_edge_1",
+        planGraphId: graph.id,
         from: implementNode.id,
         to: "trace_run_1",
         type: "runtime"
@@ -348,6 +351,7 @@ describe("domain model validation", () => {
       dynamicEdges: [
         {
           id: "bad_edge",
+          planGraphId: executionTraceFixture().planGraphId,
           from: "missing_node",
           to: "trace_run_1",
           type: "runtime"
@@ -363,6 +367,91 @@ describe("domain model validation", () => {
 
     expect(validatePlanGraph(JSON.parse(JSON.stringify(graph)))).toEqual(graph);
     expect(validateExecutionTraceGraph(JSON.parse(JSON.stringify(trace)))).toEqual(trace);
+  });
+
+  it("stores PlanGraphs and trace links in memory repositories", async () => {
+    const graphs = new InMemoryPlanGraphRepository();
+    const traceLinks = new InMemoryTraceLinkRepository();
+    const first = planGraphFixture();
+    const second = {
+      ...planGraphFixture(),
+      id: planGraphIdForTaskVersion("task_1", 2),
+      version: 2
+    };
+    second.plannerNodeId = plannerNodeIdForPlanGraph(second.id);
+    second.nodes = second.nodes.map((node, index) => ({
+      ...node,
+      id: index === 0 ? second.plannerNodeId : planNodeIdForPlanGraph(second.id, node.kind, index),
+      ...(node.kind === "planner" ? { outputPlanGraphId: second.id } : {})
+    }));
+    second.edges = [
+      { from: second.nodes[0].id, to: second.nodes[1].id, type: "primary" },
+      { from: second.nodes[1].id, to: second.nodes[2].id, type: "primary" },
+      { from: second.nodes[2].id, to: second.nodes[3].id, type: "primary" }
+    ];
+
+    await graphs.create(first);
+    await graphs.create(second);
+
+    await expect(graphs.getActiveByTaskId("task_1")).resolves.toMatchObject({
+      id: second.id,
+      status: "active"
+    });
+    await expect(graphs.listByTaskId("task_1")).resolves.toMatchObject([
+      { id: first.id, status: "superseded" },
+      { id: second.id, status: "active" }
+    ]);
+
+    const implementNode = second.nodes.find((node) => node.kind === "implement");
+    if (!implementNode) {
+      throw new Error("missing implement node");
+    }
+    await traceLinks.createNode({
+      id: "trace_run_memory",
+      planGraphId: second.id,
+      kind: "task_run",
+      title: "Memory run",
+      status: "completed",
+      sourcePlanNodeId: implementNode.id,
+      sourceType: "task_run",
+      sourceId: "run_memory",
+      createdAt
+    });
+    await traceLinks.createEdge({
+      id: "trace_edge_memory",
+      planGraphId: second.id,
+      from: implementNode.id,
+      to: "trace_run_memory",
+      type: "runtime"
+    });
+    await traceLinks.linkEvidence({
+      id: "trace_evidence_memory",
+      planGraphId: second.id,
+      sourceType: "task_run",
+      sourceId: "run_memory",
+      planNodeId: implementNode.id,
+      traceNodeId: "trace_run_memory",
+      summary: "Memory trace evidence.",
+      createdAt
+    });
+    await traceLinks.createRoleCallToolEvent({
+      id: "role_call_tool_memory",
+      planGraphId: second.id,
+      sourcePlanNodeId: implementNode.id,
+      sourceRunId: "run_memory",
+      targetRole: "reviewer",
+      task: "Review memory trace.",
+      status: "accepted",
+      createdTraceNodeIds: ["trace_run_memory"],
+      createdAt
+    });
+
+    await expect(traceLinks.listByPlanGraphId(second.id)).resolves.toMatchObject({
+      nodes: [{ id: "trace_run_memory" }],
+      edges: [{ id: "trace_edge_memory", planGraphId: second.id }],
+      evidence: [{ id: "trace_evidence_memory" }],
+      roleCallToolEvents: [{ id: "role_call_tool_memory" }]
+    });
   });
 
   it("validates preset and custom workgroup role contracts", () => {

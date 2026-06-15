@@ -445,7 +445,16 @@ edge references, `primary_run` acceptance criteria, safe execution modes,
 stable planner/node id shapes, trace edge/evidence references, deviations, and
 prohibited automatic side effects such as push, merge, PR creation, memory
 approval, repository export, or repository-root context-file writes. These
-validators do not persist graphs, schedule runs, or alter TaskRunner behavior.
+validators do not schedule runs or alter TaskRunner behavior.
+
+`packages/core` also defines PlanGraph and trace-link repository contracts with
+in-memory implementations for local composition tests. SQLite migration 18 adds
+`plan_graphs`, `plan_graph_nodes`, `plan_graph_edges`, `trace_nodes`,
+`trace_edges`, `trace_evidence_links`, and `role_call_tool_events`. The SQLite
+repositories support graph create/get/list, active graph lookup, explicit
+supersession, dynamic trace node/edge writes, evidence links, and RoleCall tool
+event persistence. `ExecutionTraceGraph` remains a projection contract; the
+stored rows are source evidence and stable links, not a cached LLM summary.
 
 This boundary should preserve the current TaskRunner and RoleCall ownership:
 

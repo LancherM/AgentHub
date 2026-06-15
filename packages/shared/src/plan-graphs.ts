@@ -136,6 +136,15 @@ export const deviationTypes = [
 ] as const;
 export type DeviationType = (typeof deviationTypes)[number];
 
+export const roleCallToolEventStatuses = [
+  "requested",
+  "accepted",
+  "rejected",
+  "completed",
+  "failed"
+] as const;
+export type RoleCallToolEventStatus = (typeof roleCallToolEventStatuses)[number];
+
 export interface TraceNode {
   id: string;
   planGraphId: string;
@@ -151,6 +160,7 @@ export interface TraceNode {
 
 export interface TraceEdge {
   id: string;
+  planGraphId: string;
   from: string;
   to: string;
   type: TraceEdgeType;
@@ -190,6 +200,19 @@ export interface ExecutionTraceGraph {
   dynamicEdges: TraceEdge[];
   evidence: TraceEvidence[];
   deviations: Deviation[];
+}
+
+export interface RoleCallToolEvent {
+  id: string;
+  planGraphId: string;
+  sourcePlanNodeId: string;
+  sourceRunId: string;
+  targetRole: string;
+  task: string;
+  status: RoleCallToolEventStatus;
+  createdTraceNodeIds: string[];
+  createdAt: string;
+  updatedAt?: string;
 }
 
 export function planGraphIdForTaskVersion(taskId: string, version: number): string {
