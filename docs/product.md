@@ -154,6 +154,20 @@ composer. The command palette opens with `:`, or by submitting a slash-only `/`
 composer command, accepts input, fuzzy filters safe focus actions and existing
 local CLI command hints, highlights matches, and uses `Enter` to either switch
 focus or prepare the selected command in the composer.
+Interactive TUI composer slash commands provide local session control without
+shelling out from the renderer. The first supported set includes `/help`,
+`/agents`, `/use <agent-or-role>`, `/context`, `/room <handle-or-id>`,
+`/search <text>`, `/timeline`, `/notify on|off`, `/team`, `/runs`, `/review`,
+`/memory`, `/memory auto status|on|off|safe`, `/tasks`, `/clear`, `/exit`, and
+`/quit`. Slash command suggestions appear while typing and `Tab` accepts the
+selected completion. Suggestion rows participate in the same terminal row
+budget as the composer, so Work content yields space before the prompt footer
+overflows. `/use pm` changes the default composer target for future prompts; an
+explicit `@role` mention on a prompt still wins for that prompt.
+`/clear` clears the terminal and creates a new isolated custom room with no
+prior room messages, so subsequent prompts use a fresh session thread while
+remaining inside the same local project. `/memory auto on|off|safe` changes the
+stored project memory automation policy; it does not approve memory directly.
 The optional mini timeline is also local renderer state. `/timeline` or
 empty-composer `L` opens a compact chronological view over the current rendered
 conversation, active runs, and recent runs; `Esc` or `L` closes it. `/notify`

@@ -83,6 +83,25 @@ export interface TuiInkReviewResult {
   model?: TuiCurrentContextModel;
 }
 
+export interface TuiInkSlashInput {
+  command: string;
+  projectId?: string;
+  threadId?: string;
+  selectedTarget?: string;
+}
+
+export interface TuiInkSlashResult {
+  ok: boolean;
+  message: string;
+  projectId?: string;
+  threadId?: string;
+  roomHandle?: string;
+  selectedAgent?: string;
+  selectedTarget?: string;
+  clearScreen?: boolean;
+  model?: TuiCurrentContextModel;
+}
+
 export interface TuiInkFrameProps {
   model: TuiCurrentContextModel;
   state?: TuiInkState;
@@ -98,6 +117,8 @@ export interface TuiInkAppProps extends TuiInkFrameProps {
   loadModel?: (state: TuiInkState) => Promise<TuiCurrentContextModel>;
   submitPrompt?: (input: TuiInkSubmitInput) => Promise<TuiInkSubmitResult>;
   recordReviewDecision?: (input: TuiInkReviewInput) => Promise<TuiInkReviewResult>;
+  executeSlashCommand?: (input: TuiInkSlashInput) => Promise<TuiInkSlashResult>;
+  clearTerminal?: () => void;
   notify?: (message: string) => void;
   operationTimeoutMs?: number;
   pollIntervalMs?: number;
@@ -258,88 +279,164 @@ export function TuiInkApp(props: TuiInkAppProps): React.ReactElement {
 
   const applyComposerCommand = (): boolean => {
     const currentState = stateRef.current;
-    const command = currentState.composer.trim().toLowerCase();
-    if (command === "/") {
+    const command = currentState.composer.trim();
+    if (!command.startsWith("/")) {
+      return false;
+    }
+    if (applyLocalSlashCommand(command, currentState)) {
+      return true;
+    }
+    void executeRemoteSlashCommand(command, currentState);
+    return true;
+  };
+
+  const applyLocalSlashCommand = (
+    command: string,
+    currentState: TuiInkState
+  ): boolean => {
+    const [name, ...args] = splitSlashCommand(command);
+    if (name === "/") {
       setStateNow({
-        ...currentState,
+        ...clearComposerForCommand(currentState, command, "Command palette opened."),
         commandPaletteOpen: true,
         searchOpen: false,
-        composer: "",
-        composerCursorPosition: 0,
-        composerHistoryIndex: undefined,
-        composerHistoryDraft: "",
-        agentCompletionIndex: 0,
         paletteQuery: "",
-        paletteSelectedIndex: 0,
-        statusMessage: "Command palette opened."
+        paletteSelectedIndex: 0
       });
       return true;
     }
-    if (command === "/team" || command === "/roles") {
+    if (name === "/help") {
       setStateNow({
-        ...currentState,
-        focus: "team",
-        composer: "",
-        composerCursorPosition: 0,
-        composerHistoryIndex: undefined,
-        composerHistoryDraft: "",
-        agentCompletionIndex: 0,
-        commandPaletteOpen: false,
-        statusMessage: "Team roles shown."
+        ...clearComposerForCommand(currentState, command, "Help shown."),
+        focus: "help"
       });
       return true;
     }
-    if (command === "/search") {
-      setStateNow(openSearchState({
-        ...currentState,
-        composer: "",
-        composerCursorPosition: 0,
-        composerHistoryIndex: undefined,
-        composerHistoryDraft: "",
-        agentCompletionIndex: 0
-      }));
+    if (name === "/agents" || name === "/team" || name === "/roles") {
+      setStateNow({
+        ...clearComposerForCommand(currentState, command, "Team roles shown."),
+        focus: "team"
+      });
       return true;
     }
-    if (command === "/timeline") {
+    if (name === "/runs" || name === "/review" || name === "/tasks" || name === "/memory" || name === "/work" || name === "/graph") {
+      if (name === "/memory" && args[0] === "auto") {
+        return false;
+      }
       setStateNow({
-        ...currentState,
-        timelineOpen: true,
+        ...clearComposerForCommand(currentState, command, `${focusLabelForSlash(name)} shown.`),
+        focus: slashFocus(name)
+      });
+      return true;
+    }
+    if (name === "/search") {
+      const query = args.join(" ");
+      setStateNow({
+        ...openSearchState(clearComposerForCommand(currentState, command, "Search opened.")),
+        searchQuery: query,
+        searchMatchIndex: 0,
+        statusMessage: query ? `Search opened for "${query}".` : "Search opened."
+      });
+      return true;
+    }
+    if (name === "/timeline") {
+      const enabled = slashBoolean(args[0], !currentState.timelineOpen);
+      setStateNow({
+        ...clearComposerForCommand(
+          currentState,
+          command,
+          enabled ? "Timeline shown." : "Timeline hidden."
+        ),
+        timelineOpen: enabled,
         searchOpen: false,
-        commandPaletteOpen: false,
-        composer: "",
-        composerCursorPosition: 0,
-        composerHistoryIndex: undefined,
-        composerHistoryDraft: "",
-        agentCompletionIndex: 0,
-        statusMessage: "Timeline shown."
+        commandPaletteOpen: false
       });
       return true;
     }
-    if (command === "/notify") {
+    if (name === "/notify") {
+      const enabled = slashBoolean(args[0], !currentState.notifyEnabled);
       setStateNow({
-        ...currentState,
-        notifyEnabled: !currentState.notifyEnabled,
-        composer: "",
-        composerCursorPosition: 0,
-        composerHistoryIndex: undefined,
-        composerHistoryDraft: "",
-        agentCompletionIndex: 0,
-        statusMessage: currentState.notifyEnabled
-          ? "Completion notifications disabled."
-          : "Completion notifications enabled."
+        ...clearComposerForCommand(
+          currentState,
+          command,
+          enabled ? "Completion notifications enabled." : "Completion notifications disabled."
+        ),
+        notifyEnabled: enabled
       });
+      return true;
+    }
+    if (name === "/exit" || name === "/quit") {
+      app.exit();
       return true;
     }
     return false;
   };
 
+  const executeRemoteSlashCommand = async (
+    command: string,
+    currentState: TuiInkState
+  ) => {
+    const currentModel = modelRef.current;
+    if (!props.executeSlashCommand) {
+      setStateNow(clearComposerForCommand(currentState, command, "Slash commands are unavailable."));
+      return;
+    }
+    if (busyRef.current) {
+      showBusyInputMessage();
+      return;
+    }
+    const busyLabel = `Running ${splitSlashCommand(command)[0] ?? "slash command"}...`;
+    setStateNow(clearComposerForCommand(currentState, command, busyLabel));
+    setBusyMessage(busyLabel);
+    busyMessageRef.current = busyLabel;
+    busyRef.current = true;
+    setBusy(true);
+    try {
+      const result = await withTimeout(
+        props.executeSlashCommand({
+          command,
+          projectId: currentModel.context.projectId,
+          threadId: currentModel.context.threadId,
+          selectedTarget: currentState.selectedTarget ?? currentModel.context.selectedAgent
+        }),
+        operationTimeoutMs,
+        "Slash command"
+      );
+      if (result.clearScreen) {
+        props.clearTerminal?.();
+      }
+      const nextState = {
+        ...stateRef.current,
+        selectedTarget: result.selectedTarget ?? stateRef.current.selectedTarget,
+        statusMessage: result.message
+      };
+      setStateNow(nextState);
+      if (result.model) {
+        setModelFromRefresh(result.model);
+      } else {
+        await refreshModel(nextState);
+      }
+    } catch (error) {
+      setStateNow({
+        ...stateRef.current,
+        statusMessage: errorMessage(error)
+      });
+    } finally {
+      busyRef.current = false;
+      busyMessageRef.current = undefined;
+      setBusy(false);
+      setBusyMessage(undefined);
+    }
+  };
+
   const submitComposer = async () => {
     const currentState = stateRef.current;
-    const prompt = currentState.composer.trim();
-    if (!prompt) {
+    const rawPrompt = currentState.composer.trim();
+    if (!rawPrompt) {
       setState({ ...currentState, statusMessage: "Composer is empty." });
       return;
     }
+    const prompt = promptForSelectedTarget(modelRef.current, currentState, rawPrompt);
     await submitPromptText(prompt, currentState, "Submitting prompt...");
   };
 
@@ -603,6 +700,17 @@ export function TuiInkApp(props: TuiInkAppProps): React.ReactElement {
       }
       if (key.ctrl && (input === "f" || input === "F")) {
         setStateNow(openSearchState(currentState));
+        return;
+      }
+      const activeSlashCompletion = slashCompletionForState(modelRef.current, currentState);
+      if (activeSlashCompletion && (key.tab || input === "\t")) {
+        updateStateNow((current) => acceptSlashCompletion(modelRef.current, current));
+        return;
+      }
+      if (activeSlashCompletion && (isUpInput(input, key) || isDownInput(input, key))) {
+        updateStateNow((current) =>
+          moveSlashCompletionSelection(modelRef.current, current, isDownInput(input, key) ? 1 : -1)
+        );
         return;
       }
       const activeCompletion = agentCompletionForState(modelRef.current, currentState);
@@ -3241,8 +3349,9 @@ function HelpPane(): React.ReactElement {
     { title: "Help" },
     line("tabs: Tab focus  W work  G graph  R runs  V review  T tasks  M memory  E team"),
     line("move: Up/Down or j/k  detail: Enter/o  folds: Space/> toggle  < close  za toggle  O open"),
-    line("commands: : palette  / then Enter palette"),
-    line("/search  /timeline or L  /notify  /team"),
+    line("commands: : palette  / palette  /use <target>  /clear session"),
+    line("/search [text]  /timeline or L  /notify on|off  /team  /runs  /review"),
+    line("/memory auto status|on|off|safe  /context  /room <handle>"),
     line("review: a accept  R reject  audit only; no apply, merge, or push"),
     line("prompt: enter submit  ctrl+o newline  esc clear  ctrl+u clear")
   );
@@ -3385,12 +3494,14 @@ function fuzzyScore(value: string, query: string): number {
 }
 
 function Composer({ model, state }: { model: TuiCurrentContextModel; state: TuiInkState }): React.ReactElement {
-  const agent = model.context.selectedAgent ? `@${model.context.selectedAgent}` : "@agent";
+  const agent = composerTarget(model, state);
   const completion = agentCompletionForState(model, state);
+  const slashCompletion = slashCompletionForState(model, state);
   return h(
     Box,
     { flexDirection: "column" },
     line(composerPreviewLine(model, state), { dimColor: true }),
+    ...(slashCompletion ? [slashCompletionLine(slashCompletion)] : []),
     ...(completion ? [agentCompletionLine(completion)] : []),
     ...(state.composer
       ? composerInputLines(state)
@@ -3499,7 +3610,211 @@ function composerTarget(model: TuiCurrentContextModel, state: TuiInkState): stri
   if (match && options.has(match[1])) {
     return `@${match[1]}`;
   }
+  if (state.selectedTarget) {
+    return `@${state.selectedTarget}`;
+  }
   return model.context.selectedAgent ? `@${model.context.selectedAgent}` : "@agent";
+}
+
+function promptForSelectedTarget(
+  model: TuiCurrentContextModel,
+  state: TuiInkState,
+  prompt: string
+): string {
+  if (/^@[A-Za-z0-9_-]+\b/.test(prompt)) {
+    return prompt;
+  }
+  const target = (state.selectedTarget ?? model.context.selectedAgent)?.trim();
+  if (!target || target === model.context.selectedAgent) {
+    return prompt;
+  }
+  return `@${target} ${prompt}`;
+}
+
+function clearComposerForCommand(
+  state: TuiInkState,
+  command: string,
+  statusMessage: string
+): TuiInkState {
+  return {
+    ...state,
+    composer: "",
+    composerCursorPosition: 0,
+    composerHistory: appendComposerHistory(state.composerHistory, command),
+    composerHistoryIndex: undefined,
+    composerHistoryDraft: "",
+    agentCompletionIndex: 0,
+    slashCompletionIndex: 0,
+    commandPaletteOpen: false,
+    statusMessage
+  };
+}
+
+function splitSlashCommand(command: string): string[] {
+  return command.trim().split(/\s+/).filter(Boolean).map((part, index) =>
+    index === 0 ? part.toLowerCase() : part
+  );
+}
+
+function slashBoolean(value: string | undefined, fallback: boolean): boolean {
+  if (value === "on" || value === "true" || value === "yes") {
+    return true;
+  }
+  if (value === "off" || value === "false" || value === "no") {
+    return false;
+  }
+  return fallback;
+}
+
+function slashFocus(command: string): TuiInkFocus {
+  if (command === "/runs") {
+    return "runs";
+  }
+  if (command === "/review") {
+    return "review";
+  }
+  if (command === "/tasks") {
+    return "tasks";
+  }
+  if (command === "/memory") {
+    return "memory";
+  }
+  if (command === "/graph") {
+    return "graph";
+  }
+  return "work";
+}
+
+function focusLabelForSlash(command: string): string {
+  const focus = slashFocus(command);
+  return `${focus[0]?.toUpperCase() ?? ""}${focus.slice(1)}`;
+}
+
+interface SlashCompletion {
+  options: string[];
+  selectedIndex: number;
+  selectedOption: string;
+}
+
+function slashCompletionForState(
+  model: TuiCurrentContextModel,
+  state: TuiInkState
+): SlashCompletion | undefined {
+  const cursor = boundedComposerCursor(state);
+  const beforeCursor = state.composer.slice(0, cursor);
+  if (!beforeCursor.startsWith("/") || beforeCursor.includes("\n")) {
+    return undefined;
+  }
+  const query = beforeCursor.toLowerCase();
+  const options = slashCompletionOptions(model, state)
+    .filter((option) => {
+      const normalized = option.toLowerCase();
+      if (query.includes(" ")) {
+        return normalized.startsWith(query);
+      }
+      return query.length === 0 || normalized.startsWith(query) || fuzzyScore(normalized, query) >= 0;
+    });
+  if (options.length === 0) {
+    return undefined;
+  }
+  const selectedIndex = Math.min(Math.max(state.slashCompletionIndex, 0), options.length - 1);
+  return {
+    options,
+    selectedIndex,
+    selectedOption: options[selectedIndex] ?? options[0]
+  };
+}
+
+function slashCompletionOptions(
+  model: TuiCurrentContextModel,
+  state: TuiInkState
+): string[] {
+  const targetOptions = agentCompletionOptions(model)
+    .map((target) => `/use ${target}`);
+  const room = model.context.roomHandle ? [`/room ${model.context.roomHandle}`] : [];
+  return dedupe([
+    "/help",
+    "/agents",
+    ...targetOptions,
+    "/use default",
+    "/context",
+    ...room,
+    "/room ",
+    "/search ",
+    "/timeline",
+    "/notify on",
+    "/notify off",
+    "/team",
+    "/runs",
+    "/review",
+    "/memory",
+    "/memory auto status",
+    "/memory auto on",
+    "/memory auto off",
+    "/memory auto safe",
+    "/tasks",
+    "/clear",
+    "/exit",
+    "/quit"
+  ]).filter((option) => option !== state.composer);
+}
+
+function slashCompletionLine(completion: SlashCompletion): React.ReactElement {
+  const visible = completion.options.slice(0, 6);
+  return h(
+    Text,
+    { wrap: "truncate" },
+    h(Text, { dimColor: true }, "commands "),
+    ...visible.flatMap((option, index) => [
+      h(
+        Text,
+        {
+          key: `slash-${option}`,
+          inverse: index === completion.selectedIndex,
+          color: index === completion.selectedIndex ? "black" : "cyan"
+        },
+        option
+      ),
+      " "
+    ])
+  );
+}
+
+function moveSlashCompletionSelection(
+  model: TuiCurrentContextModel,
+  state: TuiInkState,
+  delta: 1 | -1
+): TuiInkState {
+  const completion = slashCompletionForState(model, state);
+  if (!completion) {
+    return state;
+  }
+  return {
+    ...state,
+    slashCompletionIndex: (completion.selectedIndex + delta + completion.options.length) % completion.options.length
+  };
+}
+
+function acceptSlashCompletion(
+  model: TuiCurrentContextModel,
+  state: TuiInkState
+): TuiInkState {
+  const completion = slashCompletionForState(model, state);
+  if (!completion) {
+    return state;
+  }
+  const suffix = completion.selectedOption.endsWith(" ") ? "" : " ";
+  const composer = `${completion.selectedOption}${suffix}`;
+  return {
+    ...state,
+    composer,
+    composerCursorPosition: composer.length,
+    composerHistoryIndex: undefined,
+    composerHistoryDraft: "",
+    agentCompletionIndex: 0,
+    slashCompletionIndex: 0,
+    statusMessage: `Selected ${completion.selectedOption}.`
+  };
 }
 
 function agentCompletionLine(completion: AgentCompletion): React.ReactElement {
@@ -3682,9 +3997,10 @@ function shellChromeLineBudget(
 
 function composerLineBudget(model: TuiCurrentContextModel, state: TuiInkState): number {
   const previewLines = 1;
-  const completionLines = agentCompletionForState(model, state) ? 1 : 0;
+  const slashCompletionLines = slashCompletionForState(model, state) ? 1 : 0;
+  const agentCompletionLines = agentCompletionForState(model, state) ? 1 : 0;
   const inputLines = state.composer ? state.composer.split("\n").length : 1;
-  return previewLines + completionLines + inputLines;
+  return previewLines + slashCompletionLines + agentCompletionLines + inputLines;
 }
 
 function minimumWorkConversationRows(terminal: TuiInkTerminalSize): number {
@@ -4207,7 +4523,8 @@ function insertComposerText(state: TuiInkState, value: string): TuiInkState {
     composerCursorPosition: cursor + value.length,
     composerHistoryIndex: undefined,
     composerHistoryDraft: "",
-    agentCompletionIndex: 0
+    agentCompletionIndex: 0,
+    slashCompletionIndex: 0
   };
 }
 
@@ -4222,7 +4539,8 @@ function deleteComposerCharacterBeforeCursor(state: TuiInkState): TuiInkState {
     composerCursorPosition: cursor - 1,
     composerHistoryIndex: undefined,
     composerHistoryDraft: "",
-    agentCompletionIndex: 0
+    agentCompletionIndex: 0,
+    slashCompletionIndex: 0
   };
 }
 
@@ -4237,7 +4555,8 @@ function deleteComposerCharacterAfterCursor(state: TuiInkState): TuiInkState {
     composerCursorPosition: cursor,
     composerHistoryIndex: undefined,
     composerHistoryDraft: "",
-    agentCompletionIndex: 0
+    agentCompletionIndex: 0,
+    slashCompletionIndex: 0
   };
 }
 
@@ -4276,6 +4595,7 @@ function moveComposerHistory(state: TuiInkState, delta: 1 | -1): TuiInkState {
       composerHistoryIndex: nextIndex,
       composerHistoryDraft: draft,
       agentCompletionIndex: 0,
+      slashCompletionIndex: 0,
       statusMessage: `History ${nextIndex + 1}/${state.composerHistory.length}.`
     };
   }
@@ -4291,6 +4611,7 @@ function moveComposerHistory(state: TuiInkState, delta: 1 | -1): TuiInkState {
       composerHistoryIndex: undefined,
       composerHistoryDraft: "",
       agentCompletionIndex: 0,
+      slashCompletionIndex: 0,
       statusMessage: "Draft restored."
     };
   }
@@ -4302,6 +4623,7 @@ function moveComposerHistory(state: TuiInkState, delta: 1 | -1): TuiInkState {
     composerCursorPosition: prompt.length,
     composerHistoryIndex: nextIndex,
     agentCompletionIndex: 0,
+    slashCompletionIndex: 0,
     statusMessage: `History ${nextIndex + 1}/${state.composerHistory.length}.`
   };
 }

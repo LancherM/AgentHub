@@ -646,6 +646,22 @@ describe("Ink TUI renderer", () => {
     expect(new Set(lineCounts).size).toBe(1);
   });
 
+  it("keeps slash completion suggestions inside the terminal row budget", () => {
+    const terminal = { columns: 120, rows: 28 };
+    const output = renderToString(
+      React.createElement(TuiInkFrame, {
+        model: baseModel,
+        state: createInitialInkState("/mem"),
+        terminal
+      }),
+      { columns: terminal.columns }
+    );
+    const lines = output.split("\n");
+
+    expect(output).toContain("commands /memory");
+    expect(lines.length).toBeLessThanOrEqual(terminal.rows);
+  });
+
   it("tabs through panes in the same order as the visible navigation", () => {
     let state = createInitialInkState();
 
@@ -2205,6 +2221,11 @@ describe("Ink TUI renderer", () => {
       expect(output).toContain("/search");
       expect(output).toContain("/timeline");
       expect(output).toContain("/notify");
+      expect(output).toContain("/use <target>");
+      expect(output).toContain("/memory auto");
+      if (columns >= 80) {
+        expect(output).toContain("/clear session");
+      }
       expect(output).toContain("review:");
       expect(output).toContain("prompt:");
       expect(lines.every((value) => value.length <= columns)).toBe(true);
@@ -2923,6 +2944,342 @@ describe("Ink TUI renderer", () => {
 
     expect(instance.lastFrame()).toContain("> @engineer");
     expect(instance.lastFrame()).toContain("send @engineer  thread Review (#review)");
+    instance.unmount();
+  });
+
+  it("renders slash command suggestions and accepts slash completion", async () => {
+    const output = renderToString(
+      React.createElement(TuiInkFrame, {
+        model: baseModel,
+        state: createInitialInkState("/mem"),
+        terminal: { columns: 120, rows: 40 }
+      }),
+      { columns: 120 }
+    );
+
+    expect(output).toContain("commands /memory");
+    expect(output).toContain("/memory auto status");
+
+    const instance = render(
+      React.createElement(TuiInkApp, {
+        model: baseModel,
+        state: createInitialInkState("/use e"),
+        terminal: { columns: 120, rows: 40 },
+        interactive: true
+      })
+    );
+
+    await waitForFrame(instance, "commands /use engineer");
+    instance.stdin.write("\t");
+    await waitForFrame(instance, "Selected /use engineer.");
+
+    expect(instance.lastFrame()).toContain("> /use engineer");
+    instance.unmount();
+  });
+
+  it("moves through slash completion choices before accepting one", async () => {
+    const instance = render(
+      React.createElement(TuiInkApp, {
+        model: baseModel,
+        state: createInitialInkState("/use "),
+        terminal: { columns: 120, rows: 40 },
+        interactive: true
+      })
+    );
+
+    await waitForFrame(instance, "commands /use codex");
+    instance.stdin.write("\u001b[B");
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    instance.stdin.write("\t");
+    await waitForFrame(instance, "Selected /use claude-code.");
+
+    expect(instance.lastFrame()).toContain("> /use claude-code");
+    instance.unmount();
+  });
+
+  it("handles local slash commands without invoking the remote slash callback", async () => {
+    const remoteSlashCommands = [];
+    const instance = render(
+      React.createElement(TuiInkApp, {
+        model: baseModel,
+        state: createInitialInkState(),
+        terminal: { columns: 120, rows: 40 },
+        interactive: true,
+        executeSlashCommand: async (input) => {
+          remoteSlashCommands.push(input.command);
+          return { ok: true, message: "remote slash command ran", model: baseModel };
+        }
+      })
+    );
+
+    for (const character of "/help") {
+      instance.stdin.write(character);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+    instance.stdin.write("\r");
+    await waitForFrame(instance, "Help shown.");
+    expect(instance.lastFrame()).toContain("Help");
+
+    for (const character of "/agents") {
+      instance.stdin.write(character);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+    instance.stdin.write("\r");
+    await waitForFrame(instance, "Team roles shown.");
+    expect(instance.lastFrame()).toContain("Team Workbench");
+
+    for (const character of "/runs") {
+      instance.stdin.write(character);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+    instance.stdin.write("\r");
+    await waitForFrame(instance, "Runs shown.");
+    expect(instance.lastFrame()).toContain("Runs");
+
+    for (const character of "/memory") {
+      instance.stdin.write(character);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+    instance.stdin.write("\r");
+    await waitForFrame(instance, "Memory shown.");
+    expect(instance.lastFrame()).toContain("Memory Inbox");
+
+    expect(remoteSlashCommands).toEqual([]);
+    instance.unmount();
+  });
+
+  it("toggles local timeline and notification slash command state", async () => {
+    const instance = render(
+      React.createElement(TuiInkApp, {
+        model: baseModel,
+        state: createInitialInkState(),
+        terminal: { columns: 120, rows: 40 },
+        interactive: true
+      })
+    );
+
+    for (const character of "/timeline on") {
+      instance.stdin.write(character);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+    instance.stdin.write("\r");
+    await waitForFrame(instance, "Timeline shown.");
+    expect(instance.lastFrame()).toContain("timeline");
+
+    for (const character of "/timeline off") {
+      instance.stdin.write(character);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+    instance.stdin.write("\r");
+    await waitForFrame(instance, "Timeline hidden.");
+    expect(instance.lastFrame()).not.toContain("timeline  Timeline hidden.");
+
+    for (const character of "/notify on") {
+      instance.stdin.write(character);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+    instance.stdin.write("\r");
+    await waitForFrame(instance, "Completion notifications enabled.");
+    expect(instance.lastFrame()).toContain("notify on");
+
+    for (const character of "/notify off") {
+      instance.stdin.write(character);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+    instance.stdin.write("\r");
+    await waitForFrame(instance, "Completion notifications disabled.");
+    expect(instance.lastFrame()).toContain("notify off");
+    instance.unmount();
+  });
+
+  it("routes memory auto slash commands through the slash callback", async () => {
+    const remoteSlashCommands = [];
+    const instance = render(
+      React.createElement(TuiInkApp, {
+        model: baseModel,
+        state: createInitialInkState(),
+        terminal: { columns: 120, rows: 40 },
+        interactive: true,
+        executeSlashCommand: async (input) => {
+          remoteSlashCommands.push(input.command);
+          return {
+            ok: true,
+            message: "Memory auto mode is suggest_only.",
+            selectedTarget: input.selectedTarget,
+            model: baseModel
+          };
+        }
+      })
+    );
+
+    for (const character of "/memory auto status") {
+      instance.stdin.write(character);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+    instance.stdin.write("\r");
+    await waitForFrame(instance, "Memory auto mode is suggest_only.");
+
+    expect(remoteSlashCommands).toEqual(["/memory auto status"]);
+    expect(instance.lastFrame()).not.toContain("Memory shown.");
+    instance.unmount();
+  });
+
+  it("reports unavailable and failed remote slash commands in the composer status", async () => {
+    const unavailable = render(
+      React.createElement(TuiInkApp, {
+        model: baseModel,
+        state: createInitialInkState(),
+        terminal: { columns: 120, rows: 40 },
+        interactive: true
+      })
+    );
+
+    for (const character of "/clear") {
+      unavailable.stdin.write(character);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+    unavailable.stdin.write("\r");
+    await waitForFrame(unavailable, "Slash commands are unavailable.");
+    unavailable.unmount();
+
+    const failed = render(
+      React.createElement(TuiInkApp, {
+        model: baseModel,
+        state: createInitialInkState(),
+        terminal: { columns: 120, rows: 40 },
+        interactive: true,
+        executeSlashCommand: async () => {
+          throw new Error("slash failed");
+        }
+      })
+    );
+
+    for (const character of "/clear") {
+      failed.stdin.write(character);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+    failed.stdin.write("\r");
+    await waitForFrame(failed, "slash failed");
+    failed.unmount();
+  });
+
+  it("sets the default target with /use and prefixes role-targeted submissions", async () => {
+    const submissions = [];
+    const instance = render(
+      React.createElement(TuiInkApp, {
+        model: baseModel,
+        state: createInitialInkState(),
+        terminal: { columns: 120, rows: 40 },
+        interactive: true,
+        executeSlashCommand: async (input) => {
+          expect(input.command).toBe("/use engineer");
+          return {
+            ok: true,
+            message: "Default target set to @engineer.",
+            selectedTarget: "engineer",
+            model: baseModel
+          };
+        },
+        submitPrompt: async (input) => {
+          submissions.push(input);
+          return { ok: true, message: "Submitted prompt.", model: baseModel };
+        }
+      })
+    );
+
+    for (const character of "/use engineer") {
+      instance.stdin.write(character);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+    instance.stdin.write("\r");
+    await waitForFrame(instance, "Default target set to @engineer.");
+    expect(instance.lastFrame()).toContain("send @engineer");
+
+    for (const character of "implement this") {
+      instance.stdin.write(character);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+    instance.stdin.write("\r");
+    await waitForCondition(() => submissions.length === 1);
+
+    expect(submissions.map((submission) => submission.prompt)).toEqual([
+      "@engineer implement this"
+    ]);
+    instance.unmount();
+  });
+
+  it("preserves explicit mention targets over the /use default target", async () => {
+    const submissions = [];
+    const instance = render(
+      React.createElement(TuiInkApp, {
+        model: baseModel,
+        state: { ...createInitialInkState(), selectedTarget: "engineer" },
+        terminal: { columns: 120, rows: 40 },
+        interactive: true,
+        submitPrompt: async (input) => {
+          submissions.push(input);
+          return { ok: true, message: "Submitted prompt.", model: baseModel };
+        }
+      })
+    );
+
+    for (const character of "@reviewer check this") {
+      instance.stdin.write(character);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+    instance.stdin.write("\r");
+    await waitForCondition(() => submissions.length === 1);
+
+    expect(submissions.map((submission) => submission.prompt)).toEqual([
+      "@reviewer check this"
+    ]);
+    instance.unmount();
+  });
+
+  it("runs /clear through the slash command callback and clears the terminal", async () => {
+    let clearCount = 0;
+    const instance = render(
+      React.createElement(TuiInkApp, {
+        model: baseModel,
+        state: createInitialInkState(),
+        terminal: { columns: 120, rows: 40 },
+        interactive: true,
+        clearTerminal: () => {
+          clearCount += 1;
+        },
+        executeSlashCommand: async (input) => {
+          expect(input.command).toBe("/clear");
+          return {
+            ok: true,
+            message: "Screen cleared. Started isolated room #session-test.",
+            selectedTarget: input.selectedTarget,
+            clearScreen: true,
+            model: {
+              ...baseModel,
+              context: {
+                ...baseModel.context,
+                threadId: "thread_session",
+                threadTitle: "Session",
+                roomHandle: "session-test"
+              },
+              conversation: [],
+              transcript: [],
+              workBlocks: []
+            }
+          };
+        }
+      })
+    );
+
+    for (const character of "/clear") {
+      instance.stdin.write(character);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+    instance.stdin.write("\r");
+    await waitForFrame(instance, "Started isolated room #session-test.");
+
+    expect(clearCount).toBe(1);
+    expect(instance.lastFrame()).toContain("room:session-test");
     instance.unmount();
   });
 

@@ -771,7 +771,19 @@ items and existing CLI command hints; `Enter` either changes TUI focus or copies
 a command hint into the composer for explicit user submission. `:` opens the
 same palette directly, while a slash-only `/` composer command opens it without
 submitting a prompt and without stealing `/search`, `/timeline`, `/notify`, or
-`/team`. It never invokes shell commands directly.
+`/team`. Slash command suggestions are derived from a bounded renderer-local
+command list plus enabled agent/team-role handles already present in the read
+model; `Tab` accepts the selected suggestion. Pure UI slash commands such as
+`/help`, `/agents`, `/search`, `/timeline`, `/notify`, and focus switches are
+handled in Ink state. Slash and agent completion rows are included in the shell
+chrome budget before sizing Work content, so active suggestions cannot push the
+composer/footer past the terminal row budget. Commands that need persistence or
+project/thread state cross the CLI callback boundary: `/use` updates the active
+TUI default target, `/room` switches the active thread, `/clear` asks the CLI
+layer to create a new custom session room and then clears the terminal, and
+`/memory auto status|on|off|safe` loads or saves the project memory automation
+policy through the same settings repository used by CLI/desktop settings. The
+renderer never invokes shell commands directly.
 Detail fold state is also local Ink state. The renderer tracks collapsed and
 explicitly expanded detail section ids so default-collapsed evidence, tool,
 snippet, verification, limit, and recent-failure sections can be expanded with
@@ -807,16 +819,19 @@ Composer editing is handled in the Ink component state before shortcut
 dispatch: printable lowercase keys update the composer from any focus,
 uppercase tab shortcuts switch Work/Graph/Runs/Review/Tasks/Memory/Team,
 `/team` clears the composer and switches to the Team view, slash-only `/` opens
-the palette, `Enter` submits other non-empty composer text, empty-composer
-`Enter` opens selected detail, `Esc` clears
-composer text or returns auxiliary panes to Work, and `Tab` remains a
-focus-navigation key unless an active `@` completion token is open. The composer
-tracks a cursor offset for left/right, Home/End, Backspace/Delete, and
-Ctrl+A/E/U/D editing; `Ctrl+O` inserts a newline; Up/Down read an in-memory
-submitted-prompt history; and mention completion is derived from the selected
-agent, built-in agent kinds, and enabled team-role handles already present in
-the current read model. The renderer also shows a submit preview derived from
-the selected target, thread metadata, and context mode. This keeps normal prompt
+the palette, `Enter` submits other non-empty composer text or executes a slash
+command, empty-composer `Enter` opens selected detail, `Esc` clears composer
+text or returns auxiliary panes to Work, and `Tab` remains a focus-navigation
+key unless an active slash or `@` completion token is open. The composer tracks
+a cursor offset for left/right, Home/End, Backspace/Delete, and Ctrl+A/E/U/D
+editing; `Ctrl+O` inserts a newline; Up/Down read an in-memory submitted-prompt
+history unless a completion menu is active; mention completion is derived from
+the selected agent, built-in agent kinds, and enabled team-role handles already
+present in the current read model. `/use <role>` stores a renderer-visible
+default target and non-mention prompts are prefixed with that role before they
+enter the existing CLI chat parser; explicit `@role` prompt prefixes still win
+for that prompt. The renderer also shows a submit preview derived from the
+selected target, thread metadata, and context mode. This keeps normal prompt
 text from being stolen by global focus shortcuts without trapping focus inside
 the composer.
 Interactive TUI prompt submission reuses the CLI chat/task-runner path with a

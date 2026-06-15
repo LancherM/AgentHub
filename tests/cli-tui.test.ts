@@ -7,10 +7,17 @@ import { describe, expect, it } from "vitest";
 import { createCliRuntime, main, submitTuiPrompt } from "@agent-hub/cli";
 import {
   conservativePermissionSet,
-  type RoleCall
+  presetWorkgroupRoles,
+  type RoleCall,
+  type WorkgroupRole
 } from "@agent-hub/core";
-import { runTuiCommand, tuiPromptSubmissionMode } from "../apps/cli/src/tui";
+import {
+  executeTuiSlashCommand,
+  runTuiCommand,
+  tuiPromptSubmissionMode
+} from "../apps/cli/src/tui";
 import { isJsonModuleExperimentalWarning } from "../apps/cli/src/tui-ink/json-warning";
+import { loadProjectMemoryAutomationPolicy } from "@agent-hub/task-runner";
 
 const now = "2026-05-29T12:00:00.000Z";
 const projectRoot = "/tmp/tui-project";
@@ -357,6 +364,159 @@ describe("CLI TUI command", () => {
   it("uses background prompt submission mode for interactive TUI sessions", () => {
     expect(tuiPromptSubmissionMode({ interactive: true })).toBe("background");
     expect(tuiPromptSubmissionMode({ interactive: false })).toBe("blocking");
+  });
+
+  it("creates an isolated session room for /clear", async () => {
+    const runtime = createCliRuntime({ storageMode: "memory" });
+    await seedTuiContext(runtime);
+
+    const result = await executeTuiSlashCommand({
+      input: {
+        command: "/clear",
+        projectId: "project_1",
+        threadId: "thread_1",
+        selectedTarget: "engineer"
+      },
+      runtime,
+      projectRoot,
+      debug: false,
+      modelInput: {
+        projectId: "project_1",
+        threadId: "thread_1",
+        selectedAgent: "codex"
+      },
+      launchWarnings: []
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      projectId: "project_1",
+      selectedTarget: "engineer",
+      clearScreen: true
+    });
+    expect(result.threadId).not.toBe("thread_1");
+    expect(result.roomHandle).toMatch(/^session-/);
+    const thread = await runtime.conversationThreadRepository.get(result.threadId ?? "");
+    const messages = await runtime.conversationMessageRepository.listByThreadId(result.threadId ?? "");
+    expect(thread).toMatchObject({
+      projectId: "project_1",
+      metadata: expect.objectContaining({
+        source: "tui",
+        roomType: "custom",
+        roomHandle: result.roomHandle
+      })
+    });
+    expect(messages).toEqual([]);
+  });
+
+  it("selects a custom pm role with /use pm", async () => {
+    const runtime = createCliRuntime({ storageMode: "memory" });
+    await seedTuiContext(runtime);
+    const analyst = presetWorkgroupRoles.find((role) => role.handle === "analyst");
+    const pmRole: WorkgroupRole = {
+      ...(analyst ?? presetWorkgroupRoles[0]),
+      id: "custom:pm",
+      handle: "pm",
+      displayName: "PM",
+      purpose: "Coordinate role delegation for local work.",
+      capabilitySummary: "Planning, coordination, delegation.",
+      persona: "Project manager who routes bounded work to other roles.",
+      defaultInstructions: "Delegate bounded work to the right role.",
+      executor: { kind: "agent_adapter", adapterKind: "codex" },
+      delegationPolicy: {
+        canInitiateRoleCalls: true,
+        allowedIntentTypes: ["delegate"],
+        allowedTargetRoles: ["engineer"]
+      },
+      tags: ["coordination"],
+      metadata: { source: "custom" }
+    };
+    await runtime.settingsRepository.set({
+      key: "desktop.project.project_1.workgroupRoles",
+      value: { roles: [...presetWorkgroupRoles, pmRole] },
+      updatedAt: now
+    });
+
+    await expect(
+      executeTuiSlashCommand({
+        input: {
+          command: "/use pm",
+          projectId: "project_1",
+          threadId: "thread_1"
+        },
+        runtime,
+        projectRoot,
+        debug: false,
+        modelInput: {
+          projectId: "project_1",
+          threadId: "thread_1",
+          selectedAgent: "codex"
+        },
+        launchWarnings: []
+      })
+    ).resolves.toMatchObject({
+      ok: true,
+      message: "Default target set to @pm.",
+      selectedTarget: "pm"
+    });
+  });
+
+  it("toggles project memory auto-approval from TUI slash commands", async () => {
+    const runtime = createCliRuntime({ storageMode: "memory" });
+    await seedTuiContext(runtime);
+    const base = {
+      runtime,
+      projectRoot,
+      debug: false,
+      modelInput: {
+        projectId: "project_1",
+        threadId: "thread_1",
+        selectedAgent: "codex" as const
+      },
+      launchWarnings: []
+    };
+
+    await expect(
+      executeTuiSlashCommand({
+        ...base,
+        input: { command: "/memory auto on", projectId: "project_1", threadId: "thread_1" }
+      })
+    ).resolves.toMatchObject({
+      ok: true,
+      message: "Memory auto mode set to auto_after_review_accept."
+    });
+    await expect(
+      loadProjectMemoryAutomationPolicy(
+        { settingsRepository: runtime.settingsRepository },
+        "project_1"
+      )
+    ).resolves.toMatchObject({ mode: "auto_after_review_accept" });
+
+    await expect(
+      executeTuiSlashCommand({
+        ...base,
+        input: { command: "/memory auto status", projectId: "project_1", threadId: "thread_1" }
+      })
+    ).resolves.toMatchObject({
+      ok: true,
+      message: "Memory auto mode is auto_after_review_accept."
+    });
+
+    await expect(
+      executeTuiSlashCommand({
+        ...base,
+        input: { command: "/memory auto off", projectId: "project_1", threadId: "thread_1" }
+      })
+    ).resolves.toMatchObject({
+      ok: true,
+      message: "Memory auto mode set to suggest_only."
+    });
+    await expect(
+      loadProjectMemoryAutomationPolicy(
+        { settingsRepository: runtime.settingsRepository },
+        "project_1"
+      )
+    ).resolves.toMatchObject({ mode: "suggest_only" });
   });
 
   it("records audit-only review decisions from CLI and TUI without changing run state", async () => {
