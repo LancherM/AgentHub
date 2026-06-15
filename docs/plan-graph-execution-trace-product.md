@@ -519,42 +519,538 @@ Plan validation should reuse existing safety policy concepts:
 - automatic side effects;
 - missing verification for risky changes.
 
-## Rollout Plan
+## Implementation Phases
 
-### Phase 1: Product Contract And Read Model
+The implementation should land in small vertical slices. Each phase should keep
+the product usable, preserve the current TaskRunner/RoleCall behavior, and add
+inspection before adding automation.
 
-- Add shared PlanGraph/PlanNode/PlanEdge types and validators.
-- Add deterministic local planner output for common task shapes.
-- Persist PlanGraph records, including the planner node.
-- Add read-only CLI inspection.
-- Keep TUI rendering unchanged except for copy that distinguishes planned graph
-  from existing RoleCall trace.
+### Phase 0: Baseline Rename And Compatibility Contract
 
-### Phase 2: Runtime Injection And Linkage
+Goal: prepare the product language without changing runtime behavior.
 
-- Include active PlanGraph and current plan node in role-backed runtime
-  injection.
-- Schedule executable PlanNodes as primary TaskRuns.
-- Record `planGraphId` and `planNodeId` on run metadata and RoleCalls.
-- Record RoleCalls as runtime tool events with dynamic trace-node links.
-- Add plan-node result metadata where adapters provide structured output.
-- Build ExecutionTraceGraph projection from runs, RoleCalls, events, and
-  artifacts.
+Scope:
 
-### Phase 3: TUI Graph Upgrade
+- Rename the current RoleCall-focused graph copy to `Execution Trace` where it
+  is presented as actual execution evidence.
+- Keep the existing RoleCall read model and CLI commands unchanged.
+- Add compatibility rules for legacy tasks that have runs or RoleCalls but no
+  PlanGraph.
 
-- Replace the current RoleCall-only Graph pane with Plan, Trace, and Overlay
-  modes.
-- Render deterministic terminal DAG nodes and edges.
-- Reuse existing selected-detail payloads and navigation state.
-- Add narrow-terminal fallback and renderer tests.
+Implementation areas:
 
-### Phase 4: Agent-Backed Planner And Amendments
+- `docs/product.md`
+- `docs/architecture.md`
+- `packages/core/src/tui-read-model.ts`
+- `apps/cli/src/tui-ink/App.mts`
 
-- Allow `@planner` to run through a controlled local executor when configured.
-- Validate structured planner output before execution starts.
-- Add plan amendment and version history.
-- Mark deviations and superseded graph versions in the overlay.
+Data impact:
+
+- No schema changes.
+- No new runtime artifacts.
+- No change to TaskRunner execution.
+
+Tests:
+
+- Focused TUI renderer tests that verify graph copy changes without changing
+  selection behavior.
+- Existing RoleCall read-model tests should continue to pass unchanged.
+
+Exit criteria:
+
+- Existing tasks still show RoleCall evidence.
+- UI copy no longer implies RoleCalls are the whole future Graph model.
+- Legacy graph behavior is documented as the ExecutionTrace compatibility path.
+
+### Phase 1: Shared PlanGraph Domain Contract
+
+Goal: add typed local contracts before persistence or execution logic.
+
+Scope:
+
+- Add `PlanGraph`, `PlanNode`, `PlannerNode`, `PlanEdge`,
+  `PlanNodeExecution`, `TraceNode`, `TraceEdge`, `TraceEvidence`,
+  `Deviation`, and `ExecutionTraceGraph` shared types.
+- Add validators and state-transition helpers.
+- Keep `ExecutionTraceGraph` as a projection type, not a stored domain object.
+- Define stable ids for planner nodes and planned execution nodes.
+
+Implementation areas:
+
+- `packages/shared/src/`
+- `packages/core/src/domain.ts`
+- `tests/domain.test.ts`
+
+Product rules:
+
+- A PlanGraph must be a DAG.
+- A PlanGraph must contain exactly one planner node.
+- `planGraph.plannerNodeId` must reference a node with `kind: "planner"`.
+- Every `primary_run` node must have a role and acceptance criteria.
+- Every edge must reference existing nodes.
+- PlanGraph validation must reject automatic merge, push, PR creation, memory
+  approval, repo export, or repository-root context-file writes.
+
+Tests:
+
+- Validator tests for valid planner-rooted graphs.
+- Validator tests for cycles, missing planner nodes, invalid edges, unsafe node
+  instructions, and unsupported execution modes.
+- Serialization round-trip tests for the shared DTO shape.
+
+Exit criteria:
+
+- Core can validate a PlanGraph without touching SQLite, TaskRunner, or the TUI.
+- The type contract distinguishes planned nodes from runtime trace nodes.
+
+### Phase 2: SQLite Persistence And Repository APIs
+
+Goal: persist planner-produced graphs and dynamic trace links locally.
+
+Scope:
+
+- Add durable repositories for PlanGraph records, nodes, and edges.
+- Add durable storage for trace nodes, trace edges, trace evidence links, and
+  RoleCall tool events.
+- Add in-memory repositories with the same contract for tests and local
+  runtime composition.
+
+Implementation areas:
+
+- `packages/core/src/storage.ts`
+- `packages/db/src/sqlite-storage.ts`
+- SQLite migration/bootstrap definitions
+- `tests/sqlite-storage.test.ts`
+
+Suggested repository boundaries:
+
+```ts
+interface PlanGraphRepository {
+  create(graph: PlanGraph): Promise<PlanGraph>;
+  get(id: string): Promise<PlanGraph | undefined>;
+  getActiveByTaskId(taskId: string): Promise<PlanGraph | undefined>;
+  listByTaskId(taskId: string): Promise<PlanGraph[]>;
+  supersede(id: string, nextGraphId: string): Promise<PlanGraph>;
+}
+
+interface TraceLinkRepository {
+  createNode(node: TraceNode): Promise<TraceNode>;
+  createEdge(edge: TraceEdge): Promise<TraceEdge>;
+  linkEvidence(link: TraceEvidence): Promise<TraceEvidence>;
+  listByPlanGraphId(planGraphId: string): Promise<TraceProjectionRows>;
+}
+```
+
+Data rules:
+
+- PlanGraph rows are versioned by task.
+- Only one active PlanGraph should exist per task.
+- Superseded graphs remain readable for audit.
+- Trace links point to source evidence ids rather than copying full logs,
+  patches, or verification bodies.
+
+Tests:
+
+- SQLite integration tests for create/get/list/supersede.
+- Active graph uniqueness tests.
+- Trace link tests that attach runs, RoleCalls, artifacts, verification, and
+  risk evidence to graph nodes.
+- Migration bootstrap tests that include the new tables.
+
+Exit criteria:
+
+- CLI/core code can persist and read PlanGraph data through repositories.
+- No execution path depends on graph persistence yet.
+
+### Phase 3: Deterministic Planner MVP
+
+Goal: create a PlanGraph before execution without adding a new agent dependency.
+
+Scope:
+
+- Add a deterministic local planner that converts the current TaskBrief and
+  task metadata into a simple planner-rooted DAG.
+- Represent the deterministic planner as a planner node with `execution.mode:
+  "system"`.
+- Persist planner success or failure evidence.
+- Add read-only CLI inspection for PlanGraph records.
+
+Implementation areas:
+
+- `packages/core/src/plan-graph-planner.ts`
+- `packages/task-runner/src/task-runner.ts`
+- `apps/cli/src/cli.ts`
+- `tests/task-runner.test.ts`
+- `tests/cli.test.ts`
+
+MVP graph shape:
+
+```text
+planner
+  -> intake/research
+  -> implement or documentation
+  -> verify
+  -> review
+  -> handoff
+```
+
+Planner behavior:
+
+- Documentation-only tasks can use `documentation -> verify -> review`.
+- Code-changing tasks must include `implement`, `verify`, and `review`.
+- Memory-sensitive tasks can include optional `memory`.
+- Risky or ambiguous tasks can include `research` before implementation.
+
+CLI additions:
+
+```sh
+agent-hub plan-graphs list --task-id <task-id>
+agent-hub plan-graphs show <plan-graph-id> [--json]
+agent-hub plan-graphs validate <plan-graph-id>
+```
+
+Tests:
+
+- Deterministic planner snapshot tests for code, docs, review-only, and memory
+  tasks.
+- CLI JSON output tests.
+- TaskRunner tests proving plan creation happens before adapter execution when
+  enabled.
+- Failure tests for invalid planner output.
+
+Exit criteria:
+
+- A task can have an active PlanGraph before the first primary execution run.
+- The planner node is inspectable even when downstream execution has not
+  started.
+- Existing runs remain possible if the feature flag or configuration disables
+  planner creation.
+
+### Phase 4: Runtime Injection And Primary PlanNode Scheduling
+
+Goal: execute planned nodes as primary TaskRuns while preserving existing run
+semantics.
+
+Scope:
+
+- Add scheduling logic for executable PlanNodes.
+- Add `planGraphId`, `planNodeId`, and `traceNodeId` to run metadata or
+  first-class fields when warranted.
+- Inject the active PlanGraph summary and current plan node into adapter input.
+- Keep each scheduled run inside an isolated git worktree.
+
+Implementation areas:
+
+- `packages/task-runner/src/task-runner.ts`
+- `packages/context-compiler/src/task-brief.ts`
+- `packages/agent-adapters/src/agent-adapters.ts`
+- `packages/core/src/tui-read-model.ts`
+- `tests/task-runner.test.ts`
+- `tests/process-adapters.test.ts`
+
+Scheduling rules:
+
+- The planner node runs first.
+- `primary_run` nodes are scheduled according to graph dependencies.
+- `manual` nodes pause and surface required human action.
+- `non_executable` nodes are shown in PlanGraph but are not scheduled.
+- Failed required nodes stop downstream required nodes unless a fallback edge is
+  available.
+
+Runtime injection must include:
+
+- plan graph id/version;
+- current plan node id/title/kind/role;
+- node instructions and acceptance criteria;
+- allowed next node ids;
+- graph-level constraints;
+- rule that RoleCalls are runtime tool events, not PlanGraph mutations.
+
+Tests:
+
+- TaskRunner integration tests for scheduling a simple planner -> implement ->
+  verify graph.
+- Runtime markdown snapshot tests.
+- Tests proving generated context still stays out of the original checkout.
+- Tests proving disabled planner mode preserves current behavior.
+
+Exit criteria:
+
+- Every scheduled executable PlanNode produces one primary TaskRun.
+- The primary TaskRun links back to its PlanNode.
+- The adapter-facing prompt includes enough plan context to follow the node
+  without needing to infer the whole workflow from prose.
+
+### Phase 5: RoleCall Tool Events And Dynamic Trace Nodes
+
+Goal: model RoleCalls as runtime tool events that expand trace without changing
+the original PlanGraph.
+
+Scope:
+
+- Record a RoleCall tool event when a role-backed assistant output creates a
+  RoleCall.
+- Link RoleCalls to `planGraphId`, `sourcePlanNodeId`, and `sourceRunId`.
+- Create dynamic trace nodes for accepted RoleCalls and their callee TaskRuns.
+- Keep the existing RoleCall policy validator and orchestrator as the source of
+  truth for acceptance, rejection, approval, waiting, and execution.
+
+Implementation areas:
+
+- `packages/core/src/role-call-output-processor.ts`
+- `packages/core/src/role-call-orchestrator.ts`
+- `packages/core/src/role-call-context.ts`
+- `packages/task-runner/src/role-call-executor.ts`
+- `tests/role-call-orchestrator.test.ts`
+- `tests/role-call-executor.test.ts`
+
+Trace mapping:
+
+- `RoleCallToolEvent` is created from the source run and source plan node.
+- Accepted executable RoleCalls create dynamic trace nodes.
+- Rejected, waiting, deferred, and failed RoleCalls remain tool events and
+  deviation/evidence entries even when no callee run starts.
+- Callee runs receive the same PlanGraph plus their dynamic trace node context.
+
+Tests:
+
+- RoleCall creation links back to source plan node.
+- Accepted RoleCalls create dynamic trace nodes.
+- Rejected/waiting RoleCalls do not mutate PlanGraph.
+- Existing RoleCall depth, duplicate, and dangerous-command policy tests remain
+  valid.
+
+Exit criteria:
+
+- The original PlanGraph remains unchanged after RoleCalls.
+- Trace can explain which plan node emitted each RoleCall.
+- Dynamic RoleCall work is visible without rewriting planned nodes or edges.
+
+### Phase 6: ExecutionTraceGraph Projection And Inspection
+
+Goal: derive a stable runtime overlay from persisted evidence.
+
+Scope:
+
+- Add a core read-model builder that returns `ExecutionTraceGraph`.
+- Project base PlanGraph nodes and edges plus dynamic trace nodes, edges,
+  evidence links, deviations, and status summaries.
+- Add read-only CLI inspection for execution trace.
+- Add legacy fallback for tasks with runs/RoleCalls but no PlanGraph.
+
+Implementation areas:
+
+- `packages/core/src/execution-trace-read-model.ts`
+- `packages/core/src/tui-read-model.ts`
+- `apps/cli/src/cli.ts`
+- `tests/tui-read-model.test.ts`
+- `tests/cli.test.ts`
+
+CLI additions:
+
+```sh
+agent-hub execution-trace show --task-id <task-id> [--json]
+agent-hub execution-trace show --plan-graph-id <plan-graph-id> [--json]
+```
+
+Projection rules:
+
+- Base nodes are PlanNodes.
+- Dynamic nodes come from trace nodes and accepted RoleCall work.
+- Evidence links point to run ids, artifact ids, verification ids, risk ids,
+  memory proposal ids, and review decision ids.
+- Deviations are deterministic: skipped required node, unplanned RoleCall,
+  failed required node, blocked manual node, missing verification, or superseded
+  plan version.
+
+Tests:
+
+- Projection tests for plan-only, plan-plus-run, plan-plus-RoleCall, failure,
+  and legacy no-plan states.
+- CLI JSON stability tests.
+- Tests proving trace projection does not call an LLM.
+
+Exit criteria:
+
+- ExecutionTraceGraph can be built from local persisted evidence only.
+- Plan-only tasks and dynamic RoleCall tasks both render useful trace data.
+- Legacy tasks remain inspectable.
+
+### Phase 7: TUI Graph Modes
+
+Goal: expose Plan, Trace, and Overlay views in the terminal workbench.
+
+Scope:
+
+- Replace the RoleCall-only Graph pane with mode-aware Plan/Trace/Overlay
+  rendering.
+- Reuse existing side navigation, detail rail, selection state, fold state, and
+  command hints.
+- Add deterministic terminal DAG rendering for bounded graph sizes.
+- Keep narrow terminals readable with a compact list fallback.
+
+Implementation areas:
+
+- `apps/cli/src/tui-ink/App.mts`
+- `apps/cli/src/tui-ink/state.mts`
+- `apps/cli/src/tui-ink/graph-layout.mts`
+- `packages/core/src/tui-read-model.ts`
+- `tests/cli-tui-ink.test.mts`
+- `tests/tui-read-model.test.ts`
+
+TUI behavior:
+
+- `Plan` mode shows planner and planned execution nodes.
+- `Trace` mode shows runtime nodes and evidence.
+- `Overlay` mode shows planned nodes plus dynamic nodes and deviations.
+- Selected node detail shows plan fields or trace evidence depending on node
+  type.
+- RoleCall tool events appear as runtime edges/events, not as PlanGraph edges.
+
+Tests:
+
+- Renderer tests for Plan/Trace/Overlay at 80, 120, and wide terminal widths.
+- Interaction tests for mode switching, selection movement, folding, and detail.
+- Snapshot tests for empty, planner-failed, plan-only, and RoleCall-expanded
+  states.
+
+Manual verification:
+
+- Rebuild CLI.
+- Run `agent-hub tui --once`.
+- Launch interactive TUI in a PTY.
+- Verify Graph mode switching, selection, detail, folding, composer behavior,
+  and narrow-terminal fallback.
+- Write the manual TUI note under `docs/ui-verification/` and keep it
+  untracked.
+
+Exit criteria:
+
+- Graph is useful before RoleCalls exist.
+- Graph can explain both expected workflow and actual execution.
+- Existing TUI focus, composer, and detail behavior remains intact.
+
+### Phase 8: Desktop Graph Read Model Consumption
+
+Goal: let desktop use the same local graph read models without adding renderer
+orchestration.
+
+Scope:
+
+- Expose PlanGraph and ExecutionTraceGraph through Electron main-process
+  services and preload IPC.
+- Add desktop inspector/read-only graph panes when the UI is ready.
+- Keep the renderer sandboxed and free of direct SQLite, filesystem, shell, or
+  git access.
+
+Implementation areas:
+
+- `apps/desktop/electron/services/`
+- `apps/desktop/preload/`
+- `apps/desktop/src/`
+- `tests/desktop-services.test.ts`
+
+Tests:
+
+- IPC/service tests for plan graph and trace reads.
+- Renderer component tests where practical.
+- Manual desktop UI verification when visible desktop UI changes land.
+
+Exit criteria:
+
+- Desktop reads the same core graph projections as CLI/TUI.
+- Desktop does not duplicate TaskRunner or RoleCall orchestration logic.
+
+### Phase 9: Agent-Backed Planner And Plan Amendments
+
+Goal: make planning smarter without compromising auditability.
+
+Scope:
+
+- Allow `@planner` to run through a controlled local agent adapter when
+  configured.
+- Validate structured planner output before activation.
+- Support proposed plan amendments and versioned supersession.
+- Require explicit policy gates for activating amendments that change required
+  execution nodes.
+
+Implementation areas:
+
+- `packages/agent-adapters/`
+- `packages/task-runner/src/task-runner.ts`
+- `packages/core/src/plan-graph-planner.ts`
+- `packages/core/src/plan-graph-amendments.ts`
+- `tests/process-adapters.test.ts`
+- `tests/task-runner.test.ts`
+
+Planner modes:
+
+- `deterministic`: default, stable, test-friendly.
+- `agent_adapter`: opt-in, local-only, validated structured output.
+- `manual`: user-provided or imported plan graph after validation.
+
+Amendment rules:
+
+- Amendments create a new PlanGraph version.
+- Old graph versions remain inspectable.
+- Runs and RoleCalls keep the graph version that was active when they started.
+- A proposed amendment does not become active until validation and policy gates
+  pass.
+
+Tests:
+
+- Agent-backed planner happy path with fake adapter.
+- Invalid planner JSON rejection.
+- Amendment versioning and supersession.
+- Trace overlay across superseded graph versions.
+
+Exit criteria:
+
+- Agent-backed planning is optional and local.
+- Plan changes are versioned, inspectable, and policy-checked.
+- No amendment rewrites old execution evidence.
+
+### Phase 10: Policy Hardening And Review Workflows
+
+Goal: turn plan/trace evidence into reviewable governance without adding
+automatic acceptance.
+
+Scope:
+
+- Add plan-aware risk findings.
+- Add review surfaces for deviations.
+- Add memory proposal evidence links back to plan and trace nodes.
+- Add comparison support for two runs or two graph versions when useful.
+
+Implementation areas:
+
+- `packages/safety/`
+- `packages/task-runner/`
+- `packages/core/src/tui-read-model.ts`
+- CLI review commands
+- desktop review services
+
+Policy checks:
+
+- required verification node missing;
+- required node skipped;
+- unplanned RoleCall with high-risk task;
+- failed required node without fallback;
+- planner output asks for prohibited side effects;
+- amendment changes required work without approval.
+
+Tests:
+
+- Safety scanner tests for plan-aware findings.
+- Review command tests for deviation evidence.
+- TUI/desktop read-model tests for plan-aware risk summaries.
+
+Exit criteria:
+
+- Plan and trace evidence improves review without merging, pushing, applying,
+  approving memory, or cleaning worktrees automatically.
+- Blocking risk can stop automatic acceptance paths exactly as current safety
+  policy expects.
 
 ## Acceptance Criteria
 
