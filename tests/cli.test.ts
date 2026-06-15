@@ -98,6 +98,87 @@ describe("CLI", () => {
     expect(output.join("")).toContain("acceptance:");
   });
 
+  it("inspects PlanGraph records with read-only CLI commands", async () => {
+    const projectRoot = await createTestDirectory("cli-plan-graph-project");
+    const runRoot = path.join(await createTestDirectory("cli-plan-graph-runs"), "runs");
+    const runtime = createCliRuntime({
+      storageMode: "memory",
+      defaultRunRoot: runRoot,
+      workspaceManager: new TestWorkspaceManager(runRoot),
+      diffCollector: new StaticDiffCollector(),
+      verificationRunner: new VerificationRunner(new MockShellExecutor()),
+      idGenerator: new SequenceIdGenerator(),
+      clock: new FixedClock("2026-01-01T00:00:00.000Z")
+    });
+    const output: string[] = [];
+    const errors: string[] = [];
+    const io = {
+      stdout: { write: (chunk: string) => { output.push(chunk); return true; } },
+      stderr: { write: (chunk: string) => { errors.push(chunk); return true; } }
+    };
+
+    await expect(
+      main(["run", "@fake", "implement cli plan graph inspection"], io, projectRoot, runtime)
+    ).resolves.toBe(0);
+    output.length = 0;
+
+    await expect(
+      main(["plan-graphs", "list", "--task-id", "task_0001"], io, projectRoot, runtime)
+    ).resolves.toBe(0);
+    await expect(
+      main(["plan-graphs", "validate", "plan_graph:task_0001:v1"], io, projectRoot, runtime)
+    ).resolves.toBe(0);
+    await expect(
+      main(["plan-graphs", "show", "plan_graph:task_0001:v1"], io, projectRoot, runtime)
+    ).resolves.toBe(0);
+    const textOutput = output.join("");
+    expect(textOutput).toContain("plan_graph_id\tstatus\tversion");
+    expect(textOutput).toContain("plan_graph:task_0001:v1\tactive\t1");
+    expect(textOutput).toContain("PlanGraph valid");
+    expect(textOutput).toContain("kind=implement");
+
+    output.length = 0;
+    await expect(
+      main(
+        ["plan-graphs", "list", "--task-id", "task_0001", "--json"],
+        io,
+        projectRoot,
+        runtime
+      )
+    ).resolves.toBe(0);
+    const listJson = JSON.parse(output.join("")) as {
+      planGraphs: Array<{ id: string; status: string }>;
+    };
+    expect(listJson.planGraphs).toEqual([
+      expect.objectContaining({ id: "plan_graph:task_0001:v1", status: "active" })
+    ]);
+
+    output.length = 0;
+    await expect(
+      main(
+        ["plan-graphs", "show", "plan_graph:task_0001:v1", "--json"],
+        io,
+        projectRoot,
+        runtime
+      )
+    ).resolves.toBe(0);
+    const parsed = JSON.parse(output.join("")) as {
+      planGraph: { id: string; nodes: Array<{ kind: string; execution: { mode: string } }> };
+    };
+    expect(parsed.planGraph.id).toBe("plan_graph:task_0001:v1");
+    expect(parsed.planGraph.nodes.map((node) => node.kind)).toEqual([
+      "planner",
+      "research",
+      "implement",
+      "verify",
+      "review",
+      "handoff"
+    ]);
+    expect(parsed.planGraph.nodes.find((node) => node.kind === "implement")?.execution.mode)
+      .toBe("primary_run");
+    expect(errors.join("")).toBe("");
+  });
+
   it("hides and rejects fake agent in normal production mode", async () => {
     const previousNodeEnv = process.env.NODE_ENV;
     const previousDebug = process.env.AGENT_HUB_DEBUG;
@@ -775,7 +856,7 @@ describe("CLI", () => {
     expect(queryOutput.join("")).toContain(`${taskId}\tcompleted\t${projectId}\tRegistered fake task`);
     expect(queryOutput.join("")).toContain(`Task ${taskId}`);
     expect(queryOutput.join("")).toContain("runs: 1");
-    expect(queryOutput.join("")).toContain("events: 8");
+    expect(queryOutput.join("")).toContain("events: 9");
   });
 
   it("keeps ad-hoc SQLite projects scoped to their repository roots", async () => {

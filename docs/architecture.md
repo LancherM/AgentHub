@@ -445,7 +445,7 @@ edge references, `primary_run` acceptance criteria, safe execution modes,
 stable planner/node id shapes, trace edge/evidence references, deviations, and
 prohibited automatic side effects such as push, merge, PR creation, memory
 approval, repository export, or repository-root context-file writes. These
-validators do not schedule runs or alter TaskRunner behavior.
+validators keep graph validation local and deterministic.
 
 `packages/core` also defines PlanGraph and trace-link repository contracts with
 in-memory implementations for local composition tests. SQLite migration 18 adds
@@ -455,16 +455,24 @@ repositories support graph create/get/list, active graph lookup, explicit
 supersession, dynamic trace node/edge writes, evidence links, and RoleCall tool
 event persistence. `ExecutionTraceGraph` remains a projection contract; the
 stored rows are source evidence and stable links, not a cached LLM summary.
+`packages/core/src/plan-graph-planner.ts` provides the first deterministic
+planner backend. TaskRunner builds the existing runtime context and TaskBrief,
+then creates, validates, and persists an active PlanGraph before selecting and
+starting the primary adapter. The planner is represented as the graph's
+`planner` node with `execution.mode: "system"`; downstream implementation,
+verification, review, memory, and handoff nodes are inspectable but not yet
+scheduled as independent TaskRuns. `RunTaskInput.planGraphMode: "disabled"`
+keeps the pre-PlanGraph execution path available for compatibility tests and
+legacy callers.
 
 This boundary should preserve the current TaskRunner and RoleCall ownership:
 
 - TaskRunner remains the only execution boundary for adapters and accepted
   executable RoleCalls.
-- `@planner` is a special product role for plan creation, but the first
-  implementation may use a deterministic local planner backend while recording
-  planner ownership in persisted evidence. The planner itself should be a graph
-  node with inspectable input, output, status, failures, and retry evidence.
-- Runtime injection should include the active PlanGraph, current plan node, and
+- `@planner` is a special product role for plan creation. The first
+  implementation uses the deterministic local planner backend while recording
+  planner ownership in the persisted PlanGraph and planner lifecycle run events.
+- Runtime injection should next include the active PlanGraph, current plan node, and
   allowed next nodes alongside the existing task brief, runtime context pack,
   role metadata, and collaboration rules.
 - Runs and RoleCalls should link to `planGraphId` and `planNodeId` through

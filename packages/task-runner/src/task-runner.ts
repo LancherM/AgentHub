@@ -62,6 +62,7 @@ import {
 } from "@agent-hub/shared";
 import {
   createId,
+  createDeterministicPlanGraph,
   nowIso,
   validateContextPack,
   validateRunArtifact,
@@ -82,6 +83,7 @@ import {
   type ConversationThreadSummary,
   type InjectedSkillEvidence,
   type JsonObject,
+  type PlanGraph,
   type RiskReport,
   type RunContextDeliveryMode,
   type RuntimeContextPack,
@@ -92,6 +94,7 @@ import {
   type TrustLevel,
   type VerificationResult,
   type WorkgroupRoleRunMetadata,
+  type PlanGraphPlanner,
   type SkillReference
 } from "@agent-hub/core";
 import { RiskReportGenerator } from "@agent-hub/safety";
@@ -113,10 +116,12 @@ import {
   InMemoryVerificationResultRepository,
   InMemoryConversationThreadSummaryRepository,
   InMemoryContextEvalEventRepository,
+  InMemoryPlanGraphRepository,
   InMemoryMemoryItemRepository,
   type ContextEvalEventRepository,
   type ConversationThreadSummaryRepository,
   type MemoryItemRepository,
+  type PlanGraphRepository,
   type ProjectRepository,
   type RiskReportRepository,
   type RunArtifactRepository,
@@ -189,6 +194,7 @@ export interface RunTaskInput {
   executionHints?: string[];
   agentSessionId?: string;
   continueFrom?: RunContinuationInput;
+  planGraphMode?: "enabled" | "disabled";
   onEvent?: (event: AgentRunEvent) => void | Promise<void>;
   signal?: AbortSignal;
 }
@@ -232,6 +238,7 @@ export interface RunResult {
   diff?: DiffCollectionResult;
   verification?: VerificationSuiteResult;
   riskReport?: RiskReport;
+  planGraph?: PlanGraph;
   contextRetrievalResult?: ContextRetrievalResult;
   workspaceCleanup?: WorkspaceCleanupResult;
   warnings: string[];
@@ -259,6 +266,8 @@ export interface TaskRunnerDependencies {
   runMetadataRepository?: RunMetadataRepository;
   conversationThreadSummaryRepository?: ConversationThreadSummaryRepository;
   contextEvalEventRepository?: ContextEvalEventRepository;
+  planGraphRepository?: PlanGraphRepository;
+  planGraphPlanner?: PlanGraphPlanner;
   agentRegistry?: AgentRegistry;
   shellExecutor?: ShellExecutor;
   processRunner?: ProcessRunner;
@@ -339,6 +348,7 @@ export class TaskRunner {
   readonly runMetadataRepository: RunMetadataRepository;
   readonly conversationThreadSummaryRepository: ConversationThreadSummaryRepository;
   readonly contextEvalEventRepository: ContextEvalEventRepository;
+  readonly planGraphRepository: PlanGraphRepository;
   private readonly contextCompiler: ContextCompiler;
   private readonly hasCustomContextCompiler: boolean;
   private readonly contextFormatter: ContextFormatter;
@@ -348,6 +358,7 @@ export class TaskRunner {
   private readonly verificationRunner: VerificationRunner;
   private readonly riskReportGenerator: RiskReportGenerator;
   private readonly contextRetriever: ContextRetriever;
+  private readonly planGraphPlanner: PlanGraphPlanner;
   private readonly shellExecutor: ShellExecutor;
   private readonly idGenerator: IdGenerator;
   private readonly clock: Clock;
@@ -389,6 +400,12 @@ export class TaskRunner {
     this.contextEvalEventRepository =
       dependencies.contextEvalEventRepository ??
       new InMemoryContextEvalEventRepository();
+    this.planGraphRepository =
+      dependencies.planGraphRepository ??
+      new InMemoryPlanGraphRepository();
+    this.planGraphPlanner =
+      dependencies.planGraphPlanner ??
+      createDeterministicPlanGraph;
     this.agentRegistry =
       dependencies.agentRegistry ??
       createDefaultAgentRegistry(processRunner);
@@ -699,6 +716,14 @@ export class TaskRunner {
       baseContextPack,
       runtimeContextPack
     );
+    const taskBrief = createContextTaskBrief({
+      taskId: task.id,
+      title: task.title,
+      prompt: parsed.taskPrompt,
+      contextPackId: contextPack.id,
+      contextMarkdown,
+      createdAt
+    });
 
     if (input.signal?.aborted) {
       await emitRunEvent(
@@ -734,6 +759,49 @@ export class TaskRunner {
       });
     }
 
+    let planGraph: PlanGraph | undefined;
+    if ((input.planGraphMode ?? "enabled") === "enabled") {
+      try {
+        planGraph = await this.createPlanGraphForRun({
+          task,
+          taskBrief,
+          agentKind: parsed.agentKind,
+          roleHandle: input.role?.roleHandle,
+          createdAt
+        });
+        await emitRunEvent(
+          progressEvent("plan_graph_created", "PlanGraph created by deterministic planner.", {
+            phase: "planner",
+            planGraphId: planGraph.id,
+            planGraphVersion: planGraph.version,
+            plannerNodeId: planGraph.plannerNodeId,
+            nodeCount: planGraph.nodes.length,
+            edgeCount: planGraph.edges.length
+          })
+        );
+      } catch (error) {
+        const message = `plan graph creation failed: ${errorMessage(error)}`;
+        await emitRunEvent({ type: "error", message });
+        await emitRunEvent(
+          progressEvent("run_failed", message, {
+            phase: "planner",
+            status: "failed"
+          })
+        );
+        return this.failRunBeforeExecution({
+          run,
+          task: currentTask,
+          events,
+          warnings,
+          contextBundle,
+          contextMarkdown,
+          contextRetrievalResult,
+          taskStatusMode: input.taskStatusMode ?? "single_run",
+          error: message
+        });
+      }
+    }
+
     const adapter = this.agentRegistry.get(parsed.agentKind);
     if (!adapter) {
       const message = `agent ${parsed.agentKind} is not registered`;
@@ -752,6 +820,7 @@ export class TaskRunner {
         contextBundle,
         contextMarkdown,
         contextRetrievalResult,
+        planGraph,
         taskStatusMode: input.taskStatusMode ?? "single_run",
         error: message
       });
@@ -794,6 +863,7 @@ export class TaskRunner {
         contextBundle,
         contextMarkdown,
         contextRetrievalResult,
+        planGraph,
         taskStatusMode: input.taskStatusMode ?? "single_run",
         error: message
       });
@@ -915,13 +985,6 @@ export class TaskRunner {
             }
           });
         }
-        const taskBrief = createContextTaskBrief({
-          taskId: task.id,
-          title: task.title,
-          prompt: parsed.taskPrompt,
-          contextPackId: contextPack.id,
-          contextMarkdown
-        });
         const generatedTaskBriefPath = path.join(runtimeDirectory, "brief.md");
         taskBriefArtifactContent = taskBrief.renderedContent;
         const overlay = await materializeWorktreeOverlay({
@@ -1390,6 +1453,7 @@ export class TaskRunner {
       diff,
       verification,
       riskReport,
+      planGraph,
       workspaceCleanup,
       warnings,
       error:
@@ -1397,6 +1461,29 @@ export class TaskRunner {
           ? finalizationError ?? failureMessage ?? "run failed"
       : undefined
     });
+  }
+
+  private async createPlanGraphForRun(input: {
+    task: Task;
+    taskBrief: TaskBrief;
+    agentKind: AgentKind;
+    roleHandle?: string;
+    createdAt: string;
+  }): Promise<PlanGraph> {
+    const existingGraphs = await this.planGraphRepository.listByTaskId(input.task.id);
+    const version = existingGraphs.reduce(
+      (nextVersion, graph) => Math.max(nextVersion, graph.version + 1),
+      1
+    );
+    const graph = this.planGraphPlanner({
+      task: input.task,
+      taskBrief: input.taskBrief,
+      version,
+      createdAt: input.createdAt,
+      expectedAdapter: input.agentKind,
+      roleHandle: input.roleHandle
+    });
+    return this.planGraphRepository.create(graph);
   }
 
   private async markTaskRunning(
@@ -1418,6 +1505,7 @@ export class TaskRunner {
     contextBundle: ContextBundle;
     contextMarkdown: string;
     contextRetrievalResult?: ContextRetrievalResult;
+    planGraph?: PlanGraph;
     taskStatusMode: NonNullable<RunTaskInput["taskStatusMode"]>;
     error: string;
   }): Promise<RunResult> {
@@ -1448,6 +1536,7 @@ export class TaskRunner {
       contextBundle: input.contextBundle,
       contextMarkdown: input.contextMarkdown,
       contextRetrievalResult: input.contextRetrievalResult,
+      planGraph: input.planGraph,
       warnings: input.warnings,
       error: input.error
     });

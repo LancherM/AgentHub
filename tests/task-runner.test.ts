@@ -42,7 +42,9 @@ import {
   InMemoryContextIndexRepository,
   InMemoryContextEvalEventRepository,
   InMemoryMemoryItemRepository,
+  InMemoryPlanGraphRepository,
   extractAgentFacingOutput,
+  type PlanGraph,
   type RunEvent,
   type RunMetadata,
   type WorkgroupRoleRunMetadata,
@@ -122,6 +124,156 @@ describe("task runner", () => {
     ).resolves.toContain("Create a deterministic fake output");
     await expect(fs.readFile(projectMarker, "utf8")).resolves.toBe("original\n");
     await expect(fs.readdir(projectRoot)).resolves.toEqual(before);
+  });
+
+  it("creates an active PlanGraph before adapter execution when enabled", async () => {
+    const projectRoot = await createTestDirectory("agent-hub-plan-project");
+    const runRoot = await createTestDirectory("agent-hub-plan-runs");
+    const planGraphRepository = new InMemoryPlanGraphRepository();
+    let activeGraphSeenByAdapter: PlanGraph | undefined;
+    const adapter: AgentAdapter = {
+      kind: "fake",
+      displayName: "Plan-aware Fake",
+      async detect() {
+        return { available: true, version: "plan-aware" };
+      },
+      async *run(): AsyncIterable<AgentRunEvent> {
+        activeGraphSeenByAdapter =
+          await planGraphRepository.getActiveByTaskId("task_plan_first");
+        yield {
+          type: "status",
+          message: `adapter saw ${activeGraphSeenByAdapter?.id ?? "no plan"}`
+        };
+        yield { type: "exit", message: "plan-aware fake completed", exitCode: 0 };
+      }
+    };
+    const runner = new TaskRunner({
+      defaultRunRoot: runRoot,
+      workspaceManager: new TestWorkspaceManager(runRoot),
+      diffCollector: new StaticDiffCollector(),
+      verificationRunner: new VerificationRunner(new MockShellExecutor()),
+      planGraphRepository,
+      agentRegistry: new DefaultAgentRegistry([adapter]),
+      idGenerator: new SequenceIdGenerator(),
+      clock: new FixedClock("2026-01-01T00:00:00.000Z")
+    });
+
+    const result = await runner.run({
+      projectRoot,
+      taskPrompt: "Implement a parser fix",
+      agentKind: "fake",
+      taskId: "task_plan_first"
+    });
+
+    expect(result.status).toBe("succeeded");
+    expect(result.planGraph?.id).toBe("plan_graph:task_plan_first:v1");
+    expect(activeGraphSeenByAdapter?.id).toBe(result.planGraph?.id);
+    expect(result.planGraph?.nodes.map((node) => node.kind)).toEqual([
+      "planner",
+      "research",
+      "implement",
+      "verify",
+      "review",
+      "handoff"
+    ]);
+    const planEventIndex = result.events.findIndex((event) =>
+      event.metadata?.desktopEventType === "plan_graph_created"
+    );
+    const adapterEventIndex = result.events.findIndex((event) =>
+      event.message.startsWith("adapter saw")
+    );
+    expect(planEventIndex).toBeGreaterThanOrEqual(0);
+    expect(adapterEventIndex).toBeGreaterThan(planEventIndex);
+  });
+
+  it("can run with PlanGraph creation disabled", async () => {
+    const projectRoot = await createTestDirectory("agent-hub-plan-disabled-project");
+    const runRoot = await createTestDirectory("agent-hub-plan-disabled-runs");
+    const planGraphRepository = new InMemoryPlanGraphRepository();
+    const runner = new TaskRunner({
+      defaultRunRoot: runRoot,
+      workspaceManager: new TestWorkspaceManager(runRoot),
+      diffCollector: new StaticDiffCollector(),
+      verificationRunner: new VerificationRunner(new MockShellExecutor()),
+      planGraphRepository,
+      idGenerator: new SequenceIdGenerator(),
+      clock: new FixedClock("2026-01-01T00:00:00.000Z")
+    });
+
+    const result = await runner.run({
+      projectRoot,
+      taskPrompt: "Create output without plan binding",
+      agentKind: "fake",
+      taskId: "task_plan_disabled",
+      planGraphMode: "disabled"
+    });
+
+    expect(result.status).toBe("succeeded");
+    expect(result.planGraph).toBeUndefined();
+    await expect(planGraphRepository.listByTaskId("task_plan_disabled"))
+      .resolves.toEqual([]);
+    expect(result.events.some((event) =>
+      event.metadata?.desktopEventType === "plan_graph_created"
+    )).toBe(false);
+  });
+
+  it("fails inspectably before adapter execution when planner output is invalid", async () => {
+    const projectRoot = await createTestDirectory("agent-hub-plan-invalid-project");
+    const runRoot = await createTestDirectory("agent-hub-plan-invalid-runs");
+    let adapterStarted = false;
+    const adapter: AgentAdapter = {
+      kind: "fake",
+      displayName: "Should Not Start",
+      async detect() {
+        return { available: true, version: "unused" };
+      },
+      async *run(): AsyncIterable<AgentRunEvent> {
+        adapterStarted = true;
+        yield { type: "exit", message: "unexpected adapter start", exitCode: 0 };
+      }
+    };
+    const runner = new TaskRunner({
+      defaultRunRoot: runRoot,
+      workspaceManager: new TestWorkspaceManager(runRoot),
+      diffCollector: new StaticDiffCollector(),
+      verificationRunner: new VerificationRunner(new MockShellExecutor()),
+      agentRegistry: new DefaultAgentRegistry([adapter]),
+      planGraphPlanner: (input) => ({
+        id: `invalid:${input.task.id}`,
+        taskId: input.task.id,
+        version: input.version,
+        status: "active",
+        plannerNodeId: "missing_planner",
+        createdByRole: "planner",
+        createdAt: input.createdAt,
+        nodes: [],
+        edges: []
+      }),
+      idGenerator: new SequenceIdGenerator(),
+      clock: new FixedClock("2026-01-01T00:00:00.000Z")
+    });
+
+    const result = await runner.run({
+      projectRoot,
+      taskPrompt: "Implement with invalid planner output",
+      agentKind: "fake",
+      taskId: "task_plan_invalid"
+    });
+
+    expect(result.status).toBe("failed");
+    expect(result.error).toContain("plan graph creation failed");
+    expect(adapterStarted).toBe(false);
+    expect(result.events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "error",
+          message: expect.stringContaining("plan graph creation failed")
+        }),
+        expect.objectContaining({
+          metadata: expect.objectContaining({ desktopEventType: "run_failed" })
+        })
+      ])
+    );
   });
 
   it("injects and persists conversation briefs for task runs", async () => {

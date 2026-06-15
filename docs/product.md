@@ -514,9 +514,12 @@ The shared domain contract and core validators for `PlanGraph`,
 `PlanNode`, `PlanEdge`, trace nodes, evidence links, deviations, and
 `ExecutionTraceGraph` are implemented. SQLite and in-memory repositories can
 persist PlanGraph versions, active graph lookup, dynamic trace nodes and edges,
-trace evidence links, and RoleCall tool events. Deterministic planner creation,
-primary PlanNode scheduling, runtime RoleCall tool-event production, and
-mode-aware TUI/Desktop graph rendering are not implemented yet.
+trace evidence links, and RoleCall tool events. TaskRunner now creates and
+persists a deterministic planner-owned `PlanGraph` before primary adapter
+execution by default, with a run-input switch to disable graph creation for
+legacy compatibility. Primary PlanNode scheduling, runtime injection of current
+plan-node context, runtime RoleCall tool-event production, execution-trace
+projection, and mode-aware TUI/Desktop graph rendering are not implemented yet.
 
 ## CLI Surface
 
@@ -526,6 +529,10 @@ The current CLI exposes these command groups:
   `task list`, `task history`.
 - Context and skills: `context init`, `context show`, `context build`,
   `context export`, `skills global create`, `skills global list`.
+- Plan inspection: `plan-graphs list --task-id <task-id>`,
+  `plan-graphs show <plan-graph-id> [--json]`, and
+  `plan-graphs validate <plan-graph-id>` expose deterministic planner output
+  without scheduling or mutating runs.
 - Agent execution: `run --task ...`, ad-hoc `run "@codex ..."`,
   `run "@claude-code ..."`, `run event add`, and explicit continuation with
   `--continue-from-run` or `--continue-from-message`. Runs can select explicit

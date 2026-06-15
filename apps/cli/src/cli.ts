@@ -55,6 +55,7 @@ import {
   validateConversationThreadSummary,
   validateMemoryItem,
   validateMemoryAutomationPolicy,
+  validatePlanGraph,
   validateProject,
   validateRunEvent,
   validateTask,
@@ -73,6 +74,7 @@ import {
   type JsonObject,
   type MemoryCategory,
   type MemoryAutomationPolicy,
+  type PlanGraph,
   type Project,
   type RunContextDeliveryMode,
   type RuntimeContextPack,
@@ -122,6 +124,7 @@ import {
   InMemoryConversationThreadSummaryRepository,
   InMemoryConversationThreadRepository,
   InMemoryMemoryItemRepository,
+  InMemoryPlanGraphRepository,
   InMemoryProjectRepository,
   InMemoryRiskReportRepository,
   InMemoryRunArtifactRepository,
@@ -142,6 +145,7 @@ import {
   type ConversationThreadSummaryRepository,
   type ConversationThreadRepository,
   type MemoryItemRepository,
+  type PlanGraphRepository,
   type ProjectRepository,
   type RiskReportRepository,
   type RunArtifactRepository,
@@ -186,6 +190,7 @@ export interface CliRuntime {
   roleCallRepository: RoleCallRepository;
   roleCallEventRepository: RoleCallEventRepository;
   roleTodoRepository: RoleTodoRepository;
+  planGraphRepository: PlanGraphRepository;
   taskRunner: TaskRunner;
   roleRunQueues: Map<string, Promise<void>>;
 }
@@ -232,6 +237,7 @@ export function createCliRuntime(
     dependencies.roleCallRepository !== undefined ||
     dependencies.roleCallEventRepository !== undefined ||
     dependencies.roleTodoRepository !== undefined ||
+    dependencies.planGraphRepository !== undefined ||
     dependencies.contextIndexRepository !== undefined ||
     dependencies.codeGraphRepository !== undefined;
   const shouldUseSqlite =
@@ -337,6 +343,10 @@ export function createCliRuntime(
     dependencies.roleCallEventRepository ??
     sqliteRepositories?.roleCallEventRepository ??
     new InMemoryRoleCallEventRepository();
+  const planGraphRepository =
+    dependencies.planGraphRepository ??
+    sqliteRepositories?.planGraphRepository ??
+    new InMemoryPlanGraphRepository();
   const taskRunner = new TaskRunner({
     ...dependencies,
     taskRepository,
@@ -351,6 +361,7 @@ export function createCliRuntime(
     runMetadataRepository,
     conversationThreadSummaryRepository,
     contextEvalEventRepository,
+    planGraphRepository,
     contextIndexRepository,
     contextIndexRefresher,
     codeGraphRepository
@@ -380,6 +391,7 @@ export function createCliRuntime(
     roleCallRepository,
     roleCallEventRepository,
     roleTodoRepository,
+    planGraphRepository,
     taskRunner,
     roleRunQueues
   };
@@ -540,6 +552,21 @@ function cliCommandRoutes(debug: boolean): CliCommandRoute<CliCommandContext>[] 
       patterns: [["context", "eval"]],
       usage: ["  agent-hub [--db <path>] context eval <run-id>"],
       run: (args, context) => contextEvalInspect(args, context.io, context.runtime)
+    },
+    {
+      patterns: [["plan-graphs", "list"]],
+      usage: ["  agent-hub [--db <path>] plan-graphs list --task-id <task-id> [--json]"],
+      run: (args, context) => listPlanGraphs(args, context.io, context.runtime)
+    },
+    {
+      patterns: [["plan-graphs", "show"]],
+      usage: ["  agent-hub [--db <path>] plan-graphs show <plan-graph-id> [--json]"],
+      run: (args, context) => showPlanGraph(args, context.io, context.runtime)
+    },
+    {
+      patterns: [["plan-graphs", "validate"]],
+      usage: ["  agent-hub [--db <path>] plan-graphs validate <plan-graph-id>"],
+      run: (args, context) => validatePlanGraphCommand(args, context.io, context.runtime)
     },
     {
       patterns: [["skills", "global", "create"]],
@@ -4374,6 +4401,151 @@ async function contextEvalInspect(
     io.stderr.write(`error: ${error instanceof Error ? error.message : String(error)}\n`);
     return 1;
   }
+}
+
+async function listPlanGraphs(
+  args: string[],
+  io: CliIO,
+  runtime: CliRuntime
+): Promise<number> {
+  try {
+    const taskId = requiredFlag(args, "--task-id");
+    const graphs = await runtime.planGraphRepository.listByTaskId(taskId);
+    if (args.includes("--json")) {
+      io.stdout.write(`${JSON.stringify({ planGraphs: graphs }, null, 2)}\n`);
+      return 0;
+    }
+    if (graphs.length === 0) {
+      io.stdout.write(`No PlanGraphs found for task ${taskId}.\n`);
+      return 0;
+    }
+    io.stdout.write(
+      [
+        "plan_graph_id\tstatus\tversion\tnodes\tedges\tcreated_at",
+        ...graphs.map((graph) =>
+          [
+            graph.id,
+            graph.status,
+            graph.version,
+            graph.nodes.length,
+            graph.edges.length,
+            graph.createdAt
+          ].join("\t")
+        ),
+        ""
+      ].join("\n")
+    );
+    return 0;
+  } catch (error) {
+    io.stderr.write(`error: ${error instanceof Error ? error.message : String(error)}\n`);
+    return 1;
+  }
+}
+
+async function showPlanGraph(
+  args: string[],
+  io: CliIO,
+  runtime: CliRuntime
+): Promise<number> {
+  try {
+    const parsed = parsePlanGraphIdArgs(args);
+    const graph = await requirePlanGraph(runtime, parsed.planGraphId);
+    if (parsed.json) {
+      io.stdout.write(`${JSON.stringify({ planGraph: graph }, null, 2)}\n`);
+      return 0;
+    }
+    io.stdout.write(renderPlanGraph(graph));
+    return 0;
+  } catch (error) {
+    io.stderr.write(`error: ${error instanceof Error ? error.message : String(error)}\n`);
+    return 1;
+  }
+}
+
+async function validatePlanGraphCommand(
+  args: string[],
+  io: CliIO,
+  runtime: CliRuntime
+): Promise<number> {
+  try {
+    const parsed = parsePlanGraphIdArgs(args);
+    const graph = await requirePlanGraph(runtime, parsed.planGraphId);
+    validatePlanGraph(graph);
+    io.stdout.write(
+      [
+        "PlanGraph valid",
+        `id: ${graph.id}`,
+        `task_id: ${graph.taskId}`,
+        `version: ${graph.version}`,
+        `nodes: ${graph.nodes.length}`,
+        `edges: ${graph.edges.length}`,
+        ""
+      ].join("\n")
+    );
+    return 0;
+  } catch (error) {
+    io.stderr.write(`error: ${error instanceof Error ? error.message : String(error)}\n`);
+    return 1;
+  }
+}
+
+function parsePlanGraphIdArgs(args: string[]): { planGraphId: string; json: boolean } {
+  const positional = args.filter((arg) => !arg.startsWith("--"));
+  const planGraphId = positional[0];
+  if (!planGraphId) {
+    throw new Error("plan graph id is required");
+  }
+  if (positional.length > 1) {
+    throw new Error(`unexpected argument ${positional[1]}`);
+  }
+  const allowedFlags = new Set(["--json"]);
+  const unknownFlag = args.find((arg) => arg.startsWith("--") && !allowedFlags.has(arg));
+  if (unknownFlag) {
+    throw new Error(`unknown option ${unknownFlag}`);
+  }
+  return { planGraphId, json: args.includes("--json") };
+}
+
+async function requirePlanGraph(
+  runtime: CliRuntime,
+  planGraphId: string
+): Promise<PlanGraph> {
+  const graph = await runtime.planGraphRepository.get(planGraphId);
+  if (!graph) {
+    throw new Error(`plan graph ${planGraphId} not found`);
+  }
+  return graph;
+}
+
+function renderPlanGraph(graph: PlanGraph): string {
+  return [
+    `PlanGraph ${graph.id}`,
+    `task_id: ${graph.taskId}`,
+    `status: ${graph.status}`,
+    `version: ${graph.version}`,
+    `planner_node: ${graph.plannerNodeId}`,
+    `created_at: ${graph.createdAt}`,
+    "nodes:",
+    ...graph.nodes.map((node) =>
+      [
+        `- ${node.id}`,
+        `kind=${node.kind}`,
+        `role=${node.role}`,
+        `mode=${node.execution.mode}`,
+        `required=${node.required}`,
+        `title=${inlineText(node.title)}`
+      ].join(" ")
+    ),
+    "edges:",
+    ...(graph.edges.length === 0
+      ? ["- none"]
+      : graph.edges.map((edge) =>
+          `- ${edge.from} -> ${edge.to} ${edge.type}${
+            edge.label ? ` ${inlineText(edge.label)}` : ""
+          }`
+        )),
+    ""
+  ].join("\n");
 }
 
 interface ParsedContextInspectArgs {
