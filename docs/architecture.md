@@ -477,8 +477,10 @@ invalid. The planner is represented as the graph's `planner` node with
 node as the current primary run binding, persists that binding in
 `run_metadata.plan_binding_json`, emits planner lifecycle events, and passes
 the active PlanGraph, current plan node, and allowed next node ids through
-adapter runtime input. Downstream verification, review, memory, and handoff
-nodes are inspectable but not yet scheduled as independent TaskRuns.
+adapter runtime input. Additional primary PlanNodes can be scheduled by calling
+TaskRunner with `RunTaskInput.planGraphBinding`; downstream verification,
+review, memory, and handoff nodes are inspectable governance/evidence nodes
+unless a caller explicitly binds them to an executable run.
 `RunTaskInput.planGraphBinding` lets callers bind a run to an already-persisted
 PlanGraph and plan node instead of creating a new graph. RoleCall execution uses
 that path so callee runs inherit the source PlanGraph plus the dynamic trace

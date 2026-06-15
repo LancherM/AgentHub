@@ -1,8 +1,8 @@
 # PlanGraph And ExecutionTraceGraph Product Spec
 
-Status: planned product slice. This document describes the target behavior
-against the current Agent Hub implementation. It does not describe an existing
-shipped runtime path yet.
+Status: implemented product slice with follow-on extension notes. This document
+describes the PlanGraph and ExecutionTraceGraph behavior now implemented in
+Agent Hub, plus the bounded future extensions called out below.
 
 ## Summary
 
@@ -1074,15 +1074,17 @@ The first implementation is product-complete when:
 - all behavior remains local-first and worktree-isolated;
 - docs and tests distinguish current implementation from planned capability.
 
-## Open Decisions
+## Follow-On Decisions
 
-- Should `@planner` be visible in the team role list by default, or remain a
-  system role shown only in plan evidence?
-- Should direct `@codex` or `@claude` runs receive a synthetic execution role
-  for plan binding?
-- Which plan node result fields should be required from adapters before the
-  product can enforce plan progression?
-- Should plan amendments require explicit user approval, or can a role create a
-  proposed amendment that remains inactive until accepted?
-- How much of PlanGraph should be shown in default run output versus only in
-  Graph and inspection commands?
+- `@planner` remains a system role shown in plan evidence by default, not a
+  normal team role.
+- Direct `@codex` or `@claude` runs bind to PlanGraph evidence without
+  inventing a collaboration role unless the caller selected one.
+- Adapter-authored `PlanNodeResult` fields remain a future extension; current
+  progression uses persisted run metadata, verification, risk, trace evidence,
+  and deviations.
+- Plan amendments require explicit activation approval when required execution
+  nodes change.
+- Default run output stays concise; full PlanGraph and ExecutionTraceGraph
+  details live in inspection commands, TUI Graph modes, and the desktop Trace
+  inspector tab.

@@ -550,8 +550,10 @@ primary adapter starts when output is invalid. `manual` planner mode accepts a
 caller-supplied PlanGraph only after the same validation. Plan amendments can
 be stored as `proposed` graph versions; activation supersedes the old active
 graph only after validation, and changes to required execution nodes require an
-explicit approval flag. Multi-TaskRun PlanNode fan-out scheduling and a
-dedicated desktop graph canvas are not implemented yet.
+explicit approval flag. Additional primary PlanNodes can be scheduled
+explicitly through `RunTaskInput.planGraphBinding`; automatic topological
+fan-out orchestration and a dedicated desktop graph canvas remain follow-on
+extensions beyond the current read-only Trace tab.
 
 Plan and trace evidence now feeds review governance without creating an
 automatic acceptance path. Risk reports can include plan-aware findings for
