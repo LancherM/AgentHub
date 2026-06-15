@@ -197,6 +197,7 @@ export interface RunTaskInput {
   agentSessionId?: string;
   continueFrom?: RunContinuationInput;
   planGraphMode?: "enabled" | "disabled";
+  planGraphBinding?: RunPlanGraphBindingInput;
   onEvent?: (event: AgentRunEvent) => void | Promise<void>;
   signal?: AbortSignal;
 }
@@ -204,6 +205,14 @@ export interface RunTaskInput {
 export interface RunContinuationInput {
   parentRunId: string;
   parentMessageId?: string;
+}
+
+export interface RunPlanGraphBindingInput {
+  planGraphId: string;
+  planGraphVersion?: number;
+  planNodeId: string;
+  traceNodeId?: string;
+  allowedNextPlanNodeIds?: readonly string[];
 }
 
 export interface CodeStateProvenance {
@@ -769,7 +778,32 @@ export class TaskRunner {
 
     let planGraph: PlanGraph | undefined;
     let scheduledPlanNode: ScheduledPlanNode | undefined;
-    if ((input.planGraphMode ?? "enabled") === "enabled") {
+    if (input.planGraphBinding) {
+      try {
+        planGraph = await this.loadPlanGraphForBinding(input.planGraphBinding);
+        scheduledPlanNode = selectBoundPlanNode(planGraph, input.planGraphBinding);
+      } catch (error) {
+        const message = `plan graph binding failed: ${errorMessage(error)}`;
+        await emitRunEvent({ type: "error", message });
+        await emitRunEvent(
+          progressEvent("run_failed", message, {
+            phase: "planner",
+            status: "failed"
+          })
+        );
+        return this.failRunBeforeExecution({
+          run,
+          task: currentTask,
+          events,
+          warnings,
+          contextBundle,
+          contextMarkdown,
+          contextRetrievalResult,
+          taskStatusMode: input.taskStatusMode ?? "single_run",
+          error: message
+        });
+      }
+    } else if ((input.planGraphMode ?? "enabled") === "enabled") {
       try {
         planGraph = await this.createPlanGraphForRun({
           task,
@@ -1041,6 +1075,7 @@ export class TaskRunner {
             contextMarkdown,
             planGraph,
             currentPlanNode: scheduledPlanNode?.node,
+            currentTraceNodeId: scheduledPlanNode?.binding.traceNodeId,
             allowedNextPlanNodeIds: scheduledPlanNode?.allowedNextPlanNodeIds,
             role: input.role,
             teamRoles: input.teamRoles,
@@ -1512,6 +1547,24 @@ export class TaskRunner {
     return this.planGraphRepository.create(graph);
   }
 
+  private async loadPlanGraphForBinding(
+    binding: RunPlanGraphBindingInput
+  ): Promise<PlanGraph> {
+    const graph = await this.planGraphRepository.get(binding.planGraphId);
+    if (!graph) {
+      throw new Error(`plan graph ${binding.planGraphId} not found`);
+    }
+    if (
+      binding.planGraphVersion !== undefined &&
+      graph.version !== binding.planGraphVersion
+    ) {
+      throw new Error(
+        `plan graph ${binding.planGraphId} version ${graph.version} does not match requested version ${binding.planGraphVersion}`
+      );
+    }
+    return graph;
+  }
+
   private async markTaskRunning(
     task: Task,
     updatedAt: string,
@@ -1828,6 +1881,30 @@ function selectPrimaryPlanNode(graph: PlanGraph): ScheduledPlanNode | undefined 
       planGraphId: graph.id,
       planGraphVersion: graph.version,
       planNodeId: node.id,
+      allowedNextPlanNodeIds
+    }
+  };
+}
+
+function selectBoundPlanNode(
+  graph: PlanGraph,
+  binding: RunPlanGraphBindingInput
+): ScheduledPlanNode {
+  const node = graph.nodes.find((candidate) => candidate.id === binding.planNodeId);
+  if (!node) {
+    throw new Error(`plan node ${binding.planNodeId} not found in ${graph.id}`);
+  }
+  const allowedNextPlanNodeIds = binding.allowedNextPlanNodeIds
+    ? [...binding.allowedNextPlanNodeIds]
+    : graph.edges.filter((edge) => edge.from === node.id).map((edge) => edge.to);
+  return {
+    node,
+    allowedNextPlanNodeIds,
+    binding: {
+      planGraphId: graph.id,
+      planGraphVersion: graph.version,
+      planNodeId: node.id,
+      ...(binding.traceNodeId ? { traceNodeId: binding.traceNodeId } : {}),
       allowedNextPlanNodeIds
     }
   };

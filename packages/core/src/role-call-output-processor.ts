@@ -10,13 +10,16 @@ import { parseRoleCallIntents } from "./role-call-parser";
 import {
   RoleCallOrchestrator,
   type RoleCallLedgerSummary,
-  type RoleCallPolicyValidator
+  type RoleCallPolicyValidator,
+  type RoleCallSourcePlanBinding
 } from "./role-call-orchestrator";
 import type {
   ConversationMessageRepository,
+  RunMetadataRepository,
   RoleCallEventRepository,
   RoleCallRepository,
-  RoleTodoRepository
+  RoleTodoRepository,
+  TraceLinkRepository
 } from "./storage";
 
 export interface AssistantRoleCallOutputRepositories {
@@ -24,6 +27,8 @@ export interface AssistantRoleCallOutputRepositories {
   roleCallRepository: RoleCallRepository;
   roleCallEventRepository: RoleCallEventRepository;
   roleTodoRepository: RoleTodoRepository;
+  runMetadataRepository?: RunMetadataRepository;
+  traceLinkRepository?: TraceLinkRepository;
 }
 
 export interface AssistantRoleCallExecutionInput {
@@ -49,6 +54,7 @@ export interface ProcessAssistantRoleCallOutputInput {
   now?: () => string;
   defaultReason?: string;
   defaultExpectedOutput?: ExpectedOutputSpec;
+  sourceRunId?: string;
   executeAcceptedRoleCalls?: (
     input: AssistantRoleCallExecutionInput
   ) => Promise<AssistantRoleCallExecutionResult>;
@@ -136,7 +142,8 @@ export async function processAssistantRoleCallOutput(
     repositories: {
       roleCallRepository: input.repositories.roleCallRepository,
       roleCallEventRepository: input.repositories.roleCallEventRepository,
-      roleTodoRepository: input.repositories.roleTodoRepository
+      roleTodoRepository: input.repositories.roleTodoRepository,
+      traceLinkRepository: input.repositories.traceLinkRepository
     },
     roles: input.roles,
     policyValidator: input.policyValidator,
@@ -149,7 +156,8 @@ export async function processAssistantRoleCallOutput(
     intents: parsed.intents.map((entry) => entry.intent),
     userGoal: input.userGoal,
     parentMessageId: input.message.id,
-    currentPlan: input.currentPlan ?? input.message.content
+    currentPlan: input.currentPlan ?? input.message.content,
+    sourcePlanBinding: await resolveSourcePlanBinding(input)
   });
   let ok = true;
   let executionWarnings: string[] = [];
@@ -228,6 +236,28 @@ async function optionalRoleCallSummary(
   input: Pick<ProcessAssistantRoleCallOutputInput, "roleCallSummary">
 ): Promise<unknown> {
   return input.roleCallSummary ? input.roleCallSummary() : undefined;
+}
+
+async function resolveSourcePlanBinding(
+  input: ProcessAssistantRoleCallOutputInput
+): Promise<RoleCallSourcePlanBinding | undefined> {
+  const sourceRunId = input.sourceRunId ?? input.message.runId;
+  if (!sourceRunId || !input.repositories.runMetadataRepository) {
+    return undefined;
+  }
+  const metadata = await input.repositories.runMetadataRepository.get(sourceRunId);
+  const binding = metadata?.planBinding;
+  if (!binding) {
+    return undefined;
+  }
+  return {
+    sourceRunId,
+    planGraphId: binding.planGraphId,
+    planGraphVersion: binding.planGraphVersion,
+    planNodeId: binding.planNodeId,
+    ...(binding.traceNodeId ? { traceNodeId: binding.traceNodeId } : {}),
+    allowedNextPlanNodeIds: [...binding.allowedNextPlanNodeIds]
+  };
 }
 
 function roleCallLedgerSummaryMetadata(summary: RoleCallLedgerSummary): JsonObject {

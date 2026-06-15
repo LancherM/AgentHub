@@ -2139,6 +2139,32 @@ function validateRoleCallContext(
   ) {
     issues.push(`${field}.tokenBudget must be a positive integer when provided`);
   }
+  if (value.planTrace !== undefined) {
+    objectValue(value.planTrace, `${field}.planTrace`, issues);
+    if (plainObject(value.planTrace)) {
+      required(value.planTrace.planGraphId, `${field}.planTrace.planGraphId`, issues);
+      const planGraphVersion = value.planTrace.planGraphVersion;
+      if (
+        typeof planGraphVersion !== "number" ||
+        !Number.isInteger(planGraphVersion) ||
+        planGraphVersion <= 0
+      ) {
+        issues.push(`${field}.planTrace.planGraphVersion must be a positive integer`);
+      }
+      required(
+        value.planTrace.sourcePlanNodeId,
+        `${field}.planTrace.sourcePlanNodeId`,
+        issues
+      );
+      required(value.planTrace.sourceRunId, `${field}.planTrace.sourceRunId`, issues);
+      optionalString(value.planTrace.traceNodeId, `${field}.planTrace.traceNodeId`, issues);
+      optionalStringArray(
+        value.planTrace.allowedNextPlanNodeIds,
+        `${field}.planTrace.allowedNextPlanNodeIds`,
+        issues
+      );
+    }
+  }
 }
 
 function validateRoleCallDecisionFields(

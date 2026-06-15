@@ -6,13 +6,15 @@ import {
   type RoleCallEvent,
   type RoleDefinition,
   type RoleIntent,
+  type RoleCallToolEvent,
   type RoleResult,
   type RoleTodo
 } from "./domain";
 import type {
   RoleCallEventRepository,
   RoleCallRepository,
-  RoleTodoRepository
+  RoleTodoRepository,
+  TraceLinkRepository
 } from "./storage";
 
 export type RoleCallLedgerSummaryStatus =
@@ -62,6 +64,7 @@ export interface RoleCallOrchestratorRepositories {
   roleCallRepository: RoleCallRepository;
   roleCallEventRepository: RoleCallEventRepository;
   roleTodoRepository: RoleTodoRepository;
+  traceLinkRepository?: TraceLinkRepository;
 }
 
 export interface RoleCallOrchestratorOptions {
@@ -81,6 +84,16 @@ export interface ProcessRoleIntentsInput {
   parentMessageId?: string;
   parentRoleCallId?: string;
   currentPlan?: string;
+  sourcePlanBinding?: RoleCallSourcePlanBinding;
+}
+
+export interface RoleCallSourcePlanBinding {
+  sourceRunId: string;
+  planGraphId: string;
+  planGraphVersion: number;
+  planNodeId: string;
+  traceNodeId?: string;
+  allowedNextPlanNodeIds: readonly string[];
 }
 
 export class RoleCallOrchestrator {
@@ -326,7 +339,10 @@ export class RoleCallOrchestrator {
       reason: roleIntentReason(intent),
       context: {
         userGoal: input.userGoal,
-        currentPlan: input.currentPlan
+        currentPlan: input.currentPlan,
+        ...(input.sourcePlanBinding
+          ? { planTrace: planTraceContextFromBinding(input.sourcePlanBinding) }
+          : {})
       },
       permissions: calleeRole.permissions,
       expectedOutput: roleIntentExpectedOutput(intent),
@@ -364,6 +380,12 @@ export class RoleCallOrchestrator {
         metadata: { approvalReasons: policy.approvalReasons ?? [] },
         createdAt
       });
+      await this.recordRoleCallToolTrace({
+        roleCall,
+        sourcePlanBinding: input.sourcePlanBinding,
+        status: "requested",
+        createdAt
+      });
       return {
         roleCallId: roleCall.id,
         targetRole,
@@ -394,13 +416,19 @@ export class RoleCallOrchestrator {
       calleeRole,
       intent
     });
-    return this.applyIntakeDecision(assessingRoleCall, decision, calleeRole);
+    return this.applyIntakeDecision(
+      assessingRoleCall,
+      decision,
+      calleeRole,
+      input.sourcePlanBinding
+    );
   }
 
   private async applyIntakeDecision(
     roleCall: RoleCall,
     decision: RoleCallDecision,
-    calleeRole: RoleDefinition
+    calleeRole: RoleDefinition,
+    sourcePlanBinding?: RoleCallSourcePlanBinding
   ): Promise<RoleCallLedgerSummary> {
     const at = this.now();
     const status = roleCallStatusForDecision(decision);
@@ -420,55 +448,87 @@ export class RoleCallOrchestrator {
       metadata: { disposition: decision.disposition },
       createdAt: at
     });
+    const traced = await this.recordRoleCallToolTrace({
+      roleCall: updated,
+      decision,
+      sourcePlanBinding,
+      status: roleCallToolEventStatusForDecision(decision),
+      createdAt: at
+    });
+    const updatedWithTrace = traced ?? updated;
 
     if (decision.disposition === "accepted") {
-      const todo = await this.createTodoForDecision(updated, decision, "in_progress", at);
-      await this.repositories.roleCallRepository.update({ ...updated, todoId: todo.id });
+      const todo = await this.createTodoForDecision(
+        updatedWithTrace,
+        decision,
+        "in_progress",
+        at
+      );
+      await this.repositories.roleCallRepository.update({
+        ...updatedWithTrace,
+        todoId: todo.id
+      });
       return {
-        roleCallId: updated.id,
-        targetRole: updated.calleeRole,
+        roleCallId: updatedWithTrace.id,
+        targetRole: updatedWithTrace.calleeRole,
         status: "accepted",
         decision,
-        message: `@${updated.calleeRole} accepted the role call.`
+        message: `@${updatedWithTrace.calleeRole} accepted the role call.`
       };
     }
     if (decision.disposition === "deferred") {
-      const todo = await this.createTodoForDecision(updated, decision, "deferred", at);
-      await this.repositories.roleCallRepository.update({ ...updated, todoId: todo.id });
+      const todo = await this.createTodoForDecision(
+        updatedWithTrace,
+        decision,
+        "deferred",
+        at
+      );
+      await this.repositories.roleCallRepository.update({
+        ...updatedWithTrace,
+        todoId: todo.id
+      });
       return {
-        roleCallId: updated.id,
-        targetRole: updated.calleeRole,
+        roleCallId: updatedWithTrace.id,
+        targetRole: updatedWithTrace.calleeRole,
         status: "deferred",
         decision,
-        message: `Role call to @${updated.calleeRole} was deferred: ${decision.reason}`
+        message: `Role call to @${updatedWithTrace.calleeRole} was deferred: ${decision.reason}`
       };
     }
     if (decision.disposition === "rejected") {
-      const todo = await this.createTodoForDecision(updated, decision, "rejected", at);
-      await this.repositories.roleCallRepository.update({ ...updated, todoId: todo.id });
+      const todo = await this.createTodoForDecision(
+        updatedWithTrace,
+        decision,
+        "rejected",
+        at
+      );
+      await this.repositories.roleCallRepository.update({
+        ...updatedWithTrace,
+        todoId: todo.id
+      });
       return {
-        roleCallId: updated.id,
-        targetRole: updated.calleeRole,
+        roleCallId: updatedWithTrace.id,
+        targetRole: updatedWithTrace.calleeRole,
         status: "rejected",
         decision,
-        message: `Role call to @${updated.calleeRole} was rejected, not failed: ${decision.reason}`
+        message: `Role call to @${updatedWithTrace.calleeRole} was rejected, not failed: ${decision.reason}`
       };
     }
     if (decision.disposition === "needs_context") {
       return {
-        roleCallId: updated.id,
-        targetRole: updated.calleeRole,
+        roleCallId: updatedWithTrace.id,
+        targetRole: updatedWithTrace.calleeRole,
         status: "waiting_context",
         decision,
-        message: `Role call to @${updated.calleeRole} is waiting for context.`
+        message: `Role call to @${updatedWithTrace.calleeRole} is waiting for context.`
       };
     }
     return {
-      roleCallId: updated.id,
-      targetRole: updated.calleeRole,
+      roleCallId: updatedWithTrace.id,
+      targetRole: updatedWithTrace.calleeRole,
       status: "waiting_approval",
       decision,
-      message: `Role call to @${updated.calleeRole} is waiting for approval.`
+      message: `Role call to @${updatedWithTrace.calleeRole} is waiting for approval.`
     };
   }
 
@@ -503,6 +563,80 @@ export class RoleCallOrchestrator {
       createdAt: at
     });
     return todo;
+  }
+
+  private async recordRoleCallToolTrace(input: {
+    roleCall: RoleCall;
+    sourcePlanBinding?: RoleCallSourcePlanBinding;
+    decision?: RoleCallDecision;
+    status: RoleCallToolEvent["status"];
+    createdAt: string;
+  }): Promise<RoleCall | undefined> {
+    const traceLinks = this.repositories.traceLinkRepository;
+    const binding = input.sourcePlanBinding;
+    if (!traceLinks || !binding) {
+      return undefined;
+    }
+
+    const createdTraceNodeIds: string[] = [];
+    let tracedRoleCall = input.roleCall;
+    if (input.decision?.disposition === "accepted") {
+      const traceNodeId = this.idFactory("trace_node");
+      await traceLinks.createNode({
+        id: traceNodeId,
+        planGraphId: binding.planGraphId,
+        kind: "role_call",
+        title: `@${input.roleCall.calleeRole} ${input.roleCall.task}`,
+        status: "queued",
+        sourcePlanNodeId: binding.planNodeId,
+        role: input.roleCall.calleeRole,
+        sourceType: "role_call",
+        sourceId: input.roleCall.id,
+        createdAt: input.createdAt
+      });
+      await traceLinks.createEdge({
+        id: this.idFactory("trace_edge"),
+        planGraphId: binding.planGraphId,
+        from: binding.traceNodeId ?? binding.planNodeId,
+        to: traceNodeId,
+        type: "runtime",
+        label: `RoleCall @${input.roleCall.calleeRole}`
+      });
+      createdTraceNodeIds.push(traceNodeId);
+      tracedRoleCall = await this.repositories.roleCallRepository.update({
+        ...input.roleCall,
+        context: {
+          ...input.roleCall.context,
+          planTrace: {
+            ...planTraceContextFromBinding(binding),
+            traceNodeId
+          }
+        }
+      });
+    }
+
+    await traceLinks.linkEvidence({
+      id: this.idFactory("trace_evidence"),
+      planGraphId: binding.planGraphId,
+      sourceType: "role_call",
+      sourceId: input.roleCall.id,
+      planNodeId: binding.planNodeId,
+      traceNodeId: createdTraceNodeIds[0],
+      summary: `RoleCall from @${input.roleCall.callerRole} to @${input.roleCall.calleeRole}: ${input.roleCall.task}`,
+      createdAt: input.createdAt
+    });
+    await traceLinks.createRoleCallToolEvent({
+      id: this.idFactory("role_call_tool_event"),
+      planGraphId: binding.planGraphId,
+      sourcePlanNodeId: binding.planNodeId,
+      sourceRunId: binding.sourceRunId,
+      targetRole: input.roleCall.calleeRole,
+      task: input.roleCall.task,
+      status: input.status,
+      createdTraceNodeIds,
+      createdAt: input.createdAt
+    });
+    return tracedRoleCall;
   }
 
   private async updateLinkedTodo(
@@ -643,6 +777,18 @@ function roleCallStatusForDecision(
   return "waiting_approval";
 }
 
+function roleCallToolEventStatusForDecision(
+  decision: RoleCallDecision
+): RoleCallToolEvent["status"] {
+  if (decision.disposition === "accepted") {
+    return "accepted";
+  }
+  if (decision.disposition === "rejected") {
+    return "rejected";
+  }
+  return "requested";
+}
+
 function eventTypeForDecision(
   decision: RoleCallDecision
 ): RoleCallEvent["type"] {
@@ -659,4 +805,15 @@ function eventTypeForDecision(
     return "context_requested";
   }
   return "approval_requested";
+}
+
+function planTraceContextFromBinding(binding: RoleCallSourcePlanBinding) {
+  return {
+    planGraphId: binding.planGraphId,
+    planGraphVersion: binding.planGraphVersion,
+    sourcePlanNodeId: binding.planNodeId,
+    sourceRunId: binding.sourceRunId,
+    ...(binding.traceNodeId ? { traceNodeId: binding.traceNodeId } : {}),
+    allowedNextPlanNodeIds: [...binding.allowedNextPlanNodeIds]
+  };
 }

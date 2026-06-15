@@ -1638,7 +1638,9 @@ class RepositoryThreadService implements ThreadService {
         conversationMessageRepository: this.messages,
         roleCallRepository: this.roleCalls,
         roleCallEventRepository: this.roleCallEvents,
-        roleTodoRepository: this.roleTodos
+        roleTodoRepository: this.roleTodos,
+        runMetadataRepository: this.dependencies.context.repositories.runMetadataRepository,
+        traceLinkRepository: this.dependencies.context.repositories.traceLinkRepository
       },
       threadId: thread.id,
       callerRole: role.roleHandle,

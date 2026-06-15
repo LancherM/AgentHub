@@ -357,7 +357,8 @@ class RepositoryRunService implements RunService {
       repositories: {
         roleCallRepository: this.context.repositories.roleCallRepository,
         roleCallEventRepository: this.context.repositories.roleCallEventRepository,
-        roleTodoRepository: this.context.repositories.roleTodoRepository
+        roleTodoRepository: this.context.repositories.roleTodoRepository,
+        traceLinkRepository: this.context.repositories.traceLinkRepository
       },
       roles: input.roles,
       roleMetadata: input.roleMetadata,
@@ -443,7 +444,8 @@ class RepositoryRunService implements RunService {
       repositories: {
         roleCallRepository: this.context.repositories.roleCallRepository,
         roleCallEventRepository: this.context.repositories.roleCallEventRepository,
-        roleTodoRepository: this.context.repositories.roleTodoRepository
+        roleTodoRepository: this.context.repositories.roleTodoRepository,
+        traceLinkRepository: this.context.repositories.traceLinkRepository
       },
       roles: input.roles,
       roleMetadata: input.roleMetadata,
@@ -696,6 +698,7 @@ class RepositoryRunService implements RunService {
       runMetadataRepository: this.metadata,
       conversationThreadSummaryRepository:
         this.context.repositories.conversationThreadSummaryRepository,
+      planGraphRepository: this.context.repositories.planGraphRepository,
       contextIndexRepository,
       contextIndexRefresher: async (input: ContextIndexRefreshInput) =>
         rebuildStableContextIndex({

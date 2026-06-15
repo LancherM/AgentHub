@@ -520,9 +520,15 @@ execution by default, with a run-input switch to disable graph creation for
 legacy compatibility. The current primary adapter run is bound to the first
 planned `primary_run` node when one exists, records that binding in run
 metadata, and receives a runtime-injected PlanGraph/current-node block with
-allowed next node ids. Multi-TaskRun PlanNode fan-out scheduling, runtime
-RoleCall tool-event production, execution-trace projection, and mode-aware
-TUI/Desktop graph rendering are not implemented yet.
+allowed next node ids. Role-backed assistant output that creates a RoleCall now
+links back to the source run's plan binding when one exists: Agent Hub records a
+RoleCall tool event, stores plan trace context on the RoleCall, creates a
+dynamic `role_call` trace node for accepted RoleCalls, and records a dynamic
+`task_run` trace node when the accepted executable RoleCall runs through
+TaskRunner. The callee run inherits the same PlanGraph and receives the source
+plan node plus dynamic trace node id in runtime context. Multi-TaskRun PlanNode
+fan-out scheduling, full execution-trace projection, and mode-aware TUI/Desktop
+graph rendering are not implemented yet.
 
 ## CLI Surface
 

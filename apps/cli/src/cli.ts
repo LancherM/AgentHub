@@ -137,6 +137,7 @@ import {
   InMemoryRoleTodoRepository,
   InMemoryTaskRepository,
   InMemoryTaskRunRepository,
+  InMemoryTraceLinkRepository,
   InMemoryVerificationResultRepository,
   type AgentProfileRepository,
   type ComparisonReportRepository,
@@ -158,6 +159,7 @@ import {
   type RoleTodoRepository,
   type TaskRepository,
   type TaskRunRepository,
+  type TraceLinkRepository,
   type VerificationResultRepository
 } from "@agent-hub/core";
 
@@ -191,6 +193,7 @@ export interface CliRuntime {
   roleCallEventRepository: RoleCallEventRepository;
   roleTodoRepository: RoleTodoRepository;
   planGraphRepository: PlanGraphRepository;
+  traceLinkRepository: TraceLinkRepository;
   taskRunner: TaskRunner;
   roleRunQueues: Map<string, Promise<void>>;
 }
@@ -211,6 +214,7 @@ export interface CliRuntimeDependencies extends TaskRunnerDependencies {
   roleCallRepository?: RoleCallRepository;
   roleCallEventRepository?: RoleCallEventRepository;
   roleTodoRepository?: RoleTodoRepository;
+  traceLinkRepository?: TraceLinkRepository;
 }
 
 export function createCliRuntime(
@@ -238,6 +242,7 @@ export function createCliRuntime(
     dependencies.roleCallEventRepository !== undefined ||
     dependencies.roleTodoRepository !== undefined ||
     dependencies.planGraphRepository !== undefined ||
+    dependencies.traceLinkRepository !== undefined ||
     dependencies.contextIndexRepository !== undefined ||
     dependencies.codeGraphRepository !== undefined;
   const shouldUseSqlite =
@@ -347,6 +352,10 @@ export function createCliRuntime(
     dependencies.planGraphRepository ??
     sqliteRepositories?.planGraphRepository ??
     new InMemoryPlanGraphRepository();
+  const traceLinkRepository =
+    dependencies.traceLinkRepository ??
+    sqliteRepositories?.traceLinkRepository ??
+    new InMemoryTraceLinkRepository();
   const taskRunner = new TaskRunner({
     ...dependencies,
     taskRepository,
@@ -392,6 +401,7 @@ export function createCliRuntime(
     roleCallEventRepository,
     roleTodoRepository,
     planGraphRepository,
+    traceLinkRepository,
     taskRunner,
     roleRunQueues
   };
@@ -1787,7 +1797,9 @@ async function processCliRoleCallOutput(input: {
       conversationMessageRepository: input.runtime.conversationMessageRepository,
       roleCallRepository: input.runtime.roleCallRepository,
       roleCallEventRepository: input.runtime.roleCallEventRepository,
-      roleTodoRepository: input.runtime.roleTodoRepository
+      roleTodoRepository: input.runtime.roleTodoRepository,
+      runMetadataRepository: input.runtime.runMetadataRepository,
+      traceLinkRepository: input.runtime.traceLinkRepository
     },
     threadId: input.thread.id,
     callerRole: role.roleHandle,
@@ -1851,7 +1863,8 @@ async function executeAcceptedCliRoleCalls(input: {
     repositories: {
       roleCallRepository: input.runtime.roleCallRepository,
       roleCallEventRepository: input.runtime.roleCallEventRepository,
-      roleTodoRepository: input.runtime.roleTodoRepository
+      roleTodoRepository: input.runtime.roleTodoRepository,
+      traceLinkRepository: input.runtime.traceLinkRepository
     },
     roles: input.roleDefinitions,
     roleMetadata: input.workgroupRoles.map((role) => toWorkgroupRoleRunMetadata(role)),

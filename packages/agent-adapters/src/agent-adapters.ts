@@ -40,6 +40,7 @@ export interface AgentRunInput {
   contextMarkdown?: string;
   planGraph?: PlanGraph;
   currentPlanNode?: AnyPlanNode;
+  currentTraceNodeId?: string;
   allowedNextPlanNodeIds?: string[];
   role?: WorkgroupRoleRunMetadata;
   teamRoles?: WorkgroupRoleRunMetadata[];
@@ -682,6 +683,9 @@ function renderPlanGraphRuntimeInjection(input: AgentRunInput): string[] {
     "",
     `Plan graph: ${graph.id} v${graph.version}`,
     `Current plan node: ${node.id}`,
+    ...(input.currentTraceNodeId
+      ? [`Current dynamic trace node: ${input.currentTraceNodeId}`]
+      : []),
     `Node kind: ${node.kind}`,
     `Node role: ${node.role}`,
     `Node title: ${node.title}`,

@@ -406,12 +406,20 @@ The flow is:
    target allowed by another intent type.
 4. Accepted, deferred, rejected, waiting-context, or waiting-approval decisions
    are persisted as RoleCall and RoleCallEvent records. Callee todos are
-   created or updated where applicable.
+   created or updated where applicable. When the source assistant message is
+   tied to run metadata with a PlanGraph binding, the orchestrator also stores
+   that plan trace context on the RoleCall and writes a RoleCall tool event plus
+   trace evidence. Accepted RoleCalls create a dynamic `role_call` trace node;
+   rejected, waiting, and deferred RoleCalls remain tool events and evidence
+   without mutating the original PlanGraph.
 5. Accepted executable `agent_adapter` calls are started through
    `RoleCallTaskRunnerExecutor`, which reuses the normal TaskRunner path and
    links the resulting `task_run` to the RoleCall. The callee role is converted
    into the same safe runtime role metadata used by CLI role mentions, and its
    default skill references are forwarded into TaskRunner context compilation.
+   If the RoleCall has plan trace context, the callee TaskRunner run inherits
+   the same PlanGraph binding and records a dynamic `task_run` trace node linked
+   from the RoleCall trace node.
 6. RoleResult JSON is parsed when available; the summary is promoted to the
    transcript while raw structured payload stays in local evidence.
 7. Caller reinjection and convergence helpers summarize decisions, results,
@@ -467,6 +475,10 @@ through adapter runtime input. Downstream verification, review, memory, and
 handoff nodes are inspectable but not yet scheduled as independent TaskRuns.
 `RunTaskInput.planGraphMode: "disabled"` keeps the pre-PlanGraph execution path
 available for compatibility tests and legacy callers.
+`RunTaskInput.planGraphBinding` lets callers bind a run to an already-persisted
+PlanGraph and plan node instead of creating a new graph. RoleCall execution uses
+that path so callee runs inherit the source PlanGraph plus the dynamic trace
+node id created for the accepted RoleCall.
 
 This boundary should preserve the current TaskRunner and RoleCall ownership:
 
@@ -478,11 +490,11 @@ This boundary should preserve the current TaskRunner and RoleCall ownership:
 - Runtime injection includes the active PlanGraph, current plan node, and
   allowed next nodes alongside the existing task brief, runtime context pack,
   role metadata, and collaboration rules for the bound primary run.
-- Runs and RoleCalls should link to `planGraphId` and `planNodeId` through
-  explicit metadata or first-class columns once query needs require them. The
-  current primary run uses run metadata for this link.
-- RoleCalls should be recorded as runtime tool events that can create dynamic
-  trace nodes without mutating the original PlanGraph.
+- Runs and RoleCalls link to `planGraphId` and `planNodeId` through explicit run
+  metadata, RoleCall plan-trace context, and trace-link rows rather than inferred
+  transcript text.
+- RoleCalls are recorded as runtime tool events that can create dynamic trace
+  nodes without mutating the original PlanGraph.
 - Plan amendments should create a new graph version rather than mutating old
   plan evidence in place.
 - TUI and desktop graph views should render Plan, Trace, and Overlay modes from
