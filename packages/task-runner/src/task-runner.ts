@@ -72,6 +72,7 @@ import {
   validateTask,
   validateTaskRun,
   type AgentKind,
+  type AnyPlanNode,
   type CodeGraphRepository,
   type CompressionMode,
   type ContextPack,
@@ -85,6 +86,7 @@ import {
   type JsonObject,
   type PlanGraph,
   type RiskReport,
+  type RunPlanBindingMetadata,
   type RunContextDeliveryMode,
   type RuntimeContextPack,
   type RunEvent,
@@ -223,6 +225,12 @@ interface ResolvedContinuation extends RunContinuationInput {
   sourceBranchName?: string;
   sourceHead: string;
   changedFiles: ChangedFile[];
+}
+
+interface ScheduledPlanNode {
+  node: AnyPlanNode;
+  allowedNextPlanNodeIds: string[];
+  binding: RunPlanBindingMetadata;
 }
 
 export interface RunResult {
@@ -760,6 +768,7 @@ export class TaskRunner {
     }
 
     let planGraph: PlanGraph | undefined;
+    let scheduledPlanNode: ScheduledPlanNode | undefined;
     if ((input.planGraphMode ?? "enabled") === "enabled") {
       try {
         planGraph = await this.createPlanGraphForRun({
@@ -779,6 +788,7 @@ export class TaskRunner {
             edgeCount: planGraph.edges.length
           })
         );
+        scheduledPlanNode = selectPrimaryPlanNode(planGraph);
       } catch (error) {
         const message = `plan graph creation failed: ${errorMessage(error)}`;
         await emitRunEvent({ type: "error", message });
@@ -929,7 +939,8 @@ export class TaskRunner {
       await this.runMetadataRepository.save({
         runId: run.id,
         workspace: workspaceSession.workspace,
-        ...(input.role ? { role: input.role } : {})
+        ...(input.role ? { role: input.role } : {}),
+        ...(scheduledPlanNode ? { planBinding: scheduledPlanNode.binding } : {})
       });
     } catch (error) {
       recordDiagnostic("workspace metadata persistence", error);
@@ -954,6 +965,17 @@ export class TaskRunner {
         branchName: workspaceSession.workspace.branchName
       })
     );
+    if (scheduledPlanNode && planGraph) {
+      await emitRunEvent(
+        progressEvent("plan_node_scheduled", "PlanNode bound to primary run.", {
+          phase: "planner",
+          planGraphId: planGraph.id,
+          planGraphVersion: planGraph.version,
+          planNodeId: scheduledPlanNode.node.id,
+          allowedNextPlanNodeIds: scheduledPlanNode.allowedNextPlanNodeIds
+        })
+      );
+    }
 
     if (input.dryRun) {
       await emitRunEvent({
@@ -1017,6 +1039,9 @@ export class TaskRunner {
             contextPackPath: path.join(runtimeDirectory, "context-pack.json"),
             contextBundle,
             contextMarkdown,
+            planGraph,
+            currentPlanNode: scheduledPlanNode?.node,
+            allowedNextPlanNodeIds: scheduledPlanNode?.allowedNextPlanNodeIds,
             role: input.role,
             teamRoles: input.teamRoles,
             runtimeDirectory,
@@ -1292,6 +1317,7 @@ export class TaskRunner {
         runId: run.id,
         workspace: workspaceSession.workspace,
         ...(input.role ? { role: input.role } : {}),
+        ...(scheduledPlanNode ? { planBinding: scheduledPlanNode.binding } : {}),
         diff,
         verification,
         riskReport
@@ -1783,6 +1809,28 @@ export class TaskRunner {
       toPersistedRunEvent(runId, event, sequence, this.clock, this.idGenerator)
     ]);
   }
+}
+
+function selectPrimaryPlanNode(graph: PlanGraph): ScheduledPlanNode | undefined {
+  const node = graph.nodes.find((candidate) =>
+    candidate.execution.mode === "primary_run"
+  );
+  if (!node) {
+    return undefined;
+  }
+  const allowedNextPlanNodeIds = graph.edges
+    .filter((edge) => edge.from === node.id)
+    .map((edge) => edge.to);
+  return {
+    node,
+    allowedNextPlanNodeIds,
+    binding: {
+      planGraphId: graph.id,
+      planGraphVersion: graph.version,
+      planNodeId: node.id,
+      allowedNextPlanNodeIds
+    }
+  };
 }
 
 export async function runTask(input: RunTaskInput): Promise<RunResult> {

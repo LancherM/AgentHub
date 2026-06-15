@@ -3380,6 +3380,16 @@ describe("task runner", () => {
 
     expect(result.status).toBe("succeeded");
     expect(adapter.inputs[0]).toMatchObject({
+      planGraph: expect.objectContaining({
+        id: "plan_graph:task_0001:v1",
+        version: 1
+      }),
+      currentPlanNode: expect.objectContaining({
+        kind: "implement",
+        role: "engineer",
+        execution: expect.objectContaining({ mode: "primary_run" })
+      }),
+      allowedNextPlanNodeIds: ["plan_graph:task_0001:v1:verify:3"],
       role: expect.objectContaining({
         roleHandle: "engineer",
         displayName: "Engineer",
@@ -3396,6 +3406,12 @@ describe("task runner", () => {
           roleHandle: "engineer",
           displayName: "Engineer",
           adapterKind: "fake"
+        }),
+        planBinding: expect.objectContaining({
+          planGraphId: "plan_graph:task_0001:v1",
+          planGraphVersion: 1,
+          planNodeId: "plan_graph:task_0001:v1:implement:2",
+          allowedNextPlanNodeIds: ["plan_graph:task_0001:v1:verify:3"]
         })
       })
     );

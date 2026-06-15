@@ -459,11 +459,14 @@ stored rows are source evidence and stable links, not a cached LLM summary.
 planner backend. TaskRunner builds the existing runtime context and TaskBrief,
 then creates, validates, and persists an active PlanGraph before selecting and
 starting the primary adapter. The planner is represented as the graph's
-`planner` node with `execution.mode: "system"`; downstream implementation,
-verification, review, memory, and handoff nodes are inspectable but not yet
-scheduled as independent TaskRuns. `RunTaskInput.planGraphMode: "disabled"`
-keeps the pre-PlanGraph execution path available for compatibility tests and
-legacy callers.
+`planner` node with `execution.mode: "system"`. TaskRunner selects the first
+planned `primary_run` node as the current primary run binding, persists that
+binding in `run_metadata.plan_binding_json`, emits a planner lifecycle event,
+and passes the active PlanGraph, current plan node, and allowed next node ids
+through adapter runtime input. Downstream verification, review, memory, and
+handoff nodes are inspectable but not yet scheduled as independent TaskRuns.
+`RunTaskInput.planGraphMode: "disabled"` keeps the pre-PlanGraph execution path
+available for compatibility tests and legacy callers.
 
 This boundary should preserve the current TaskRunner and RoleCall ownership:
 
@@ -472,11 +475,12 @@ This boundary should preserve the current TaskRunner and RoleCall ownership:
 - `@planner` is a special product role for plan creation. The first
   implementation uses the deterministic local planner backend while recording
   planner ownership in the persisted PlanGraph and planner lifecycle run events.
-- Runtime injection should next include the active PlanGraph, current plan node, and
+- Runtime injection includes the active PlanGraph, current plan node, and
   allowed next nodes alongside the existing task brief, runtime context pack,
-  role metadata, and collaboration rules.
+  role metadata, and collaboration rules for the bound primary run.
 - Runs and RoleCalls should link to `planGraphId` and `planNodeId` through
-  explicit metadata or first-class columns once query needs require them.
+  explicit metadata or first-class columns once query needs require them. The
+  current primary run uses run metadata for this link.
 - RoleCalls should be recorded as runtime tool events that can create dynamic
   trace nodes without mutating the original PlanGraph.
 - Plan amendments should create a new graph version rather than mutating old

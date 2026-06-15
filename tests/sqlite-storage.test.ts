@@ -51,7 +51,7 @@ describe("SQLite storage", () => {
 
     await database.ensureInitialized();
 
-    expect(SQLITE_MIGRATIONS.at(-1)?.version).toBe(18);
+    expect(SQLITE_MIGRATIONS.at(-1)?.version).toBe(19);
     await expect(
       database.query<{ version: number }>(
         "SELECT version FROM schema_migrations ORDER BY version ASC;"
@@ -74,7 +74,8 @@ describe("SQLite storage", () => {
       { version: 15 },
       { version: 16 },
       { version: 17 },
-      { version: 18 }
+      { version: 18 },
+      { version: 19 }
     ]);
     await expect(
       database.query<{ name: string }>(
@@ -87,7 +88,9 @@ describe("SQLite storage", () => {
       database.query<{ name: string }>(
         "SELECT name FROM pragma_table_info('run_metadata') ORDER BY cid ASC;"
       )
-    ).resolves.toEqual(expect.arrayContaining([{ name: "role_json" }]));
+    ).resolves.toEqual(
+      expect.arrayContaining([{ name: "role_json" }, { name: "plan_binding_json" }])
+    );
     await expect(
       database.query<{ name: string }>(
         "SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name ASC;"
@@ -872,7 +875,13 @@ INSERT INTO context_eval_events (
       diff: diff(baseDirectory),
       verification: verification(),
       riskReport: riskReport(),
-      role: toWorkgroupRoleRunMetadata(presetWorkgroupRoles[0])
+      role: toWorkgroupRoleRunMetadata(presetWorkgroupRoles[0]),
+      planBinding: {
+        planGraphId: "plan_graph:task_1:v1",
+        planGraphVersion: 1,
+        planNodeId: "plan_graph:task_1:v1:implement:2",
+        allowedNextPlanNodeIds: ["plan_graph:task_1:v1:verify:3"]
+      }
     });
     await first.runEventRepository.createMany([
       {
@@ -1019,6 +1028,11 @@ INSERT INTO context_eval_events (
           roleHandle: "researcher",
           executorKind: "agent_adapter",
           adapterKind: "fake"
+        }),
+        planBinding: expect.objectContaining({
+          planGraphId: "plan_graph:task_1:v1",
+          planNodeId: "plan_graph:task_1:v1:implement:2",
+          allowedNextPlanNodeIds: ["plan_graph:task_1:v1:verify:3"]
         })
       })
     );
@@ -1821,7 +1835,8 @@ VALUES (
       { version: 15 },
       { version: 16 },
       { version: 17 },
-      { version: 18 }
+      { version: 18 },
+      { version: 19 }
     ]);
   });
 
@@ -1879,7 +1894,8 @@ VALUES (
       { version: 15 },
       { version: 16 },
       { version: 17 },
-      { version: 18 }
+      { version: 18 },
+      { version: 19 }
     ]);
     await expect(repositories.database.execute(`
 INSERT INTO tasks (id, project_id, title, status, created_at, updated_at)
@@ -1959,7 +1975,8 @@ VALUES ('message_summary_legacy', 'thread_summary_legacy', 0, 'user', 'text', 'P
       { version: 15 },
       { version: 16 },
       { version: 17 },
-      { version: 18 }
+      { version: 18 },
+      { version: 19 }
     ]);
   });
 
@@ -1999,7 +2016,8 @@ ALTER TABLE task_runs
       { version: 15 },
       { version: 16 },
       { version: 17 },
-      { version: 18 }
+      { version: 18 },
+      { version: 19 }
     ]);
     await expect(
       repositories.database.query<{ name: string }>(

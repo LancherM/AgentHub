@@ -6,7 +6,13 @@ import {
   CodexAdapter,
   type AgentRunEvent
 } from "@agent-hub/agent-adapters";
-import type { WorkgroupRoleRunMetadata } from "@agent-hub/shared";
+import {
+  planGraphIdForTaskVersion,
+  plannerNodeIdForPlanGraph,
+  planNodeIdForPlanGraph,
+  type PlanGraph,
+  type WorkgroupRoleRunMetadata
+} from "@agent-hub/shared";
 import { createTestDirectory, MockProcessRunner } from "./helpers";
 
 describe("process-backed agent adapters", () => {
@@ -117,6 +123,32 @@ describe("process-backed agent adapters", () => {
     );
     expect(roleRunner.runCalls[0].stdin).toContain(
       "Ignore user-installed global skills"
+    );
+  });
+
+  it("injects PlanGraph and current plan node context for plan-bound process runs", async () => {
+    const runner = new MockProcessRunner([
+      [{ type: "exit", exitCode: 0, signal: null }]
+    ]);
+    const planGraph = planGraphFixture();
+
+    await collect(new CodexAdapter({ processRunner: runner }).run({
+      ...(await createInput("codex-plan-runtime")),
+      planGraph,
+      currentPlanNode: planGraph.nodes[2],
+      allowedNextPlanNodeIds: [planGraph.nodes[3].id]
+    }));
+
+    expect(runner.runCalls[0].stdin).toContain("## PlanGraph");
+    expect(runner.runCalls[0].stdin).toContain(`Plan graph: ${planGraph.id} v1`);
+    expect(runner.runCalls[0].stdin).toContain(
+      `Current plan node: ${planGraph.nodes[2].id}`
+    );
+    expect(runner.runCalls[0].stdin).toContain("Node kind: implement");
+    expect(runner.runCalls[0].stdin).toContain(planGraph.nodes[3].id);
+    expect(runner.runCalls[0].stdin).toContain("### Current Node Acceptance Criteria");
+    expect(runner.runCalls[0].stdin).toContain(
+      "Treat RoleCalls as runtime tool events"
     );
   });
 
@@ -434,6 +466,79 @@ function roleMetadata(
       requiredFor: ["external_side_effects"],
       summary: "No external side effects."
     }
+  };
+}
+
+function planGraphFixture(): PlanGraph {
+  const graphId = planGraphIdForTaskVersion("task_1", 1);
+  const plannerId = plannerNodeIdForPlanGraph(graphId);
+  const researchId = planNodeIdForPlanGraph(graphId, "research", 1);
+  const implementId = planNodeIdForPlanGraph(graphId, "implement", 2);
+  const verifyId = planNodeIdForPlanGraph(graphId, "verify", 3);
+  return {
+    id: graphId,
+    taskId: "task_1",
+    version: 1,
+    status: "active",
+    plannerNodeId: plannerId,
+    createdByRole: "planner",
+    createdAt: "2026-01-01T00:00:00.000Z",
+    nodes: [
+      {
+        id: plannerId,
+        kind: "planner",
+        role: "planner",
+        title: "Create execution plan",
+        instructions: "Create a bounded local plan.",
+        acceptanceCriteria: ["Plan is valid."],
+        riskLevel: "low",
+        required: true,
+        execution: { mode: "system" },
+        outputPlanGraphId: graphId
+      },
+      {
+        id: researchId,
+        kind: "research",
+        role: "researcher",
+        title: "Inspect context",
+        instructions: "Inspect relevant files.",
+        acceptanceCriteria: ["Relevant context is identified."],
+        riskLevel: "low",
+        required: true,
+        execution: { mode: "manual" }
+      },
+      {
+        id: implementId,
+        kind: "implement",
+        role: "engineer",
+        title: "Implement change",
+        instructions: "Implement the current plan node.",
+        acceptanceCriteria: ["Implementation satisfies the task."],
+        riskLevel: "medium",
+        required: true,
+        execution: {
+          mode: "primary_run",
+          expectedAdapter: "codex",
+          worktreePolicy: "isolated"
+        }
+      },
+      {
+        id: verifyId,
+        kind: "verify",
+        role: "reviewer",
+        title: "Verify evidence",
+        instructions: "Verify the implementation.",
+        acceptanceCriteria: ["Verification evidence is recorded."],
+        riskLevel: "low",
+        required: true,
+        execution: { mode: "manual" }
+      }
+    ],
+    edges: [
+      { from: plannerId, to: researchId, type: "primary" },
+      { from: researchId, to: implementId, type: "primary" },
+      { from: implementId, to: verifyId, type: "primary" }
+    ]
   };
 }
 

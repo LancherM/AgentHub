@@ -1302,6 +1302,17 @@ CREATE INDEX IF NOT EXISTS idx_role_call_tool_events_plan_graph
 CREATE INDEX IF NOT EXISTS idx_role_call_tool_events_source_run
   ON role_call_tool_events(source_run_id);
 `
+  },
+  {
+    version: 19,
+    sql: `
+ALTER TABLE run_metadata
+  ADD COLUMN plan_binding_json TEXT CHECK (
+    plan_binding_json IS NULL OR (
+      json_valid(plan_binding_json) AND json_type(plan_binding_json) = 'object'
+    )
+  );
+`
   }
 ];
 
@@ -1976,6 +1987,7 @@ INSERT INTO run_metadata (
   verification_json,
   risk_report_json,
   role_json,
+  plan_binding_json,
   updated_at
 ) VALUES (
   ${sqlString(updated.runId)},
@@ -1985,6 +1997,7 @@ INSERT INTO run_metadata (
   ${sqlJson(updated.verification)},
   ${sqlJson(updated.riskReport)},
   ${sqlJson(updated.role)},
+  ${sqlJson(updated.planBinding)},
   ${sqlString(new Date().toISOString())}
 )
 ON CONFLICT(run_id) DO UPDATE SET
@@ -1994,6 +2007,7 @@ ON CONFLICT(run_id) DO UPDATE SET
   verification_json = excluded.verification_json,
   risk_report_json = excluded.risk_report_json,
   role_json = excluded.role_json,
+  plan_binding_json = excluded.plan_binding_json,
   updated_at = excluded.updated_at;
 `);
     return cloneRunMetadata(updated);
@@ -2008,7 +2022,8 @@ SELECT
   diff_json AS diffJson,
   verification_json AS verificationJson,
   risk_report_json AS riskReportJson,
-  role_json AS roleJson
+  role_json AS roleJson,
+  plan_binding_json AS planBindingJson
 FROM run_metadata
 WHERE run_id = ${sqlString(runId)}
 LIMIT 1;
@@ -3918,6 +3933,7 @@ interface RunMetadataRow extends Record<string, unknown> {
   verificationJson: string | null;
   riskReportJson: string | null;
   roleJson: string | null;
+  planBindingJson: string | null;
 }
 
 interface RunEventRow extends Record<string, unknown> {
@@ -4293,7 +4309,8 @@ function metadataFromRow(row: RunMetadataRow): RunMetadata {
     diff: parseJson(row.diffJson),
     verification: parseJson(row.verificationJson),
     riskReport: parseJson(row.riskReportJson),
-    role: parseJson(row.roleJson)
+    role: parseJson(row.roleJson),
+    planBinding: parseJson(row.planBindingJson)
   };
 }
 

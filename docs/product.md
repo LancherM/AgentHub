@@ -517,9 +517,12 @@ persist PlanGraph versions, active graph lookup, dynamic trace nodes and edges,
 trace evidence links, and RoleCall tool events. TaskRunner now creates and
 persists a deterministic planner-owned `PlanGraph` before primary adapter
 execution by default, with a run-input switch to disable graph creation for
-legacy compatibility. Primary PlanNode scheduling, runtime injection of current
-plan-node context, runtime RoleCall tool-event production, execution-trace
-projection, and mode-aware TUI/Desktop graph rendering are not implemented yet.
+legacy compatibility. The current primary adapter run is bound to the first
+planned `primary_run` node when one exists, records that binding in run
+metadata, and receives a runtime-injected PlanGraph/current-node block with
+allowed next node ids. Multi-TaskRun PlanNode fan-out scheduling, runtime
+RoleCall tool-event production, execution-trace projection, and mode-aware
+TUI/Desktop graph rendering are not implemented yet.
 
 ## CLI Surface
 

@@ -2,8 +2,10 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import type {
   AgentKind,
+  AnyPlanNode,
   ContextBundle,
   JsonObject,
+  PlanGraph,
   WorkgroupRoleRunMetadata
 } from "@agent-hub/shared";
 import { NodeProcessRunner, type ProcessRunner } from "./process-runner";
@@ -36,6 +38,9 @@ export interface AgentRunInput {
   taskPrompt: string;
   contextBundle?: ContextBundle;
   contextMarkdown?: string;
+  planGraph?: PlanGraph;
+  currentPlanNode?: AnyPlanNode;
+  allowedNextPlanNodeIds?: string[];
   role?: WorkgroupRoleRunMetadata;
   teamRoles?: WorkgroupRoleRunMetadata[];
   agentSessionId?: string;
@@ -655,6 +660,7 @@ function buildRuntimeStdin(input: AgentRunInput, taskBrief: string): string {
     "Run inside the current isolated worktree. Do not push, merge, or delete branches.",
     "",
     ...renderRoleRuntimeInjection(input),
+    ...renderPlanGraphRuntimeInjection(input),
     "## Task Brief",
     "",
     taskBrief.trim(),
@@ -663,6 +669,48 @@ function buildRuntimeStdin(input: AgentRunInput, taskBrief: string): string {
     "",
     input.contextMarkdown?.trim() ?? "No context payload was provided."
   ].join("\n");
+}
+
+function renderPlanGraphRuntimeInjection(input: AgentRunInput): string[] {
+  if (!input.planGraph || !input.currentPlanNode) {
+    return [];
+  }
+  const graph = input.planGraph;
+  const node = input.currentPlanNode;
+  return [
+    "## PlanGraph",
+    "",
+    `Plan graph: ${graph.id} v${graph.version}`,
+    `Current plan node: ${node.id}`,
+    `Node kind: ${node.kind}`,
+    `Node role: ${node.role}`,
+    `Node title: ${node.title}`,
+    `Node risk: ${node.riskLevel}`,
+    `Required: ${node.required}`,
+    `Allowed next nodes: ${formatList(input.allowedNextPlanNodeIds)}`,
+    "",
+    "### Current Node Instructions",
+    "",
+    node.instructions,
+    "",
+    "### Current Node Acceptance Criteria",
+    "",
+    ...node.acceptanceCriteria.map((criterion) => `- ${criterion}`),
+    "",
+    "### Plan Nodes",
+    "",
+    ...graph.nodes.map((entry) =>
+      `- ${entry.id}: ${entry.kind} @${entry.role} ${entry.execution.mode} ${entry.required ? "required" : "optional"} ${entry.title}`
+    ),
+    "",
+    "### Plan-Following Rules",
+    "",
+    "- Work on the current plan node first.",
+    "- Treat RoleCalls as runtime tool events, not edits to the PlanGraph.",
+    "- Report completed, blocked, skipped, or deviated work against the current plan node.",
+    "- Keep external publication and context export on explicit user-controlled paths.",
+    ""
+  ];
 }
 
 function renderRoleRuntimeInjection(input: AgentRunInput): string[] {

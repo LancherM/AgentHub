@@ -123,6 +123,15 @@ export interface RunMetadata {
   verification?: VerificationSuiteResult;
   riskReport?: RiskReport;
   role?: WorkgroupRoleRunMetadata;
+  planBinding?: RunPlanBindingMetadata;
+}
+
+export interface RunPlanBindingMetadata {
+  planGraphId: string;
+  planGraphVersion: number;
+  planNodeId: string;
+  traceNodeId?: string;
+  allowedNextPlanNodeIds: string[];
 }
 
 export interface RunMetadataRepository {
@@ -1497,6 +1506,12 @@ export function cloneRunMetadata(metadata: RunMetadata): RunMetadata {
             ...metadata.role.approvalPolicy,
             requiredFor: [...metadata.role.approvalPolicy.requiredFor]
           }
+        }
+      : undefined,
+    planBinding: metadata.planBinding
+      ? {
+          ...metadata.planBinding,
+          allowedNextPlanNodeIds: [...metadata.planBinding.allowedNextPlanNodeIds]
         }
       : undefined
   };
