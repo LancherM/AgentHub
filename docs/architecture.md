@@ -505,8 +505,11 @@ repository.
 `ExecutionTraceGraph` projection from local repositories only. It overlays base
 PlanGraph nodes and edges with stored trace links, generated primary TaskRun
 trace nodes from run metadata, RoleCall tool event nodes, task-run evidence,
-simple failed-required-node and superseded-version deviations, and a synthetic
-legacy plan-unavailable node for tasks that have run evidence but no PlanGraph.
+generated verification/risk/diff evidence from run metadata, deterministic
+deviations for failed required nodes, skipped required primary-run nodes after
+execution has begun, missing verification evidence, unplanned RoleCall trace
+nodes, superseded plan versions, and a synthetic legacy plan-unavailable node
+for tasks that have run evidence but no PlanGraph.
 The CLI `execution-trace show` command is read-only and delegates to this core
 projection instead of reconstructing state from transcript prose.
 The CLI `reviews show` command remains an audit/read command over review

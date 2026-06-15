@@ -159,6 +159,88 @@ describe("execution trace read model", () => {
     ]);
   });
 
+  it("projects verification, risk, and diff evidence from run metadata", async () => {
+    const repos = repositories();
+    await repos.planGraphRepository.create(planGraph());
+    await repos.taskRunRepository.create(taskRun());
+    await repos.runMetadataRepository.save({
+      runId: "run_1",
+      planBinding: {
+        planGraphId: "plan_graph_1",
+        planGraphVersion: 1,
+        planNodeId: "plan_node_implement",
+        allowedNextPlanNodeIds: ["plan_node_verify"]
+      },
+      verification: {
+        status: "skipped",
+        results: [],
+        failedCommands: [],
+        missingCommandConfig: true,
+        summary: "No verification commands were configured.",
+        durationMs: 0
+      },
+      diff: {
+        ok: true,
+        workspacePath: "/tmp/worktree",
+        isClean: false,
+        changedFiles: [{ path: "src/app.ts", status: "modified" }],
+        stat: {
+          filesChanged: 1,
+          insertions: 2,
+          deletions: 0,
+          text: "1 file changed"
+        },
+        diff: "",
+        fileSummaries: ["src/app.ts: modified"],
+        commands: []
+      },
+      riskReport: {
+        id: "risk_1",
+        taskRunId: "run_1",
+        level: "medium",
+        summary: "Risk is medium.",
+        changedFiles: ["src/app.ts"],
+        verificationSummary: "No verification commands were configured.",
+        failedChecks: [],
+        riskFactors: ["Verification commands were not run."],
+        manualReviewChecklist: ["Inspect risk."],
+        acceptanceRecommendation: "Review before accepting.",
+        findings: [],
+        createdAt
+      }
+    });
+
+    const trace = await buildExecutionTraceGraph(repos, {
+      planGraphId: "plan_graph_1",
+      now: createdAt
+    });
+
+    expect(trace.evidence).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        sourceType: "verification",
+        sourceId: "run_1",
+        planNodeId: "plan_node_implement"
+      }),
+      expect.objectContaining({
+        sourceType: "risk",
+        sourceId: "risk_1",
+        planNodeId: "plan_node_implement"
+      }),
+      expect.objectContaining({
+        sourceType: "diff",
+        sourceId: "run_1",
+        summary: "Diff changed 1 file(s)"
+      })
+    ]));
+    expect(trace.deviations).toEqual([
+      expect.objectContaining({
+        type: "missing_verification",
+        evidenceId: "trace_evidence:verification:run_1",
+        planNodeId: "plan_node_implement"
+      })
+    ]);
+  });
+
   it("projects RoleCall tool events and accepted dynamic trace nodes", async () => {
     const repos = repositories();
     await repos.planGraphRepository.create(planGraph());
@@ -238,6 +320,71 @@ describe("execution trace read model", () => {
         traceNodeId: "trace_node:run:run_1"
       })
     ]);
+  });
+
+  it("marks skipped primary nodes and unplanned RoleCalls as deviations", async () => {
+    const repos = repositories();
+    await repos.planGraphRepository.create(planGraph({
+      nodes: [
+        ...planGraph().nodes,
+        {
+          id: "plan_node_docs",
+          kind: "documentation",
+          role: "writer",
+          title: "Update docs",
+          instructions: "Update docs.",
+          acceptanceCriteria: ["Docs are updated."],
+          riskLevel: "low",
+          required: true,
+          execution: {
+            mode: "primary_run",
+            expectedAdapter: "fake",
+            worktreePolicy: "isolated"
+          }
+        }
+      ],
+      edges: [
+        ...planGraph().edges,
+        { from: "plan_node_implement", to: "plan_node_docs", type: "parallel" }
+      ]
+    }));
+    await repos.taskRunRepository.create(taskRun());
+    await repos.runMetadataRepository.save({
+      runId: "run_1",
+      planBinding: {
+        planGraphId: "plan_graph_1",
+        planGraphVersion: 1,
+        planNodeId: "plan_node_implement",
+        allowedNextPlanNodeIds: []
+      }
+    });
+    await repos.traceLinkRepository.createNode({
+      id: "trace_role_call_unplanned",
+      planGraphId: "plan_graph_1",
+      kind: "role_call",
+      title: "@reviewer inspect result",
+      status: "queued",
+      role: "reviewer",
+      sourceType: "role_call",
+      sourceId: "role_call_1",
+      createdAt
+    });
+
+    const trace = await buildExecutionTraceGraph(repos, {
+      planGraphId: "plan_graph_1",
+      now: createdAt
+    });
+
+    expect(trace.deviations).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        type: "skipped_required_node",
+        planNodeId: "plan_node_docs"
+      }),
+      expect.objectContaining({
+        type: "unplanned_role_call",
+        traceNodeId: "trace_role_call_unplanned"
+      })
+    ]));
   });
 
   it("falls back to a legacy trace for tasks without PlanGraph evidence", async () => {

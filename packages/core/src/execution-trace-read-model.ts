@@ -66,7 +66,12 @@ export async function buildExecutionTraceGraph(
     dynamicEdges
   });
 
-  const deviations = buildDeviations(graph, [...dynamicNodes.values()], input.now ?? nowIso());
+  const deviations = buildDeviations(
+    graph,
+    [...dynamicNodes.values()],
+    [...evidence.values()],
+    input.now ?? nowIso()
+  );
   return validateExecutionTraceGraph({
     taskId: graph.taskId,
     planGraphId: graph.id,
@@ -177,6 +182,44 @@ async function addPrimaryRunTraceNodes(
       planNodeId: binding.planNodeId,
       traceNodeId
     }));
+    if (metadata.verification) {
+      target.evidence.set(`trace_evidence:verification:${run.id}`, {
+        id: `trace_evidence:verification:${run.id}`,
+        planGraphId: graph.id,
+        sourceType: "verification",
+        sourceId: run.id,
+        planNodeId: binding.planNodeId,
+        traceNodeId,
+        summary: `Verification ${metadata.verification.status}: ${metadata.verification.summary}`,
+        createdAt: run.updatedAt
+      });
+    }
+    if (metadata.riskReport) {
+      target.evidence.set(`trace_evidence:risk:${metadata.riskReport.id}`, {
+        id: `trace_evidence:risk:${metadata.riskReport.id}`,
+        planGraphId: graph.id,
+        sourceType: "risk",
+        sourceId: metadata.riskReport.id,
+        planNodeId: binding.planNodeId,
+        traceNodeId,
+        summary: `Risk ${metadata.riskReport.level}: ${metadata.riskReport.summary}`,
+        createdAt: metadata.riskReport.createdAt
+      });
+    }
+    if (metadata.diff) {
+      target.evidence.set(`trace_evidence:diff:${run.id}`, {
+        id: `trace_evidence:diff:${run.id}`,
+        planGraphId: graph.id,
+        sourceType: "diff",
+        sourceId: run.id,
+        planNodeId: binding.planNodeId,
+        traceNodeId,
+        summary: metadata.diff.isClean
+          ? "Diff clean"
+          : `Diff changed ${metadata.diff.changedFiles.length} file(s)`,
+        createdAt: run.updatedAt
+      });
+    }
   }
 }
 
@@ -234,6 +277,7 @@ function addRoleCallToolEventNodes(
 function buildDeviations(
   graph: PlanGraph,
   dynamicNodes: readonly TraceNode[],
+  evidence: readonly TraceEvidence[],
   now: string
 ): Deviation[] {
   const nodesById = new Map(graph.nodes.map((node) => [node.id, node]));
@@ -248,7 +292,42 @@ function buildDeviations(
       createdAt: now
     });
   }
+  const taskRunPlanNodeIds = new Set(
+    dynamicNodes
+      .filter((node) => node.kind === "task_run" && node.sourcePlanNodeId)
+      .map((node) => node.sourcePlanNodeId as string)
+  );
+  if (taskRunPlanNodeIds.size > 0) {
+    for (const node of graph.nodes) {
+      if (
+        node.required &&
+        node.execution.mode === "primary_run" &&
+        !taskRunPlanNodeIds.has(node.id)
+      ) {
+        deviations.push({
+          id: `deviation:${graph.id}:skipped_required:${node.id}`,
+          planGraphId: graph.id,
+          type: "skipped_required_node",
+          severity: node.riskLevel,
+          description: `Required primary_run plan node ${node.id} has no linked TaskRun evidence.`,
+          planNodeId: node.id,
+          createdAt: now
+        });
+      }
+    }
+  }
   for (const node of dynamicNodes) {
+    if (node.kind === "role_call" && !node.sourcePlanNodeId) {
+      deviations.push({
+        id: `deviation:${graph.id}:unplanned_role_call:${node.id}`,
+        planGraphId: graph.id,
+        type: "unplanned_role_call",
+        severity: "medium",
+        description: `RoleCall trace node ${node.id} is not linked to a source PlanNode.`,
+        traceNodeId: node.id,
+        createdAt: now
+      });
+    }
     if (
       node.kind !== "task_run" ||
       (node.status !== "failed" && node.status !== "blocked") ||
@@ -271,7 +350,33 @@ function buildDeviations(
       createdAt: now
     });
   }
+  for (const item of evidence) {
+    if (
+      item.sourceType !== "verification" ||
+      !item.planNodeId ||
+      !isMissingVerificationEvidence(item)
+    ) {
+      continue;
+    }
+    const planNode = nodesById.get(item.planNodeId);
+    deviations.push({
+      id: `deviation:${graph.id}:missing_verification:${item.id}`,
+      planGraphId: graph.id,
+      type: "missing_verification",
+      severity: planNode?.riskLevel ?? "medium",
+      description: item.summary ?? `Verification evidence is missing for ${item.planNodeId}.`,
+      planNodeId: item.planNodeId,
+      traceNodeId: item.traceNodeId,
+      evidenceId: item.id,
+      createdAt: now
+    });
+  }
   return deviations.sort((left, right) => left.id.localeCompare(right.id));
+}
+
+function isMissingVerificationEvidence(evidence: TraceEvidence): boolean {
+  const summary = evidence.summary?.toLowerCase() ?? "";
+  return summary.includes("skipped") || summary.includes("not configured");
 }
 
 function taskRunTraceNode(input: {

@@ -217,9 +217,9 @@ describe("CLI", () => {
     expect(traceJson.executionTrace.dynamicNodes).toEqual([
       expect.objectContaining({ kind: "task_run", sourceId: "run_0002" })
     ]);
-    expect(traceJson.executionTrace.evidence).toEqual([
+    expect(traceJson.executionTrace.evidence).toEqual(expect.arrayContaining([
       expect.objectContaining({ sourceType: "task_run", sourceId: "run_0002" })
-    ]);
+    ]));
 
     output.length = 0;
     await expect(
@@ -228,7 +228,8 @@ describe("CLI", () => {
     const reviewText = output.join("");
     expect(reviewText).toContain("review_status:");
     expect(reviewText).toContain("plan_graph_id: plan_graph:task_0001:v1");
-    expect(reviewText).toContain("plan_deviations: 0");
+    expect(reviewText).toContain("plan_deviations: 1");
+    expect(reviewText).toContain("missing_verification");
     expect(errors.join("")).toBe("");
   });
 

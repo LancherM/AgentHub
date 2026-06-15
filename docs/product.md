@@ -528,15 +528,18 @@ TaskRunner. The callee run inherits the same PlanGraph and receives the source
 plan node plus dynamic trace node id in runtime context. A local
 `ExecutionTraceGraph` read model now projects the active PlanGraph, persisted
 trace nodes/edges/evidence, primary run bindings, RoleCall tool events, simple
-deterministic deviations, and legacy no-plan run evidence. The read-only
-`execution-trace show` CLI command exposes that projection by task id or
-PlanGraph id. The terminal workbench Execution Trace focus now consumes the
-same projection when available and exposes Overlay, Plan, and Trace modes while
-falling back to legacy RoleCall evidence for older tasks. The desktop Workgroup
-Inspector exposes the same projection through a read-only Trace tab backed by
-Electron main-process IPC; the renderer displays plan nodes, runtime trace
-nodes, evidence counts, and deviations without reading SQLite or rebuilding
-orchestration state.
+deterministic deviations, generated verification/risk/diff evidence from run
+metadata, and legacy no-plan run evidence. Deviations include failed required
+nodes, skipped required primary-run nodes after execution has begun, missing
+verification evidence, unplanned RoleCall trace nodes, and superseded plan
+versions. The read-only `execution-trace show` CLI command exposes that
+projection by task id or PlanGraph id. The terminal workbench Execution Trace
+focus now consumes the same projection when available and exposes Overlay,
+Plan, and Trace modes while falling back to legacy RoleCall evidence for older
+tasks. The desktop Workgroup Inspector exposes the same projection through a
+read-only Trace tab backed by Electron main-process IPC; the renderer displays
+plan nodes, runtime trace nodes, evidence counts, and deviations without
+reading SQLite or rebuilding orchestration state.
 
 TaskRunner also supports the first opt-in planner alternatives. The default
 planner mode remains deterministic. `agent_adapter` planner mode runs the
