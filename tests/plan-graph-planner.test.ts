@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   createDeterministicPlanGraph,
+  activatePlanGraphAmendment,
+  InMemoryPlanGraphRepository,
+  proposePlanGraphAmendment,
   validateTask,
   validateTaskBrief
 } from "@agent-hub/core";
@@ -74,9 +77,61 @@ describe("deterministic PlanGraph planner", () => {
       ]
     `);
   });
+
+  it("keeps amendments proposed until required-node changes are approved", async () => {
+    const repository = new InMemoryPlanGraphRepository();
+    const activeGraph = planGraphFor("Fix parser bug", "Implement a fix for parser E_PARSE.");
+    const amendedGraph = {
+      ...planGraphFor("Fix parser bug", "Implement a fix for parser E_PARSE.", 2),
+      nodes: planGraphFor("Fix parser bug", "Implement a fix for parser E_PARSE.", 2)
+        .nodes.map((node) =>
+          node.kind === "implement"
+            ? { ...node, instructions: `${node.instructions} Also update parser tests.` }
+            : node
+        )
+    };
+
+    await repository.create(activeGraph);
+    const proposal = await proposePlanGraphAmendment({
+      repository,
+      activeGraph,
+      amendedGraph
+    });
+
+    expect(proposal.graph.status).toBe("proposed");
+    expect(proposal.findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "required_execution_node_changed",
+          requiresExplicitApproval: true
+        })
+      ])
+    );
+    await expect(repository.getActiveByTaskId(activeGraph.taskId))
+      .resolves.toMatchObject({ id: activeGraph.id, status: "active" });
+    await expect(
+      activatePlanGraphAmendment({
+        repository,
+        activeGraphId: activeGraph.id,
+        amendmentGraphId: proposal.graph.id
+      })
+    ).rejects.toThrow("requires explicit approval");
+
+    const activated = await activatePlanGraphAmendment({
+      repository,
+      activeGraphId: activeGraph.id,
+      amendmentGraphId: proposal.graph.id,
+      approvedRequiredNodeChanges: true
+    });
+
+    expect(activated.graph.status).toBe("active");
+    expect(activated.supersededGraph.status).toBe("superseded");
+    await expect(repository.getActiveByTaskId(activeGraph.taskId))
+      .resolves.toMatchObject({ id: proposal.graph.id, version: 2 });
+  });
 });
 
-function planGraphFor(title: string, prompt: string) {
+function planGraphFor(title: string, prompt: string, version = 1) {
   const task = validateTask({
     id: "task_plan",
     projectId: "project_plan",
@@ -97,7 +152,7 @@ function planGraphFor(title: string, prompt: string) {
   return createDeterministicPlanGraph({
     task,
     taskBrief,
-    version: 1,
+    version,
     createdAt,
     expectedAdapter: "codex"
   });

@@ -1,4 +1,4 @@
-export const planGraphStatuses = ["active", "superseded", "failed"] as const;
+export const planGraphStatuses = ["proposed", "active", "superseded", "failed"] as const;
 export type PlanGraphStatus = (typeof planGraphStatuses)[number];
 
 export const planNodeKinds = [

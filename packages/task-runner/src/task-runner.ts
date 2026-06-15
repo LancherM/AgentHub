@@ -64,7 +64,10 @@ import {
   createId,
   createDeterministicPlanGraph,
   nowIso,
+  planGraphIdForTaskVersion,
+  parseStructuredPlanGraphOutput,
   validateContextPack,
+  validateTaskBrief,
   validateRunArtifact,
   validateRunEvent,
   validateRuntimeContextPack,
@@ -146,7 +149,8 @@ import {
   GitWorktreeWorkspaceManager,
   type WorkspaceCleanupPolicy,
   type WorkspaceCleanupResult,
-  type WorkspaceManager
+  type WorkspaceManager,
+  type WorkspaceSession
 } from "./workspace";
 import { safeGitCommand, safeGitExecutionOptions } from "./git-safety";
 
@@ -196,11 +200,20 @@ export interface RunTaskInput {
   executionHints?: string[];
   agentSessionId?: string;
   continueFrom?: RunContinuationInput;
-  planGraphMode?: "enabled" | "disabled";
+  planGraphMode?: PlanGraphModeInput;
+  plannerAgentKind?: AgentKind;
+  manualPlanGraph?: PlanGraph;
   planGraphBinding?: RunPlanGraphBindingInput;
   onEvent?: (event: AgentRunEvent) => void | Promise<void>;
   signal?: AbortSignal;
 }
+
+export type PlanGraphModeInput =
+  | "enabled"
+  | "disabled"
+  | "deterministic"
+  | "agent_adapter"
+  | "manual";
 
 export interface RunContinuationInput {
   parentRunId: string;
@@ -778,6 +791,7 @@ export class TaskRunner {
 
     let planGraph: PlanGraph | undefined;
     let scheduledPlanNode: ScheduledPlanNode | undefined;
+    const planGraphMode = normalizePlanGraphMode(input.planGraphMode);
     if (input.planGraphBinding) {
       try {
         planGraph = await this.loadPlanGraphForBinding(input.planGraphBinding);
@@ -803,18 +817,34 @@ export class TaskRunner {
           error: message
         });
       }
-    } else if ((input.planGraphMode ?? "enabled") === "enabled") {
+    } else if (planGraphMode !== "disabled") {
       try {
         planGraph = await this.createPlanGraphForRun({
           task,
           taskBrief,
           agentKind: parsed.agentKind,
           roleHandle: input.role?.roleHandle,
-          createdAt
+          createdAt,
+          mode: planGraphMode,
+          manualPlanGraph: input.manualPlanGraph,
+          plannerAgentKind: input.plannerAgentKind,
+          projectRoot,
+          workspaceBasePath,
+          run,
+          contextBundle,
+          contextPack,
+          contextMarkdown,
+          deliveryMode: parsed.deliveryMode,
+          environment: input.environmentOverrides,
+          signal: input.signal,
+          dryRun: input.dryRun,
+          emitRunEvent,
+          warnings
         });
         await emitRunEvent(
-          progressEvent("plan_graph_created", "PlanGraph created by deterministic planner.", {
+          progressEvent("plan_graph_created", `PlanGraph created by ${planGraphMode} planner.`, {
             phase: "planner",
+            plannerMode: planGraphMode,
             planGraphId: planGraph.id,
             planGraphVersion: planGraph.version,
             plannerNodeId: planGraph.plannerNodeId,
@@ -1530,21 +1560,194 @@ export class TaskRunner {
     agentKind: AgentKind;
     roleHandle?: string;
     createdAt: string;
+    mode: NormalizedPlanGraphMode;
+    manualPlanGraph?: PlanGraph;
+    plannerAgentKind?: AgentKind;
+    projectRoot: string;
+    workspaceBasePath: string;
+    run: TaskRun;
+    contextBundle: ContextBundle;
+    contextPack: ContextPack;
+    contextMarkdown: string;
+    deliveryMode: RunContextDeliveryMode;
+    environment?: Record<string, string | undefined>;
+    signal?: AbortSignal;
+    dryRun?: boolean;
+    emitRunEvent: (event: AgentRunEvent) => Promise<void>;
+    warnings: string[];
   }): Promise<PlanGraph> {
     const existingGraphs = await this.planGraphRepository.listByTaskId(input.task.id);
     const version = existingGraphs.reduce(
       (nextVersion, graph) => Math.max(nextVersion, graph.version + 1),
       1
     );
-    const graph = this.planGraphPlanner({
+    const plannerInput = {
       task: input.task,
       taskBrief: input.taskBrief,
       version,
       createdAt: input.createdAt,
       expectedAdapter: input.agentKind,
       roleHandle: input.roleHandle
+    };
+    const graph = await this.resolvePlanGraphForMode({
+      ...input,
+      plannerInput
     });
     return this.planGraphRepository.create(graph);
+  }
+
+  private async resolvePlanGraphForMode(input: {
+    task: Task;
+    taskBrief: TaskBrief;
+    agentKind: AgentKind;
+    roleHandle?: string;
+    createdAt: string;
+    mode: NormalizedPlanGraphMode;
+    manualPlanGraph?: PlanGraph;
+    plannerAgentKind?: AgentKind;
+    projectRoot: string;
+    workspaceBasePath: string;
+    run: TaskRun;
+    contextBundle: ContextBundle;
+    contextPack: ContextPack;
+    contextMarkdown: string;
+    deliveryMode: RunContextDeliveryMode;
+    environment?: Record<string, string | undefined>;
+    signal?: AbortSignal;
+    dryRun?: boolean;
+    emitRunEvent: (event: AgentRunEvent) => Promise<void>;
+    warnings: string[];
+    plannerInput: Parameters<PlanGraphPlanner>[0];
+  }): Promise<PlanGraph> {
+    if (input.mode === "manual") {
+      if (!input.manualPlanGraph) {
+        throw new Error("manual PlanGraph mode requires manualPlanGraph input");
+      }
+      return parseStructuredPlanGraphOutput(input.plannerInput, input.manualPlanGraph);
+    }
+    if (input.mode === "agent_adapter") {
+      return this.createPlanGraphWithAgentAdapter(input);
+    }
+    return this.planGraphPlanner(input.plannerInput);
+  }
+
+  private async createPlanGraphWithAgentAdapter(input: {
+    task: Task;
+    taskBrief: TaskBrief;
+    agentKind: AgentKind;
+    plannerAgentKind?: AgentKind;
+    projectRoot: string;
+    workspaceBasePath: string;
+    run: TaskRun;
+    contextBundle: ContextBundle;
+    contextPack: ContextPack;
+    contextMarkdown: string;
+    deliveryMode: RunContextDeliveryMode;
+    environment?: Record<string, string | undefined>;
+    signal?: AbortSignal;
+    dryRun?: boolean;
+    emitRunEvent: (event: AgentRunEvent) => Promise<void>;
+    warnings: string[];
+    plannerInput: Parameters<PlanGraphPlanner>[0];
+  }): Promise<PlanGraph> {
+    if (!input.plannerAgentKind) {
+      throw new Error("agent_adapter PlanGraph mode requires plannerAgentKind");
+    }
+    const plannerAdapter = this.agentRegistry.get(input.plannerAgentKind);
+    if (!plannerAdapter) {
+      throw new Error(`planner agent ${input.plannerAgentKind} is not registered`);
+    }
+    if (input.dryRun) {
+      throw new Error("agent_adapter PlanGraph mode is not available in dry-run mode");
+    }
+
+    let plannerSession: WorkspaceSession | undefined;
+    let plannerSucceeded = false;
+    const plannerEvents: AgentRunEvent[] = [];
+    try {
+      plannerSession = await this.workspaceManager.createSession({
+        sourceRepositoryPath: input.projectRoot,
+        workspaceBasePath: input.workspaceBasePath,
+        taskId: input.task.id,
+        runId: `${input.run.id}-planner`,
+        agentKind: input.plannerAgentKind,
+        branchName: plannerBranchName(
+          input.task.id,
+          input.plannerAgentKind,
+          input.run.id
+        ),
+        cleanupPolicy: "always",
+        dryRun: input.dryRun
+      });
+      await input.emitRunEvent(
+        progressEvent("planner_started", "@planner adapter started.", {
+          phase: "planner",
+          plannerMode: "agent_adapter",
+          plannerAgentKind: input.plannerAgentKind,
+          worktreePath: plannerSession.workspace.path,
+          branchName: plannerSession.workspace.branchName
+        })
+      );
+
+      const plannerTaskBrief = plannerTaskBriefForGraphOutput(input);
+      const plannerRuntimeDirectory = path.join(
+        plannerSession.workspace.path,
+        ".agent-hub",
+        "tasks",
+        input.task.id
+      );
+      await materializeWorktreeOverlay({
+        worktreePath: plannerSession.workspace.path,
+        taskId: input.task.id,
+        contextPack: input.contextPack,
+        taskBrief: plannerTaskBrief,
+        contextMarkdown: input.contextMarkdown,
+        includeAgentFiles: false
+      });
+
+      for await (const event of plannerAdapter.run({
+        originalProjectRoot: input.projectRoot,
+        worktreePath: plannerSession.workspace.path,
+        taskBriefPath: path.join(plannerRuntimeDirectory, "brief.md"),
+        contextPackPath: path.join(plannerRuntimeDirectory, "context-pack.json"),
+        contextBundle: input.contextBundle,
+        contextMarkdown: input.contextMarkdown,
+        role: plannerRoleMetadata(),
+        runtimeDirectory: plannerRuntimeDirectory,
+        taskId: input.task.id,
+        taskTitle: input.task.title,
+        taskPrompt: plannerTaskBrief.taskPrompt ?? input.task.description ?? input.task.title,
+        environment: input.environment,
+        signal: input.signal
+      })) {
+        plannerEvents.push(event);
+        await input.emitRunEvent(plannerEvent(event));
+      }
+
+      const exitEvent = findLastExitEvent(plannerEvents);
+      if (!exitEvent || exitEvent.exitCode !== 0) {
+        throw new Error(
+          exitEvent?.message ?? "@planner adapter did not report a successful exit"
+        );
+      }
+      const graph = parseStructuredPlanGraphOutput(
+        input.plannerInput,
+        plannerOutputFromEvents(plannerEvents)
+      );
+      plannerSucceeded = true;
+      return graph;
+    } finally {
+      if (plannerSession) {
+        try {
+          const cleanup = await plannerSession.cleanup({ successful: plannerSucceeded });
+          if (!cleanup.cleaned) {
+            input.warnings.push(`planner workspace retained: ${cleanup.reason}`);
+          }
+        } catch (error) {
+          input.warnings.push(`planner workspace cleanup failed: ${errorMessage(error)}`);
+        }
+      }
+    }
   }
 
   private async loadPlanGraphForBinding(
@@ -1862,6 +2065,151 @@ export class TaskRunner {
       toPersistedRunEvent(runId, event, sequence, this.clock, this.idGenerator)
     ]);
   }
+}
+
+type NormalizedPlanGraphMode =
+  | "disabled"
+  | "deterministic"
+  | "agent_adapter"
+  | "manual";
+
+function normalizePlanGraphMode(
+  mode: PlanGraphModeInput | undefined
+): NormalizedPlanGraphMode {
+  if (mode === undefined || mode === "enabled") {
+    return "deterministic";
+  }
+  return mode;
+}
+
+function plannerTaskBriefForGraphOutput(input: {
+  task: Task;
+  taskBrief: TaskBrief;
+  agentKind: AgentKind;
+  plannerAgentKind?: AgentKind;
+  plannerInput: Parameters<PlanGraphPlanner>[0];
+}): TaskBrief {
+  const expectedGraphId = planGraphIdForTaskVersion(
+    input.task.id,
+    input.plannerInput.version
+  );
+  const prompt = [
+    "You are the local @planner role for Agent Hub.",
+    "Return exactly one JSON object containing a PlanGraph. Do not include prose.",
+    `The PlanGraph id must be ${expectedGraphId}.`,
+    `The PlanGraph taskId must be ${input.task.id}.`,
+    `The PlanGraph version must be ${input.plannerInput.version}.`,
+    "The PlanGraph status must be active and createdByRole must be planner.",
+    "The graph must be a DAG and include exactly one planner node.",
+    `Primary run nodes should use expectedAdapter ${input.agentKind}.`,
+    "Do not include automatic merge, push, pull request creation, memory approval, repo export, or repository-root context-file writes.",
+    "Use only local, worktree-isolated execution modes: primary_run, system, manual, or non_executable."
+  ].join("\n");
+  return validateTaskBrief({
+    ...input.taskBrief,
+    taskPrompt: prompt,
+    renderedContent: [
+      input.taskBrief.renderedContent.trim(),
+      "",
+      "## Planner Output Contract",
+      "",
+      prompt,
+      "",
+      "## Required JSON Shape",
+      "",
+      "{",
+      `  \"planGraph\": { \"id\": \"${expectedGraphId}\", \"taskId\": \"${input.task.id}\", \"version\": ${input.plannerInput.version}, \"status\": \"active\", \"createdByRole\": \"planner\", \"nodes\": [], \"edges\": [] }`,
+      "}"
+    ].join("\n")
+  });
+}
+
+function plannerRoleMetadata(): WorkgroupRoleRunMetadata {
+  return {
+    roleId: "system_planner",
+    roleHandle: "planner",
+    displayName: "Planner",
+    executorKind: "agent_adapter",
+    persona: "Local planning role that produces structured, auditable PlanGraph JSON.",
+    defaultInstructions:
+      "Produce only validated local PlanGraph JSON and avoid external side effects.",
+    permissions: ["read_project_context"],
+    contextPolicy: {
+      scope: "current_task_and_project_context",
+      includeApprovedMemory: true,
+      includeThreadSummary: true,
+      instructions: ["Use only Agent Hub injected task and context evidence."]
+    },
+    approvalPolicy: {
+      requiredFor: ["external_side_effects", "plan_amendment_activation"],
+      summary: "No external side effects; amendments require explicit activation."
+    }
+  };
+}
+
+function plannerEvent(event: AgentRunEvent): AgentRunEvent {
+  if (event.type === "exit") {
+    return {
+      ...event,
+      metadata: {
+        ...(event.metadata ?? {}),
+        phase: "planner",
+        plannerEvent: true
+      }
+    };
+  }
+  return {
+    ...event,
+    metadata: {
+      ...(event.metadata ?? {}),
+      phase: "planner",
+      plannerEvent: true
+    }
+  };
+}
+
+function plannerOutputFromEvents(events: readonly AgentRunEvent[]): string {
+  const explicitOutput = events
+    .map((event) => event.metadata?.output)
+    .find((output): output is string =>
+      typeof output === "string" && output.trim().length > 0
+    );
+  if (explicitOutput) {
+    return explicitOutput;
+  }
+  const assistantMessages = events
+    .filter((event) => event.type === "message" || event.metadata?.assistantOutput === true)
+    .map((event) => event.message)
+    .filter((message) => message.trim().length > 0);
+  if (assistantMessages.length > 0) {
+    return assistantMessages.join("\n");
+  }
+  return events
+    .filter((event) => event.type === "stdout")
+    .map((event) => event.message)
+    .join("\n");
+}
+
+function plannerBranchName(
+  taskId: string,
+  agentKind: AgentKind,
+  runId: string
+): string {
+  return [
+    "agent-hub",
+    sanitizeGitBranchSegment(taskId),
+    "planner",
+    sanitizeGitBranchSegment(agentKind),
+    sanitizeGitBranchSegment(runId)
+  ].join("/");
+}
+
+function sanitizeGitBranchSegment(value: string): string {
+  const sanitized = value
+    .trim()
+    .replace(/[^A-Za-z0-9._-]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return sanitized || "item";
 }
 
 function selectPrimaryPlanNode(graph: PlanGraph): ScheduledPlanNode | undefined {
@@ -2874,10 +3222,13 @@ function renderCodeStateProvenance(provenance: CodeStateProvenance): string {
   ].join("\n");
 }
 
-function findLastExitEvent(events: AgentRunEvent[]): AgentRunEvent | undefined {
+function findLastExitEvent(
+  events: AgentRunEvent[]
+): Extract<AgentRunEvent, { type: "exit" }> | undefined {
   for (let index = events.length - 1; index >= 0; index -= 1) {
-    if (events[index].type === "exit") {
-      return events[index];
+    const event = events[index];
+    if (event.type === "exit") {
+      return event;
     }
   }
 

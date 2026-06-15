@@ -2508,6 +2508,7 @@ const roleTodoStatusTransitions: Record<RoleTodoStatus, readonly RoleTodoStatus[
 };
 
 const planGraphStatusTransitions: Record<PlanGraphStatus, readonly PlanGraphStatus[]> = {
+  proposed: ["active", "failed"],
   active: ["superseded", "failed"],
   superseded: [],
   failed: []

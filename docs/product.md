@@ -499,16 +499,15 @@ The injected `available_role_calls` directory advertises only targets that the
 caller can reach through that line-start `delegate` protocol, so custom roles
 with other intent types are not shown as shorthand-callable.
 
-PlanGraph and ExecutionTraceGraph are the planned next product layer for the
-Execution Trace surface. Today Execution Trace is driven by legacy RoleCall
-evidence. The proposed design
-adds a planner node that turns the TaskBrief into a `PlanGraph`, schedules
-executable PlanNodes as primary TaskRuns, treats RoleCall as a runtime tool
-event that can create dynamic trace nodes, and derives `ExecutionTraceGraph`
-deterministically as an overlay of the original plan plus persisted runtime
-evidence. This keeps the expected workflow separate from actual execution while
-preserving RoleCalls as the dynamic delegation mechanism. The full product
-contract is tracked in
+PlanGraph and ExecutionTraceGraph are the current product layer for the
+Execution Trace surface, with legacy RoleCall evidence retained as the
+compatibility path for older tasks. The graph model adds a planner node that
+turns the TaskBrief into a `PlanGraph`, schedules executable PlanNodes as
+primary TaskRuns, treats RoleCall as a runtime tool event that can create
+dynamic trace nodes, and derives `ExecutionTraceGraph` deterministically as an
+overlay of the original plan plus persisted runtime evidence. This keeps the
+expected workflow separate from actual execution while preserving RoleCalls as
+the dynamic delegation mechanism. The full product contract is tracked in
 `docs/plan-graph-execution-trace-product.md`.
 The shared domain contract and core validators for `PlanGraph`,
 `PlanNode`, `PlanEdge`, trace nodes, evidence links, deviations, and
@@ -537,8 +536,19 @@ falling back to legacy RoleCall evidence for older tasks. The desktop Workgroup
 Inspector exposes the same projection through a read-only Trace tab backed by
 Electron main-process IPC; the renderer displays plan nodes, runtime trace
 nodes, evidence counts, and deviations without reading SQLite or rebuilding
-orchestration state. Multi-TaskRun PlanNode fan-out scheduling and a dedicated
-desktop graph canvas are not implemented yet.
+orchestration state.
+
+TaskRunner also supports the first opt-in planner alternatives. The default
+planner mode remains deterministic. `agent_adapter` planner mode runs the
+special local `@planner` role through a configured local adapter inside its own
+isolated planner worktree, requires structured PlanGraph JSON, validates it
+against the current task/version before activation, and fails before the
+primary adapter starts when output is invalid. `manual` planner mode accepts a
+caller-supplied PlanGraph only after the same validation. Plan amendments can
+be stored as `proposed` graph versions; activation supersedes the old active
+graph only after validation, and changes to required execution nodes require an
+explicit approval flag. Multi-TaskRun PlanNode fan-out scheduling and a
+dedicated desktop graph canvas are not implemented yet.
 
 ## CLI Surface
 
