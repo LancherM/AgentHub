@@ -660,6 +660,7 @@ INSERT INTO context_eval_events (
     const graph1 = sqlitePlanGraph("task_plan_graph", 1);
     const graph2 = sqlitePlanGraph("task_plan_graph", 2);
     const graph3 = sqlitePlanGraph("task_plan_graph", 3, "failed");
+    const proposedGraph = sqlitePlanGraph("task_plan_graph", 4, "proposed");
     await first.planGraphRepository.create(graph1);
     await first.planGraphRepository.create(graph2);
     await expect(first.planGraphRepository.getActiveByTaskId("task_plan_graph"))
@@ -672,6 +673,11 @@ INSERT INTO context_eval_events (
 
     await first.planGraphRepository.create(graph3);
     await first.planGraphRepository.supersede(graph2.id, graph3.id);
+    await expect(first.planGraphRepository.getActiveByTaskId("task_plan_graph"))
+      .resolves.toMatchObject({ id: graph3.id, status: "active" });
+    await first.planGraphRepository.create(proposedGraph);
+    await expect(first.planGraphRepository.get(proposedGraph.id))
+      .resolves.toMatchObject({ id: proposedGraph.id, status: "proposed" });
     await expect(first.planGraphRepository.getActiveByTaskId("task_plan_graph"))
       .resolves.toMatchObject({ id: graph3.id, status: "active" });
 

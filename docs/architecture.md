@@ -490,7 +490,9 @@ audit-safe. A proposed amendment is stored as a `proposed` PlanGraph version and
 does not supersede the active graph on create. Activation revalidates same-task
 and version-increase rules, requires explicit approval when required execution
 nodes are added, removed, or changed, and then calls the repository
-supersession path so old graph versions remain readable.
+supersession path so old graph versions remain readable. SQLite schema checks
+allow `proposed`, `active`, `superseded`, and `failed` PlanGraph statuses to
+match the shared domain validator.
 `packages/safety` consumes optional PlanGraph, current PlanNode, and
 ExecutionTraceGraph inputs when producing a RiskReport. Plan-aware findings are
 plain local risk findings: they can identify proposed graphs, missing required
