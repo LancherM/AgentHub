@@ -487,6 +487,12 @@ simple failed-required-node and superseded-version deviations, and a synthetic
 legacy plan-unavailable node for tasks that have run evidence but no PlanGraph.
 The CLI `execution-trace show` command is read-only and delegates to this core
 projection instead of reconstructing state from transcript prose.
+The TUI read model optionally attaches that same projection to
+`TuiCurrentContextModel.executionTrace` for the current task. The Ink Graph
+focus renders Overlay, Plan, and Trace modes from that read model only; it does
+not query SQLite, run agents, or duplicate TaskRunner/RoleCall orchestration in
+the renderer. When the projection is unavailable, the existing RoleCall
+compatibility view remains the fallback.
 
 This boundary should preserve the current TaskRunner and RoleCall ownership:
 

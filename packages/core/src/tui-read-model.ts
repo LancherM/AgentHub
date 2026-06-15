@@ -2,6 +2,7 @@ import {
   evaluateRoleCallGraphConvergence,
   type RoleCallGraphConvergenceReason
 } from "./role-call-convergence";
+import { buildExecutionTraceGraph } from "./execution-trace-read-model";
 import { extractAgentFacingOutput } from "./run-output";
 import {
   isAgentKindEnabled,
@@ -14,6 +15,7 @@ import type {
   AgentKind,
   ConversationMessage,
   ConversationThread,
+  ExecutionTraceGraph,
   JsonObject,
   MemoryItem,
   MemoryStatus,
@@ -45,11 +47,13 @@ import type {
   RoleTodoRepository,
   RunArtifactRepository,
   ComparisonReportRepository,
+  PlanGraphRepository,
   RunMetadataRepository,
   SkillRepository,
   SettingsRepository,
   TaskRepository,
   TaskRunRepository,
+  TraceLinkRepository,
   VerificationResultRepository
 } from "./storage";
 
@@ -72,6 +76,8 @@ export interface TuiReadModelRepositories {
   roleCallRepository: RoleCallRepository;
   roleCallEventRepository: RoleCallEventRepository;
   roleTodoRepository: RoleTodoRepository;
+  planGraphRepository?: PlanGraphRepository;
+  traceLinkRepository?: TraceLinkRepository;
   settingsRepository?: SettingsRepository;
 }
 
@@ -102,6 +108,7 @@ export interface TuiCurrentContextModel {
   transcript: TuiTranscriptMessage[];
   runs: TuiRunSummary[];
   roleCalls: TuiRoleCallGraphSummary;
+  executionTrace?: ExecutionTraceGraph;
   review: TuiReviewSelectionSummary;
   tasks: TuiTaskSummary[];
   team: TuiTeamSummary;
@@ -115,6 +122,11 @@ export interface TuiSelectionDetails {
   workBlocks: TuiSelectionDetail[];
   runs: TuiSelectionDetail[];
   roleCalls: TuiSelectionDetail[];
+  graph: {
+    overlay: TuiSelectionDetail[];
+    plan: TuiSelectionDetail[];
+    trace: TuiSelectionDetail[];
+  };
   tasks: TuiSelectionDetail[];
   teamRoles: TuiSelectionDetail[];
   memoryRows: TuiSelectionDetail[];
@@ -123,7 +135,7 @@ export interface TuiSelectionDetails {
 
 export interface TuiSelectionDetail {
   id: string;
-  kind: "work_block" | "run" | "role_call" | "memory" | "team_role" | "task";
+  kind: "work_block" | "run" | "role_call" | "graph_node" | "memory" | "team_role" | "task";
   title: string;
   subtitle?: string;
   sections: TuiDetailSection[];
@@ -151,6 +163,11 @@ export function emptyTuiSelectionDetails(): TuiSelectionDetails {
     workBlocks: [],
     runs: [],
     roleCalls: [],
+    graph: {
+      overlay: [],
+      plan: [],
+      trace: []
+    },
     tasks: [],
     teamRoles: [],
     memoryRows: [],
@@ -715,6 +732,11 @@ export async function buildTuiCurrentContextModel(
     maxSkills: input.maxSkills ?? defaultLimits.skills,
     contextMode: input.contextMode ?? "runtime_injection"
   });
+  const executionTrace = await summarizeExecutionTraceForTui(
+    repositories,
+    contextTasks,
+    warnings
+  );
 
   return {
     context: {
@@ -733,6 +755,7 @@ export async function buildTuiCurrentContextModel(
     transcript: summarizeTranscript(messages, input.maxMessages ?? defaultLimits.messages),
     runs: boundedRuns,
     roleCalls: roleCallSummary,
+    executionTrace,
     review,
     tasks: taskSummaries,
     team: teamResult.summary,
@@ -742,6 +765,7 @@ export async function buildTuiCurrentContextModel(
       workBlocks,
       runs: boundedRuns,
       roleCalls: visibleRoleCallNodes,
+      executionTrace,
       tasks: taskSummaries,
       team: teamResult.summary,
       memory: memorySummary,
@@ -749,6 +773,41 @@ export async function buildTuiCurrentContextModel(
     }),
     warnings
   };
+}
+
+async function summarizeExecutionTraceForTui(
+  repositories: TuiReadModelRepositories,
+  tasks: readonly Task[],
+  warnings: string[]
+): Promise<ExecutionTraceGraph | undefined> {
+  if (!repositories.planGraphRepository || !repositories.traceLinkRepository) {
+    return undefined;
+  }
+  const task = [...tasks].sort((left, right) =>
+    right.updatedAt.localeCompare(left.updatedAt) || right.id.localeCompare(left.id)
+  )[0];
+  if (!task) {
+    return undefined;
+  }
+  try {
+    return await buildExecutionTraceGraph(
+      {
+        planGraphRepository: repositories.planGraphRepository,
+        traceLinkRepository: repositories.traceLinkRepository,
+        taskRunRepository: repositories.taskRunRepository,
+        runMetadataRepository: repositories.runMetadataRepository,
+        roleCallRepository: repositories.roleCallRepository
+      },
+      { taskId: task.id }
+    );
+  } catch (error) {
+    warnings.push(
+      `execution trace unavailable for task ${task.id}: ${
+        error instanceof Error ? error.message : String(error)
+      }`
+    );
+    return undefined;
+  }
 }
 
 function summarizeTranscript(
@@ -2298,6 +2357,7 @@ function buildSelectionDetails(input: {
   workBlocks: TuiWorkBlock[];
   runs: TuiRunSummary[];
   roleCalls: TuiRoleCallNodeSummary[];
+  executionTrace?: ExecutionTraceGraph;
   tasks: TuiTaskSummary[];
   team: TuiTeamSummary;
   memory: TuiMemorySummary;
@@ -2307,10 +2367,91 @@ function buildSelectionDetails(input: {
     workBlocks: input.workBlocks.map((block) => workBlockDetail(block)),
     runs: input.runs.map((run) => runSelectionDetail(run)),
     roleCalls: input.roleCalls.map((call) => roleCallSelectionDetail(call)),
+    graph: graphSelectionDetails(input.executionTrace),
     tasks: input.tasks.map((task) => taskSelectionDetail(input.team.projectId, task)),
     teamRoles: input.team.roles.map((role) => teamRoleSelectionDetail(input.team, role)),
     memoryRows: input.memory.rows.map((row) => memoryRowSelectionDetail(row)),
     memory: memorySelectionDetail(input.memory, input.skills)
+  };
+}
+
+function graphSelectionDetails(trace: ExecutionTraceGraph | undefined): {
+  overlay: TuiSelectionDetail[];
+  plan: TuiSelectionDetail[];
+  trace: TuiSelectionDetail[];
+} {
+  if (!trace) {
+    return { overlay: [], plan: [], trace: [] };
+  }
+  const planDetails = trace.baseNodes.map((node) => ({
+    id: node.id,
+    kind: "graph_node" as const,
+    title: node.title,
+    subtitle: `${node.kind} @${node.role} ${node.execution.mode}`,
+    sections: [
+      {
+        id: "plan-node",
+        title: "Plan Node",
+        lines: [
+          `id: ${node.id}`,
+          `kind: ${node.kind}`,
+          `role: ${node.role}`,
+          `mode: ${node.execution.mode}`,
+          `required: ${node.required}`,
+          `risk: ${node.riskLevel}`
+        ]
+      },
+      {
+        id: "instructions",
+        title: "Instructions",
+        lines: [node.instructions]
+      },
+      {
+        id: "acceptance",
+        title: "Acceptance",
+        lines: node.acceptanceCriteria
+      }
+    ],
+    commands: [
+      `agent-hub execution-trace show --plan-graph-id ${trace.planGraphId}`
+    ],
+    actions: []
+  }));
+  const traceDetails = trace.dynamicNodes.map((node) => ({
+    id: node.id,
+    kind: "graph_node" as const,
+    title: node.title,
+    subtitle: `${node.kind} ${node.status}`,
+    sections: [
+      {
+        id: "trace-node",
+        title: "Trace Node",
+        lines: [
+          `id: ${node.id}`,
+          `kind: ${node.kind}`,
+          `status: ${node.status}`,
+          `source_plan_node: ${node.sourcePlanNodeId ?? "none"}`,
+          `role: ${node.role ?? "none"}`,
+          `source: ${node.sourceType ?? "event"}:${node.sourceId ?? "none"}`
+        ]
+      },
+      {
+        id: "evidence",
+        title: "Evidence",
+        lines: trace.evidence
+          .filter((evidence) => evidence.traceNodeId === node.id)
+          .map((evidence) => `${evidence.sourceType}:${evidence.sourceId} ${evidence.summary ?? ""}`.trim())
+      }
+    ],
+    commands: [
+      `agent-hub execution-trace show --plan-graph-id ${trace.planGraphId}`
+    ],
+    actions: []
+  }));
+  return {
+    overlay: [...planDetails, ...traceDetails],
+    plan: planDetails,
+    trace: traceDetails
   };
 }
 

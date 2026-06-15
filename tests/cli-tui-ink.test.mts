@@ -376,6 +376,11 @@ const baseModel = {
       }
     ],
     roleCalls: [],
+    graph: {
+      overlay: [],
+      plan: [],
+      trace: []
+    },
     tasks: [],
     memoryRows: [
       {
@@ -694,6 +699,192 @@ describe("Ink TUI renderer", () => {
     expect(output).toContain("legacy RoleCall evidence");
     expect(output).toContain("@engineer -> @reviewer");
     expect(output).toContain("Review execution trace");
+  });
+
+  it("renders Plan/Trace/Overlay execution trace modes", () => {
+    const model = {
+      ...baseModel,
+      executionTrace: {
+        taskId: "task_1",
+        planGraphId: "plan_graph:task_1:v1",
+        planGraphVersion: 1,
+        baseNodes: [
+          {
+            id: "plan_node_implement",
+            kind: "implement",
+            role: "engineer",
+            title: "Implement graph view",
+            instructions: "Implement the graph view.",
+            acceptanceCriteria: ["Graph renders."],
+            riskLevel: "low",
+            required: true,
+            execution: {
+              mode: "primary_run",
+              expectedAdapter: "fake",
+              worktreePolicy: "isolated"
+            }
+          }
+        ],
+        baseEdges: [],
+        dynamicNodes: [
+          {
+            id: "trace_node:run:run_1",
+            planGraphId: "plan_graph:task_1:v1",
+            kind: "task_run",
+            title: "TaskRun run_1",
+            status: "completed",
+            sourcePlanNodeId: "plan_node_implement",
+            sourceType: "task_run",
+            sourceId: "run_1",
+            createdAt: "2026-05-29T12:05:00.000Z"
+          }
+        ],
+        dynamicEdges: [],
+        evidence: [
+          {
+            id: "trace_evidence:run:run_1",
+            planGraphId: "plan_graph:task_1:v1",
+            sourceType: "task_run",
+            sourceId: "run_1",
+            planNodeId: "plan_node_implement",
+            traceNodeId: "trace_node:run:run_1"
+          }
+        ],
+        deviations: []
+      },
+      selectionDetails: {
+        ...baseModel.selectionDetails,
+        graph: {
+          overlay: [
+            {
+              id: "plan_node_implement",
+              kind: "graph_node",
+              title: "Implement graph view",
+              subtitle: "implement @engineer primary_run",
+              sections: [
+                {
+                  id: "plan-node",
+                  title: "Plan Node",
+                  lines: ["id: plan_node_implement"]
+                }
+              ],
+              commands: ["agent-hub execution-trace show --plan-graph-id plan_graph:task_1:v1"],
+              actions: []
+            },
+            {
+              id: "trace_node:run:run_1",
+              kind: "graph_node",
+              title: "TaskRun run_1",
+              subtitle: "task_run completed",
+              sections: [
+                {
+                  id: "trace-node",
+                  title: "Trace Node",
+                  lines: ["id: trace_node:run:run_1", "status: completed"]
+                }
+              ],
+              commands: ["agent-hub execution-trace show --plan-graph-id plan_graph:task_1:v1"],
+              actions: []
+            }
+          ],
+          plan: [
+            {
+              id: "plan_node_implement",
+              kind: "graph_node",
+              title: "Implement graph view",
+              subtitle: "implement @engineer primary_run",
+              sections: [
+                {
+                  id: "plan-node",
+                  title: "Plan Node",
+                  lines: ["id: plan_node_implement"]
+                }
+              ],
+              commands: ["agent-hub execution-trace show --plan-graph-id plan_graph:task_1:v1"],
+              actions: []
+            }
+          ],
+          trace: [
+            {
+              id: "trace_node:run:run_1",
+              kind: "graph_node",
+              title: "TaskRun run_1",
+              subtitle: "task_run completed",
+              sections: [
+                {
+                  id: "trace-node",
+                  title: "Trace Node",
+                  lines: ["id: trace_node:run:run_1", "status: completed"]
+                }
+              ],
+              commands: ["agent-hub execution-trace show --plan-graph-id plan_graph:task_1:v1"],
+              actions: []
+            }
+          ]
+        }
+      }
+    };
+    const overlay = renderToString(
+      React.createElement(TuiInkFrame, {
+        model,
+        state: { ...createInitialInkState(), focus: "graph" },
+        terminal: { columns: 120, rows: 28 }
+      }),
+      { columns: 120 }
+    );
+    const plan = renderToString(
+      React.createElement(TuiInkFrame, {
+        model,
+        state: { ...createInitialInkState(), focus: "graph", graphMode: "plan" },
+        terminal: { columns: 120, rows: 28 }
+      }),
+      { columns: 120 }
+    );
+    const trace = renderToString(
+      React.createElement(TuiInkFrame, {
+        model,
+        state: { ...createInitialInkState(), focus: "graph", graphMode: "trace" },
+        terminal: { columns: 120, rows: 28 }
+      }),
+      { columns: 120 }
+    );
+
+    expect(overlay).toContain("mode overlay");
+    expect(overlay).toContain("P plan_node_imple");
+    expect(overlay).toContain("implement @engineer primary_run");
+    expect(overlay).toContain("T trace_node:run:");
+    expect(overlay).toContain("TaskRun run_1");
+    expect(plan).toContain("mode plan");
+    expect(plan).toContain("implement @engineer primary_run");
+    expect(plan).not.toContain("TaskRun run_1");
+    expect(trace).toContain("mode trace");
+    expect(trace).toContain("TaskRun run_1");
+    expect(trace).not.toContain("implement @engineer primary_run");
+
+    const traceDetail = renderToString(
+      React.createElement(TuiInkFrame, {
+        model,
+        state: {
+          ...createInitialInkState(),
+          focus: "graph",
+          graphMode: "trace",
+          detailVisible: true
+        },
+        terminal: { columns: 120, rows: 28 }
+      }),
+      { columns: 120 }
+    );
+    expect(traceDetail).toContain("Trace Node");
+    expect(traceDetail).toContain("status: completed");
+    expect(traceDetail).not.toContain("Empty Slot");
+  });
+
+  it("cycles graph mode only from the graph focus", () => {
+    let state = { ...createInitialInkState(), focus: "graph" };
+    state = reduceInkState(state, "cycle_graph_mode", baseModel);
+    expect(state.graphMode).toBe("plan");
+    state = reduceInkState(state, "cycle_graph_mode", baseModel);
+    expect(state.graphMode).toBe("trace");
   });
 
   it("keeps slash completion suggestions inside the terminal row budget", () => {

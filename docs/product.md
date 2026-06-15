@@ -531,8 +531,11 @@ plan node plus dynamic trace node id in runtime context. A local
 trace nodes/edges/evidence, primary run bindings, RoleCall tool events, simple
 deterministic deviations, and legacy no-plan run evidence. The read-only
 `execution-trace show` CLI command exposes that projection by task id or
-PlanGraph id. Multi-TaskRun PlanNode fan-out scheduling and mode-aware
-TUI/Desktop graph rendering are not implemented yet.
+PlanGraph id. The terminal workbench Execution Trace focus now consumes the
+same projection when available and exposes Overlay, Plan, and Trace modes while
+falling back to legacy RoleCall evidence for older tasks. Multi-TaskRun
+PlanNode fan-out scheduling and desktop graph rendering are not implemented
+yet.
 
 ## CLI Surface
 
@@ -559,8 +562,9 @@ The current CLI exposes these command groups:
 - Terminal workbench: `tui` opens a keyboard-first read-only view over the
   current thread or room context, with focus modes for work, execution trace,
   runs, review, tasks, memory, and help. The trace focus uses existing
-  RoleCall evidence as the legacy compatibility path until PlanGraph-backed
-  trace projections are implemented.
+  RoleCall evidence as the legacy compatibility path when no PlanGraph-backed
+  trace projection is available, and shows Overlay/Plan/Trace modes for current
+  graph-backed tasks.
 - Team roles: `team roles list`, `team roles show`, `team roles save`, and
   `team roles executor`. Saved roles can reference default skills with
   `--skill [scope:]id`, and custom RoleCall fan-out is configured with

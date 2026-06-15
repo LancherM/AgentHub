@@ -90,6 +90,122 @@ describe("TUI current-context read model", () => {
       );
   });
 
+  it("includes ExecutionTraceGraph projection for the current task", async () => {
+    const runtime = createCliRuntime({ storageMode: "memory" });
+    await runtime.projectRepository.create({
+      id: "project_trace",
+      name: "Trace Project",
+      rootPath: "/tmp/trace-project",
+      createdAt: now,
+      updatedAt: now
+    });
+    await runtime.conversationThreadRepository.create({
+      id: "thread_trace",
+      projectId: "project_trace",
+      title: "Trace",
+      createdAt: now,
+      updatedAt: now
+    });
+    await runtime.taskRepository.create({
+      id: "task_trace",
+      projectId: "project_trace",
+      title: "Trace the graph",
+      metadata: { threadId: "thread_trace" },
+      status: "running",
+      createdAt: now,
+      updatedAt: now
+    });
+    await runtime.planGraphRepository.create({
+      id: "plan_graph_trace",
+      taskId: "task_trace",
+      version: 1,
+      status: "active",
+      plannerNodeId: "plan_graph_trace:planner",
+      createdByRole: "planner",
+      createdAt: now,
+      nodes: [
+        {
+          id: "plan_graph_trace:planner",
+          kind: "planner",
+          role: "planner",
+          title: "Create plan",
+          instructions: "Create a plan.",
+          acceptanceCriteria: ["Plan is valid."],
+          riskLevel: "low",
+          required: true,
+          execution: { mode: "system" },
+          outputPlanGraphId: "plan_graph_trace"
+        },
+        {
+          id: "plan_node_trace",
+          kind: "implement",
+          role: "engineer",
+          title: "Implement trace",
+          instructions: "Implement trace projection.",
+          acceptanceCriteria: ["Run is linked."],
+          riskLevel: "low",
+          required: true,
+          execution: {
+            mode: "primary_run",
+            expectedAdapter: "fake",
+            worktreePolicy: "isolated"
+          }
+        }
+      ],
+      edges: [
+        { from: "plan_graph_trace:planner", to: "plan_node_trace", type: "primary" }
+      ]
+    });
+    await runtime.taskRunRepository.create({
+      id: "run_trace",
+      taskId: "task_trace",
+      agentKind: "fake",
+      status: "succeeded",
+      createdAt: now,
+      updatedAt: now
+    });
+    await runtime.runMetadataRepository.save({
+      runId: "run_trace",
+      planBinding: {
+        planGraphId: "plan_graph_trace",
+        planGraphVersion: 1,
+        planNodeId: "plan_node_trace",
+        allowedNextPlanNodeIds: []
+      }
+    });
+
+    const model = await buildTuiCurrentContextModel(runtime, {
+      projectId: "project_trace",
+      threadId: "thread_trace"
+    });
+
+    expect(model.executionTrace).toEqual(
+      expect.objectContaining({
+        planGraphId: "plan_graph_trace",
+        dynamicNodes: [
+          expect.objectContaining({
+            kind: "task_run",
+            sourceId: "run_trace"
+          })
+        ]
+      })
+    );
+    expect(model.selectionDetails.graph.overlay).toEqual([
+      expect.objectContaining({
+        kind: "graph_node",
+        title: "Create plan"
+      }),
+      expect.objectContaining({
+        kind: "graph_node",
+        title: "Implement trace"
+      }),
+      expect.objectContaining({
+        kind: "graph_node",
+        title: "TaskRun run_trace"
+      })
+    ]);
+  });
+
   it("summarizes transcript, runs, RoleCalls, tasks, team, memory, and skills in stable order", async () => {
     const runtime = createCliRuntime({ storageMode: "memory" });
     await seedCurrentContext(runtime);

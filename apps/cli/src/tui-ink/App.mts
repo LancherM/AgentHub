@@ -1800,6 +1800,16 @@ function selectedDetail(
     return undefined;
   }
   if (state.focus === "graph") {
+    if (model.executionTrace) {
+      const mode = state.graphMode ?? "overlay";
+      const graphDetails = details.graph[mode];
+      const index = selectedDetailIndexById(
+        graphDetails,
+        undefined,
+        state.selectedRoleCallIndex
+      );
+      return graphDetails[index];
+    }
     const roleCall = visibleRoleCalls(model, state)[selectedRoleCallIndex(model, state)];
     return roleCall ? details.roleCalls.find((detail) => detail.id === roleCall.id) : undefined;
   }
@@ -2792,6 +2802,44 @@ function RoleCallsPane({
   terminal: TuiInkTerminalSize;
   detail?: boolean;
 }): React.ReactElement {
+  const trace = model.executionTrace;
+  if (trace) {
+    const mode = state.graphMode ?? "overlay";
+    const rows = executionTraceRows(model, mode);
+    const selectedIndex = Math.min(
+      Math.max(state.selectedRoleCallIndex ?? 0, 0),
+      Math.max(0, rows.length - 1)
+    );
+    const windowSize = roleCallWindowSize(terminal, detail);
+    const offset = Math.min(state.scrollOffsets.roleCalls, Math.max(0, rows.length - windowSize));
+    const visibleRows = rows.slice(offset, offset + windowSize);
+    return block(
+      line("Execution Trace", { color: "cyan", bold: true }),
+      line(
+        `mode ${mode} | plan ${trace.baseNodes.length} trace ${trace.dynamicNodes.length} evidence ${trace.evidence.length} deviations ${trace.deviations.length} | m mode`,
+        { dimColor: true }
+      ),
+      ...visibleRows.map((row, index) => {
+        const absoluteIndex = offset + index;
+        const selected = absoluteIndex === selectedIndex;
+        return line(`${selected ? "▌" : " "} ${row}`, {
+          color: selected ? "green" : undefined,
+          inverse: selected
+        });
+      }),
+      ...(trace.deviations.length > 0
+        ? [
+            line("deviations:", { color: "yellow" }),
+            ...trace.deviations.slice(0, 3).map((deviation) =>
+              line(`! ${deviation.type} ${deviation.severity} ${truncateText(deviation.description, 74)}`, { color: "yellow" })
+            )
+          ]
+        : []),
+      ...(model.roleCalls.counts.total > 0
+        ? [line(`RoleCall compatibility evidence: ${model.roleCalls.counts.visible} visible`, { dimColor: true })]
+        : [])
+    );
+  }
   const nodes = visibleRoleCalls(model, state);
   if (nodes.length === 0) {
     return block(
@@ -2822,6 +2870,29 @@ function RoleCallsPane({
       );
     })
   );
+}
+
+function executionTraceRows(
+  model: TuiCurrentContextModel,
+  mode: "overlay" | "plan" | "trace"
+): string[] {
+  const trace = model.executionTrace;
+  if (!trace) {
+    return [];
+  }
+  const planRows = trace.baseNodes.map((node) =>
+    `P ${compactId(node.id)} ${node.kind} @${node.role} ${node.execution.mode} ${node.required ? "required" : "optional"} ${truncateText(node.title, 48)}`
+  );
+  const traceRows = trace.dynamicNodes.map((node) =>
+    `T ${compactId(node.id)} ${node.kind} ${node.status} ${node.sourceType ?? "event"}:${compactId(node.sourceId ?? "none")} ${truncateText(node.title, 48)}`
+  );
+  if (mode === "plan") {
+    return planRows.length > 0 ? planRows : ["no planned nodes"];
+  }
+  if (mode === "trace") {
+    return traceRows.length > 0 ? traceRows : ["no runtime trace nodes"];
+  }
+  return [...planRows, ...traceRows];
 }
 
 function TasksPane({
@@ -3351,6 +3422,7 @@ function HelpPane(): React.ReactElement {
     { title: "Help" },
     line("tabs: Tab focus  W work  G trace  R runs  V review  T tasks  M memory  E team"),
     line("move: Up/Down or j/k  detail: Enter/o  folds: Space/> toggle  < close  za toggle  O open"),
+    line("trace: m cycles Overlay/Plan/Trace"),
     line("commands: : palette  / palette  /use <target>  /clear session"),
     line("/search [text]  /timeline or L  /notify on|off  /team  /runs  /review"),
     line("/memory auto status|on|off|safe  /context  /room <handle>"),
@@ -4427,6 +4499,9 @@ function keyToAction(input: string, key: Key, focus: string): TuiInkKey | undefi
   if (input === "h") {
     return "hide_done";
   }
+  if (focus === "graph" && input === "m") {
+    return "cycle_graph_mode";
+  }
   if (input === "C") {
     return "continue_loop";
   }
@@ -4471,6 +4546,9 @@ function isImmediateEmptyComposerAction(action: TuiInkKey, focus: TuiInkFocus): 
     return focus !== "work";
   }
   if (action === "hide_done") {
+    return focus === "graph";
+  }
+  if (action === "cycle_graph_mode") {
     return focus === "graph";
   }
   if (action === "skills") {
