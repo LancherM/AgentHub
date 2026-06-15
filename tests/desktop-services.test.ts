@@ -6,6 +6,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { describe, expect, it, vi } from "vitest";
 import {
+  createDeterministicPlanGraph,
   validateConversationMessage,
   validateConversationThreadSummary,
   validateConversationThread,
@@ -863,6 +864,111 @@ describe("desktop services", () => {
       truncated: false
     });
     expect(artifacts[0]?.contentPreview).not.toContain("secret-value");
+  });
+
+  it("exposes ExecutionTraceGraph through desktop review service and IPC", async () => {
+    const fixture = await createFixture();
+    const context = createDesktopServiceContext(fixture.repositories);
+    const projects = createProjectService(context);
+    const review = createReviewService(context);
+    const project = await projects.open(fixture.projectRoot);
+    const now = context.now();
+    const task = await fixture.repositories.taskRepository.create(
+      validateTask({
+        id: "task_desktop_trace",
+        projectId: project.id,
+        title: "Implement desktop trace tab",
+        status: "completed",
+        createdAt: now,
+        updatedAt: now
+      })
+    );
+    const run = await fixture.repositories.taskRunRepository.create(
+      validateTaskRun({
+        id: "run_desktop_trace",
+        taskId: task.id,
+        agentKind: "fake",
+        status: "succeeded",
+        createdAt: now,
+        updatedAt: now
+      })
+    );
+    const graph = createDeterministicPlanGraph({
+      task,
+      taskBrief: {
+        taskId: task.id,
+        taskTitle: task.title,
+        taskPrompt: "Implement the desktop execution trace tab.",
+        renderedContent: "Implement the desktop execution trace tab.",
+        contextPackId: "context_pack_desktop_trace",
+        createdAt: now
+      },
+      createdAt: now,
+      version: 1,
+      expectedAdapter: "fake",
+      roleHandle: "engineer"
+    });
+    await fixture.repositories.planGraphRepository.create(graph);
+    const executionNode = graph.nodes.find((node) => node.execution.mode === "primary_run");
+    if (!executionNode) {
+      throw new Error("expected primary run node");
+    }
+    await fixture.repositories.traceLinkRepository.createNode({
+      id: "trace_node_desktop_run",
+      planGraphId: graph.id,
+      kind: "task_run",
+      title: "Desktop trace run",
+      status: "completed",
+      sourcePlanNodeId: executionNode.id,
+      role: "engineer",
+      sourceType: "task_run",
+      sourceId: run.id,
+      createdAt: now
+    });
+    await fixture.repositories.traceLinkRepository.linkEvidence({
+      id: "trace_evidence_desktop_run",
+      planGraphId: graph.id,
+      sourceType: "task_run",
+      sourceId: run.id,
+      planNodeId: executionNode.id,
+      traceNodeId: "trace_node_desktop_run",
+      summary: "Desktop inspector can read trace evidence.",
+      createdAt: now
+    });
+
+    await expect(review.getExecutionTrace(run.id)).resolves.toMatchObject({
+      taskId: task.id,
+      planGraphId: graph.id,
+      baseNodes: expect.arrayContaining([
+        expect.objectContaining({ id: executionNode.id })
+      ]),
+      dynamicNodes: [
+        expect.objectContaining({
+          id: "trace_node_desktop_run",
+          sourceId: run.id
+        })
+      ],
+      evidence: [
+        expect.objectContaining({
+          id: "trace_evidence_desktop_run",
+          sourceId: run.id
+        })
+      ]
+    });
+
+    const handlers = createIpcHandlers(createDesktopServices(context));
+    await expect(
+      handlers[IPC_CHANNELS.reviewExecutionTrace]({ sender: { send: vi.fn() } }, run.id)
+    ).resolves.toMatchObject({
+      taskId: task.id,
+      planGraphId: graph.id,
+      dynamicNodes: [
+        expect.objectContaining({
+          id: "trace_node_desktop_run",
+          status: "completed"
+        })
+      ]
+    });
   });
 
   it("lists knowledge workspace memory, thread summaries, and review decisions", async () => {

@@ -20,6 +20,7 @@ export const IPC_CHANNELS = {
   reviewDiff: "agent-hub:review:diff",
   reviewRisk: "agent-hub:review:risk",
   reviewVerification: "agent-hub:review:verification",
+  reviewExecutionTrace: "agent-hub:review:execution-trace",
   reviewLogs: "agent-hub:review:logs",
   reviewHandoff: "agent-hub:review:handoff",
   reviewHandoffOpenWorktree: "agent-hub:review:handoff:open-worktree",

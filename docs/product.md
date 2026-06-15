@@ -533,9 +533,12 @@ deterministic deviations, and legacy no-plan run evidence. The read-only
 `execution-trace show` CLI command exposes that projection by task id or
 PlanGraph id. The terminal workbench Execution Trace focus now consumes the
 same projection when available and exposes Overlay, Plan, and Trace modes while
-falling back to legacy RoleCall evidence for older tasks. Multi-TaskRun
-PlanNode fan-out scheduling and desktop graph rendering are not implemented
-yet.
+falling back to legacy RoleCall evidence for older tasks. The desktop Workgroup
+Inspector exposes the same projection through a read-only Trace tab backed by
+Electron main-process IPC; the renderer displays plan nodes, runtime trace
+nodes, evidence counts, and deviations without reading SQLite or rebuilding
+orchestration state. Multi-TaskRun PlanNode fan-out scheduling and a dedicated
+desktop graph canvas are not implemented yet.
 
 ## CLI Surface
 

@@ -3076,7 +3076,7 @@ select:focus-visible {
 
 .review-tabs {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(72px, 1fr));
   gap: 6px;
   padding: 12px;
   border-bottom: 1px solid var(--line);
@@ -3102,6 +3102,76 @@ select:focus-visible {
 
 .role-call-inspector {
   width: min(960px, 72vw);
+}
+
+.execution-trace-panel .review-section-head {
+  align-items: flex-start;
+}
+
+.trace-node-list,
+.trace-deviation-list {
+  display: grid;
+  gap: 9px;
+}
+
+.trace-node-row,
+.trace-deviation-row {
+  display: grid;
+  min-width: 0;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.trace-node-row > div:first-child,
+.trace-deviation-row > div:first-child {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.trace-node-row strong,
+.trace-deviation-row strong {
+  min-width: 0;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.trace-node-row span:not(.timeline-chip),
+.trace-deviation-row span:not(.timeline-chip) {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.trace-node-row p,
+.trace-deviation-row p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.trace-node-row.runtime.failed,
+.trace-deviation-row.high,
+.trace-deviation-row.blocking {
+  border-color: rgba(255, 125, 107, 0.42);
+}
+
+.trace-criteria-list {
+  display: grid;
+  gap: 5px;
+  margin: 0;
+  padding-left: 18px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
 }
 
 .role-call-inspector .inspector-title-copy p {

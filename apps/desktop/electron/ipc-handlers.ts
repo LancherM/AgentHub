@@ -219,6 +219,8 @@ export function createIpcHandlers(
       services.review.getRisk(parseId(input, "runId")),
     [IPC_CHANNELS.reviewVerification]: async (_event, input) =>
       services.review.getVerification(parseId(input, "runId")),
+    [IPC_CHANNELS.reviewExecutionTrace]: async (_event, input) =>
+      services.review.getExecutionTrace(parseId(input, "runId")),
     [IPC_CHANNELS.reviewLogs]: async (_event, input) =>
       services.review.getLogs(parseId(input, "runId")),
     [IPC_CHANNELS.reviewHandoff]: async (_event, input) =>

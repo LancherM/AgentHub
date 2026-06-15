@@ -1,7 +1,9 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import {
+  buildExecutionTraceGraph,
   validateRunArtifact,
+  type ExecutionTraceGraph,
   type MemoryItemRepository,
   type RunArtifact,
   type RunArtifactRepository,
@@ -58,6 +60,7 @@ export interface ReviewService {
   getDiff(runId: string): Promise<DiffSummary>;
   getRisk(runId: string): Promise<RiskReport>;
   getVerification(runId: string): Promise<VerificationReport>;
+  getExecutionTrace(runId: string): Promise<ExecutionTraceGraph>;
   getLogs(runId: string): Promise<RunLog[]>;
   getHandoff(runId: string): Promise<ReviewHandoff>;
   openHandoffWorktree(runId: string): Promise<ReviewHandoffActionResult>;
@@ -260,6 +263,13 @@ class RepositoryReviewService implements ReviewService {
       })),
       message: `${passed.length} passed, ${failed.length} failed, ${skipped.length} skipped`
     };
+  }
+
+  async getExecutionTrace(runId: string): Promise<ExecutionTraceGraph> {
+    const { run } = await this.requireRunAndTask(runId);
+    return buildExecutionTraceGraph(this.context.repositories, {
+      taskId: run.taskId
+    });
   }
 
   async getLogs(runId: string): Promise<RunLog[]> {

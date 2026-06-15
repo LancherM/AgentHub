@@ -493,6 +493,12 @@ focus renders Overlay, Plan, and Trace modes from that read model only; it does
 not query SQLite, run agents, or duplicate TaskRunner/RoleCall orchestration in
 the renderer. When the projection is unavailable, the existing RoleCall
 compatibility view remains the fallback.
+The desktop Workgroup Inspector consumes the same core projection through
+`ReviewService.getExecutionTrace`, the `agent-hub:review:execution-trace` IPC
+channel, and the sandboxed preload API. The React renderer owns only the
+read-only Trace tab presentation; it receives a bounded `ExecutionTraceGraph`
+DTO and does not reach into SQLite, shell, git, TaskRunner, or RoleCall
+orchestration services.
 
 This boundary should preserve the current TaskRunner and RoleCall ownership:
 
