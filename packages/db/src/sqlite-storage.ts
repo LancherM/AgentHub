@@ -1184,7 +1184,7 @@ CREATE TABLE IF NOT EXISTS plan_graphs (
   task_id TEXT NOT NULL,
   task_brief_artifact_id TEXT,
   version INTEGER NOT NULL CHECK (version >= 1),
-  status TEXT NOT NULL CHECK (status IN ('active', 'superseded', 'failed')),
+  status TEXT NOT NULL CHECK (status IN ('proposed', 'active', 'superseded', 'failed')),
   planner_node_id TEXT NOT NULL,
   created_by_role TEXT NOT NULL CHECK (created_by_role = 'planner'),
   created_at TEXT NOT NULL,
