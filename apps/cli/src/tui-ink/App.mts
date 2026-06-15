@@ -1036,7 +1036,7 @@ function HeaderBar({
 
 function focusDisplayLabel(focus: TuiInkFocus): string {
   if (focus === "graph") {
-    return "Graph";
+    return "Execution Trace";
   }
   return `${focus.slice(0, 1).toUpperCase()}${focus.slice(1)}`;
 }
@@ -1482,7 +1482,7 @@ function sideNavItems(model: TuiCurrentContextModel): SideNavItem[] {
     },
     {
       focus: "graph",
-      label: "Graph",
+      label: "Trace",
       count: String(model.roleCalls.counts.visible ?? model.roleCalls.counts.total)
     },
     {
@@ -2795,8 +2795,9 @@ function RoleCallsPane({
   const nodes = visibleRoleCalls(model, state);
   if (nodes.length === 0) {
     return block(
+      line("Execution Trace", { color: "cyan", bold: true }),
       line(
-        `none | loop stop ${model.roleCalls.loop.stopReason} | pending ${model.roleCalls.loop.pendingRoleCallIds.length}`
+        `no RoleCall evidence yet | loop stop ${model.roleCalls.loop.stopReason} | pending ${model.roleCalls.loop.pendingRoleCallIds.length}`
       )
     );
   }
@@ -2805,8 +2806,9 @@ function RoleCallsPane({
   const offset = Math.min(state.scrollOffsets.roleCalls, Math.max(0, nodes.length - windowSize));
   const visibleNodes = nodes.slice(offset, offset + windowSize);
   return block(
+    line("Execution Trace", { color: "cyan", bold: true }),
     line(
-      `active ${model.roleCalls.counts.active} waiting ${model.roleCalls.counts.waiting} pending ${model.roleCalls.counts.pending} stop ${model.roleCalls.loop.stopReason}`,
+      `legacy RoleCall evidence | active ${model.roleCalls.counts.active} waiting ${model.roleCalls.counts.waiting} pending ${model.roleCalls.counts.pending} stop ${model.roleCalls.loop.stopReason}`,
       { dimColor: true }
     ),
     ...visibleNodes.map((node, index) => {
@@ -3347,7 +3349,7 @@ function HelpPane(): React.ReactElement {
   return h(
     Pane,
     { title: "Help" },
-    line("tabs: Tab focus  W work  G graph  R runs  V review  T tasks  M memory  E team"),
+    line("tabs: Tab focus  W work  G trace  R runs  V review  T tasks  M memory  E team"),
     line("move: Up/Down or j/k  detail: Enter/o  folds: Space/> toggle  < close  za toggle  O open"),
     line("commands: : palette  / palette  /use <target>  /clear session"),
     line("/search [text]  /timeline or L  /notify on|off  /team  /runs  /review"),
@@ -3375,6 +3377,7 @@ function paletteItems(model: TuiCurrentContextModel, state: TuiInkState): Palett
   );
   return [
     { kind: "focus", label: "Open Work", focus: "work" },
+    { kind: "focus", label: "Open Execution Trace", focus: "graph" },
     { kind: "focus", label: "Open Runs", focus: "runs" },
     { kind: "focus", label: "Open Review", focus: "review" },
     { kind: "focus", label: "Open Team", focus: "team" },
@@ -3687,7 +3690,7 @@ function slashFocus(command: string): TuiInkFocus {
 
 function focusLabelForSlash(command: string): string {
   const focus = slashFocus(command);
-  return `${focus[0]?.toUpperCase() ?? ""}${focus.slice(1)}`;
+  return focusDisplayLabel(focus);
 }
 
 interface SlashCompletion {

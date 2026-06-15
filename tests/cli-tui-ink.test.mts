@@ -646,6 +646,56 @@ describe("Ink TUI renderer", () => {
     expect(new Set(lineCounts).size).toBe(1);
   });
 
+  it("labels the current RoleCall graph as Execution Trace compatibility evidence", () => {
+    const model = {
+      ...baseModel,
+      roleCalls: {
+        ...baseModel.roleCalls,
+        nodes: [
+          {
+            id: "call_trace",
+            threadId: "thread_1",
+            callerRole: "engineer",
+            calleeRole: "reviewer",
+            task: "Review execution trace copy.",
+            status: "running",
+            statusLabel: "running",
+            priority: "normal",
+            depth: 0,
+            linkedRunId: "run_27984312-fc9a-46bf-9ccf-c06997187091",
+            createdAt: "2026-05-29T12:00:00.000Z",
+            hidden: false,
+            evidence: {}
+          }
+        ],
+        counts: {
+          ...baseModel.roleCalls.counts,
+          total: 1,
+          visible: 1,
+          active: 1
+        },
+        loop: {
+          ...baseModel.roleCalls.loop,
+          stopReason: "pending_role_calls",
+          pendingRoleCallIds: ["call_trace"]
+        }
+      }
+    };
+    const output = renderToString(
+      React.createElement(TuiInkFrame, {
+        model,
+        state: { ...createInitialInkState(), focus: "graph" },
+        terminal: { columns: 120, rows: 28 }
+      }),
+      { columns: 120 }
+    );
+
+    expect(output).toContain("Execution Trace");
+    expect(output).toContain("legacy RoleCall evidence");
+    expect(output).toContain("@engineer -> @reviewer");
+    expect(output).toContain("Review execution trace");
+  });
+
   it("keeps slash completion suggestions inside the terminal row budget", () => {
     const terminal = { columns: 120, rows: 28 };
     const output = renderToString(
@@ -3479,7 +3529,7 @@ describe("Ink TUI renderer", () => {
     instance.stdin.write("\t");
     await new Promise((resolve) => setTimeout(resolve, 25));
 
-    expect(instance.lastFrame()).toContain("> Graph");
+    expect(instance.lastFrame()).toContain("> Trace");
     expect(instance.lastFrame()).toContain("> draft");
     instance.unmount();
   });

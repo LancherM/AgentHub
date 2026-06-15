@@ -44,9 +44,13 @@ signals, and the next action without exposing raw logs or full patches. Compact
 run stage/latest summaries use the same TUI presentation filter as active-run
 boxes, so internal setup or Codex diagnostic lines remain in raw evidence rather
 than the operator-facing summary.
-The RoleCall graph shows bounded loop state, including iteration count,
-pending/waiting/active counts, convergence reason, max-iteration stops,
-blocking-risk stops, and waiting-for-approval or waiting-for-context stops.
+The Execution Trace focus currently shows the legacy RoleCall evidence path:
+bounded loop state, including iteration count, pending/waiting/active counts,
+convergence reason, max-iteration stops, blocking-risk stops, and
+waiting-for-approval or waiting-for-context stops. Tasks that predate
+PlanGraph evidence, or tasks that have not yet emitted RoleCalls, remain
+inspectable through this compatibility trace instead of showing an empty future
+graph.
 Continuation helpers prepare an explicit composer prompt; they do not continue
 work in the background.
 Review decisions can be recorded with `agent-hub reviews accept|reject` or the
@@ -179,7 +183,7 @@ alter run behavior, or invoke external services. Startup splash is explicit:
 `--splash` prints a short prelude before the interactive Ink frame, so the live
 frame does not need a delayed splash-removal repaint; `--no-splash` suppresses
 it.
-The persistent side navigation keeps Work, Graph, Runs, Review, Tasks, Memory,
+The persistent side navigation keeps Work, Trace, Runs, Review, Tasks, Memory,
 Team, and Help one key away at normal and wide widths. Tab and Shift+Tab follow
 that same visible order, so keyboard focus matches the side navigation. The
 framed Workbench columns keep a terminal-derived height across focus switches.
@@ -250,7 +254,7 @@ status or structured tool durations; those remain unavailable until adapters
 persist them as structured evidence.
 The TUI composer is prompt-first while editing: printable lowercase keys append
 to the prompt from any focus, uppercase tab shortcuts switch
-Work/Graph/Runs/Review/Tasks/Memory/Team, `/team` opens the Team roles view
+Work/Trace/Runs/Review/Tasks/Memory/Team, `/team` opens the Team roles view
 without submitting a prompt, `Enter` submits non-command prompts when a
 submission callback is available, `Esc` clears the in-progress prompt, and
 empty-composer `Enter` does not switch panes. `Tab` remains available for focus
@@ -326,10 +330,10 @@ TaskRunner persists run events as they are produced, so running boxes can show
 live progress from the local evidence store instead of waiting for final run
 completion. The conversation can scroll back by
 rendered line from Work focus, Runs and Tasks panes expand on taller terminals,
-uppercase focus keys switch Work/Graph/Runs/Review/Tasks/Memory/Team when the
+uppercase focus keys switch Work/Trace/Runs/Review/Tasks/Memory/Team when the
 composer is empty, and the Review reject shortcut is uppercase `R` so
 vim-style `j` remains navigation rather than an audit write.
-When the graph has no selected RoleCall, the TUI command hint and command
+When the trace has no selected RoleCall, the TUI command hint and command
 palette surface `agent-hub team roles list --project-id <project-id>` as the
 next useful role command; `/team` is the in-TUI shortcut for viewing that list
 directly.
@@ -496,7 +500,8 @@ caller can reach through that line-start `delegate` protocol, so custom roles
 with other intent types are not shown as shorthand-callable.
 
 PlanGraph and ExecutionTraceGraph are the planned next product layer for the
-Graph surface. Today Graph is driven by RoleCall evidence. The proposed design
+Execution Trace surface. Today Execution Trace is driven by legacy RoleCall
+evidence. The proposed design
 adds a planner node that turns the TaskBrief into a `PlanGraph`, schedules
 executable PlanNodes as primary TaskRuns, treats RoleCall as a runtime tool
 event that can create dynamic trace nodes, and derives `ExecutionTraceGraph`
@@ -522,8 +527,10 @@ The current CLI exposes these command groups:
   `threads list`, `threads show`, `rooms list`, `rooms create`, `rooms use`,
   `rooms send`, and `rooms timeline`.
 - Terminal workbench: `tui` opens a keyboard-first read-only view over the
-  current thread or room context, with focus modes for work, RoleCalls, runs,
-  review, tasks, memory, and help.
+  current thread or room context, with focus modes for work, execution trace,
+  runs, review, tasks, memory, and help. The trace focus uses existing
+  RoleCall evidence as the legacy compatibility path until PlanGraph-backed
+  trace projections are implemented.
 - Team roles: `team roles list`, `team roles show`, `team roles save`, and
   `team roles executor`. Saved roles can reference default skills with
   `--skill [scope:]id`, and custom RoleCall fan-out is configured with
@@ -758,5 +765,5 @@ direction; this document describes the current product state. The
 conversation-terminal TUI roadmap now records the
 implemented Work-view direction and remaining hardening guidance: the current
 TUI keeps the Ink/local read-model boundary while presenting a
-conversation-first Work surface, moving Runs, Review, Graph, Tasks, and Memory
+conversation-first Work surface, moving Runs, Review, Trace, Tasks, and Memory
 into explicit auxiliary tabs, and keeping Team behind slash-command access.

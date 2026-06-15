@@ -2536,7 +2536,7 @@ function roleCallSelectionDetail(call: TuiRoleCallNodeSummary): TuiSelectionDeta
     ],
     commands,
     actions: [
-      { key: "G", label: "Open Graph", kind: "focus" },
+      { key: "G", label: "Open Execution Trace", kind: "focus" },
       ...detailActions(commands)
     ]
   };

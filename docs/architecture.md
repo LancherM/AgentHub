@@ -433,6 +433,12 @@ RoleCallEvents, RoleTodos, verification rows, risk reports, review artifacts,
 run metadata, RoleCall tool events, and plan/trace links instead of asking an
 LLM to reconstruct what happened.
 
+Until PlanGraph persistence lands, the TUI's Execution Trace surface is a
+compatibility projection over the existing RoleCall summary. Legacy tasks with
+runs or RoleCalls but no PlanGraph must stay readable through that path, and
+the renderer should avoid presenting RoleCalls as the complete future graph
+model.
+
 This boundary should preserve the current TaskRunner and RoleCall ownership:
 
 - TaskRunner remains the only execution boundary for adapters and accepted
@@ -450,7 +456,7 @@ This boundary should preserve the current TaskRunner and RoleCall ownership:
   trace nodes without mutating the original PlanGraph.
 - Plan amendments should create a new graph version rather than mutating old
   plan evidence in place.
-- TUI and desktop Graph views should render Plan, Trace, and Overlay modes from
+- TUI and desktop graph views should render Plan, Trace, and Overlay modes from
   read models. Renderer code must not query SQLite or infer execution state
   outside core/main-process services.
 
@@ -718,7 +724,7 @@ metadata; no executor backend, database table, daemon, or desktop behavior is
 added for the TUI.
 Terminal polish is also contained in the CLI renderer. It compacts identifiers,
 renders the Work view as a conversation flow plus bounded active-run boxes,
-moves Work/Graph/Runs/Review/Tasks/Memory/Team/Help into the persistent side
+moves Work/Trace/Runs/Review/Tasks/Memory/Team/Help into the persistent side
 navigation when width allows, keeps Tab and Shift+Tab aligned to that visible
 navigation order, renders a single reference-aligned hotkey band
 and focus-specific status band
@@ -851,7 +857,7 @@ test IO object omits stdin. This keeps `agent-hub tui` interactive in a real
 terminal while preserving deterministic `--once` and non-TTY smoke renders.
 Composer editing is handled in the Ink component state before shortcut
 dispatch: printable lowercase keys update the composer from any focus,
-uppercase tab shortcuts switch Work/Graph/Runs/Review/Tasks/Memory/Team,
+uppercase tab shortcuts switch Work/Trace/Runs/Review/Tasks/Memory/Team,
 `/team` clears the composer and switches to the Team view, slash-only `/` opens
 the palette, `Enter` submits other non-empty composer text or executes a slash
 command, empty-composer `Enter` opens selected detail, `Esc` clears composer
@@ -937,7 +943,7 @@ The Work-view conversation-terminal architecture is documented in
 `docs/tui-conversation-terminal-roadmap.md`. It extends the same core read
 model with conversation and active-run projections, then keeps the Ink Work
 surface scoped to `ConversationFlow` and `ActiveRunBox` components. Auxiliary
-Runs, Review, Graph, Tasks, Memory, Help, Palette, and the slash-command Team
+Runs, Review, Trace, Tasks, Memory, Help, Palette, and the slash-command Team
 pane continue to use the existing local evidence and callback boundaries.
 The follow-on TUI optimization plan is documented in
 `docs/tui-optimization-roadmap.md`. It remains renderer/read-model work inside
