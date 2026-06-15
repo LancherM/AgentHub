@@ -497,12 +497,13 @@ with other intent types are not shown as shorthand-callable.
 
 PlanGraph and ExecutionTraceGraph are the planned next product layer for the
 Graph surface. Today Graph is driven by RoleCall evidence. The proposed design
-adds a pre-execution `PlanGraph` generated from the TaskBrief by a special
-local `@planner` role, then derives `ExecutionTraceGraph` deterministically from
-persisted runs, RoleCalls, events, verification, risk, diffs, artifacts, and
-deviations. This keeps the expected workflow separate from actual execution
-evidence while preserving RoleCalls as the dynamic delegation mechanism. The
-full product contract is tracked in
+adds a planner node that turns the TaskBrief into a `PlanGraph`, schedules
+executable PlanNodes as primary TaskRuns, treats RoleCall as a runtime tool
+event that can create dynamic trace nodes, and derives `ExecutionTraceGraph`
+deterministically as an overlay of the original plan plus persisted runtime
+evidence. This keeps the expected workflow separate from actual execution while
+preserving RoleCalls as the dynamic delegation mechanism. The full product
+contract is tracked in
 `docs/plan-graph-execution-trace-product.md`.
 
 ## CLI Surface

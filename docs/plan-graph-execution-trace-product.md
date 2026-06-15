@@ -6,11 +6,22 @@ shipped runtime path yet.
 
 ## Summary
 
-Agent Hub should split the Graph concept into two related views:
+Agent Hub models graph execution through a three-stage lifecycle:
 
-- `PlanGraph`: the expected workflow generated before execution starts.
-- `ExecutionTraceGraph`: the actual execution evidence projected from runs,
-  RoleCalls, events, verification, risk, diffs, and artifacts.
+1. A planner node runs from the `TaskBrief` and produces the initial graph.
+2. The resulting `PlanGraph` schedules planned execution nodes as primary
+   TaskRuns.
+3. Runtime events expand the trace through TaskRuns, RoleCall tool events,
+   verification, risk, diffs, artifacts, and deviations.
+
+Agent Hub exposes two graph layers through that lifecycle:
+
+- `PlanGraph`: a planner-produced executable DAG. It includes the planner node
+  itself and the planned execution nodes that should be scheduled as primary
+  runs.
+- `ExecutionTraceGraph`: the runtime-expanded graph. It overlays the original
+  PlanGraph with actual TaskRuns, RoleCall tool events, dynamically created
+  trace nodes, verification, risk, diffs, artifacts, and deviations.
 
 The current implementation already has most execution evidence primitives:
 `TaskBrief`, `TaskRun`, `RunEvent`, `RunArtifact`, RoleCall records,
@@ -19,14 +30,19 @@ TUI read model that exposes a RoleCall graph summary. The missing product layer
 is an explicit plan contract that is created before the first execution role
 runs and then linked to actual execution evidence.
 
+The planner creates the initial graph; each planned execution node is scheduled
+as a run; RoleCall is treated as a runtime tool event that may add dynamic
+nodes to the execution trace without rewriting the original PlanGraph.
+
 The intended flow is:
 
 ```text
 TaskBrief
-  -> @planner PlanGraph
-  -> role execution constrained by active plan nodes
-  -> RoleCalls and runs when execution expands
-  -> ExecutionTraceGraph projected from persisted evidence
+  -> PlannerNode run
+  -> PlanGraph
+       -> planned execution nodes scheduled as primary TaskRuns
+       -> RoleCall tool events may create dynamic trace nodes
+  -> ExecutionTraceGraph = PlanGraph + runtime expansions + persisted evidence
 ```
 
 ## Problem
@@ -37,7 +53,7 @@ delegates to another, but it cannot answer these questions:
 - What was supposed to happen before execution started?
 - Which step is the current role working on?
 - Did the implementation follow the intended verification and review path?
-- Which RoleCalls were planned, which were ad hoc, and which changed the plan?
+- Which planned node emitted a runtime RoleCall tool event?
 - Where did execution deviate from the original task brief?
 
 Without a first-class plan graph, the product can only display a trace after
@@ -70,15 +86,18 @@ contract before them and a broader execution projection above them.
 ## Product Goals
 
 1. Generate a `PlanGraph` before task execution starts.
-2. Treat the planner as a special local `@planner` role in product semantics.
-3. Require executable roles to receive the active PlanGraph and current plan
+2. Treat the planner as a special local `@planner` role represented by a
+   planner node inside the graph.
+3. Schedule executable PlanNodes as primary TaskRuns.
+4. Treat RoleCall as a runtime tool event emitted by a running PlanNode.
+5. Require executable roles to receive the active PlanGraph and current plan
    node in runtime injection.
-4. Link task runs, RoleCalls, artifacts, verification results, and risk results
+6. Link task runs, RoleCalls, artifacts, verification results, and risk results
    back to plan nodes where possible.
-5. Show planned workflow and actual execution separately, with an overlay view
+7. Show planned workflow and actual execution separately, with an overlay view
    for deviations.
-6. Keep all behavior local-first and compatible with isolated worktrees.
-7. Preserve the existing RoleCall model as the dynamic delegation mechanism
+8. Keep all behavior local-first and compatible with isolated worktrees.
+9. Preserve the existing RoleCall model as the dynamic delegation mechanism
    inside the execution trace.
 
 ## Non-Goals
@@ -98,7 +117,8 @@ contract before them and a broader execution projection above them.
 ### PlanGraph
 
 `PlanGraph` is the expected workflow for one task. It is generated from the
-current `TaskBrief` before the first execution role runs.
+current `TaskBrief` by a planner node before planned execution nodes are
+scheduled.
 
 The graph is product-owned local state. It should be persisted in SQLite and
 available to CLI, TUI, desktop, and review commands.
@@ -112,6 +132,7 @@ interface PlanGraph {
   taskBriefArtifactId?: string;
   version: number;
   status: "active" | "superseded" | "failed";
+  plannerNodeId: string;
   createdByRole: "planner";
   createdAt: string;
   nodes: PlanNode[];
@@ -119,14 +140,33 @@ interface PlanGraph {
 }
 ```
 
+The planner node should be part of `nodes`, not only metadata on the graph:
+
+```ts
+interface PlannerNode extends PlanNode {
+  kind: "planner";
+  role: "planner";
+  outputPlanGraphId: string;
+}
+```
+
+This makes planner input, output, status, failures, and retries inspectable in
+the same audit model as the rest of the graph.
+
 ### PlanNode
 
-A `PlanNode` is a planned unit of work. It is not a run. A run may execute one
-or more plan nodes, and one plan node may produce multiple runs if RoleCalls or
-retries happen.
+A `PlanNode` is a planned executable slot in the PlanGraph. It is not the
+persisted TaskRun record itself, but each executable PlanNode is expected to
+produce one primary TaskRun when scheduled.
+
+A PlanNode describes which role should execute the node, what instructions it
+receives, what output is expected, and what acceptance criteria must be met.
+Runtime RoleCalls may create additional dynamic trace nodes linked back to the
+source PlanNode, but they do not rewrite the original PlanGraph.
 
 Suggested node kinds:
 
+- `planner`: produce the executable DAG from the TaskBrief.
 - `intake`: understand the user request and constraints.
 - `plan`: derive implementation and verification sequence.
 - `research`: inspect code, docs, or evidence.
@@ -148,8 +188,22 @@ interface PlanNode {
   acceptanceCriteria: string[];
   riskLevel: "low" | "medium" | "high";
   required: boolean;
+  execution: {
+    mode: "primary_run" | "system" | "manual" | "non_executable";
+    expectedAdapter?: string;
+    worktreePolicy?: "isolated";
+  };
 }
 ```
+
+Execution modes distinguish scheduled work from display or governance nodes:
+
+- `primary_run`: the node should create a primary TaskRun when scheduled.
+- `system`: Agent Hub executes the node through a local system path, such as a
+  deterministic MVP planner.
+- `manual`: the node waits for explicit human input or confirmation.
+- `non_executable`: the node represents evidence, artifacts, or summary state
+  and is not scheduled directly.
 
 ### PlanEdge
 
@@ -176,6 +230,11 @@ interface PlanEdge {
 `ExecutionTraceGraph` is not generated directly by an agent. It is a
 deterministic projection from persisted local evidence.
 
+ExecutionTraceGraph is the runtime overlay of a PlanGraph. It contains all
+PlanGraph nodes and edges, then adds runtime evidence and dynamic trace nodes
+created by TaskRuns, RoleCall tool events, verification, risk analysis, diffs,
+artifacts, memory proposals, and deviations.
+
 It should include:
 
 - plan nodes from the active PlanGraph;
@@ -185,8 +244,24 @@ It should include:
 - memory proposal events;
 - deviations between planned workflow and actual execution.
 
-`ExecutionTraceGraph` is the successor name for the current RoleCall graph
-surface, but it should remain broader than RoleCalls.
+Minimum projection shape:
+
+```ts
+interface ExecutionTraceGraph {
+  taskId: string;
+  planGraphId: string;
+  planGraphVersion: number;
+  baseNodes: PlanNode[];
+  baseEdges: PlanEdge[];
+  dynamicNodes: TraceNode[];
+  dynamicEdges: TraceEdge[];
+  evidence: TraceEvidence[];
+  deviations: Deviation[];
+}
+```
+
+The current RoleCall graph surface should evolve into an ExecutionTrace view,
+but ExecutionTraceGraph remains broader than RoleCalls.
 
 ### Deviation
 
@@ -204,8 +279,9 @@ Deviations are evidence, not necessarily errors.
 
 ## Planner Role
 
-The product should expose `@planner` as a special local role that creates the
-PlanGraph from the TaskBrief.
+The product should expose `@planner` as a special local role represented by a
+planner node. The planner node creates the PlanGraph from the TaskBrief and is
+the root of the graph lifecycle rather than an external pre-step.
 
 MVP behavior can use a deterministic local planner implementation while still
 recording the product role as `planner`. This keeps tests stable and avoids
@@ -234,11 +310,16 @@ Planner constraints:
 When a task run starts:
 
 1. TaskRunner builds the context pack and TaskBrief as it does today.
-2. Agent Hub creates or retrieves the active PlanGraph for the task.
-3. The PlanGraph is validated and persisted.
-4. Runtime injection includes the PlanGraph summary, current plan node, allowed
-   next nodes, and plan-following rules.
-5. The selected role starts work inside the isolated worktree.
+2. Agent Hub schedules the PlannerNode run or deterministic system planner.
+3. The planner output becomes a PlanGraph with `plannerNodeId`, planned
+   execution nodes, and plan edges.
+4. The PlanGraph is validated and persisted.
+5. Executable PlanNodes are scheduled as primary TaskRuns according to graph
+   edges and policy gates.
+6. Runtime injection for each scheduled PlanNode includes the PlanGraph summary,
+   current plan node, allowed next nodes, and plan-following rules.
+7. The selected role starts work inside the isolated worktree for its scheduled
+   primary TaskRun.
 
 For direct agent runs without a role, Agent Hub may assign a default execution
 role for plan binding, but it should not invent a collaboration role unless the
@@ -246,7 +327,8 @@ user selected one.
 
 ### Executing A Plan Node
 
-Each execution role receives:
+Each scheduled executable PlanNode produces a primary TaskRun. The execution
+role for that run receives:
 
 - task brief;
 - selected runtime context;
@@ -271,7 +353,26 @@ interface PlanNodeResult {
 }
 ```
 
-### Creating A RoleCall During Execution
+### RoleCall As Runtime Tool Event
+
+A RoleCall is a runtime tool event emitted by a running PlanNode. It is not a
+PlanGraph edge and does not mutate the original PlanGraph. If accepted by
+policy, it creates one or more dynamic trace nodes in the ExecutionTraceGraph.
+
+Suggested event shape:
+
+```ts
+interface RoleCallToolEvent {
+  id: string;
+  planGraphId: string;
+  sourcePlanNodeId: string;
+  sourceRunId: string;
+  targetRole: string;
+  task: string;
+  status: "requested" | "accepted" | "rejected" | "completed" | "failed";
+  createdTraceNodeIds: string[];
+}
+```
 
 If a role decides it needs another role:
 
@@ -281,9 +382,11 @@ If a role decides it needs another role:
 4. Policy validation still checks delegation permissions, depth, duplicate
    calls, dangerous commands, executor availability, approval gates, and todo
    capacity.
-5. The callee run receives the same PlanGraph plus a role-specific current
-   plan node or an ad hoc trace node linked to the source plan node.
-6. The ExecutionTraceGraph shows both the planned path and the dynamic
+5. The accepted event creates one or more dynamic trace nodes linked to the
+   source plan node.
+6. The callee run receives the same PlanGraph plus the dynamic trace node or
+   a role-specific planned node when one exists.
+7. The ExecutionTraceGraph shows both the planned path and the dynamic
    delegation path.
 
 Unplanned RoleCalls are allowed when policy permits them, but they should be
@@ -386,7 +489,10 @@ Suggested tables:
 - `plan_graphs`
 - `plan_graph_nodes`
 - `plan_graph_edges`
-- `execution_trace_links`
+- `trace_nodes`
+- `trace_edges`
+- `trace_evidence_links`
+- `role_call_tool_events`
 
 `ExecutionTraceGraph` itself can remain a read model/projection instead of a
 stored graph snapshot. Persist the source evidence and stable links; derive the
@@ -419,7 +525,7 @@ Plan validation should reuse existing safety policy concepts:
 
 - Add shared PlanGraph/PlanNode/PlanEdge types and validators.
 - Add deterministic local planner output for common task shapes.
-- Persist PlanGraph records.
+- Persist PlanGraph records, including the planner node.
 - Add read-only CLI inspection.
 - Keep TUI rendering unchanged except for copy that distinguishes planned graph
   from existing RoleCall trace.
@@ -428,7 +534,9 @@ Plan validation should reuse existing safety policy concepts:
 
 - Include active PlanGraph and current plan node in role-backed runtime
   injection.
+- Schedule executable PlanNodes as primary TaskRuns.
 - Record `planGraphId` and `planNodeId` on run metadata and RoleCalls.
+- Record RoleCalls as runtime tool events with dynamic trace-node links.
 - Add plan-node result metadata where adapters provide structured output.
 - Build ExecutionTraceGraph projection from runs, RoleCalls, events, and
   artifacts.
@@ -453,9 +561,17 @@ Plan validation should reuse existing safety policy concepts:
 The first implementation is product-complete when:
 
 - a task has an active PlanGraph before the first implementation run starts;
+- the planner itself is represented as a graph node with inspectable input,
+  output, status, and failure evidence;
+- each executable PlanNode can be scheduled as a primary TaskRun, and its run
+  result is linked back to that node;
 - the run prompt includes the active plan and current node;
 - RoleCalls created during execution link back to the source plan node;
+- RoleCall is recorded as a tool event and produces dynamic trace nodes rather
+  than mutating the original PlanGraph;
 - the trace can be derived without asking an LLM to reconstruct it;
+- ExecutionTraceGraph can be rendered as an overlay of PlanGraph plus dynamic
+  runtime nodes and evidence;
 - Graph can show a task with no RoleCalls by displaying its PlanGraph;
 - Graph can show a task with RoleCalls by displaying ExecutionTraceGraph;
 - unplanned RoleCalls or skipped nodes are marked as deviations;
