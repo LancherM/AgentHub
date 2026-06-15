@@ -510,6 +510,11 @@ evidence. This keeps the expected workflow separate from actual execution while
 preserving RoleCalls as the dynamic delegation mechanism. The full product
 contract is tracked in
 `docs/plan-graph-execution-trace-product.md`.
+The shared domain contract and core validators for `PlanGraph`,
+`PlanNode`, `PlanEdge`, trace nodes, evidence links, deviations, and
+`ExecutionTraceGraph` are implemented. Persistence, deterministic planner
+creation, primary PlanNode scheduling, RoleCall tool-event links, and
+mode-aware TUI/Desktop graph rendering are not implemented yet.
 
 ## CLI Surface
 

@@ -439,6 +439,14 @@ runs or RoleCalls but no PlanGraph must stay readable through that path, and
 the renderer should avoid presenting RoleCalls as the complete future graph
 model.
 
+The shared `PlanGraph` and `ExecutionTraceGraph` DTO contracts now live in
+`packages/shared`, and `packages/core` validates planner-rooted DAG structure,
+edge references, `primary_run` acceptance criteria, safe execution modes,
+stable planner/node id shapes, trace edge/evidence references, deviations, and
+prohibited automatic side effects such as push, merge, PR creation, memory
+approval, repository export, or repository-root context-file writes. These
+validators do not persist graphs, schedule runs, or alter TaskRunner behavior.
+
 This boundary should preserve the current TaskRunner and RoleCall ownership:
 
 - TaskRunner remains the only execution boundary for adapters and accepted

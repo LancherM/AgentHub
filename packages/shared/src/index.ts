@@ -19,6 +19,7 @@ import {
 } from "./workgroup-packs";
 
 export * from "./process-environment";
+export * from "./plan-graphs";
 export * from "./role-calls";
 export type {
   PresetWorkgroupRoleHandle,
