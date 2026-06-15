@@ -901,7 +901,7 @@ async function summarizeConversation(
         type: "user_message",
         timestamp: message.createdAt,
         author: messageAuthor(message),
-        content: truncate(message.content, defaultLimits.contentChars),
+        content: message.content,
         agent: message.agentKind,
         runId: message.runId,
         statusLabel: message.status,
@@ -3141,16 +3141,14 @@ function detailActions(commands: string[]): TuiDetailAction[] {
 }
 
 function detailLines(value: string[] | string | undefined): string[] {
-  if (Array.isArray(value)) {
-    return value.length > 0 ? value.map((line) => truncate(line, defaultLimits.contentChars)) : ["(empty)"];
-  }
-  if (!value) {
-    return ["(empty)"];
-  }
-  const lines = value
-    .split(/\r?\n/)
-    .map((line) => truncate(line.trim(), defaultLimits.contentChars))
-    .filter(Boolean);
+  const sourceLines = Array.isArray(value)
+    ? value
+    : typeof value === "string"
+      ? value.split(/\r?\n/)
+      : [];
+  const lines = sourceLines
+    .map((line) => line.replace(/\r/g, "").trimEnd())
+    .filter((line) => line.trim().length > 0);
   return lines.length > 0 ? lines : ["(empty)"];
 }
 

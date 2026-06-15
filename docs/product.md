@@ -120,12 +120,12 @@ agent output does not push earlier visible rows under the header. Conversation c
 keeps file paths underlined and blue with safe OSC 8 file links when the
 terminal supports them, shell-command lines bold, and fenced code blocks lightly
 highlighted for keywords, strings, and comments. Agent output content is not
-truncated; long lines wrap in the terminal surface using display-width-aware
-breaks so CJK/full-width text, Markdown links, paths, and inline code keep
-their visible tail instead of relying on Ink truncation. Conversation entries
-are separated by terminal divider lines, and gaps of five minutes or more add a
-compact timeline anchor so long Work histories remain scannable without
-collapsing agent output.
+truncated before it reaches the Work block renderer; long lines wrap in the
+terminal surface using display-width-aware breaks so CJK/full-width text,
+Markdown links, paths, and inline code keep their visible tail instead of
+relying on Ink truncation. Conversation entries are separated by terminal
+divider lines, and gaps of five minutes or more add a compact timeline anchor
+so long Work histories remain scannable without collapsing agent output.
 Active run boxes use rounded frames that grow to fit wrapped visible output.
 Titles show the compact run identity, role/agent handle, a static running
 marker, running status, elapsed time, and live token usage when the run emits
@@ -227,11 +227,12 @@ stream now uses a dedicated block-list renderer rather than the older
 ConversationFlow lines. It shows a `Work - Conversation` title row, time
 gutter, speaker column, block body, status token column, selected-block frame,
 inline folded affordances for metadata/tools/files/commands/evidence/diffs, and
-bounded active-run output tails while keeping completed agent output
-scrollable. Quick replies and dense pending-review collapse remain part of the
-Work surface. The detail pane shows message text, inferred tools, commands,
-file refs, evidence, inline diff summaries, and fix snippets only when those
-fields come from persisted read-model evidence. The right detail panel now uses
+bounded active-run output tails while keeping active and completed agent output
+available for renderer wrapping instead of read-model ellipsis. Quick replies
+and dense pending-review collapse remain part of the Work surface. The detail
+pane shows message text, inferred tools, commands, file refs, evidence, inline
+diff summaries, and fix snippets only when those fields come from persisted
+read-model evidence. The right detail panel now uses
 view-specific titles (`Block Detail`, `Live Block Detail`, `Final Report
 Detail`, `Proposal Detail`, and `Role Profile`), section dividers, stable
 section ordering, a renderer-owned PageUp/PageDown scroll window, and a
