@@ -646,6 +646,22 @@ describe("Ink TUI renderer", () => {
     expect(new Set(lineCounts).size).toBe(1);
   });
 
+  it("keeps slash completion suggestions inside the terminal row budget", () => {
+    const terminal = { columns: 120, rows: 28 };
+    const output = renderToString(
+      React.createElement(TuiInkFrame, {
+        model: baseModel,
+        state: createInitialInkState("/mem"),
+        terminal
+      }),
+      { columns: terminal.columns }
+    );
+    const lines = output.split("\n");
+
+    expect(output).toContain("commands /memory");
+    expect(lines.length).toBeLessThanOrEqual(terminal.rows);
+  });
+
   it("tabs through panes in the same order as the visible navigation", () => {
     let state = createInitialInkState();
 
