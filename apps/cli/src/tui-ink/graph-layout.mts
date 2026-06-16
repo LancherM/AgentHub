@@ -206,9 +206,7 @@ export function renderGraphWorkbench(
   const rows = layout.viewport.narrow
     ? narrowGraphRows(layout, options.columns, options.labels)
     : dagRows(layout, options);
-  const miniMap = layout.nodes.length === 0
-    ? "mini-map empty"
-    : `mini-map ${layout.selectedIndex + 1}/${layout.nodes.length} r${layout.viewport.startRank}-${layout.viewport.endRank} ${layout.nodes.map((node) => statusGlyph(node.status)).join("")}`;
+  const miniMap = structuralMiniMap(layout, options);
   return {
     title: "Graph - Workflow DAG",
     toolbar: toolbarText(trace, options, layout.nodes.length, layout.viewport.narrow, layout.selectedId),
@@ -221,6 +219,59 @@ export function renderGraphWorkbench(
     miniMap,
     itemCount: layout.nodes.length
   };
+}
+
+function structuralMiniMap(
+  layout: GraphLayoutModel,
+  options: GraphWorkbenchOptions
+): string {
+  if (layout.nodes.length === 0) {
+    return "mini-map empty";
+  }
+  const ranks = [...new Set(layout.nodes.map((node) => node.rank))].sort((a, b) => a - b);
+  const maxRank = ranks[ranks.length - 1] ?? 0;
+  const selectedRank = layout.nodes.find((node) => node.selected)?.rank;
+  const viewportRankSet = new Set(
+    layout.nodes.filter((node) => node.viewportIncluded).map((node) => node.rank)
+  );
+  const viewport = ranks.map((rank) => {
+    if (rank === selectedRank) {
+      return "*";
+    }
+    return viewportRankSet.has(rank) ? "#" : ".";
+  }).join("");
+  const occupancy = ranks.map((rank) => rankMiniMapCell(layout.nodes.filter((node) => node.rank === rank))).join("-");
+  const compact = `mini-map z${options.zoom} vp[${viewport}] ${occupancy}`;
+  const full = `mini-map z${options.zoom} r${layout.viewport.startRank}-${layout.viewport.endRank}/${maxRank} vp[${viewport}] lanes ${occupancy}`;
+  return truncateText(options.columns < 72 ? compact : full, options.columns);
+}
+
+function rankMiniMapCell(nodes: GraphLayoutNode[]): string {
+  if (nodes.length === 0) {
+    return ".";
+  }
+  const maxLane = nodes.reduce((max, node) => Math.max(max, node.lane), 0);
+  const laneLimit = Math.min(maxLane + 1, 3);
+  const laneGlyphs: string[] = [];
+  for (let lane = 0; lane < laneLimit; lane += 1) {
+    laneGlyphs.push(laneMiniMapGlyph(nodes.filter((node) => node.lane === lane)));
+  }
+  return `${laneGlyphs.join("")}${maxLane + 1 > laneLimit ? "+" : ""}`;
+}
+
+function laneMiniMapGlyph(nodes: GraphLayoutNode[]): string {
+  if (nodes.length === 0) {
+    return ".";
+  }
+  if (nodes.some((node) => node.selected)) {
+    return "*";
+  }
+  const hasPlan = nodes.some((node) => node.source === "plan");
+  const hasTrace = nodes.some((node) => node.source === "trace");
+  if (hasPlan && hasTrace) {
+    return "B";
+  }
+  return hasPlan ? "P" : "T";
 }
 
 function workbenchGraph(

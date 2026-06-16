@@ -47,21 +47,23 @@ than the operator-facing summary.
 The Graph focus now presents the current execution-trace projection as
 `Graph - Workflow DAG`: graph-backed tasks show bounded Overlay, Plan, and
 Trace modes with wide horizontal rank rows, connector rows, edge labels,
-selected-node details, real toolbar state, a mini-map, a legend, and bounded
-medium or narrow-terminal fallback. The terminal graph renderer uses a
+selected-node details, real toolbar state, a structural mini-map, a legend, and
+bounded medium or narrow-terminal fallback. The terminal graph renderer uses a
 deterministic local layout model so selection, rank/lane placement, grouping,
 percentage-like zoom density, label policy, viewport rank, and focus command
-behavior stay stable across renders. Grouped mode derives local subgraph
-containers for parallel, fallback, RoleCall, and comparison branches; collapsed
-groups render summary rows with node count, status, risk, and selected
-descendant state without mutating PlanGraph or trace evidence. `/graph focus
-<node-id>` selects a node and moves the local viewport around it without
-running agents or mutating task state. Selected graph-node details expose safe
-read-only commands for trace, run, RoleCall, and comparison evidence plus
-prepared focus, fold, and rerun-from-here prompts; none of these graph actions
-auto-run agents, apply code, merge, push, create PRs, or approve memory. Legacy
-tasks that predate PlanGraph evidence remain inspectable through the
-RoleCall/run compatibility trace instead of showing an empty future graph.
+behavior stay stable across renders. The mini-map shows symbolic rank/lane
+occupancy, selected-node position, current zoom density, and viewport coverage,
+and compresses or hides when the terminal cannot spare space. Grouped mode
+derives local subgraph containers for parallel, fallback, RoleCall, and
+comparison branches; collapsed groups render summary rows with node count,
+status, risk, and selected descendant state without mutating PlanGraph or trace
+evidence. `/graph focus <node-id>` selects a node and moves the local viewport
+around it without running agents or mutating task state. Selected graph-node
+details expose safe read-only commands for trace, run, RoleCall, and comparison
+evidence plus prepared focus, fold, and rerun-from-here prompts; none of these
+graph actions auto-run agents, apply code, merge, push, create PRs, or approve
+memory. Legacy tasks that predate PlanGraph evidence remain inspectable through
+the RoleCall/run compatibility trace instead of showing an empty future graph.
 Continuation helpers prepare an explicit composer prompt; they do not continue
 work in the background.
 Review decisions can be recorded with `agent-hub reviews accept|reject` or the
@@ -556,13 +558,13 @@ mislabeled as skipped. The read-only
 PlanGraph id. The terminal workbench Graph focus now presents this projection
 as `Graph - Workflow DAG`: Overlay, Plan, and Trace modes render bounded
 terminal node boxes, visible edge labels, selected-node highlighting, toolbar
-state for mode/labels/fold/zoom, a mini-map, a legend, and a compact fallback
-for narrow terminals while falling back to legacy RoleCall evidence for older
-tasks. Selected graph-node details synchronize with the same read model and
-show incoming links, outgoing links, evidence, deviations, and inspection
-commands. Remaining terminal graph fidelity work, including spatial rank
-layout, viewport/focus commands, subgraph containers, node actions, and visual
-QA fixtures, is tracked in `docs/plan-graph-tui-workflow-dag-roadmap.md`. The
+state for mode/labels/fold/zoom, a structural rank/lane mini-map with selected
+viewport state, a legend, and a compact fallback for narrow terminals while
+falling back to legacy RoleCall evidence for older tasks. Selected graph-node
+details synchronize with the same read model and show incoming links, outgoing
+links, evidence, deviations, and inspection commands. Remaining terminal graph
+fidelity work, including visual QA fixtures, is tracked in
+`docs/plan-graph-tui-workflow-dag-roadmap.md`. The
 desktop Workgroup Inspector exposes the same projection through a
 read-only Trace tab backed by Electron main-process IPC; the renderer displays
 plan nodes, runtime trace nodes, evidence counts, and deviations without

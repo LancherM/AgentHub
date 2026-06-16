@@ -2935,10 +2935,13 @@ function RoleCallsPane({
     const windowSize = roleCallWindowSize(terminal, detail);
     const offset = Math.min(state.scrollOffsets.roleCalls, Math.max(0, workbench.rows.length - windowSize));
     const visibleRows = workbench.rows.slice(offset, offset + windowSize);
+    const miniMapRows = detail || terminal.rows >= 20
+      ? [line(truncateText(workbench.miniMap, terminal.columns), { dimColor: true })]
+      : [];
     return block(
       line(workbench.title, { color: "cyan", bold: true }),
       line(truncateText(workbench.toolbar, terminal.columns), { dimColor: true }),
-      line(truncateText(workbench.miniMap, terminal.columns), { dimColor: true }),
+      ...miniMapRows,
       ...visibleRows.map((row) => {
         return line(`${row.selected ? "▌" : " "} ${row.text}`, {
           color: row.selected ? "green" : graphRowColor(row),

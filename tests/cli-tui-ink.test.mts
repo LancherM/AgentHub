@@ -656,6 +656,23 @@ function workflowDagTraceFixture(): ExecutionTraceGraph {
   };
 }
 
+function chainWorkflowDagTraceFixture(): ExecutionTraceGraph {
+  const trace = workflowDagTraceFixture();
+  return {
+    ...trace,
+    baseNodes: trace.baseNodes.filter((node) =>
+      ["user_req", "pm_plan", "codex_run", "compare_results"].includes(node.id)
+    ),
+    baseEdges: [
+      { from: "user_req", to: "pm_plan", type: "primary", label: "plan" },
+      { from: "pm_plan", to: "codex_run", type: "primary", label: "implement" },
+      { from: "codex_run", to: "compare_results", type: "primary", label: "review" }
+    ],
+    dynamicNodes: [],
+    dynamicEdges: []
+  };
+}
+
 function longWorkflowDagTraceFixture(): ExecutionTraceGraph {
   const trace = workflowDagTraceFixture();
   return {
@@ -1135,6 +1152,80 @@ describe("Ink TUI renderer", () => {
     expect(layout.viewport.includedNodeIds).toContain("best_result");
   });
 
+  it("renders a structural mini-map for linear Workflow DAG chains", () => {
+    const workbench = renderGraphWorkbench(chainWorkflowDagTraceFixture(), {
+      mode: "overlay",
+      columns: 118,
+      selectedIndex: 0,
+      layout: "ranked",
+      labels: "compact",
+      fold: "expanded",
+      zoom: "82%"
+    });
+
+    expect(workbench.miniMap).toContain("mini-map z82%");
+    expect(workbench.miniMap).toContain("vp[*###]");
+    expect(workbench.miniMap).toContain("lanes *-P-P-P");
+    expect(workbench.miniMap.length).toBeLessThanOrEqual(118);
+  });
+
+  it("renders branch occupancy in the Workflow DAG mini-map", () => {
+    const workbench = renderGraphWorkbench(workflowDagTraceFixture(), {
+      mode: "overlay",
+      columns: 154,
+      selectedIndex: 2,
+      layout: "ranked",
+      labels: "compact",
+      fold: "expanded",
+      zoom: "82%"
+    });
+
+    expect(workbench.miniMap).toContain("vp[##*##]");
+    expect(workbench.miniMap).toContain("lanes P-P-*P-PT-T");
+    expect(workbench.miniMap.length).toBeLessThanOrEqual(154);
+  });
+
+  it("moves the Workflow DAG mini-map selected viewport marker with focus", () => {
+    const first = renderGraphWorkbench(workflowDagTraceFixture(), {
+      mode: "overlay",
+      columns: 154,
+      selectedIndex: 0,
+      layout: "ranked",
+      labels: "compact",
+      fold: "expanded",
+      zoom: "82%"
+    });
+    const focused = renderGraphWorkbench(workflowDagTraceFixture(), {
+      mode: "overlay",
+      columns: 154,
+      selectedIndex: 4,
+      layout: "ranked",
+      labels: "compact",
+      fold: "expanded",
+      zoom: "82%"
+    });
+
+    expect(first.miniMap).toContain("vp[*####]");
+    expect(focused.miniMap).toContain("vp[###*#]");
+    expect(first.miniMap).not.toBe(focused.miniMap);
+  });
+
+  it("truncates the Workflow DAG mini-map safely in narrow terminals", () => {
+    const workbench = renderGraphWorkbench(longWorkflowDagTraceFixture(), {
+      mode: "overlay",
+      columns: 36,
+      selectedIndex: 6,
+      layout: "ranked",
+      labels: "compact",
+      fold: "expanded",
+      zoom: "67%",
+      viewportRank: 3
+    });
+
+    expect(workbench.miniMap).toContain("mini-map z67%");
+    expect(workbench.miniMap.length).toBeLessThanOrEqual(36);
+  });
+
   it("renders Plan/Trace/Overlay Workflow DAG modes", () => {
     const model = {
       ...baseModel,
@@ -1372,7 +1463,7 @@ describe("Ink TUI renderer", () => {
 
     expect(overlay).toContain("Graph - Workflow DAG");
     expect(overlay).toContain("mode overlay");
-    expect(overlay).toContain("mini-map 1/4");
+    expect(overlay).toContain("mini-map z82%");
     expect(overlay).toContain("P");
     expect(overlay).toContain("plan_node_imple");
     expect(overlay).toContain("plan_node_imple... -->");

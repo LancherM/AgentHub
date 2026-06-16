@@ -541,15 +541,16 @@ focus renders the `Graph - Workflow DAG` workbench from that read model only:
 `apps/cli/src/tui-ink/graph-layout.mts` derives a deterministic renderer-local
 layout model with node rank/lane, bounded width, connector anchors, group ids,
 selected/focused state, viewport inclusion, safe action descriptors, bounded
-wide spatial rank rows, connector rows, edge labels, mini-map, legend, and
-compact fallback rows from the `ExecutionTraceGraph` DTO, while
+wide spatial rank rows, connector rows, edge labels, structural mini-map,
+legend, and compact fallback rows from the `ExecutionTraceGraph` DTO, while
 `packages/core/src/tui-read-model.ts` supplies selected graph-node details for
 incoming links, outgoing links, evidence, deviations, and commands. The
 renderer owns percentage-like zoom density, label policy (`auto`, `compact`,
 `full`, `off`), local viewport rank, grouped subgraph containers, collapsed
-group ids, and `/graph focus <node-id>` state only; these controls select,
-frame, group, and collapse local graph nodes without querying SQLite, running
-agents, mutating PlanGraph/ExecutionTraceGraph records, or duplicating
+group ids, structural mini-map compression, and `/graph focus <node-id>` state
+only; these controls select, frame, group, collapse, and summarize local graph
+nodes without querying SQLite, running agents, mutating
+PlanGraph/ExecutionTraceGraph records, or duplicating
 TaskRunner/RoleCall orchestration. Graph-node detail actions are derived in
 `packages/core/src/tui-read-model.ts` when they depend on source ids: they add
 read-only trace/run/RoleCall/comparison commands and prepare-only focus, fold,
