@@ -2,7 +2,9 @@ import React from "../apps/cli/node_modules/react/index.js";
 import { renderToString } from "../apps/cli/node_modules/ink/build/index.js";
 import { render } from "../apps/cli/node_modules/ink-testing-library/build/index.js";
 import { describe, expect, it, vi } from "vitest";
+import type { ExecutionTraceGraph } from "@agent-hub/core";
 import { TuiInkApp, TuiInkFrame } from "../apps/cli/src/tui-ink/App.mts";
+import { buildGraphLayout, renderGraphWorkbench } from "../apps/cli/src/tui-ink/graph-layout.mts";
 import {
   createInitialInkState,
   reduceInkState,
@@ -538,6 +540,122 @@ const baseModel = {
   warnings: []
 };
 
+function workflowDagTraceFixture(): ExecutionTraceGraph {
+  return {
+    taskId: "task_1",
+    planGraphId: "plan_graph:task_1:v1",
+    planGraphVersion: 1,
+    baseNodes: [
+      {
+        id: "user_req",
+        kind: "intake",
+        role: "user",
+        title: "Capture request",
+        instructions: "Capture the request.",
+        acceptanceCriteria: ["Request is clear."],
+        riskLevel: "low",
+        required: true,
+        execution: { mode: "system" }
+      },
+      {
+        id: "pm_plan",
+        kind: "plan",
+        role: "planner",
+        title: "Plan workflow",
+        instructions: "Plan the workflow.",
+        acceptanceCriteria: ["Plan is inspectable."],
+        riskLevel: "low",
+        required: true,
+        execution: { mode: "system" }
+      },
+      {
+        id: "codex_run",
+        kind: "implement",
+        role: "codex",
+        title: "Codex implementation",
+        instructions: "Implement with Codex.",
+        acceptanceCriteria: ["Implementation exists."],
+        riskLevel: "medium",
+        required: true,
+        execution: {
+          mode: "primary_run",
+          expectedAdapter: "codex",
+          worktreePolicy: "isolated"
+        }
+      },
+      {
+        id: "claude_run",
+        kind: "implement",
+        role: "claude",
+        title: "Claude implementation",
+        instructions: "Implement with Claude.",
+        acceptanceCriteria: ["Implementation exists."],
+        riskLevel: "medium",
+        required: false,
+        execution: {
+          mode: "primary_run",
+          expectedAdapter: "claude",
+          worktreePolicy: "isolated"
+        }
+      },
+      {
+        id: "compare_results",
+        kind: "review",
+        role: "reviewer",
+        title: "Compare results",
+        instructions: "Compare the implementations.",
+        acceptanceCriteria: ["Comparison is recorded."],
+        riskLevel: "low",
+        required: true,
+        execution: { mode: "manual" }
+      }
+    ],
+    baseEdges: [
+      { from: "user_req", to: "pm_plan", type: "primary", label: "plan" },
+      { from: "pm_plan", to: "codex_run", type: "parallel", label: "codex" },
+      { from: "pm_plan", to: "claude_run", type: "parallel", label: "claude" },
+      { from: "codex_run", to: "compare_results", type: "primary", label: "candidate" },
+      { from: "claude_run", to: "compare_results", type: "primary", label: "candidate" }
+    ],
+    dynamicNodes: [
+      {
+        id: "trace_node:role_call:call_1",
+        planGraphId: "plan_graph:task_1:v1",
+        kind: "role_call",
+        title: "Implement subgraph",
+        status: "completed",
+        sourcePlanNodeId: "codex_run",
+        sourceType: "role_call",
+        sourceId: "call_1",
+        createdAt: "2026-06-16T08:00:00.000Z"
+      },
+      {
+        id: "trace_node:comparison:comparison_1",
+        planGraphId: "plan_graph:task_1:v1",
+        kind: "review",
+        title: "Comparison comparison_1",
+        status: "completed",
+        sourcePlanNodeId: "compare_results",
+        sourceType: "comparison_report",
+        sourceId: "comparison_1",
+        createdAt: "2026-06-16T08:05:00.000Z"
+      }
+    ],
+    dynamicEdges: [
+      {
+        id: "trace_edge:call_1:comparison_1",
+        planGraphId: "plan_graph:task_1:v1",
+        from: "trace_node:role_call:call_1",
+        to: "trace_node:comparison:comparison_1",
+        type: "evidence",
+        label: "candidate"
+      }
+    ],
+    evidence: [],
+    deviations: []
+  };
+}
+
 describe("Ink TUI renderer", () => {
   it("renders Work as a conversation terminal instead of an embedded dashboard", () => {
     const output = renderToString(
@@ -699,6 +817,98 @@ describe("Ink TUI renderer", () => {
     expect(output).toContain("legacy RoleCall evidence");
     expect(output).toContain("@engineer -> @reviewer");
     expect(output).toContain("Review execution trace");
+  });
+
+  it("derives deterministic Workflow DAG ranks, lanes, anchors, and actions", () => {
+    const layout = buildGraphLayout(workflowDagTraceFixture(), {
+      mode: "overlay",
+      columns: 154,
+      selectedIndex: 1,
+      layout: "ranked",
+      labels: "compact",
+      fold: "expanded",
+      zoom: "fit"
+    });
+    const byId = new Map(layout.nodes.map((node) => [node.id, node]));
+
+    expect(byId.get("user_req")?.rank).toBe(0);
+    expect(byId.get("pm_plan")?.rank).toBe(1);
+    expect(byId.get("codex_run")?.rank).toBe(2);
+    expect(byId.get("claude_run")?.rank).toBe(2);
+    expect(byId.get("compare_results")?.rank).toBe(3);
+    expect(byId.get("codex_run")?.lane).toBe(0);
+    expect(byId.get("claude_run")?.lane).toBe(1);
+    expect(byId.get("pm_plan")?.selected).toBe(true);
+    expect(byId.get("pm_plan")?.focused).toBe(true);
+    expect(byId.get("pm_plan")?.displayWidth).toBe(31);
+    expect(byId.get("pm_plan")?.incomingAnchors.map((anchor) => anchor.nodeId)).toEqual(["user_req"]);
+    expect(byId.get("pm_plan")?.outgoingAnchors.map((anchor) => anchor.nodeId)).toEqual([
+      "codex_run",
+      "claude_run"
+    ]);
+    expect(byId.get("pm_plan")?.actions.map((action) => action.id)).toEqual(["inspect", "focus"]);
+    expect(byId.get("pm_plan")?.actions.every((action) => action.safe)).toBe(true);
+    expect(layout.viewport.includedNodeIds).toEqual(layout.nodes.map((node) => node.id));
+  });
+
+  it("derives comparison branch grouping for grouped Workflow DAG layouts", () => {
+    const layout = buildGraphLayout(workflowDagTraceFixture(), {
+      mode: "overlay",
+      columns: 154,
+      selectedIndex: 0,
+      layout: "ranked",
+      labels: "compact",
+      fold: "grouped",
+      zoom: "detail"
+    });
+    const byId = new Map(layout.nodes.map((node) => [node.id, node]));
+
+    expect(layout.groups.map((group) => group.id)).toEqual(["role-call", "comparison"]);
+    expect(byId.get("trace_node:role_call:call_1")?.groupId).toBe("role-call");
+    expect(byId.get("trace_node:comparison:comparison_1")?.groupId).toBe("comparison");
+    expect(byId.get("trace_node:comparison:comparison_1")?.displayWidth).toBe(39);
+  });
+
+  it("keeps compact Workflow DAG fallback below the width threshold", () => {
+    const workbench = renderGraphWorkbench(workflowDagTraceFixture(), {
+      mode: "overlay",
+      columns: 80,
+      selectedIndex: 0,
+      layout: "ranked",
+      labels: "compact",
+      fold: "expanded",
+      zoom: "fit"
+    });
+
+    expect(workbench.narrow).toBe(true);
+    expect(workbench.rows.some((row) => row.text.includes("<="))).toBe(true);
+    expect(workbench.rows.every((row) => row.text.length <= 80)).toBe(true);
+  });
+
+  it("keeps common selected Workflow DAG nodes stable across overlay and plan modes", () => {
+    const trace = workflowDagTraceFixture();
+    const overlay = buildGraphLayout(trace, {
+      mode: "overlay",
+      columns: 154,
+      selectedIndex: 1,
+      layout: "ranked",
+      labels: "compact",
+      fold: "expanded",
+      zoom: "fit"
+    });
+    const plan = buildGraphLayout(trace, {
+      mode: "plan",
+      columns: 154,
+      selectedIndex: 1,
+      layout: "ranked",
+      labels: "compact",
+      fold: "expanded",
+      zoom: "fit"
+    });
+
+    expect(overlay.selectedId).toBe("pm_plan");
+    expect(plan.selectedId).toBe("pm_plan");
+    expect(plan.nodes.find((node) => node.id === "pm_plan")?.selected).toBe(true);
   });
 
   it("renders Plan/Trace/Overlay Workflow DAG modes", () => {

@@ -39,7 +39,22 @@ export interface GraphWorkbenchRow {
   tone?: "success" | "warning" | "danger" | "info" | "muted";
 }
 
-interface LayoutNode {
+export interface GraphLayoutAction {
+  id: string;
+  label: string;
+  safe: boolean;
+  command?: string;
+}
+
+export interface GraphLayoutAnchor {
+  edgeId: string;
+  nodeId: string;
+  rank: number;
+  lane: number;
+  side: "left" | "right" | "top" | "bottom";
+}
+
+export interface GraphLayoutNode {
   id: string;
   source: "plan" | "trace";
   title: string;
@@ -47,45 +62,147 @@ interface LayoutNode {
   status: string;
   risk?: string;
   required?: boolean;
-  group?: string;
+  groupId?: string;
+  groupLabel?: string;
+  rank: number;
+  lane: number;
+  displayWidth: number;
+  incomingAnchors: GraphLayoutAnchor[];
+  outgoingAnchors: GraphLayoutAnchor[];
+  selected: boolean;
+  focused: boolean;
+  viewportIncluded: boolean;
+  actions: GraphLayoutAction[];
 }
 
-interface LayoutEdge {
+export interface GraphLayoutEdge {
+  id: string;
   from: string;
   to: string;
   type: string;
   label?: string;
+  fromRank: number;
+  fromLane: number;
+  toRank: number;
+  toLane: number;
+}
+
+export interface GraphLayoutGroup {
+  id: string;
+  label: string;
+  nodeIds: string[];
+}
+
+export interface GraphLayoutViewport {
+  columns: number;
+  narrow: boolean;
+  startRank: number;
+  endRank: number;
+  includedNodeIds: string[];
+}
+
+export interface GraphLayoutModel {
+  mode: GraphWorkbenchMode;
+  nodes: GraphLayoutNode[];
+  edges: GraphLayoutEdge[];
+  groups: GraphLayoutGroup[];
+  viewport: GraphLayoutViewport;
+  selectedIndex: number;
+  selectedId?: string;
 }
 
 const narrowColumnThreshold = 92;
 const compactNodeWidth = 31;
 const detailNodeWidth = 39;
 
-export function renderGraphWorkbench(
+export function buildGraphLayout(
   trace: ExecutionTraceGraph,
   options: GraphWorkbenchOptions
-): GraphWorkbenchRender {
+): GraphLayoutModel {
   const graph = workbenchGraph(trace, options.mode, options.fold);
   const selectedIndex = clampIndex(options.selectedIndex, graph.nodes.length);
   const selectedId = graph.nodes[selectedIndex]?.id;
   const narrow = options.columns < narrowColumnThreshold;
-  const rows = narrow
-    ? narrowRows(graph.nodes, graph.edges, selectedId, options.columns, options.labels)
-    : dagRows(graph.nodes, graph.edges, selectedId, options);
-  const miniMap = graph.nodes.length === 0
+  const nodeWidth = options.zoom === "detail" ? detailNodeWidth : compactNodeWidth;
+  const rankedNodes = rankLayoutNodes(graph.nodes, graph.edges, nodeWidth, selectedId);
+  const rankById = new Map(rankedNodes.map((node) => [node.id, node]));
+  const rankedEdges = graph.edges
+    .map((edge) => {
+      const from = rankById.get(edge.from);
+      const to = rankById.get(edge.to);
+      if (!from || !to) {
+        return undefined;
+      }
+      return {
+        ...edge,
+        fromRank: from.rank,
+        fromLane: from.lane,
+        toRank: to.rank,
+        toLane: to.lane
+      };
+    })
+    .filter((edge): edge is GraphLayoutEdge => Boolean(edge));
+  const nodesWithAnchors = rankedNodes.map((node) => ({
+    ...node,
+    incomingAnchors: rankedEdges
+      .filter((edge) => edge.to === node.id)
+      .map((edge) => ({
+        edgeId: edge.id,
+        nodeId: edge.from,
+        rank: edge.fromRank,
+        lane: edge.fromLane,
+        side: "left" as const
+      })),
+    outgoingAnchors: rankedEdges
+      .filter((edge) => edge.from === node.id)
+      .map((edge) => ({
+        edgeId: edge.id,
+        nodeId: edge.to,
+        rank: edge.toRank,
+        lane: edge.toLane,
+        side: "right" as const
+      }))
+  }));
+  const maxRank = nodesWithAnchors.reduce((max, node) => Math.max(max, node.rank), 0);
+  return {
+    mode: options.mode,
+    nodes: nodesWithAnchors,
+    edges: rankedEdges,
+    groups: layoutGroups(nodesWithAnchors),
+    viewport: {
+      columns: options.columns,
+      narrow,
+      startRank: 0,
+      endRank: maxRank,
+      includedNodeIds: nodesWithAnchors.filter((node) => node.viewportIncluded).map((node) => node.id)
+    },
+    selectedIndex,
+    selectedId
+  };
+}
+
+export function renderGraphWorkbench(
+  trace: ExecutionTraceGraph,
+  options: GraphWorkbenchOptions
+): GraphWorkbenchRender {
+  const layout = buildGraphLayout(trace, options);
+  const rows = layout.viewport.narrow
+    ? narrowRows(layout.nodes, layout.edges, options.columns, options.labels)
+    : dagRows(layout.nodes, layout.edges, options);
+  const miniMap = layout.nodes.length === 0
     ? "mini-map empty"
-    : `mini-map ${selectedIndex + 1}/${graph.nodes.length} ${graph.nodes.map((node) => statusGlyph(node.status)).join("")}`;
+    : `mini-map ${layout.selectedIndex + 1}/${layout.nodes.length} ${layout.nodes.map((node) => statusGlyph(node.status)).join("")}`;
   return {
     title: "Graph - Workflow DAG",
-    toolbar: toolbarText(trace, options, graph.nodes.length, narrow),
+    toolbar: toolbarText(trace, options, layout.nodes.length, layout.viewport.narrow, layout.selectedIndex),
     rows,
-    narrow,
+    narrow: layout.viewport.narrow,
     legend: [
       "legend: [P] plan  [T] trace  ! deviation  * selected",
       "edges: --> primary  ==> parallel  -?> optional  -!> fallback  ..> evidence"
     ],
     miniMap,
-    itemCount: graph.nodes.length
+    itemCount: layout.nodes.length
   };
 }
 
@@ -93,7 +210,7 @@ function workbenchGraph(
   trace: ExecutionTraceGraph,
   mode: GraphWorkbenchMode,
   fold: GraphFoldMode
-): { nodes: LayoutNode[]; edges: LayoutEdge[] } {
+): { nodes: BaseLayoutNode[]; edges: BaseLayoutEdge[] } {
   const planNodes = mode === "trace"
     ? []
     : trace.baseNodes.map((node) => layoutPlanNode(node));
@@ -112,7 +229,27 @@ function workbenchGraph(
   };
 }
 
-function layoutPlanNode(node: AnyPlanNode): LayoutNode {
+interface BaseLayoutNode {
+  id: string;
+  source: "plan" | "trace";
+  title: string;
+  subtitle: string;
+  status: string;
+  risk?: string;
+  required?: boolean;
+  groupId?: string;
+  groupLabel?: string;
+}
+
+interface BaseLayoutEdge {
+  id: string;
+  from: string;
+  to: string;
+  type: string;
+  label?: string;
+}
+
+function layoutPlanNode(node: AnyPlanNode): BaseLayoutNode {
   return {
     id: node.id,
     source: "plan",
@@ -124,11 +261,11 @@ function layoutPlanNode(node: AnyPlanNode): LayoutNode {
   };
 }
 
-function layoutTraceNode(node: TraceNode, fold: GraphFoldMode): LayoutNode {
+function layoutTraceNode(node: TraceNode, fold: GraphFoldMode): BaseLayoutNode {
   const group = node.sourceType === "role_call" || node.sourceType === "role_call_event"
-    ? "RoleCall branch"
+    ? { id: "role-call", label: "RoleCall branch" }
     : node.sourceType === "comparison_report"
-      ? "Comparison branch"
+      ? { id: "comparison", label: "Comparison branch" }
       : undefined;
   return {
     id: node.id,
@@ -136,12 +273,14 @@ function layoutTraceNode(node: TraceNode, fold: GraphFoldMode): LayoutNode {
     title: node.title,
     subtitle: `${node.kind} ${node.sourceType ?? "event"}:${compactId(node.sourceId ?? "none")}`,
     status: node.status,
-    group: fold === "grouped" ? group : undefined
+    groupId: fold === "grouped" ? group?.id : undefined,
+    groupLabel: fold === "grouped" ? group?.label : undefined
   };
 }
 
-function layoutPlanEdge(edge: PlanEdge): LayoutEdge {
+function layoutPlanEdge(edge: PlanEdge): BaseLayoutEdge {
   return {
+    id: `plan:${edge.from}->${edge.to}:${edge.type}:${edge.label ?? ""}`,
     from: edge.from,
     to: edge.to,
     type: edge.type,
@@ -149,8 +288,9 @@ function layoutPlanEdge(edge: PlanEdge): LayoutEdge {
   };
 }
 
-function layoutTraceEdge(edge: TraceEdge): LayoutEdge {
+function layoutTraceEdge(edge: TraceEdge): BaseLayoutEdge {
   return {
+    id: edge.id,
     from: edge.from,
     to: edge.to,
     type: edge.type,
@@ -158,10 +298,11 @@ function layoutTraceEdge(edge: TraceEdge): LayoutEdge {
   };
 }
 
-function runtimeBindingEdges(trace: ExecutionTraceGraph): LayoutEdge[] {
+function runtimeBindingEdges(trace: ExecutionTraceGraph): BaseLayoutEdge[] {
   return trace.dynamicNodes
     .filter((node) => node.sourcePlanNodeId)
     .map((node) => ({
+      id: `runtime:${node.sourcePlanNodeId ?? ""}->${node.id}`,
       from: node.sourcePlanNodeId ?? "",
       to: node.id,
       type: "runtime",
@@ -170,9 +311,8 @@ function runtimeBindingEdges(trace: ExecutionTraceGraph): LayoutEdge[] {
 }
 
 function dagRows(
-  nodes: LayoutNode[],
-  edges: LayoutEdge[],
-  selectedId: string | undefined,
+  nodes: GraphLayoutNode[],
+  edges: GraphLayoutEdge[],
   options: GraphWorkbenchOptions
 ): GraphWorkbenchRow[] {
   if (nodes.length === 0) {
@@ -180,20 +320,18 @@ function dagRows(
   }
   const rows: GraphWorkbenchRow[] = [];
   const edgeByFrom = groupEdgesByFrom(edges);
-  const nodeWidth = options.zoom === "detail" ? detailNodeWidth : compactNodeWidth;
   let currentGroup: string | undefined;
   for (const node of nodes) {
-    if (node.group && node.group !== currentGroup) {
-      currentGroup = node.group;
+    if (node.groupId && node.groupId !== currentGroup) {
+      currentGroup = node.groupId;
       rows.push({
-        text: truncateText(`. . . ${node.group} . . .`, options.columns),
+        text: truncateText(`. . . ${node.groupLabel ?? node.groupId} . . .`, options.columns),
         tone: "info"
       });
     }
-    const selected = node.id === selectedId;
     rows.push({
-      text: nodeBoxLine(node, nodeWidth, selected, options.labels),
-      selected,
+      text: nodeBoxLine(node, node.displayWidth, node.selected, options.labels),
+      selected: node.selected,
       tone: nodeTone(node)
     });
     for (const edge of edgeByFrom.get(node.id) ?? []) {
@@ -207,9 +345,8 @@ function dagRows(
 }
 
 function narrowRows(
-  nodes: LayoutNode[],
-  edges: LayoutEdge[],
-  selectedId: string | undefined,
+  nodes: GraphLayoutNode[],
+  edges: GraphLayoutEdge[],
   columns: number,
   labels: GraphLabelMode
 ): GraphWorkbenchRow[] {
@@ -218,19 +355,18 @@ function narrowRows(
   }
   const incoming = groupEdgesByTo(edges);
   return nodes.map((node) => {
-    const selected = node.id === selectedId;
     const inbound = incoming.get(node.id)?.map((edge) => `${edgeGlyph(edge.type)}${compactId(edge.from)}`).join(" ") ?? "root";
     const title = labels === "full" ? node.title : truncateText(node.title, 24);
     return {
-      text: truncateText(`${selected ? "*" : " "} ${nodeKindMarker(node)} ${statusGlyph(node.status)} ${compactId(node.id)} <= ${inbound} ${title}`, columns),
-      selected,
+      text: truncateText(`${node.selected ? "*" : " "} ${nodeKindMarker(node)} ${statusGlyph(node.status)} ${compactId(node.id)} <= ${inbound} ${title}`, columns),
+      selected: node.selected,
       tone: nodeTone(node)
     };
   });
 }
 
 function nodeBoxLine(
-  node: LayoutNode,
+  node: GraphLayoutNode,
   width: number,
   selected: boolean,
   labels: GraphLabelMode
@@ -251,12 +387,13 @@ function toolbarText(
   trace: ExecutionTraceGraph,
   options: GraphWorkbenchOptions,
   nodeCount: number,
-  narrow: boolean
+  narrow: boolean,
+  selectedIndex: number
 ): string {
   return [
     `mode ${options.mode}`,
     `layout ${options.layout}`,
-    `focus ${nodeCount === 0 ? 0 : options.selectedIndex + 1}/${nodeCount}`,
+    `focus ${nodeCount === 0 ? 0 : selectedIndex + 1}/${nodeCount}`,
     `labels ${options.labels}`,
     `fold ${options.fold}`,
     `zoom ${options.zoom}`,
@@ -269,8 +406,121 @@ function toolbarText(
   ].join(" | ");
 }
 
-function groupEdgesByFrom(edges: LayoutEdge[]): Map<string, LayoutEdge[]> {
-  const grouped = new Map<string, LayoutEdge[]>();
+function rankLayoutNodes(
+  nodes: BaseLayoutNode[],
+  edges: BaseLayoutEdge[],
+  displayWidth: number,
+  selectedId: string | undefined
+): GraphLayoutNode[] {
+  const rankById = rankNodes(nodes, edges);
+  const laneById = laneNodes(nodes, rankById);
+  return nodes.map((node) => {
+    const selected = node.id === selectedId;
+    return {
+      ...node,
+      rank: rankById.get(node.id) ?? 0,
+      lane: laneById.get(node.id) ?? 0,
+      displayWidth,
+      incomingAnchors: [],
+      outgoingAnchors: [],
+      selected,
+      focused: selected,
+      viewportIncluded: true,
+      actions: layoutActions(node)
+    };
+  });
+}
+
+function rankNodes(nodes: BaseLayoutNode[], edges: BaseLayoutEdge[]): Map<string, number> {
+  const nodeIds = new Set(nodes.map((node) => node.id));
+  const incomingCount = new Map(nodes.map((node) => [node.id, 0]));
+  const outgoing = new Map<string, BaseLayoutEdge[]>();
+  for (const edge of edges) {
+    if (!nodeIds.has(edge.from) || !nodeIds.has(edge.to)) {
+      continue;
+    }
+    incomingCount.set(edge.to, (incomingCount.get(edge.to) ?? 0) + 1);
+    const list = outgoing.get(edge.from) ?? [];
+    list.push(edge);
+    outgoing.set(edge.from, list);
+  }
+  const rankById = new Map(nodes.map((node) => [node.id, 0]));
+  const queue = nodes.filter((node) => (incomingCount.get(node.id) ?? 0) === 0);
+  const visited = new Set<string>();
+  for (let index = 0; index < queue.length; index += 1) {
+    const node = queue[index];
+    visited.add(node.id);
+    for (const edge of outgoing.get(node.id) ?? []) {
+      const nextRank = Math.max(rankById.get(edge.to) ?? 0, (rankById.get(node.id) ?? 0) + 1);
+      rankById.set(edge.to, nextRank);
+      incomingCount.set(edge.to, Math.max(0, (incomingCount.get(edge.to) ?? 0) - 1));
+      if ((incomingCount.get(edge.to) ?? 0) === 0) {
+        const next = nodes.find((candidate) => candidate.id === edge.to);
+        if (next) {
+          queue.push(next);
+        }
+      }
+    }
+  }
+  for (const node of nodes) {
+    if (visited.has(node.id)) {
+      continue;
+    }
+    const incomingRanks = edges
+      .filter((edge) => edge.to === node.id && rankById.has(edge.from))
+      .map((edge) => (rankById.get(edge.from) ?? 0) + 1);
+    rankById.set(node.id, incomingRanks.length > 0 ? Math.max(...incomingRanks) : rankById.get(node.id) ?? 0);
+  }
+  return rankById;
+}
+
+function laneNodes(nodes: BaseLayoutNode[], rankById: Map<string, number>): Map<string, number> {
+  const laneById = new Map<string, number>();
+  const nextLaneByRank = new Map<number, number>();
+  for (const node of nodes) {
+    const rank = rankById.get(node.id) ?? 0;
+    const lane = nextLaneByRank.get(rank) ?? 0;
+    laneById.set(node.id, lane);
+    nextLaneByRank.set(rank, lane + 1);
+  }
+  return laneById;
+}
+
+function layoutGroups(nodes: GraphLayoutNode[]): GraphLayoutGroup[] {
+  const groups = new Map<string, GraphLayoutGroup>();
+  for (const node of nodes) {
+    if (!node.groupId) {
+      continue;
+    }
+    const group = groups.get(node.groupId) ?? {
+      id: node.groupId,
+      label: node.groupLabel ?? node.groupId,
+      nodeIds: []
+    };
+    group.nodeIds.push(node.id);
+    groups.set(group.id, group);
+  }
+  return [...groups.values()];
+}
+
+function layoutActions(node: BaseLayoutNode): GraphLayoutAction[] {
+  return [
+    {
+      id: "inspect",
+      label: "Open details",
+      safe: true
+    },
+    {
+      id: "focus",
+      label: "Prepare focus command",
+      safe: true,
+      command: `/graph focus ${node.id}`
+    }
+  ];
+}
+
+function groupEdgesByFrom(edges: GraphLayoutEdge[]): Map<string, GraphLayoutEdge[]> {
+  const grouped = new Map<string, GraphLayoutEdge[]>();
   for (const edge of edges) {
     const list = grouped.get(edge.from) ?? [];
     list.push(edge);
@@ -279,8 +529,8 @@ function groupEdgesByFrom(edges: LayoutEdge[]): Map<string, LayoutEdge[]> {
   return grouped;
 }
 
-function groupEdgesByTo(edges: LayoutEdge[]): Map<string, LayoutEdge[]> {
-  const grouped = new Map<string, LayoutEdge[]>();
+function groupEdgesByTo(edges: GraphLayoutEdge[]): Map<string, GraphLayoutEdge[]> {
+  const grouped = new Map<string, GraphLayoutEdge[]>();
   for (const edge of edges) {
     const list = grouped.get(edge.to) ?? [];
     list.push(edge);
@@ -289,7 +539,7 @@ function groupEdgesByTo(edges: LayoutEdge[]): Map<string, LayoutEdge[]> {
   return grouped;
 }
 
-function nodeKindMarker(node: LayoutNode): string {
+function nodeKindMarker(node: GraphLayoutNode): string {
   return node.source === "plan" ? "P" : "T";
 }
 
@@ -328,7 +578,7 @@ function edgeGlyph(type: string): string {
   return "-->";
 }
 
-function nodeTone(node: LayoutNode): GraphWorkbenchRow["tone"] {
+function nodeTone(node: GraphLayoutNode): GraphWorkbenchRow["tone"] {
   if (node.status === "failed" || node.status === "deviated" || node.risk === "high") {
     return "danger";
   }
@@ -338,7 +588,7 @@ function nodeTone(node: LayoutNode): GraphWorkbenchRow["tone"] {
   if (node.status === "completed" || node.status === "primary_run") {
     return "success";
   }
-  if (node.group) {
+  if (node.groupId) {
     return "info";
   }
   return undefined;

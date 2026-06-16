@@ -538,8 +538,10 @@ unavailable rather than blocking the underlying review decision output.
 The TUI read model optionally attaches that same projection to
 `TuiCurrentContextModel.executionTrace` for the current task. The Ink Graph
 focus renders the `Graph - Workflow DAG` workbench from that read model only:
-`apps/cli/src/tui-ink/graph-layout.mts` derives bounded node rows, edge labels,
-mini-map, legend, compact fallback rows, and selected state from the
+`apps/cli/src/tui-ink/graph-layout.mts` derives a deterministic renderer-local
+layout model with node rank/lane, bounded width, connector anchors, group ids,
+selected/focused state, viewport inclusion, safe action descriptors, bounded
+node rows, edge labels, mini-map, legend, and compact fallback rows from the
 `ExecutionTraceGraph` DTO, while `packages/core/src/tui-read-model.ts` supplies
 selected graph-node details for incoming links, outgoing links, evidence,
 deviations, and commands. The renderer does not query SQLite, run agents, or
