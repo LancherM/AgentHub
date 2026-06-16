@@ -673,6 +673,101 @@ function chainWorkflowDagTraceFixture(): ExecutionTraceGraph {
   };
 }
 
+function primaryRunWorkflowDagTraceFixture(): ExecutionTraceGraph {
+  const trace = chainWorkflowDagTraceFixture();
+  return {
+    ...trace,
+    dynamicNodes: [
+      {
+        id: "trace_node:run:run_visual_primary",
+        planGraphId: trace.planGraphId,
+        kind: "task_run",
+        title: "TaskRun run_visual_primary",
+        status: "completed",
+        sourcePlanNodeId: "codex_run",
+        sourceType: "task_run",
+        sourceId: "run_visual_primary",
+        createdAt: "2026-06-16T08:02:00.000Z"
+      }
+    ],
+    dynamicEdges: []
+  };
+}
+
+function failedFallbackWorkflowDagTraceFixture(): ExecutionTraceGraph {
+  const trace = longWorkflowDagTraceFixture();
+  return {
+    ...trace,
+    dynamicNodes: [
+      {
+        id: "trace_node:run:run_visual_failed",
+        planGraphId: trace.planGraphId,
+        kind: "task_run",
+        title: "TaskRun run_visual_failed",
+        status: "failed",
+        sourcePlanNodeId: "codex_run",
+        sourceType: "task_run",
+        sourceId: "run_visual_failed",
+        createdAt: "2026-06-16T08:03:00.000Z"
+      },
+      {
+        id: "trace_node:run:run_visual_fallback",
+        planGraphId: trace.planGraphId,
+        kind: "task_run",
+        title: "TaskRun run_visual_fallback",
+        status: "completed",
+        sourcePlanNodeId: "fallback_fix",
+        sourceType: "task_run",
+        sourceId: "run_visual_fallback",
+        createdAt: "2026-06-16T08:08:00.000Z"
+      }
+    ],
+    dynamicEdges: [
+      {
+        id: "trace_edge:run_visual_failed:fallback",
+        planGraphId: trace.planGraphId,
+        from: "trace_node:run:run_visual_failed",
+        to: "trace_node:run:run_visual_fallback",
+        type: "fallback",
+        label: "fallback run"
+      }
+    ],
+    deviations: [
+      {
+        id: "deviation:run_visual_failed",
+        planGraphId: trace.planGraphId,
+        type: "required_node_failed",
+        severity: "high",
+        description: "Required Codex implementation failed before fallback.",
+        planNodeId: "codex_run",
+        createdAt: "2026-06-16T08:09:00.000Z"
+      }
+    ]
+  };
+}
+
+function cjkWorkflowDagTraceFixture(): ExecutionTraceGraph {
+  const trace = chainWorkflowDagTraceFixture();
+  return {
+    ...trace,
+    baseNodes: trace.baseNodes.map((node) => {
+      if (node.id === "codex_run") {
+        return {
+          ...node,
+          title: "实现图谱视图"
+        };
+      }
+      if (node.id === "compare_results") {
+        return {
+          ...node,
+          title: "验证宽字符输出"
+        };
+      }
+      return node;
+    })
+  };
+}
+
 function longWorkflowDagTraceFixture(): ExecutionTraceGraph {
   const trace = workflowDagTraceFixture();
   return {
@@ -2484,6 +2579,118 @@ describe("Ink TUI renderer", () => {
         if (fixture.name === "Team" && terminal.columns >= 112) {
           expect(output).toContain("Role Profile");
           expect(output).toContain("Caller");
+        }
+        expect(lines.every((value) => value.length <= terminal.columns)).toBe(true);
+      }
+    }
+  });
+
+  it("renders Workflow DAG visual QA fixtures across reference sizes", () => {
+    const sizes = [
+      { columns: 154, rows: 42 },
+      { columns: 160, rows: 48 },
+      { columns: 120, rows: 36 },
+      { columns: 80, rows: 24 }
+    ];
+    const graphFixtures = [
+      {
+        name: "plan-only chain",
+        model: { ...baseModel, executionTrace: chainWorkflowDagTraceFixture() },
+        state: { ...createInitialInkState(), focus: "graph" as const, graphMode: "plan" as const, graphLabels: "full" as const },
+        expected: ["Graph - Workflow DAG", "mode plan", "mini-map z82%"],
+        wideExpected: ["Capture request", "Plan workflow", "Codex implementation"],
+        narrowExpected: ["<="]
+      },
+      {
+        name: "plan plus primary TaskRun",
+        model: { ...baseModel, executionTrace: primaryRunWorkflowDagTraceFixture() },
+        state: {
+          ...createInitialInkState(),
+          focus: "graph" as const,
+          selectedRoleCallIndex: 4,
+          graphLabels: "full" as const
+        },
+        expected: ["Graph - Workflow DAG", "mode overlay", "mini-map z82%"],
+        wideExpected: ["TaskRun run_visual", "trace_node:run"],
+        narrowExpected: ["<="]
+      },
+      {
+        name: "RoleCall-expanded subgraph",
+        model: { ...baseModel, executionTrace: workflowDagTraceFixture() },
+        state: {
+          ...createInitialInkState(),
+          focus: "graph" as const,
+          selectedRoleCallIndex: 5,
+          graphFold: "grouped" as const,
+          graphLabels: "full" as const
+        },
+        expected: ["Graph - Workflow DAG", "mini-map z82%", "Implement subgraph"],
+        wideExpected: ["Implement subgraph", "Comparison branch"],
+        narrowExpected: ["<="]
+      },
+      {
+        name: "parallel comparison branch",
+        model: { ...baseModel, executionTrace: workflowDagTraceFixture() },
+        state: {
+          ...createInitialInkState(),
+          focus: "graph" as const,
+          selectedRoleCallIndex: 2,
+          graphMode: "plan" as const
+        },
+        expected: ["Graph - Workflow DAG", "mode plan", "mini-map z82%"],
+        wideExpected: ["claude_run", "compare_results", "==> codex codex_run"],
+        narrowExpected: ["<="]
+      },
+      {
+        name: "failed required node with fallback",
+        model: { ...baseModel, executionTrace: failedFallbackWorkflowDagTraceFixture() },
+        state: {
+          ...createInitialInkState(),
+          focus: "graph" as const,
+          graphFold: "grouped" as const,
+          graphLabels: "full" as const
+        },
+        expected: ["Graph - Workflow DAG", "deviations", "mini-map z82%"],
+        wideExpected: ["fallback_fix", "TaskRun run_visual", "-!>"],
+        narrowExpected: ["<="]
+      },
+      {
+        name: "CJK graph labels",
+        model: { ...baseModel, executionTrace: cjkWorkflowDagTraceFixture() },
+        state: {
+          ...createInitialInkState(),
+          focus: "graph" as const,
+          graphMode: "plan" as const,
+          graphLabels: "full" as const
+        },
+        expected: ["Graph - Workflow DAG", "mode plan", "mini-map z82%"],
+        wideExpected: ["实现图谱视图", "验证宽字符输出"],
+        narrowExpected: ["<="]
+      }
+    ];
+
+    for (const fixture of graphFixtures) {
+      for (const terminal of sizes) {
+        const output = renderToString(
+          React.createElement(TuiInkFrame, {
+            model: fixture.model,
+            state: fixture.state,
+            terminal
+          }),
+          { columns: terminal.columns }
+        );
+        const lines = output.split("\n");
+        const expectedValues = [
+          ...fixture.expected,
+          ...(terminal.columns >= 140 ? fixture.wideExpected : []),
+          ...(terminal.columns < 92 ? fixture.narrowExpected : [])
+        ];
+
+        expect(output, `${fixture.name} ${terminal.columns}x${terminal.rows}`).toContain("AGENT HUB");
+        expect(output, `${fixture.name} ${terminal.columns}x${terminal.rows}`).toContain("> @codex prompt");
+        expect(output, `${fixture.name} ${terminal.columns}x${terminal.rows}`).toContain("keys:");
+        for (const value of expectedValues) {
+          expect(output, `${fixture.name} ${terminal.columns}x${terminal.rows}`).toContain(value);
         }
         expect(lines.every((value) => value.length <= terminal.columns)).toBe(true);
       }

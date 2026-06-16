@@ -65,7 +65,11 @@ graph actions auto-run agents, apply code, merge, push, create PRs, or approve
 memory. Legacy tasks that predate PlanGraph evidence remain inspectable through
 the RoleCall/run compatibility trace instead of showing an empty future graph.
 Continuation helpers prepare an explicit composer prompt; they do not continue
-work in the background.
+work in the background. The Graph workflow now has deterministic visual QA
+fixtures for plan-only chains, primary TaskRuns, RoleCall-expanded subgraphs,
+parallel comparisons, failed required nodes with fallback paths, narrow
+terminal fallback, and CJK labels; future Graph changes should also use
+`docs/tui-workflow-dag-manual-checklist.md` for PTY verification.
 Review decisions can be recorded with `agent-hub reviews accept|reject` or the
 TUI review shortcuts. These decisions create local `review_decision` artifacts
 only; they do not apply files, alter run status, merge, push, approve memory,
@@ -563,8 +567,9 @@ viewport state, a legend, and a compact fallback for narrow terminals while
 falling back to legacy RoleCall evidence for older tasks. Selected graph-node
 details synchronize with the same read model and show incoming links, outgoing
 links, evidence, deviations, and inspection commands. Remaining terminal graph
-fidelity work, including visual QA fixtures, is tracked in
-`docs/plan-graph-tui-workflow-dag-roadmap.md`. The
+fidelity work is tracked in `docs/plan-graph-tui-workflow-dag-roadmap.md`, and
+future Graph changes should use `docs/tui-workflow-dag-manual-checklist.md` as
+the manual PTY verification checklist. The
 desktop Workgroup Inspector exposes the same projection through a
 read-only Trace tab backed by Electron main-process IPC; the renderer displays
 plan nodes, runtime trace nodes, evidence counts, and deviations without

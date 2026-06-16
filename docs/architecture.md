@@ -561,7 +561,12 @@ compatibility view remains the fallback. Remaining
 terminal graph fidelity work is isolated to the CLI/TUI renderer and read-model
 boundary in `docs/plan-graph-tui-workflow-dag-roadmap.md`, rather than the
 broader PlanGraph lifecycle roadmap; it must preserve the same no-SQLite,
-no-shell, no-TaskRunner renderer boundary.
+no-shell, no-TaskRunner renderer boundary. `tests/cli-tui-ink.test.mts` now
+keeps deterministic Workflow DAG visual QA fixtures for plan-only chains,
+primary TaskRuns, RoleCall-expanded subgraphs, parallel comparisons, failed
+required nodes with fallback paths, narrow fallback, and CJK labels at
+reference terminal sizes; `docs/tui-workflow-dag-manual-checklist.md` is the
+manual PTY checklist for future Graph renderer changes.
 The desktop Workgroup Inspector consumes the same core projection through
 `ReviewService.getExecutionTrace`, the `agent-hub:review:execution-trace` IPC
 channel, and the sandboxed preload API. The React renderer owns only the
