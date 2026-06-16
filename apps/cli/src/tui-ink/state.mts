@@ -8,6 +8,7 @@ import type {
   TuiTaskSummary,
   TuiWorkBlock
 } from "@agent-hub/core";
+import { graphViewportRankForSelection as layoutViewportRankForSelection } from "./graph-layout.mjs";
 
 const defaultListWindowSize = 8;
 const defaultConversationWindowSize = 8;
@@ -709,7 +710,16 @@ function moveSelection(
     nextIndex,
     itemCount
   );
-  state.selectedRoleCallId = nodes[state.selectedRoleCallIndex]?.id;
+  if (state.focus === "graph" && model.executionTrace) {
+    state.selectedRoleCallId = undefined;
+    state.graphViewportRank = graphViewportRankForSelection(
+      model,
+      state,
+      state.selectedRoleCallIndex
+    );
+  } else {
+    state.selectedRoleCallId = nodes[state.selectedRoleCallIndex]?.id;
+  }
   resetDetailScroll(state);
   state.scrollOffsets.roleCalls = ensureVisible(
     state.scrollOffsets.roleCalls,
@@ -733,6 +743,25 @@ function graphSelectionCount(
     return model.executionTrace.dynamicNodes.length;
   }
   return model.executionTrace.baseNodes.length + model.executionTrace.dynamicNodes.length;
+}
+
+function graphViewportRankForSelection(
+  model: TuiCurrentContextModel,
+  state: TuiInkState,
+  selectedIndex: number
+): number {
+  const trace = model.executionTrace;
+  if (!trace) {
+    return Math.max(0, state.graphViewportRank ?? 0);
+  }
+  return Math.max(
+    0,
+    layoutViewportRankForSelection(trace, {
+      mode: state.graphMode ?? "overlay",
+      selectedIndex,
+      fold: state.graphFold ?? "expanded"
+    }) ?? state.graphViewportRank ?? 0
+  );
 }
 
 function selectedGraphGroupId(

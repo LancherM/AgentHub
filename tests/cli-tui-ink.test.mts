@@ -1250,6 +1250,38 @@ describe("Ink TUI renderer", () => {
     expect(layout.viewport.includedNodeIds).toContain("best_result");
   });
 
+  it("keeps keyboard-selected Workflow DAG nodes inside the viewport window", () => {
+    const trace = longWorkflowDagTraceFixture();
+    const model = {
+      ...baseModel,
+      executionTrace: trace
+    };
+    const state = reduceInkState(
+      {
+        ...createInitialInkState(),
+        focus: "graph",
+        graphViewportRank: 0
+      },
+      "page_down",
+      model
+    );
+    const layout = buildGraphLayout(trace, {
+      mode: state.graphMode,
+      columns: 120,
+      selectedIndex: state.selectedRoleCallIndex,
+      layout: state.graphLayout,
+      labels: state.graphLabels,
+      fold: state.graphFold,
+      zoom: state.graphZoom,
+      viewportRank: state.graphViewportRank
+    });
+
+    expect(state.selectedRoleCallIndex).toBeGreaterThan(0);
+    expect(state.graphViewportRank).toBeGreaterThan(0);
+    expect(layout.selectedId).toBeDefined();
+    expect(layout.viewport.includedNodeIds).toContain(layout.selectedId);
+  });
+
   it("renders a structural mini-map for linear Workflow DAG chains", () => {
     const workbench = renderGraphWorkbench(chainWorkflowDagTraceFixture(), {
       mode: "overlay",
