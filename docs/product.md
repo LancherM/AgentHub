@@ -503,13 +503,15 @@ with other intent types are not shown as shorthand-callable.
 PlanGraph and ExecutionTraceGraph are the current product layer for the
 Execution Trace surface, with legacy RoleCall evidence retained as the
 compatibility path for older tasks. The graph model adds a planner node that
-turns the TaskBrief into a `PlanGraph`, schedules executable PlanNodes as
-primary TaskRuns, treats RoleCall as a runtime tool event that can create
+turns the TaskBrief into a `PlanGraph`, binds primary TaskRuns to planned
+executable nodes, treats RoleCall as a runtime tool event that can create
 dynamic trace nodes, and derives `ExecutionTraceGraph` deterministically as an
 overlay of the original plan plus persisted runtime evidence. This keeps the
 expected workflow separate from actual execution while preserving RoleCalls as
 the dynamic delegation mechanism. The full product contract is tracked in
-`docs/plan-graph-execution-trace-product.md`.
+`docs/plan-graph-execution-trace-product.md`; the remaining implementation
+diffs and phase prompts are tracked in
+`docs/plan-graph-execution-trace-followup-roadmap.md`.
 The shared domain contract and core validators for `PlanGraph`,
 `PlanNode`, `PlanEdge`, trace nodes, evidence links, deviations, and
 `ExecutionTraceGraph` are implemented. SQLite and in-memory repositories can
@@ -548,13 +550,15 @@ special local `@planner` role through a configured local adapter inside its own
 isolated planner worktree, requires structured PlanGraph JSON, validates it
 against the current task/version before activation, and fails before the
 primary adapter starts when output is invalid. `manual` planner mode accepts a
-caller-supplied PlanGraph only after the same validation. Plan amendments can
-be stored as `proposed` graph versions; activation supersedes the old active
-graph only after validation, and changes to required execution nodes require an
-explicit approval flag. Additional primary PlanNodes can be scheduled
-explicitly through `RunTaskInput.planGraphBinding`; automatic topological
-fan-out orchestration and a dedicated desktop graph canvas remain follow-on
-extensions beyond the current read-only Trace tab.
+caller-supplied PlanGraph only after the same validation. The core amendment
+contract supports `proposed` graph versions; the follow-up roadmap tracks the
+SQLite status-constraint alignment needed before proposed amendments are fully
+durable on SQLite. Activation supersedes the old active graph only after
+validation, and changes to required execution nodes require an explicit
+approval flag. Additional primary PlanNodes can be scheduled explicitly through
+`RunTaskInput.planGraphBinding`; automatic topological fan-out orchestration and
+a dedicated desktop graph canvas remain follow-on extensions beyond the current
+read-only Trace tab.
 
 Plan and trace evidence now feeds review governance without creating an
 automatic acceptance path. Risk reports can include plan-aware findings for
@@ -823,9 +827,11 @@ Roadmaps for future work live in `docs/local-ai-workgroup-roadmap.md`,
 `docs/interaction-optimization-roadmap.md`, `docs/tui-roadmap.md`,
 `docs/tui-conversation-terminal-roadmap.md`,
 `docs/tui-optimization-roadmap.md`, `docs/tui-v3-roadmap.md`,
-`docs/tui-v3-reference-gap-roadmap.md`, `docs/memory-automation-roadmap.md`,
-and the Adaptive Role Calls specification documents. Those files describe
-direction; this document describes the current product state. The
+`docs/tui-v3-reference-gap-roadmap.md`,
+`docs/plan-graph-execution-trace-followup-roadmap.md`,
+`docs/memory-automation-roadmap.md`, and the Adaptive Role Calls specification
+documents. Those files describe direction; this document describes the current
+product state. The
 conversation-terminal TUI roadmap now records the
 implemented Work-view direction and remaining hardening guidance: the current
 TUI keeps the Ink/local read-model boundary while presenting a
