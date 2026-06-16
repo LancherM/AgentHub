@@ -1077,9 +1077,9 @@ describe("Ink TUI renderer", () => {
     const collapsedText = collapsed.rows.map((row) => row.text).join("\n");
 
     expect(expandedText).toContain(". . . RoleCall branch . . .");
-    expect(expandedText).toContain("trace_node:role...");
+    expect(expandedText).toContain("Implement subgraph");
     expect(collapsedText).toContain("[+] RoleCall branch 1 node status completed risk - selected-descendant");
-    expect(collapsedText).not.toContain("trace_node:role...");
+    expect(collapsedText).not.toContain("Implement subgraph");
     expect(collapsed.rows.find((row) => row.text.includes("RoleCall branch"))?.selected).toBe(true);
   });
 
@@ -1111,18 +1111,18 @@ describe("Ink TUI renderer", () => {
     });
     const primaryLane = workbench.rows[0]?.text ?? "";
     const codexConnector = workbench.rows.find((row) =>
-      row.text.includes("pm_plan ==>") && row.text.includes("codex codex_run")
+      row.text.includes("Plan workflow ==>") && row.text.includes("Codex implementation")
     );
     const roleCallConnector = workbench.rows.find((row) =>
-      row.text.includes("codex_run ..>") && row.text.includes("role_call trace_node:role...")
+      row.text.includes("Codex implementation ..>") && row.text.includes("Implement subgraph")
     );
 
     expect(workbench.narrow).toBe(false);
-    expect(primaryLane.indexOf("user_req")).toBeLessThan(primaryLane.indexOf("pm_plan"));
-    expect(primaryLane.indexOf("pm_plan")).toBeLessThan(primaryLane.indexOf("codex_run"));
-    expect(primaryLane.indexOf("codex_run")).toBeLessThan(primaryLane.indexOf("compare_results"));
-    expect(codexConnector?.text).toContain("codex codex_run");
-    expect(roleCallConnector?.text).toContain("role_call trace_node:role...");
+    expect(primaryLane.indexOf("Capture request")).toBeLessThan(primaryLane.indexOf("Plan workflow"));
+    expect(primaryLane.indexOf("Plan workflow")).toBeLessThan(primaryLane.indexOf("Codex"));
+    expect(primaryLane.indexOf("Codex")).toBeLessThan(primaryLane.indexOf("Compare"));
+    expect(codexConnector?.text).toContain("codex Codex implementation");
+    expect(roleCallConnector?.text).toContain("role_call Implement subgraph");
     expect(workbench.rows.every((row) => row.text.length <= 154)).toBe(true);
   });
 
@@ -1138,7 +1138,7 @@ describe("Ink TUI renderer", () => {
     });
 
     expect(workbench.narrow).toBe(false);
-    expect(workbench.rows.some((row) => row.text.includes("--> plan pm_plan"))).toBe(true);
+    expect(workbench.rows.some((row) => row.text.includes("Capture request --> plan Plan workflow"))).toBe(true);
     expect(workbench.rows.every((row) => row.text.length <= 118)).toBe(true);
   });
 
@@ -1561,10 +1561,10 @@ describe("Ink TUI renderer", () => {
     expect(overlay).toContain("mini-map z82%");
     expect(overlay).toContain("P");
     expect(overlay).toContain("plan_node_imple");
-    expect(overlay).toContain("plan_node_imple... -->");
-    expect(overlay).toContain("then plan_node_verify");
+    expect(overlay).toContain("Implement graph view -->");
+    expect(overlay).toContain("then Verify graph view");
     expect(overlay).toContain("T");
-    expect(overlay).toContain("trace_node:run:");
+    expect(overlay).toContain("TaskRun run_1");
     expect(overlay).toContain("legend: [P] plan");
     expect(overlay).toContain("TaskRun run_1");
     expect(plan).toContain("mode plan");
@@ -2611,7 +2611,7 @@ describe("Ink TUI renderer", () => {
           graphLabels: "full" as const
         },
         expected: ["Graph - Workflow DAG", "mode overlay", "mini-map z82%"],
-        wideExpected: ["TaskRun run_visual", "trace_node:run"],
+        wideExpected: ["TaskRun run_visual"],
         narrowExpected: ["<="]
       },
       {
@@ -2638,7 +2638,7 @@ describe("Ink TUI renderer", () => {
           graphMode: "plan" as const
         },
         expected: ["Graph - Workflow DAG", "mode plan", "mini-map z82%"],
-        wideExpected: ["claude_run", "compare_results", "==> codex codex_run"],
+        wideExpected: ["Claude implementation", "Compare results", "==> codex Codex implementation"],
         narrowExpected: ["<="]
       },
       {
@@ -2651,7 +2651,7 @@ describe("Ink TUI renderer", () => {
           graphLabels: "full" as const
         },
         expected: ["Graph - Workflow DAG", "deviations", "mini-map z82%"],
-        wideExpected: ["fallback_fix", "TaskRun run_visual", "-!>"],
+        wideExpected: ["Fallback fix", "TaskRun run_visual", "-!>"],
         narrowExpected: ["<="]
       },
       {
@@ -3249,7 +3249,7 @@ describe("Ink TUI renderer", () => {
     await waitForFrame(instance, "Graph focused compare_results.");
 
     expect(submissions).toEqual([]);
-    expect(instance.lastFrame()).toContain("focus compare_results");
+    expect(instance.lastFrame()).toContain("focus Compare results");
     expect(instance.lastFrame()).toContain("> @codex prompt");
 
     for (const character of "/graph focus missing_node") {

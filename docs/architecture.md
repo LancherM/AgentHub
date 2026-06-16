@@ -545,6 +545,10 @@ wide spatial rank rows, connector rows, edge labels, structural mini-map,
 legend, and compact fallback rows from the `ExecutionTraceGraph` DTO, while
 `packages/core/src/tui-read-model.ts` supplies selected graph-node details for
 incoming links, outgoing links, evidence, deviations, and commands. The
+renderer and read model keep default graph text title-first: node boxes,
+connector labels, toolbar focus, and relationship rows use plan/trace titles,
+and long PlanGraph or trace node ids are shortened to local secondary keys
+unless a command needs the full identifier. The
 renderer owns percentage-like zoom density, label policy (`auto`, `compact`,
 `full`, `off`), local viewport rank, grouped subgraph containers, collapsed
 group ids, structural mini-map compression, and `/graph focus <node-id>` state

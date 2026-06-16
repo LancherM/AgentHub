@@ -215,12 +215,12 @@ describe("TUI current-context read model", () => {
     expect(implementDetail?.sections).toEqual(expect.arrayContaining([
       expect.objectContaining({
         id: "incoming",
-        lines: ["plan plan_graph_trace:planner -> plan_node_trace primary"]
+        lines: ["plan Create plan -> Implement trace primary"]
       }),
       expect.objectContaining({
         id: "outgoing",
         lines: expect.arrayContaining([
-          "runtime plan_node_trace -> trace_node:run:run_trace task_run completed"
+          "runtime Implement trace -> TaskRun run_trace task_run completed"
         ])
       }),
       expect.objectContaining({
@@ -249,7 +249,7 @@ describe("TUI current-context read model", () => {
       expect.objectContaining({
         id: "incoming",
         lines: expect.arrayContaining([
-          "runtime plan_node_trace -> trace_node:run:run_trace task_run"
+          "runtime Implement trace -> TaskRun run_trace task_run"
         ])
       }),
       expect.objectContaining({

@@ -2398,7 +2398,8 @@ function graphSelectionDetails(trace: ExecutionTraceGraph | undefined): {
           id: "plan-node",
           title: "Plan Node",
           lines: [
-            `id: ${node.id}`,
+            `title: ${node.title}`,
+            `id: ${compactGraphNodeId(node.id)}`,
             `kind: ${node.kind}`,
             `role: ${node.role}`,
             `mode: ${node.execution.mode}`,
@@ -2463,10 +2464,11 @@ function graphSelectionDetails(trace: ExecutionTraceGraph | undefined): {
           id: "trace-node",
           title: "Trace Node",
           lines: [
-            `id: ${node.id}`,
+            `title: ${node.title}`,
+            `id: ${compactGraphNodeId(node.id)}`,
             `kind: ${node.kind}`,
             `status: ${node.status}`,
-            `source_plan_node: ${node.sourcePlanNodeId ?? "none"}`,
+            `source_plan_node: ${node.sourcePlanNodeId ? graphNodeLabel(trace, node.sourcePlanNodeId) : "none"}`,
             `role: ${node.role ?? "none"}`,
             `source: ${node.sourceType ?? "event"}:${node.sourceId ?? "none"}`
           ]
@@ -2623,17 +2625,52 @@ function graphRerunPrompt(trace: ExecutionTraceGraph, nodeId: string): string {
   return `Rerun from graph node ${nodeId} for task ${trace.taskId}. Do not apply, merge, push, approve memory, or create PRs automatically.`;
 }
 
+function graphNodeLabel(trace: ExecutionTraceGraph, nodeId: string): string {
+  const planNode = trace.baseNodes.find((node) => node.id === nodeId);
+  if (planNode) {
+    return planNode.title;
+  }
+  const traceNode = trace.dynamicNodes.find((node) => node.id === nodeId);
+  if (traceNode) {
+    return traceNode.title;
+  }
+  return compactGraphNodeId(nodeId);
+}
+
+function compactGraphNodeId(nodeId: string): string {
+  const planNodeMatch = /^plan_graph:[^:]+:v\d+:([^:]+):(\d+)$/.exec(nodeId);
+  if (planNodeMatch) {
+    return `${planNodeMatch[1]}:${planNodeMatch[2]}`;
+  }
+  const plannerMatch = /^plan_graph:[^:]+:v\d+:planner$/.exec(nodeId);
+  if (plannerMatch) {
+    return "planner";
+  }
+  const traceMatch = /^trace_node:([^:]+):(.+)$/.exec(nodeId);
+  if (traceMatch) {
+    return `${traceMatch[1]}:${shortGraphToken(traceMatch[2])}`;
+  }
+  return shortGraphToken(nodeId);
+}
+
+function shortGraphToken(value: string): string {
+  if (value.length <= 24) {
+    return value;
+  }
+  return `${value.slice(0, 10)}...${value.slice(-6)}`;
+}
+
 function graphIncomingLines(trace: ExecutionTraceGraph, nodeId: string): string[] {
   const lines = [
     ...trace.baseEdges
       .filter((edge) => edge.to === nodeId)
-      .map((edge) => `plan ${edge.from} -> ${edge.to} ${edge.type}${edge.label ? ` ${edge.label}` : ""}`),
+      .map((edge) => `plan ${graphNodeLabel(trace, edge.from)} -> ${graphNodeLabel(trace, edge.to)} ${edge.type}${edge.label ? ` ${edge.label}` : ""}`),
     ...trace.dynamicEdges
       .filter((edge) => edge.to === nodeId)
-      .map((edge) => `trace ${edge.from} -> ${edge.to} ${edge.type}${edge.label ? ` ${edge.label}` : ""}`),
+      .map((edge) => `trace ${graphNodeLabel(trace, edge.from)} -> ${graphNodeLabel(trace, edge.to)} ${edge.type}${edge.label ? ` ${edge.label}` : ""}`),
     ...trace.dynamicNodes
       .filter((node) => node.id === nodeId && node.sourcePlanNodeId)
-      .map((node) => `runtime ${node.sourcePlanNodeId} -> ${node.id} ${node.kind}`)
+      .map((node) => `runtime ${graphNodeLabel(trace, node.sourcePlanNodeId ?? "")} -> ${node.title} ${node.kind}`)
   ];
   return lines.length > 0 ? lines : ["root or not linked in current trace"];
 }
@@ -2642,13 +2679,13 @@ function graphOutgoingLines(trace: ExecutionTraceGraph, nodeId: string): string[
   const lines = [
     ...trace.baseEdges
       .filter((edge) => edge.from === nodeId)
-      .map((edge) => `plan ${edge.from} -> ${edge.to} ${edge.type}${edge.label ? ` ${edge.label}` : ""}`),
+      .map((edge) => `plan ${graphNodeLabel(trace, edge.from)} -> ${graphNodeLabel(trace, edge.to)} ${edge.type}${edge.label ? ` ${edge.label}` : ""}`),
     ...trace.dynamicEdges
       .filter((edge) => edge.from === nodeId)
-      .map((edge) => `trace ${edge.from} -> ${edge.to} ${edge.type}${edge.label ? ` ${edge.label}` : ""}`),
+      .map((edge) => `trace ${graphNodeLabel(trace, edge.from)} -> ${graphNodeLabel(trace, edge.to)} ${edge.type}${edge.label ? ` ${edge.label}` : ""}`),
     ...trace.dynamicNodes
       .filter((node) => node.sourcePlanNodeId === nodeId)
-      .map((node) => `runtime ${nodeId} -> ${node.id} ${node.kind} ${node.status}`)
+      .map((node) => `runtime ${graphNodeLabel(trace, nodeId)} -> ${node.title} ${node.kind} ${node.status}`)
   ];
   return lines.length > 0 ? lines : ["leaf or no outgoing links in current trace"];
 }

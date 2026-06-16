@@ -203,13 +203,14 @@ export function renderGraphWorkbench(
   options: GraphWorkbenchOptions
 ): GraphWorkbenchRender {
   const layout = buildGraphLayout(trace, options);
+  const selectedNode = layout.nodes.find((node) => node.id === layout.selectedId);
   const rows = layout.viewport.narrow
     ? narrowGraphRows(layout, options.columns, options.labels)
     : dagRows(layout, options);
   const miniMap = structuralMiniMap(layout, options);
   return {
     title: "Graph - Workflow DAG",
-    toolbar: toolbarText(trace, options, layout.nodes.length, layout.viewport.narrow, layout.selectedId),
+    toolbar: toolbarText(trace, options, layout.nodes.length, layout.viewport.narrow, selectedNode),
     rows,
     narrow: layout.viewport.narrow,
     legend: [
@@ -415,6 +416,7 @@ function dagRows(
   const nodes = visibleNodesForGroups(layout.nodes, collapsedGroupIds);
   const visibleNodeIds = new Set(nodes.map((node) => node.id));
   const edges = layout.edges.filter((edge) => visibleNodeIds.has(edge.from) && visibleNodeIds.has(edge.to));
+  const nodeById = new Map(nodes.map((node) => [node.id, node]));
   if (nodes.length === 0) {
     const summaries = collapsedGroupRows(layout, options.columns);
     return summaries.length > 0 ? summaries : [{ text: "no graph nodes available", tone: "muted" }];
@@ -441,7 +443,10 @@ function dagRows(
     });
     for (const edge of edgeByFrom.get(node.id) ?? []) {
       rows.push({
-        text: truncateText(`  ${edgeGlyph(edge.type)} ${edgeLabelText(edge, effectiveLabelMode(options.labels, options.columns))}`, options.columns),
+        text: truncateText(
+          `  ${nodeInlineLabel(node, effectiveLabelMode(options.labels, options.columns))} ${edgeGlyph(edge.type)} ${edgeLabelText(edge, effectiveLabelMode(options.labels, options.columns), nodeById)}`,
+          options.columns
+        ),
         tone: edge.type === "fallback" || edge.type === "deviation" ? "warning" : "muted"
       });
     }
@@ -459,6 +464,7 @@ function spatialDagRows(
   const collapsedGroupIds = new Set(layout.groups.filter((group) => group.collapsed).map((group) => group.id));
   const nodes = visibleNodesForGroups(layout.nodes, collapsedGroupIds);
   const visibleNodeIds = new Set(nodes.map((node) => node.id));
+  const nodeById = new Map(nodes.map((node) => [node.id, node]));
   const ranks = [...new Set(nodes.filter((node) => node.viewportIncluded).map((node) => node.rank))].sort((a, b) => a - b);
   if (ranks.length <= 1) {
     return undefined;
@@ -486,16 +492,19 @@ function spatialDagRows(
       selected: lineNodes.some((node) => node?.selected),
       tone: toneNode ? nodeTone(toneNode) : undefined
     });
-  }
-  const connectorRows = spatialConnectorRows(
-    layout.edges.filter((edge) => visibleNodeIds.has(edge.from) && visibleNodeIds.has(edge.to)),
-    ranks,
-    cellWidth,
-    options.columns,
-    effectiveLabelMode(options.labels, options.columns)
-  );
-  if (connectorRows.length > 0) {
-    rows.push(...connectorRows);
+    const laneConnectorRows = spatialConnectorRows(
+      layout.edges.filter((edge) =>
+        visibleNodeIds.has(edge.from) &&
+        visibleNodeIds.has(edge.to) &&
+        (nodeById.get(edge.from)?.lane ?? -1) === lane
+      ),
+      ranks,
+      cellWidth,
+      options.columns,
+      effectiveLabelMode(options.labels, options.columns),
+      nodeById
+    );
+    rows.push(...laneConnectorRows);
   }
   return rows;
 }
@@ -526,7 +535,8 @@ function spatialConnectorRows(
   ranks: number[],
   cellWidth: number,
   columns: number,
-  labels: ResolvedGraphLabelMode
+  labels: ResolvedGraphLabelMode,
+  nodeById: ReadonlyMap<string, GraphLayoutNode>
 ): GraphWorkbenchRow[] {
   const rankIndex = new Map(ranks.map((rank, index) => [rank, index]));
   const visibleRankSet = new Set(ranks);
@@ -540,11 +550,14 @@ function spatialConnectorRows(
         tone: edge.type === "fallback" || edge.type === "deviation" ? "warning" as const : "muted" as const
       };
     }
-    cells[fromIndex] = truncateText(`${compactId(edge.from)} ${edgeGlyph(edge.type)}`, cellWidth).padEnd(cellWidth);
+    cells[fromIndex] = truncateText(
+      `${nodeInlineLabel(nodeById.get(edge.from), labels)} ${edgeGlyph(edge.type)}`,
+      cellWidth
+    ).padEnd(cellWidth);
     for (let index = fromIndex + 1; index < toIndex; index += 1) {
       cells[index] = "-".repeat(Math.min(cellWidth, 12)).padEnd(cellWidth);
     }
-    cells[toIndex] = truncateText(edgeLabelText(edge, labels), cellWidth).padEnd(cellWidth);
+    cells[toIndex] = truncateText(edgeLabelText(edge, labels, nodeById), cellWidth).padEnd(cellWidth);
     return {
       text: truncateText(cells.join(" ".repeat(spatialGapWidth)), columns),
       tone: edge.type === "fallback" || edge.type === "deviation" ? "warning" : "muted"
@@ -563,11 +576,14 @@ function narrowRows(
   }
   const incoming = groupEdgesByTo(edges);
   const effectiveLabels = effectiveLabelMode(labels, columns);
+  const nodeById = new Map(nodes.map((node) => [node.id, node]));
   return nodes.map((node) => {
-    const inbound = incoming.get(node.id)?.map((edge) => `${edgeGlyph(edge.type)}${compactId(edge.from)}`).join(" ") ?? "root";
-    const title = effectiveLabels === "full" ? node.title : truncateText(node.title, 24);
+    const inbound = incoming.get(node.id)?.map((edge) =>
+      `${edgeGlyph(edge.type)}${nodeInlineLabel(nodeById.get(edge.from), effectiveLabels)}`
+    ).join(" ") ?? "root";
+    const title = nodeInlineLabel(node, effectiveLabels);
     return {
-      text: truncateText(`${node.selected ? "*" : " "} ${nodeKindMarker(node)} ${statusGlyph(node.status)} ${compactId(node.id)} <= ${inbound} ${title}`, columns),
+      text: truncateText(`${node.selected ? "*" : " "} ${nodeKindMarker(node)} ${statusGlyph(node.status)} ${title} <= ${inbound}`, columns),
       selected: node.selected,
       tone: nodeTone(node)
     };
@@ -601,9 +617,7 @@ function nodeBoxLine(
 ): string {
   const marker = selected ? "*" : " ";
   const titleWidth = Math.max(8, width - 10);
-  const title = labels === "full"
-    ? truncateText(node.title, titleWidth)
-    : truncateText(compactId(node.id), titleWidth);
+  const title = truncateText(nodeTitleForLabelMode(node, labels), titleWidth);
   const left = `${marker}${nodeKindMarker(node)} ${statusGlyph(node.status)} ${title}`;
   const right = node.source === "plan"
     ? `${node.required ? "req" : "opt"} ${node.risk ?? "risk"}`
@@ -616,13 +630,13 @@ function toolbarText(
   options: GraphWorkbenchOptions,
   nodeCount: number,
   narrow: boolean,
-  selectedId: string | undefined
+  selectedNode: GraphLayoutNode | undefined
 ): string {
   return [
     `zoom ${options.zoom}`,
     `mode ${options.mode}`,
     `layout ${options.layout}`,
-    `focus ${selectedId ? compactId(selectedId) : nodeCount === 0 ? "none" : "unknown"}`,
+    `focus ${selectedNode ? nodeInlineLabel(selectedNode, effectiveLabelMode(options.labels, options.columns)) : nodeCount === 0 ? "none" : "unknown"}`,
     `labels ${options.labels}`,
     `fold ${options.fold}`,
     narrow ? "compact" : "dag",
@@ -679,11 +693,38 @@ function effectiveLabelMode(labels: GraphLabelMode, columns: number): ResolvedGr
   return labels;
 }
 
-function edgeLabelText(edge: GraphLayoutEdge, labels: ResolvedGraphLabelMode): string {
+function edgeLabelText(
+  edge: GraphLayoutEdge,
+  labels: ResolvedGraphLabelMode,
+  nodeById?: ReadonlyMap<string, GraphLayoutNode>
+): string {
   if (labels === "off") {
     return compactId(edge.to);
   }
-  return `${edge.label ?? edge.type} ${compactId(edge.to)}`;
+  const target = nodeInlineLabel(nodeById?.get(edge.to), labels, edge.to);
+  const prefix = edge.label ?? (edge.type === "primary" ? "" : edge.type);
+  return prefix ? `${prefix} ${target}` : target;
+}
+
+function nodeTitleForLabelMode(
+  node: GraphLayoutNode,
+  labels: ResolvedGraphLabelMode
+): string {
+  if (labels === "off") {
+    return compactId(node.id);
+  }
+  return node.title;
+}
+
+function nodeInlineLabel(
+  node: GraphLayoutNode | undefined,
+  labels: ResolvedGraphLabelMode,
+  fallbackId = "unknown"
+): string {
+  if (!node || labels === "off") {
+    return compactId(node?.id ?? fallbackId);
+  }
+  return truncateText(node.title, labels === "full" ? 28 : 20);
 }
 
 function viewportRanksForColumns(

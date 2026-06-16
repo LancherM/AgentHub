@@ -57,12 +57,16 @@ and compresses or hides when the terminal cannot spare space. Grouped mode
 derives local subgraph containers for parallel, fallback, RoleCall, and
 comparison branches; collapsed groups render summary rows with node count,
 status, risk, and selected descendant state without mutating PlanGraph or trace
-evidence. `/graph focus <node-id>` selects a node and moves the local viewport
-around it without running agents or mutating task state. Selected graph-node
-details expose safe read-only commands for trace, run, RoleCall, and comparison
-evidence plus prepared focus, fold, and rerun-from-here prompts; none of these
-graph actions auto-run agents, apply code, merge, push, create PRs, or approve
-memory. Legacy tasks that predate PlanGraph evidence remain inspectable through
+evidence. The default graph surface is title-first: node boxes, toolbar focus,
+connector labels, and selected-node relationship rows use human-readable plan
+or trace titles, while long PlanGraph and trace IDs are shortened to secondary
+keys or kept inside explicit commands. `/graph focus <node-id>` selects a node
+and moves the local viewport around it without running agents or mutating task
+state. Selected graph-node details expose safe read-only commands for trace,
+run, RoleCall, and comparison evidence plus prepared focus, fold, and
+rerun-from-here prompts; none of these graph actions auto-run agents, apply
+code, merge, push, create PRs, or approve memory. Legacy tasks that predate
+PlanGraph evidence remain inspectable through
 the RoleCall/run compatibility trace instead of showing an empty future graph.
 Continuation helpers prepare an explicit composer prompt; they do not continue
 work in the background. The Graph workflow now has deterministic visual QA
@@ -564,9 +568,12 @@ as `Graph - Workflow DAG`: Overlay, Plan, and Trace modes render bounded
 terminal node boxes, visible edge labels, selected-node highlighting, toolbar
 state for mode/labels/fold/zoom, a structural rank/lane mini-map with selected
 viewport state, a legend, and a compact fallback for narrow terminals while
-falling back to legacy RoleCall evidence for older tasks. Selected graph-node
-details synchronize with the same read model and show incoming links, outgoing
-links, evidence, deviations, and inspection commands. Remaining terminal graph
+falling back to legacy RoleCall evidence for older tasks. The default terminal
+rendering prioritizes node titles in boxes, edge rows, toolbar focus, and
+relationship details; raw graph IDs are shortened to secondary keys unless the
+operator opens a command-oriented action. Selected graph-node details
+synchronize with the same read model and show incoming links, outgoing links,
+evidence, deviations, and inspection commands. Remaining terminal graph
 fidelity work is tracked in `docs/plan-graph-tui-workflow-dag-roadmap.md`, and
 future Graph changes should use `docs/tui-workflow-dag-manual-checklist.md` as
 the manual PTY verification checklist. The
