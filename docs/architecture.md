@@ -529,11 +529,12 @@ run first, use `run_metadata.planBinding.planGraphId` when present, and fall
 back to the task active graph only for legacy runs without a binding.
 The CLI `execution-trace show` command is read-only and delegates to this core
 projection instead of reconstructing state from transcript prose.
-The CLI `reviews show` command remains an audit/read command over review
-decision artifacts, but it now also calls the same execution-trace projection to
-print the active plan graph id and deterministic deviation summary for the run's
-task. Projection failures are displayed as unavailable rather than blocking the
-underlying review decision output.
+The CLI `execution-trace show` and `reviews show` commands remain audit/read
+commands, but they now call the same execution-trace projection with task-run,
+run-metadata, artifact, comparison, RoleCall, and trace-link repositories so CLI
+JSON and text inspection include the same bounded local evidence classes as the
+core read model. Projection failures in `reviews show` are displayed as
+unavailable rather than blocking the underlying review decision output.
 The TUI read model optionally attaches that same projection to
 `TuiCurrentContextModel.executionTrace` for the current task. The Ink Graph
 focus renders the `Graph - Workflow DAG` workbench from that read model only:
@@ -1083,6 +1084,9 @@ The reference-gap follow-up is documented in
 `docs/tui-v3-reference-gap-roadmap.md`, with local prompts in
 `docs/tui-v3-reference-gap-implementation-prompts.md` under the same ignored
 implementation-prompt convention.
-The remaining PlanGraph and ExecutionTraceGraph semantic gaps are tracked in
-`docs/plan-graph-execution-trace-followup-roadmap.md`. That roadmap includes
-publishable implementation prompts for the end-to-end acceptance sweep.
+The PlanGraph and ExecutionTraceGraph semantic-gap follow-up is tracked in
+`docs/plan-graph-execution-trace-followup-roadmap.md`. Its implemented
+acceptance sweep covers task-brief creation, graph-scheduled fake runs,
+RoleCall trace expansion, verification/risk/diff/artifact/review/comparison
+evidence, CLI JSON inspection, and TUI read-model consumption; remaining work is
+future polish or capability expansion rather than an unproven lifecycle gap.

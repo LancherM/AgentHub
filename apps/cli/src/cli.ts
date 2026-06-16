@@ -4585,6 +4585,8 @@ async function showExecutionTrace(
         traceLinkRepository: runtime.traceLinkRepository,
         taskRunRepository: runtime.taskRunRepository,
         runMetadataRepository: runtime.runMetadataRepository,
+        runArtifactRepository: runtime.runArtifactRepository,
+        comparisonReportRepository: runtime.comparisonReportRepository,
         roleCallRepository: runtime.roleCallRepository
       },
       parsed
@@ -5301,6 +5303,8 @@ async function buildReviewExecutionTrace(
         traceLinkRepository: runtime.traceLinkRepository,
         taskRunRepository: runtime.taskRunRepository,
         runMetadataRepository: runtime.runMetadataRepository,
+        runArtifactRepository: runtime.runArtifactRepository,
+        comparisonReportRepository: runtime.comparisonReportRepository,
         roleCallRepository: runtime.roleCallRepository
       },
       { taskId }

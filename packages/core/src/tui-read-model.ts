@@ -796,6 +796,8 @@ async function summarizeExecutionTraceForTui(
         traceLinkRepository: repositories.traceLinkRepository,
         taskRunRepository: repositories.taskRunRepository,
         runMetadataRepository: repositories.runMetadataRepository,
+        runArtifactRepository: repositories.runArtifactRepository,
+        comparisonReportRepository: repositories.comparisonReportRepository,
         roleCallRepository: repositories.roleCallRepository
       },
       { taskId: task.id }

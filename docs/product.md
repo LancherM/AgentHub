@@ -572,6 +572,13 @@ limits scheduled runs when requested, and requires an explicit rerun request
 before repeating successful plan nodes. A dedicated desktop graph canvas remains
 follow-on UI work beyond the current read-only Trace tab.
 
+The PlanGraph lifecycle now has deterministic local acceptance coverage: a
+fake-adapter fixture creates a task brief, uses an active planner-owned graph to
+schedule primary runs, records runtime RoleCall expansion, attaches
+verification, risk, diff, artifact, review, and comparison evidence, and proves
+the resulting `ExecutionTraceGraph` is inspectable through the core projection,
+CLI JSON, and TUI read model.
+
 Plan and trace evidence now feeds review governance without creating an
 automatic acceptance path. Risk reports can include plan-aware findings for
 proposed graphs, missing required verification nodes on changed-file runs,
