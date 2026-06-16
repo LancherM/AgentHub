@@ -13,8 +13,8 @@ This document turns the remaining PlanGraph and ExecutionTraceGraph gaps into
 small implementation slices. It assumes the current branch already has the
 shared graph contracts, deterministic planner, optional local adapter-backed
 planner, primary-run plan binding, RoleCall trace links, execution-trace read
-model, CLI inspection, TUI list modes, desktop Trace tab, and plan-aware risk
-findings.
+model, CLI inspection, the `Graph - Workflow DAG` TUI workbench, desktop Trace
+tab, and plan-aware risk findings.
 
 The goal of the follow-up work is not to replace that foundation. The goal is
 to close the semantic gaps between the current implementation and the target
@@ -48,7 +48,10 @@ Implemented:
 - callee run inheritance of the source PlanGraph binding;
 - deterministic `ExecutionTraceGraph` projection from local evidence;
 - read-only CLI and desktop inspection;
-- TUI Overlay, Plan, and Trace list modes.
+- TUI `Graph - Workflow DAG` workbench with Overlay, Plan, and Trace modes,
+  bounded node rows, edge labels, selected-node details, mini-map, legend, and
+  compact fallback, plus legacy RoleCall compatibility when no PlanGraph-backed
+  projection exists.
 
 Remaining product diffs:
 
@@ -66,9 +69,11 @@ Remaining product diffs:
 5. ExecutionTraceGraph does not yet attach every available evidence class as a
    first-class trace source, especially run artifacts, review decisions, and
    comparison/best-result outcomes.
-6. The TUI Graph surface is still a list-oriented trace view, not the full DAG
-   workbench with node boxes, edge labels, subgraphs, mini-map, legend, and
-   structured selected-node actions.
+6. The TUI Graph surface has the current Workflow DAG workbench, but reference
+   fidelity remains incomplete: spatial rank layout, viewport/focus commands,
+   subgraph containers, structural mini-map polish, safe node actions, and
+   visual QA fixtures are tracked in
+   `docs/plan-graph-tui-workflow-dag-roadmap.md`.
 
 ## Guardrails
 

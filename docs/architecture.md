@@ -546,8 +546,9 @@ deviations, and commands. The renderer does not query SQLite, run agents, or
 duplicate TaskRunner/RoleCall orchestration. When the projection is unavailable,
 the existing RoleCall compatibility view remains the fallback. Remaining
 terminal graph fidelity work is isolated to the CLI/TUI renderer and read-model
-boundary in `docs/plan-graph-tui-workflow-dag-roadmap.md`; it must preserve the
-same no-SQLite, no-shell, no-TaskRunner renderer boundary.
+boundary in `docs/plan-graph-tui-workflow-dag-roadmap.md`, rather than the
+broader PlanGraph lifecycle roadmap; it must preserve the same no-SQLite,
+no-shell, no-TaskRunner renderer boundary.
 The desktop Workgroup Inspector consumes the same core projection through
 `ReviewService.getExecutionTrace`, the `agent-hub:review:execution-trace` IPC
 channel, and the sandboxed preload API. The React renderer owns only the

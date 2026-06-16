@@ -44,13 +44,12 @@ signals, and the next action without exposing raw logs or full patches. Compact
 run stage/latest summaries use the same TUI presentation filter as active-run
 boxes, so internal setup or Codex diagnostic lines remain in raw evidence rather
 than the operator-facing summary.
-The Execution Trace focus currently shows the legacy RoleCall evidence path:
-bounded loop state, including iteration count, pending/waiting/active counts,
-convergence reason, max-iteration stops, blocking-risk stops, and
-waiting-for-approval or waiting-for-context stops. Tasks that predate
-PlanGraph evidence, or tasks that have not yet emitted RoleCalls, remain
-inspectable through this compatibility trace instead of showing an empty future
-graph.
+The Graph focus now presents the current execution-trace projection as
+`Graph - Workflow DAG`: graph-backed tasks show bounded Overlay, Plan, and
+Trace modes with node rows, edge labels, selected-node details, toolbar state,
+a mini-map, a legend, and compact narrow-terminal fallback. Legacy tasks that
+predate PlanGraph evidence remain inspectable through the RoleCall/run
+compatibility trace instead of showing an empty future graph.
 Continuation helpers prepare an explicit composer prompt; they do not continue
 work in the background.
 Review decisions can be recorded with `agent-hub reviews accept|reject` or the
@@ -509,9 +508,11 @@ dynamic trace nodes, and derives `ExecutionTraceGraph` deterministically as an
 overlay of the original plan plus persisted runtime evidence. This keeps the
 expected workflow separate from actual execution while preserving RoleCalls as
 the dynamic delegation mechanism. The full product contract is tracked in
-`docs/plan-graph-execution-trace-product.md`; the remaining implementation
-diffs and phase prompts are tracked in
-`docs/plan-graph-execution-trace-followup-roadmap.md`.
+`docs/plan-graph-execution-trace-product.md`; remaining lifecycle and semantic
+implementation diffs are tracked in
+`docs/plan-graph-execution-trace-followup-roadmap.md`, while TUI-specific
+Workflow DAG reference fidelity is tracked separately in
+`docs/plan-graph-tui-workflow-dag-roadmap.md`.
 The shared domain contract and core validators for `PlanGraph`,
 `PlanNode`, `PlanEdge`, trace nodes, evidence links, deviations, and
 `ExecutionTraceGraph` are implemented. SQLite and in-memory repositories can
