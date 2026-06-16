@@ -656,6 +656,43 @@ function workflowDagTraceFixture(): ExecutionTraceGraph {
   };
 }
 
+function longWorkflowDagTraceFixture(): ExecutionTraceGraph {
+  const trace = workflowDagTraceFixture();
+  return {
+    ...trace,
+    baseNodes: [
+      ...trace.baseNodes,
+      {
+        id: "best_result",
+        kind: "handoff",
+        role: "reviewer",
+        title: "Best result handoff",
+        instructions: "Prepare the best result.",
+        acceptanceCriteria: ["Best result is clear."],
+        riskLevel: "low",
+        required: true,
+        execution: { mode: "manual" }
+      },
+      {
+        id: "handoff",
+        kind: "handoff",
+        role: "reviewer",
+        title: "Handoff",
+        instructions: "Record the handoff.",
+        acceptanceCriteria: ["Handoff is recorded."],
+        riskLevel: "low",
+        required: true,
+        execution: { mode: "manual" }
+      }
+    ],
+    baseEdges: [
+      ...trace.baseEdges,
+      { from: "compare_results", to: "best_result", type: "primary", label: "best" },
+      { from: "best_result", to: "handoff", type: "primary", label: "handoff" }
+    ]
+  };
+}
+
 describe("Ink TUI renderer", () => {
   it("renders Work as a conversation terminal instead of an embedded dashboard", () => {
     const output = renderToString(
@@ -827,7 +864,7 @@ describe("Ink TUI renderer", () => {
       layout: "ranked",
       labels: "compact",
       fold: "expanded",
-      zoom: "fit"
+      zoom: "82%"
     });
     const byId = new Map(layout.nodes.map((node) => [node.id, node]));
 
@@ -859,7 +896,7 @@ describe("Ink TUI renderer", () => {
       layout: "ranked",
       labels: "compact",
       fold: "grouped",
-      zoom: "detail"
+      zoom: "100%"
     });
     const byId = new Map(layout.nodes.map((node) => [node.id, node]));
 
@@ -877,7 +914,7 @@ describe("Ink TUI renderer", () => {
       layout: "ranked",
       labels: "compact",
       fold: "expanded",
-      zoom: "fit"
+      zoom: "82%"
     });
 
     expect(workbench.narrow).toBe(true);
@@ -893,7 +930,7 @@ describe("Ink TUI renderer", () => {
       layout: "ranked",
       labels: "compact",
       fold: "expanded",
-      zoom: "fit"
+      zoom: "82%"
     });
     const primaryLane = workbench.rows[0]?.text ?? "";
     const codexConnector = workbench.rows.find((row) =>
@@ -920,7 +957,7 @@ describe("Ink TUI renderer", () => {
       layout: "ranked",
       labels: "compact",
       fold: "expanded",
-      zoom: "fit"
+      zoom: "82%"
     });
 
     expect(workbench.narrow).toBe(false);
@@ -937,7 +974,7 @@ describe("Ink TUI renderer", () => {
       layout: "ranked",
       labels: "compact",
       fold: "expanded",
-      zoom: "fit"
+      zoom: "82%"
     });
     const plan = buildGraphLayout(trace, {
       mode: "plan",
@@ -946,12 +983,91 @@ describe("Ink TUI renderer", () => {
       layout: "ranked",
       labels: "compact",
       fold: "expanded",
-      zoom: "fit"
+      zoom: "82%"
     });
 
     expect(overlay.selectedId).toBe("pm_plan");
     expect(plan.selectedId).toBe("pm_plan");
     expect(plan.nodes.find((node) => node.id === "pm_plan")?.selected).toBe(true);
+  });
+
+  it("maps Workflow DAG percentage zoom to bounded density levels", () => {
+    const trace = workflowDagTraceFixture();
+    const compact = buildGraphLayout(trace, {
+      mode: "overlay",
+      columns: 154,
+      selectedIndex: 0,
+      layout: "ranked",
+      labels: "compact",
+      fold: "expanded",
+      zoom: "67%"
+    });
+    const normal = buildGraphLayout(trace, {
+      mode: "overlay",
+      columns: 154,
+      selectedIndex: 0,
+      layout: "ranked",
+      labels: "compact",
+      fold: "expanded",
+      zoom: "82%"
+    });
+    const detail = buildGraphLayout(trace, {
+      mode: "overlay",
+      columns: 154,
+      selectedIndex: 0,
+      layout: "ranked",
+      labels: "compact",
+      fold: "expanded",
+      zoom: "100%"
+    });
+
+    expect(compact.nodes[0]?.displayWidth).toBeLessThan(normal.nodes[0]?.displayWidth ?? 0);
+    expect(detail.nodes[0]?.displayWidth).toBeGreaterThan(normal.nodes[0]?.displayWidth ?? 0);
+  });
+
+  it("applies auto and off Workflow DAG label policies predictably", () => {
+    const auto = renderGraphWorkbench(workflowDagTraceFixture(), {
+      mode: "overlay",
+      columns: 154,
+      selectedIndex: 0,
+      layout: "ranked",
+      labels: "auto",
+      fold: "expanded",
+      zoom: "82%"
+    });
+    const off = renderGraphWorkbench(workflowDagTraceFixture(), {
+      mode: "overlay",
+      columns: 154,
+      selectedIndex: 0,
+      layout: "ranked",
+      labels: "off",
+      fold: "expanded",
+      zoom: "82%"
+    });
+    const autoText = auto.rows.map((row) => row.text).join("\n");
+    const offText = off.rows.map((row) => row.text).join("\n");
+
+    expect(auto.toolbar).toContain("labels auto");
+    expect(autoText).toContain("Capture request");
+    expect(offText).toContain("pm_plan ==>");
+    expect(offText).not.toContain("codex codex_run");
+  });
+
+  it("uses viewport rank state when wide Workflow DAG ranks overflow", () => {
+    const layout = buildGraphLayout(longWorkflowDagTraceFixture(), {
+      mode: "overlay",
+      columns: 120,
+      selectedIndex: 5,
+      layout: "ranked",
+      labels: "compact",
+      fold: "expanded",
+      zoom: "82%",
+      viewportRank: 3
+    });
+
+    expect(layout.viewport.startRank).toBeGreaterThan(0);
+    expect(layout.viewport.includedNodeIds).not.toContain("user_req");
+    expect(layout.viewport.includedNodeIds).toContain("best_result");
   });
 
   it("renders Plan/Trace/Overlay Workflow DAG modes", () => {
@@ -1235,11 +1351,13 @@ describe("Ink TUI renderer", () => {
     state = reduceInkState(state, "cycle_graph_mode", baseModel);
     expect(state.graphMode).toBe("trace");
     state = reduceInkState(state, "toggle_graph_labels", baseModel);
+    expect(state.graphLabels).toBe("compact");
+    state = reduceInkState(state, "toggle_graph_labels", baseModel);
     expect(state.graphLabels).toBe("full");
     state = reduceInkState(state, "toggle_graph_fold", baseModel);
     expect(state.graphFold).toBe("grouped");
     state = reduceInkState(state, "toggle_graph_zoom", baseModel);
-    expect(state.graphZoom).toBe("detail");
+    expect(state.graphZoom).toBe("100%");
   });
 
   it("keeps slash completion suggestions inside the terminal row budget", () => {
@@ -2718,6 +2836,46 @@ describe("Ink TUI renderer", () => {
     expect(instance.lastFrame()).toContain("Open Help");
     expect(instance.lastFrame()).toContain("agent-hub memory list --project-id project_1");
     expect(instance.lastFrame()).toContain("> @codex prompt");
+    instance.unmount();
+  });
+
+  it("focuses Workflow DAG nodes from the local graph slash command", async () => {
+    const submissions = [];
+    const graphModel = {
+      ...baseModel,
+      executionTrace: workflowDagTraceFixture()
+    };
+    const instance = render(
+      React.createElement(TuiInkApp, {
+        model: graphModel,
+        state: { ...createInitialInkState(), focus: "graph" },
+        terminal: { columns: 154, rows: 40 },
+        interactive: true,
+        submitPrompt: async (input) => {
+          submissions.push(input);
+          return { ok: true, message: "Submitted prompt.", model: graphModel };
+        }
+      })
+    );
+
+    for (const character of "/graph focus compare_results") {
+      instance.stdin.write(character);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+    instance.stdin.write("\r");
+    await waitForFrame(instance, "Graph focused compare_results.");
+
+    expect(submissions).toEqual([]);
+    expect(instance.lastFrame()).toContain("focus compare_results");
+    expect(instance.lastFrame()).toContain("> @codex prompt");
+
+    for (const character of "/graph focus missing_node") {
+      instance.stdin.write(character);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+    instance.stdin.write("\r");
+    await waitForFrame(instance, "Graph node not found: missing_node.");
+    expect(submissions).toEqual([]);
     instance.unmount();
   });
 

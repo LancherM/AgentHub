@@ -27,9 +27,10 @@ export interface TuiInkState {
   focus: TuiInkFocus;
   graphMode: "overlay" | "plan" | "trace";
   graphLayout: "ranked";
-  graphLabels: "compact" | "full";
+  graphLabels: "auto" | "compact" | "full" | "off";
   graphFold: "expanded" | "grouped";
-  graphZoom: "fit" | "detail";
+  graphZoom: "67%" | "82%" | "100%";
+  graphViewportRank: number;
   selectedRunIndex: number;
   selectedRunId?: string;
   selectedRoleCallIndex: number;
@@ -139,9 +140,10 @@ export function createInitialInkState(composer = ""): TuiInkState {
     focus: "work",
     graphMode: "overlay",
     graphLayout: "ranked",
-    graphLabels: "compact",
+    graphLabels: "auto",
     graphFold: "expanded",
-    graphZoom: "fit",
+    graphZoom: "82%",
+    graphViewportRank: 0,
     selectedRunIndex: 0,
     selectedRoleCallIndex: 0,
     selectedTaskIndex: 0,
@@ -191,9 +193,10 @@ export function reduceInkState(
   const next: TuiInkState = {
     ...state,
     graphLayout: state.graphLayout ?? "ranked",
-    graphLabels: state.graphLabels ?? "compact",
+    graphLabels: state.graphLabels ?? "auto",
     graphFold: state.graphFold ?? "expanded",
-    graphZoom: state.graphZoom ?? "fit",
+    graphZoom: state.graphZoom ?? "82%",
+    graphViewportRank: Math.max(0, state.graphViewportRank ?? 0),
     selectedWorkBlockIndex: state.selectedWorkBlockIndex ?? 0,
     workSelectionAnchor: state.workSelectionAnchor ?? false,
     selectedMemoryItemIndex: state.selectedMemoryItemIndex ?? 0,
@@ -304,7 +307,7 @@ export function reduceInkState(
     return next;
   }
   if (key === "toggle_graph_labels") {
-    next.graphLabels = next.graphLabels === "full" ? "compact" : "full";
+    next.graphLabels = nextGraphLabels(next.graphLabels ?? "auto");
     next.statusMessage = `Workflow DAG labels: ${next.graphLabels}.`;
     return next;
   }
@@ -314,7 +317,7 @@ export function reduceInkState(
     return next;
   }
   if (key === "toggle_graph_zoom") {
-    next.graphZoom = next.graphZoom === "detail" ? "fit" : "detail";
+    next.graphZoom = nextGraphZoom(next.graphZoom ?? "82%");
     next.statusMessage = `Workflow DAG zoom: ${next.graphZoom}.`;
     return next;
   }
@@ -1191,6 +1194,33 @@ function nextGraphMode(
     return "trace";
   }
   return "overlay";
+}
+
+function nextGraphLabels(
+  labels: TuiInkState["graphLabels"]
+): TuiInkState["graphLabels"] {
+  if (labels === "auto") {
+    return "compact";
+  }
+  if (labels === "compact") {
+    return "full";
+  }
+  if (labels === "full") {
+    return "off";
+  }
+  return "auto";
+}
+
+function nextGraphZoom(
+  zoom: TuiInkState["graphZoom"]
+): TuiInkState["graphZoom"] {
+  if (zoom === "82%") {
+    return "100%";
+  }
+  if (zoom === "100%") {
+    return "67%";
+  }
+  return "82%";
 }
 
 function transcriptScrollDelta(

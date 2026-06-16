@@ -42,7 +42,7 @@ import {
   type TuiInkKey,
   type TuiInkState
 } from "./state.mjs";
-import { renderGraphWorkbench, type GraphWorkbenchRow } from "./graph-layout.mjs";
+import { buildGraphLayout, renderGraphWorkbench, type GraphWorkbenchRow } from "./graph-layout.mjs";
 
 const h = React.createElement;
 const defaultTuiOperationTimeoutMs = 10 * 60 * 1000;
@@ -291,6 +291,58 @@ export function TuiInkApp(props: TuiInkAppProps): React.ReactElement {
     return true;
   };
 
+  const applyGraphFocusCommand = (
+    command: string,
+    currentState: TuiInkState,
+    rawNodeId: string
+  ): TuiInkState => {
+    const nodeId = rawNodeId.trim();
+    const trace = modelRef.current.executionTrace;
+    if (!nodeId) {
+      return {
+        ...clearComposerForCommand(currentState, command, "Usage: /graph focus <node-id>."),
+        focus: "graph"
+      };
+    }
+    if (!trace) {
+      return {
+        ...clearComposerForCommand(currentState, command, "No Workflow DAG is available for focus."),
+        focus: "graph"
+      };
+    }
+    const layout = buildGraphLayout(trace, {
+      mode: "overlay",
+      columns: props.terminal.columns,
+      selectedIndex: 0,
+      layout: currentState.graphLayout ?? "ranked",
+      labels: currentState.graphLabels ?? "auto",
+      fold: currentState.graphFold ?? "expanded",
+      zoom: currentState.graphZoom ?? "82%",
+      viewportRank: currentState.graphViewportRank ?? 0,
+      focusedNodeId: nodeId
+    });
+    const selectedIndex = layout.nodes.findIndex((node) => node.id === nodeId);
+    if (selectedIndex < 0) {
+      return {
+        ...clearComposerForCommand(currentState, command, `Graph node not found: ${nodeId}.`),
+        focus: "graph"
+      };
+    }
+    const selectedNode = layout.nodes[selectedIndex];
+    return {
+      ...clearComposerForCommand(currentState, command, `Graph focused ${compactId(nodeId)}.`),
+      focus: "graph",
+      graphMode: "overlay",
+      selectedRoleCallIndex: selectedIndex,
+      selectedRoleCallId: undefined,
+      graphViewportRank: Math.max(0, selectedNode?.rank ?? 0),
+      scrollOffsets: {
+        ...currentState.scrollOffsets,
+        roleCalls: 0
+      }
+    };
+  };
+
   const applyLocalSlashCommand = (
     command: string,
     currentState: TuiInkState
@@ -318,6 +370,10 @@ export function TuiInkApp(props: TuiInkAppProps): React.ReactElement {
         ...clearComposerForCommand(currentState, command, "Team roles shown."),
         focus: "team"
       });
+      return true;
+    }
+    if (name === "/graph" && args[0] === "focus") {
+      setStateNow(applyGraphFocusCommand(command, currentState, args.slice(1).join(" ")));
       return true;
     }
     if (name === "/runs" || name === "/review" || name === "/tasks" || name === "/memory" || name === "/work" || name === "/graph") {
@@ -2832,9 +2888,11 @@ function RoleCallsPane({
       columns: terminal.columns,
       selectedIndex,
       layout: state.graphLayout ?? "ranked",
-      labels: state.graphLabels ?? "compact",
+      labels: state.graphLabels ?? "auto",
       fold: state.graphFold ?? "expanded",
-      zoom: state.graphZoom ?? "fit"
+      zoom: state.graphZoom ?? "82%",
+      viewportRank: state.graphViewportRank ?? 0,
+      focusedNodeId: graphFocusedNodeId(model, state)
     });
     const windowSize = roleCallWindowSize(terminal, detail);
     const offset = Math.min(state.scrollOffsets.roleCalls, Math.max(0, workbench.rows.length - windowSize));
@@ -2904,13 +2962,35 @@ function graphSelectionCountForTrace(
   if (!model.executionTrace) {
     return 0;
   }
-  if (state.graphMode === "plan") {
-    return model.executionTrace.baseNodes.length;
+  return graphNodeIdsForTrace(model.executionTrace, state.graphMode ?? "overlay").length;
+}
+
+function graphFocusedNodeId(
+  model: TuiCurrentContextModel,
+  state: TuiInkState
+): string | undefined {
+  if (!model.executionTrace) {
+    return undefined;
   }
-  if (state.graphMode === "trace") {
-    return model.executionTrace.dynamicNodes.length;
+  const ids = graphNodeIdsForTrace(model.executionTrace, state.graphMode ?? "overlay");
+  const index = Math.min(Math.max(state.selectedRoleCallIndex ?? 0, 0), Math.max(0, ids.length - 1));
+  return ids[index];
+}
+
+function graphNodeIdsForTrace(
+  trace: NonNullable<TuiCurrentContextModel["executionTrace"]>,
+  mode: TuiInkState["graphMode"]
+): string[] {
+  if (mode === "plan") {
+    return trace.baseNodes.map((node) => node.id);
   }
-  return model.executionTrace.baseNodes.length + model.executionTrace.dynamicNodes.length;
+  if (mode === "trace") {
+    return trace.dynamicNodes.map((node) => node.id);
+  }
+  return [
+    ...trace.baseNodes.map((node) => node.id),
+    ...trace.dynamicNodes.map((node) => node.id)
+  ];
 }
 
 function graphRowColor(row: GraphWorkbenchRow): string | undefined {
@@ -3856,6 +3936,8 @@ function slashCompletionOptions(
     "/team",
     "/runs",
     "/review",
+    "/graph",
+    "/graph focus ",
     "/memory",
     "/memory auto status",
     "/memory auto on",

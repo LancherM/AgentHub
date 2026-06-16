@@ -9,9 +9,10 @@ import { compactId, truncateText } from "./format.mjs";
 
 export type GraphWorkbenchMode = "overlay" | "plan" | "trace";
 export type GraphLayoutMode = "ranked";
-export type GraphLabelMode = "compact" | "full";
+export type GraphLabelMode = "auto" | "compact" | "full" | "off";
 export type GraphFoldMode = "expanded" | "grouped";
-export type GraphZoomMode = "fit" | "detail";
+export type GraphZoomMode = "67%" | "82%" | "100%";
+type ResolvedGraphLabelMode = "compact" | "full" | "off";
 
 export interface GraphWorkbenchOptions {
   mode: GraphWorkbenchMode;
@@ -21,6 +22,8 @@ export interface GraphWorkbenchOptions {
   labels: GraphLabelMode;
   fold: GraphFoldMode;
   zoom: GraphZoomMode;
+  viewportRank?: number;
+  focusedNodeId?: string;
 }
 
 export interface GraphWorkbenchRender {
@@ -125,8 +128,12 @@ export function buildGraphLayout(
   const selectedIndex = clampIndex(options.selectedIndex, graph.nodes.length);
   const selectedId = graph.nodes[selectedIndex]?.id;
   const narrow = options.columns < narrowColumnThreshold;
-  const nodeWidth = options.zoom === "detail" ? detailNodeWidth : compactNodeWidth;
-  const rankedNodes = rankLayoutNodes(graph.nodes, graph.edges, nodeWidth, selectedId);
+  const nodeWidth = nodeWidthForZoom(options.zoom);
+  const focusedId = options.focusedNodeId ?? selectedId;
+  const rankByNodeId = rankNodes(graph.nodes, graph.edges);
+  const rankValues = [...new Set(graph.nodes.map((node) => rankByNodeId.get(node.id) ?? 0))].sort((a, b) => a - b);
+  const viewportRanks = viewportRanksForColumns(rankValues, options.columns, options.viewportRank ?? 0);
+  const rankedNodes = rankLayoutNodes(graph.nodes, graph.edges, nodeWidth, selectedId, focusedId, rankByNodeId, viewportRanks);
   const rankById = new Map(rankedNodes.map((node) => [node.id, node]));
   const rankedEdges = graph.edges
     .map((edge) => {
@@ -165,7 +172,9 @@ export function buildGraphLayout(
         side: "right" as const
       }))
   }));
-  const maxRank = nodesWithAnchors.reduce((max, node) => Math.max(max, node.rank), 0);
+  const maxRank = rankValues.reduce((max, rank) => Math.max(max, rank), 0);
+  const viewportStartRank = viewportRanks[0] ?? 0;
+  const viewportEndRank = viewportRanks[viewportRanks.length - 1] ?? maxRank;
   return {
     mode: options.mode,
     nodes: nodesWithAnchors,
@@ -174,8 +183,8 @@ export function buildGraphLayout(
     viewport: {
       columns: options.columns,
       narrow,
-      startRank: 0,
-      endRank: maxRank,
+      startRank: viewportStartRank,
+      endRank: viewportEndRank,
       includedNodeIds: nodesWithAnchors.filter((node) => node.viewportIncluded).map((node) => node.id)
     },
     selectedIndex,
@@ -193,10 +202,10 @@ export function renderGraphWorkbench(
     : dagRows(layout, options);
   const miniMap = layout.nodes.length === 0
     ? "mini-map empty"
-    : `mini-map ${layout.selectedIndex + 1}/${layout.nodes.length} ${layout.nodes.map((node) => statusGlyph(node.status)).join("")}`;
+    : `mini-map ${layout.selectedIndex + 1}/${layout.nodes.length} r${layout.viewport.startRank}-${layout.viewport.endRank} ${layout.nodes.map((node) => statusGlyph(node.status)).join("")}`;
   return {
     title: "Graph - Workflow DAG",
-    toolbar: toolbarText(trace, options, layout.nodes.length, layout.viewport.narrow, layout.selectedIndex),
+    toolbar: toolbarText(trace, options, layout.nodes.length, layout.viewport.narrow, layout.selectedId),
     rows,
     narrow: layout.viewport.narrow,
     legend: [
@@ -336,13 +345,13 @@ function dagRows(
       });
     }
     rows.push({
-      text: nodeBoxLine(node, node.displayWidth, node.selected, options.labels),
+      text: nodeBoxLine(node, node.displayWidth, node.selected, effectiveLabelMode(options.labels, options.columns)),
       selected: node.selected,
       tone: nodeTone(node)
     });
     for (const edge of edgeByFrom.get(node.id) ?? []) {
       rows.push({
-        text: truncateText(`  ${edgeGlyph(edge.type)} ${edge.label ?? edge.type} ${compactId(edge.to)}`, options.columns),
+        text: truncateText(`  ${edgeGlyph(edge.type)} ${edgeLabelText(edge, effectiveLabelMode(options.labels, options.columns))}`, options.columns),
         tone: edge.type === "fallback" || edge.type === "deviation" ? "warning" : "muted"
       });
     }
@@ -357,7 +366,7 @@ function spatialDagRows(
   if (options.columns < spatialColumnThreshold) {
     return undefined;
   }
-  const ranks = [...new Set(layout.nodes.map((node) => node.rank))].sort((a, b) => a - b);
+  const ranks = [...new Set(layout.nodes.filter((node) => node.viewportIncluded).map((node) => node.rank))].sort((a, b) => a - b);
   if (ranks.length <= 1) {
     return undefined;
   }
@@ -378,14 +387,14 @@ function spatialDagRows(
     const toneNode = selectedNode ?? lineNodes.find((node): node is GraphLayoutNode => Boolean(node));
     rows.push({
       text: truncateText(
-        lineNodes.map((node) => spatialNodeCell(node, cellWidth, options.labels)).join(" ".repeat(spatialGapWidth)),
+        lineNodes.map((node) => spatialNodeCell(node, cellWidth, effectiveLabelMode(options.labels, options.columns))).join(" ".repeat(spatialGapWidth)),
         options.columns
       ),
       selected: lineNodes.some((node) => node?.selected),
       tone: toneNode ? nodeTone(toneNode) : undefined
     });
   }
-  const connectorRows = spatialConnectorRows(layout.edges, ranks, cellWidth, options.columns);
+  const connectorRows = spatialConnectorRows(layout.edges, ranks, cellWidth, options.columns, effectiveLabelMode(options.labels, options.columns));
   if (connectorRows.length > 0) {
     rows.push(...connectorRows);
   }
@@ -404,7 +413,7 @@ function spatialCellWidth(columns: number, rankCount: number): number | undefine
 function spatialNodeCell(
   node: GraphLayoutNode | undefined,
   cellWidth: number,
-  labels: GraphLabelMode
+  labels: ResolvedGraphLabelMode
 ): string {
   if (!node) {
     return "".padEnd(cellWidth);
@@ -417,16 +426,18 @@ function spatialConnectorRows(
   edges: GraphLayoutEdge[],
   ranks: number[],
   cellWidth: number,
-  columns: number
+  columns: number,
+  labels: ResolvedGraphLabelMode
 ): GraphWorkbenchRow[] {
   const rankIndex = new Map(ranks.map((rank, index) => [rank, index]));
-  return edges.map((edge) => {
+  const visibleRankSet = new Set(ranks);
+  return edges.filter((edge) => visibleRankSet.has(edge.fromRank) && visibleRankSet.has(edge.toRank)).map((edge) => {
     const cells = ranks.map(() => "".padEnd(cellWidth));
     const fromIndex = rankIndex.get(edge.fromRank);
     const toIndex = rankIndex.get(edge.toRank);
     if (fromIndex === undefined || toIndex === undefined) {
       return {
-        text: truncateText(`${compactId(edge.from)} ${edgeGlyph(edge.type)} ${edge.label ?? edge.type} ${compactId(edge.to)}`, columns),
+        text: truncateText(`${compactId(edge.from)} ${edgeGlyph(edge.type)} ${edgeLabelText(edge, labels)}`, columns),
         tone: edge.type === "fallback" || edge.type === "deviation" ? "warning" as const : "muted" as const
       };
     }
@@ -434,7 +445,7 @@ function spatialConnectorRows(
     for (let index = fromIndex + 1; index < toIndex; index += 1) {
       cells[index] = "-".repeat(Math.min(cellWidth, 12)).padEnd(cellWidth);
     }
-    cells[toIndex] = truncateText(`${edge.label ?? edge.type} ${compactId(edge.to)}`, cellWidth).padEnd(cellWidth);
+    cells[toIndex] = truncateText(edgeLabelText(edge, labels), cellWidth).padEnd(cellWidth);
     return {
       text: truncateText(cells.join(" ".repeat(spatialGapWidth)), columns),
       tone: edge.type === "fallback" || edge.type === "deviation" ? "warning" : "muted"
@@ -452,9 +463,10 @@ function narrowRows(
     return [{ text: "no graph nodes available", tone: "muted" }];
   }
   const incoming = groupEdgesByTo(edges);
+  const effectiveLabels = effectiveLabelMode(labels, columns);
   return nodes.map((node) => {
     const inbound = incoming.get(node.id)?.map((edge) => `${edgeGlyph(edge.type)}${compactId(edge.from)}`).join(" ") ?? "root";
-    const title = labels === "full" ? node.title : truncateText(node.title, 24);
+    const title = effectiveLabels === "full" ? node.title : truncateText(node.title, 24);
     return {
       text: truncateText(`${node.selected ? "*" : " "} ${nodeKindMarker(node)} ${statusGlyph(node.status)} ${compactId(node.id)} <= ${inbound} ${title}`, columns),
       selected: node.selected,
@@ -467,7 +479,7 @@ function nodeBoxLine(
   node: GraphLayoutNode,
   width: number,
   selected: boolean,
-  labels: GraphLabelMode
+  labels: ResolvedGraphLabelMode
 ): string {
   const marker = selected ? "*" : " ";
   const titleWidth = Math.max(8, width - 10);
@@ -486,15 +498,15 @@ function toolbarText(
   options: GraphWorkbenchOptions,
   nodeCount: number,
   narrow: boolean,
-  selectedIndex: number
+  selectedId: string | undefined
 ): string {
   return [
+    `zoom ${options.zoom}`,
     `mode ${options.mode}`,
     `layout ${options.layout}`,
-    `focus ${nodeCount === 0 ? 0 : selectedIndex + 1}/${nodeCount}`,
+    `focus ${selectedId ? compactId(selectedId) : nodeCount === 0 ? "none" : "unknown"}`,
     `labels ${options.labels}`,
     `fold ${options.fold}`,
-    `zoom ${options.zoom}`,
     narrow ? "compact" : "dag",
     `plan ${trace.baseNodes.length}`,
     `trace ${trace.dynamicNodes.length}`,
@@ -508,10 +520,13 @@ function rankLayoutNodes(
   nodes: BaseLayoutNode[],
   edges: BaseLayoutEdge[],
   displayWidth: number,
-  selectedId: string | undefined
+  selectedId: string | undefined,
+  focusedId: string | undefined,
+  rankById: Map<string, number>,
+  viewportRanks: number[]
 ): GraphLayoutNode[] {
-  const rankById = rankNodes(nodes, edges);
   const laneById = laneNodes(nodes, rankById);
+  const viewportRankSet = new Set(viewportRanks);
   return nodes.map((node) => {
     const selected = node.id === selectedId;
     return {
@@ -522,11 +537,60 @@ function rankLayoutNodes(
       incomingAnchors: [],
       outgoingAnchors: [],
       selected,
-      focused: selected,
-      viewportIncluded: true,
+      focused: node.id === focusedId,
+      viewportIncluded: viewportRankSet.has(rankById.get(node.id) ?? 0),
       actions: layoutActions(node)
     };
   });
+}
+
+function nodeWidthForZoom(zoom: GraphZoomMode): number {
+  if (zoom === "100%") {
+    return detailNodeWidth;
+  }
+  if (zoom === "67%") {
+    return 25;
+  }
+  return compactNodeWidth;
+}
+
+function effectiveLabelMode(labels: GraphLabelMode, columns: number): ResolvedGraphLabelMode {
+  if (labels === "auto") {
+    return columns >= 140 ? "full" : "compact";
+  }
+  return labels;
+}
+
+function edgeLabelText(edge: GraphLayoutEdge, labels: ResolvedGraphLabelMode): string {
+  if (labels === "off") {
+    return compactId(edge.to);
+  }
+  return `${edge.label ?? edge.type} ${compactId(edge.to)}`;
+}
+
+function viewportRanksForColumns(
+  rankValues: number[],
+  columns: number,
+  requestedStartRank: number
+): number[] {
+  if (rankValues.length === 0 || columns < spatialColumnThreshold) {
+    return rankValues;
+  }
+  const capacity = spatialRankCapacity(columns);
+  if (rankValues.length <= capacity) {
+    return rankValues;
+  }
+  const requestedIndex = rankValues.findIndex((rank) => rank >= requestedStartRank);
+  const boundedStartIndex = Math.min(
+    Math.max(requestedIndex < 0 ? 0 : requestedIndex, 0),
+    Math.max(0, rankValues.length - capacity)
+  );
+  return rankValues.slice(boundedStartIndex, boundedStartIndex + capacity);
+}
+
+function spatialRankCapacity(columns: number): number {
+  const minimumCellWidth = 18;
+  return Math.max(1, Math.floor((columns + spatialGapWidth) / (minimumCellWidth + spatialGapWidth)));
 }
 
 function rankNodes(nodes: BaseLayoutNode[], edges: BaseLayoutEdge[]): Map<string, number> {
