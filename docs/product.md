@@ -56,9 +56,12 @@ containers for parallel, fallback, RoleCall, and comparison branches; collapsed
 groups render summary rows with node count, status, risk, and selected
 descendant state without mutating PlanGraph or trace evidence. `/graph focus
 <node-id>` selects a node and moves the local viewport around it without
-running agents or mutating task state. Legacy tasks that predate PlanGraph
-evidence remain inspectable through the RoleCall/run compatibility trace
-instead of showing an empty future graph.
+running agents or mutating task state. Selected graph-node details expose safe
+read-only commands for trace, run, RoleCall, and comparison evidence plus
+prepared focus, fold, and rerun-from-here prompts; none of these graph actions
+auto-run agents, apply code, merge, push, create PRs, or approve memory. Legacy
+tasks that predate PlanGraph evidence remain inspectable through the
+RoleCall/run compatibility trace instead of showing an empty future graph.
 Continuation helpers prepare an explicit composer prompt; they do not continue
 work in the background.
 Review decisions can be recorded with `agent-hub reviews accept|reject` or the

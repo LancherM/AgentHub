@@ -204,7 +204,7 @@ export function renderGraphWorkbench(
 ): GraphWorkbenchRender {
   const layout = buildGraphLayout(trace, options);
   const rows = layout.viewport.narrow
-    ? narrowRows(layout.nodes, layout.edges, options.columns, options.labels)
+    ? narrowGraphRows(layout, options.columns, options.labels)
     : dagRows(layout, options);
   const miniMap = layout.nodes.length === 0
     ? "mini-map empty"
@@ -521,6 +521,25 @@ function narrowRows(
       tone: nodeTone(node)
     };
   });
+}
+
+function narrowGraphRows(
+  layout: GraphLayoutModel,
+  columns: number,
+  labels: GraphLabelMode
+): GraphWorkbenchRow[] {
+  const collapsedGroupIds = new Set(layout.groups.filter((group) => group.collapsed).map((group) => group.id));
+  const nodes = visibleNodesForGroups(layout.nodes, collapsedGroupIds);
+  const visibleNodeIds = new Set(nodes.map((node) => node.id));
+  const edges = layout.edges.filter((edge) => visibleNodeIds.has(edge.from) && visibleNodeIds.has(edge.to));
+  const summaries = collapsedGroupRows(layout, columns);
+  if (nodes.length === 0) {
+    return summaries.length > 0 ? summaries : [{ text: "no graph nodes available", tone: "muted" }];
+  }
+  return [
+    ...summaries,
+    ...narrowRows(nodes, edges, columns, labels)
+  ];
 }
 
 function nodeBoxLine(

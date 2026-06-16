@@ -2964,6 +2964,37 @@ describe("Ink TUI renderer", () => {
     instance.unmount();
   });
 
+  it("toggles Workflow DAG groups from the local graph fold slash command", async () => {
+    const submissions = [];
+    const graphModel = {
+      ...baseModel,
+      executionTrace: workflowDagTraceFixture()
+    };
+    const instance = render(
+      React.createElement(TuiInkApp, {
+        model: graphModel,
+        state: { ...createInitialInkState(), focus: "graph" },
+        terminal: { columns: 118, rows: 40 },
+        interactive: true,
+        submitPrompt: async (input) => {
+          submissions.push(input);
+          return { ok: true, message: "Submitted prompt.", model: graphModel };
+        }
+      })
+    );
+
+    for (const character of "/graph fold role-call") {
+      instance.stdin.write(character);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+    instance.stdin.write("\r");
+    await waitForFrame(instance, "Graph group collapsed: role-call.");
+
+    expect(instance.lastFrame()).toContain("[+] RoleCall branch");
+    expect(submissions).toEqual([]);
+    instance.unmount();
+  });
+
   it("toggles selected detail folds without writing hotkeys into the composer", async () => {
     const foldModel = {
       ...baseModel,

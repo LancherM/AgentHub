@@ -344,6 +344,37 @@ export function TuiInkApp(props: TuiInkAppProps): React.ReactElement {
     };
   };
 
+  const applyGraphFoldCommand = (
+    command: string,
+    currentState: TuiInkState,
+    rawGroupId: string
+  ): TuiInkState => {
+    const groupId = rawGroupId.trim();
+    if (!groupId) {
+      return {
+        ...clearComposerForCommand(currentState, command, "Usage: /graph fold <group-id>."),
+        focus: "graph",
+        graphFold: "grouped"
+      };
+    }
+    const collapsed = new Set(currentState.collapsedGraphGroupIds ?? []);
+    if (collapsed.has(groupId)) {
+      collapsed.delete(groupId);
+    } else {
+      collapsed.add(groupId);
+    }
+    return {
+      ...clearComposerForCommand(
+        currentState,
+        command,
+        collapsed.has(groupId) ? `Graph group collapsed: ${groupId}.` : `Graph group expanded: ${groupId}.`
+      ),
+      focus: "graph",
+      graphFold: "grouped",
+      collapsedGraphGroupIds: [...collapsed]
+    };
+  };
+
   const applyLocalSlashCommand = (
     command: string,
     currentState: TuiInkState
@@ -375,6 +406,10 @@ export function TuiInkApp(props: TuiInkAppProps): React.ReactElement {
     }
     if (name === "/graph" && args[0] === "focus") {
       setStateNow(applyGraphFocusCommand(command, currentState, args.slice(1).join(" ")));
+      return true;
+    }
+    if (name === "/graph" && args[0] === "fold") {
+      setStateNow(applyGraphFoldCommand(command, currentState, args.slice(1).join(" ")));
       return true;
     }
     if (name === "/runs" || name === "/review" || name === "/tasks" || name === "/memory" || name === "/work" || name === "/graph") {
@@ -1809,6 +1844,7 @@ function detailSectionOrder(kind: TuiSelectionDetail["kind"]): Map<string, numbe
                   "outgoing",
                   "evidence",
                   "deviations",
+                  "actions",
                   "instructions",
                   "acceptance"
                 ]
@@ -3940,6 +3976,7 @@ function slashCompletionOptions(
     "/review",
     "/graph",
     "/graph focus ",
+    "/graph fold ",
     "/memory",
     "/memory auto status",
     "/memory auto on",

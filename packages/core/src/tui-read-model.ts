@@ -2387,7 +2387,7 @@ function graphSelectionDetails(trace: ExecutionTraceGraph | undefined): {
   }
   const traceCommand = `agent-hub execution-trace show --plan-graph-id ${trace.planGraphId}`;
   const planDetails = trace.baseNodes.map((node) => {
-    const commands = [traceCommand];
+    const commands = graphPlanNodeCommands(trace, node.id, traceCommand);
     return {
       id: node.id,
       kind: "graph_node" as const,
@@ -2430,6 +2430,11 @@ function graphSelectionDetails(trace: ExecutionTraceGraph | undefined): {
           lines: graphDeviationLines(trace, { planNodeId: node.id })
         },
         {
+          id: "actions",
+          title: "Actions",
+          lines: graphPlanNodeActionLines(trace, node.id, traceCommand)
+        },
+        {
           id: "instructions",
           title: "Instructions",
           lines: [node.instructions],
@@ -2447,7 +2452,7 @@ function graphSelectionDetails(trace: ExecutionTraceGraph | undefined): {
     };
   });
   const traceDetails = trace.dynamicNodes.map((node) => {
-    const commands = [traceCommand];
+    const commands = graphTraceNodeCommands(trace, node.id, traceCommand);
     return {
       id: node.id,
       kind: "graph_node" as const,
@@ -2488,6 +2493,11 @@ function graphSelectionDetails(trace: ExecutionTraceGraph | undefined): {
             ? "warning" as const
             : undefined,
           lines: graphDeviationLines(trace, { traceNodeId: node.id })
+        },
+        {
+          id: "actions",
+          title: "Actions",
+          lines: graphTraceNodeActionLines(trace, node.id, traceCommand)
         }
       ],
       commands,
@@ -2499,6 +2509,118 @@ function graphSelectionDetails(trace: ExecutionTraceGraph | undefined): {
     plan: planDetails,
     trace: traceDetails
   };
+}
+
+function graphPlanNodeCommands(
+  trace: ExecutionTraceGraph,
+  nodeId: string,
+  traceCommand: string
+): string[] {
+  const commands = [
+    traceCommand,
+    `agent-hub plan-graphs show ${trace.planGraphId}`,
+    `/graph focus ${nodeId}`
+  ];
+  const groupId = graphPlanNodeGroupId(trace, nodeId);
+  if (groupId) {
+    commands.push(`/graph fold ${groupId}`);
+  }
+  return commands;
+}
+
+function graphTraceNodeCommands(
+  trace: ExecutionTraceGraph,
+  nodeId: string,
+  traceCommand: string
+): string[] {
+  const node = trace.dynamicNodes.find((candidate) => candidate.id === nodeId);
+  const commands = [
+    traceCommand,
+    `/graph focus ${nodeId}`
+  ];
+  if (node?.sourceType === "task_run" && node.sourceId) {
+    commands.push(`agent-hub runs show ${node.sourceId}`);
+    commands.push(`agent-hub runs diff ${node.sourceId} --stat`);
+  } else if ((node?.sourceType === "role_call" || node?.sourceType === "role_call_event") && node.sourceId) {
+    commands.push(`agent-hub role-calls show ${node.sourceId}`);
+  }
+  const groupId = graphTraceNodeGroupId(node);
+  if (groupId) {
+    commands.push(`/graph fold ${groupId}`);
+  }
+  return commands;
+}
+
+function graphPlanNodeActionLines(
+  trace: ExecutionTraceGraph,
+  nodeId: string,
+  traceCommand: string
+): string[] {
+  const lines = [
+    `open trace: ${traceCommand}`,
+    `focus node: /graph focus ${nodeId}`
+  ];
+  const groupId = graphPlanNodeGroupId(trace, nodeId);
+  if (groupId) {
+    lines.push(`fold subgraph: /graph fold ${groupId}`);
+  }
+  lines.push(`prepare rerun-from-here prompt: ${graphRerunPrompt(trace, nodeId)}`);
+  return lines;
+}
+
+function graphTraceNodeActionLines(
+  trace: ExecutionTraceGraph,
+  nodeId: string,
+  traceCommand: string
+): string[] {
+  const node = trace.dynamicNodes.find((candidate) => candidate.id === nodeId);
+  const lines = [
+    `open trace: ${traceCommand}`,
+    `focus node: /graph focus ${nodeId}`
+  ];
+  if (node?.sourceType === "task_run" && node.sourceId) {
+    lines.push(`open run: agent-hub runs show ${node.sourceId}`);
+  } else if ((node?.sourceType === "role_call" || node?.sourceType === "role_call_event") && node.sourceId) {
+    lines.push(`open RoleCall: agent-hub role-calls show ${node.sourceId}`);
+  } else if (node?.sourceType === "comparison_report" && node.sourceId) {
+    lines.push(`open comparison evidence: ${traceCommand}`);
+  }
+  const groupId = graphTraceNodeGroupId(node);
+  if (groupId) {
+    lines.push(`fold subgraph: /graph fold ${groupId}`);
+  }
+  lines.push(`prepare rerun-from-here prompt: ${graphRerunPrompt(trace, node?.sourcePlanNodeId ?? nodeId)}`);
+  return lines;
+}
+
+function graphPlanNodeGroupId(trace: ExecutionTraceGraph, nodeId: string): string | undefined {
+  const incoming = trace.baseEdges.find((edge) => edge.to === nodeId);
+  if (incoming?.type === "parallel") {
+    return "parallel";
+  }
+  if (incoming?.type === "fallback") {
+    return "fallback";
+  }
+  return undefined;
+}
+
+function graphTraceNodeGroupId(
+  node: ExecutionTraceGraph["dynamicNodes"][number] | undefined
+): string | undefined {
+  if (!node) {
+    return undefined;
+  }
+  if (node.sourceType === "role_call" || node.sourceType === "role_call_event") {
+    return "role-call";
+  }
+  if (node.sourceType === "comparison_report") {
+    return "comparison";
+  }
+  return undefined;
+}
+
+function graphRerunPrompt(trace: ExecutionTraceGraph, nodeId: string): string {
+  return `Rerun from graph node ${nodeId} for task ${trace.taskId}. Do not apply, merge, push, approve memory, or create PRs automatically.`;
 }
 
 function graphIncomingLines(trace: ExecutionTraceGraph, nodeId: string): string[] {

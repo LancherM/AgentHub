@@ -550,8 +550,13 @@ renderer owns percentage-like zoom density, label policy (`auto`, `compact`,
 group ids, and `/graph focus <node-id>` state only; these controls select,
 frame, group, and collapse local graph nodes without querying SQLite, running
 agents, mutating PlanGraph/ExecutionTraceGraph records, or duplicating
-TaskRunner/RoleCall orchestration. When the projection is unavailable, the
-existing RoleCall compatibility view remains the fallback. Remaining
+TaskRunner/RoleCall orchestration. Graph-node detail actions are derived in
+`packages/core/src/tui-read-model.ts` when they depend on source ids: they add
+read-only trace/run/RoleCall/comparison commands and prepare-only focus, fold,
+and rerun-from-here prompts. The TUI may prepare those strings in the composer,
+but it does not execute reruns, apply files, merge, push, create PRs, or approve
+memory from Graph. When the projection is unavailable, the existing RoleCall
+compatibility view remains the fallback. Remaining
 terminal graph fidelity work is isolated to the CLI/TUI renderer and read-model
 boundary in `docs/plan-graph-tui-workflow-dag-roadmap.md`, rather than the
 broader PlanGraph lifecycle roadmap; it must preserve the same no-SQLite,
