@@ -319,7 +319,8 @@ export function TuiInkApp(props: TuiInkAppProps): React.ReactElement {
       fold: currentState.graphFold ?? "expanded",
       zoom: currentState.graphZoom ?? "82%",
       viewportRank: currentState.graphViewportRank ?? 0,
-      focusedNodeId: nodeId
+      focusedNodeId: nodeId,
+      collapsedGroupIds: currentState.collapsedGraphGroupIds ?? []
     });
     const selectedIndex = layout.nodes.findIndex((node) => node.id === nodeId);
     if (selectedIndex < 0) {
@@ -2892,7 +2893,8 @@ function RoleCallsPane({
       fold: state.graphFold ?? "expanded",
       zoom: state.graphZoom ?? "82%",
       viewportRank: state.graphViewportRank ?? 0,
-      focusedNodeId: graphFocusedNodeId(model, state)
+      focusedNodeId: graphFocusedNodeId(model, state),
+      collapsedGroupIds: state.collapsedGraphGroupIds ?? []
     });
     const windowSize = roleCallWindowSize(terminal, detail);
     const offset = Math.min(state.scrollOffsets.roleCalls, Math.max(0, workbench.rows.length - windowSize));

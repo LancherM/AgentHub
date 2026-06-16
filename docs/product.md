@@ -51,10 +51,14 @@ selected-node details, real toolbar state, a mini-map, a legend, and bounded
 medium or narrow-terminal fallback. The terminal graph renderer uses a
 deterministic local layout model so selection, rank/lane placement, grouping,
 percentage-like zoom density, label policy, viewport rank, and focus command
-behavior stay stable across renders. `/graph focus <node-id>` selects a node
-and moves the local viewport around it without running agents or mutating task
-state. Legacy tasks that predate PlanGraph evidence remain inspectable through
-the RoleCall/run compatibility trace instead of showing an empty future graph.
+behavior stay stable across renders. Grouped mode derives local subgraph
+containers for parallel, fallback, RoleCall, and comparison branches; collapsed
+groups render summary rows with node count, status, risk, and selected
+descendant state without mutating PlanGraph or trace evidence. `/graph focus
+<node-id>` selects a node and moves the local viewport around it without
+running agents or mutating task state. Legacy tasks that predate PlanGraph
+evidence remain inspectable through the RoleCall/run compatibility trace
+instead of showing an empty future graph.
 Continuation helpers prepare an explicit composer prompt; they do not continue
 work in the background.
 Review decisions can be recorded with `agent-hub reviews accept|reject` or the

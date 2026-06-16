@@ -24,6 +24,7 @@ export interface GraphWorkbenchOptions {
   zoom: GraphZoomMode;
   viewportRank?: number;
   focusedNodeId?: string;
+  collapsedGroupIds?: string[];
 }
 
 export interface GraphWorkbenchRender {
@@ -94,6 +95,10 @@ export interface GraphLayoutGroup {
   id: string;
   label: string;
   nodeIds: string[];
+  collapsed: boolean;
+  selectedDescendant: boolean;
+  status: string;
+  risk?: string;
 }
 
 export interface GraphLayoutViewport {
@@ -130,6 +135,7 @@ export function buildGraphLayout(
   const narrow = options.columns < narrowColumnThreshold;
   const nodeWidth = nodeWidthForZoom(options.zoom);
   const focusedId = options.focusedNodeId ?? selectedId;
+  const collapsedGroupIds = new Set(options.collapsedGroupIds ?? []);
   const rankByNodeId = rankNodes(graph.nodes, graph.edges);
   const rankValues = [...new Set(graph.nodes.map((node) => rankByNodeId.get(node.id) ?? 0))].sort((a, b) => a - b);
   const viewportRanks = viewportRanksForColumns(rankValues, options.columns, options.viewportRank ?? 0);
@@ -179,7 +185,7 @@ export function buildGraphLayout(
     mode: options.mode,
     nodes: nodesWithAnchors,
     edges: rankedEdges,
-    groups: layoutGroups(nodesWithAnchors),
+    groups: layoutGroups(nodesWithAnchors, collapsedGroupIds),
     viewport: {
       columns: options.columns,
       narrow,
@@ -222,15 +228,18 @@ function workbenchGraph(
   mode: GraphWorkbenchMode,
   fold: GraphFoldMode
 ): { nodes: BaseLayoutNode[]; edges: BaseLayoutEdge[] } {
+  const planEdges = mode === "trace"
+    ? []
+    : trace.baseEdges.map((edge) => layoutPlanEdge(edge));
   const planNodes = mode === "trace"
     ? []
-    : trace.baseNodes.map((node) => layoutPlanNode(node));
+    : withPlanBranchGroups(trace.baseNodes.map((node) => layoutPlanNode(node)), planEdges, fold);
   const traceNodes = mode === "plan"
     ? []
     : trace.dynamicNodes.map((node) => layoutTraceNode(node, fold));
   const visibleIds = new Set([...planNodes, ...traceNodes].map((node) => node.id));
   const edges = [
-    ...(mode === "trace" ? [] : trace.baseEdges.map((edge) => layoutPlanEdge(edge))),
+    ...planEdges,
     ...(mode === "plan" ? [] : trace.dynamicEdges.map((edge) => layoutTraceEdge(edge))),
     ...(mode === "overlay" ? runtimeBindingEdges(trace) : [])
   ].filter((edge) => visibleIds.has(edge.from) && visibleIds.has(edge.to));
@@ -238,6 +247,32 @@ function workbenchGraph(
     nodes: [...planNodes, ...traceNodes],
     edges
   };
+}
+
+function withPlanBranchGroups(
+  nodes: BaseLayoutNode[],
+  edges: BaseLayoutEdge[],
+  fold: GraphFoldMode
+): BaseLayoutNode[] {
+  if (fold !== "grouped") {
+    return nodes;
+  }
+  const branchTypeByNodeId = new Map<string, BaseLayoutEdge["type"]>();
+  for (const edge of edges) {
+    if (edge.type === "parallel" || edge.type === "fallback") {
+      branchTypeByNodeId.set(edge.to, edge.type);
+    }
+  }
+  return nodes.map((node) => {
+    const branchType = branchTypeByNodeId.get(node.id);
+    if (branchType === "parallel") {
+      return { ...node, groupId: "parallel", groupLabel: "Parallel branch" };
+    }
+    if (branchType === "fallback") {
+      return { ...node, groupId: "fallback", groupLabel: "Fallback branch" };
+    }
+    return node;
+  });
 }
 
 interface BaseLayoutNode {
@@ -325,15 +360,19 @@ function dagRows(
   layout: GraphLayoutModel,
   options: GraphWorkbenchOptions
 ): GraphWorkbenchRow[] {
-  const { nodes, edges } = layout;
+  const collapsedGroupIds = new Set(layout.groups.filter((group) => group.collapsed).map((group) => group.id));
+  const nodes = visibleNodesForGroups(layout.nodes, collapsedGroupIds);
+  const visibleNodeIds = new Set(nodes.map((node) => node.id));
+  const edges = layout.edges.filter((edge) => visibleNodeIds.has(edge.from) && visibleNodeIds.has(edge.to));
   if (nodes.length === 0) {
-    return [{ text: "no graph nodes available", tone: "muted" }];
+    const summaries = collapsedGroupRows(layout, options.columns);
+    return summaries.length > 0 ? summaries : [{ text: "no graph nodes available", tone: "muted" }];
   }
   const spatialRows = spatialDagRows(layout, options);
   if (spatialRows) {
     return spatialRows;
   }
-  const rows: GraphWorkbenchRow[] = [];
+  const rows: GraphWorkbenchRow[] = collapsedGroupRows(layout, options.columns);
   const edgeByFrom = groupEdgesByFrom(edges);
   let currentGroup: string | undefined;
   for (const node of nodes) {
@@ -366,7 +405,10 @@ function spatialDagRows(
   if (options.columns < spatialColumnThreshold) {
     return undefined;
   }
-  const ranks = [...new Set(layout.nodes.filter((node) => node.viewportIncluded).map((node) => node.rank))].sort((a, b) => a - b);
+  const collapsedGroupIds = new Set(layout.groups.filter((group) => group.collapsed).map((group) => group.id));
+  const nodes = visibleNodesForGroups(layout.nodes, collapsedGroupIds);
+  const visibleNodeIds = new Set(nodes.map((node) => node.id));
+  const ranks = [...new Set(nodes.filter((node) => node.viewportIncluded).map((node) => node.rank))].sort((a, b) => a - b);
   if (ranks.length <= 1) {
     return undefined;
   }
@@ -374,11 +416,11 @@ function spatialDagRows(
   if (!cellWidth) {
     return undefined;
   }
-  const maxLane = layout.nodes.reduce((max, node) => Math.max(max, node.lane), 0);
-  const rows: GraphWorkbenchRow[] = [];
+  const maxLane = nodes.reduce((max, node) => Math.max(max, node.lane), 0);
+  const rows: GraphWorkbenchRow[] = collapsedGroupRows(layout, options.columns);
   for (let lane = 0; lane <= maxLane; lane += 1) {
     const lineNodes = ranks.map((rank) =>
-      layout.nodes.find((node) => node.rank === rank && node.lane === lane)
+      nodes.find((node) => node.rank === rank && node.lane === lane)
     );
     if (lineNodes.every((node) => !node)) {
       continue;
@@ -394,7 +436,13 @@ function spatialDagRows(
       tone: toneNode ? nodeTone(toneNode) : undefined
     });
   }
-  const connectorRows = spatialConnectorRows(layout.edges, ranks, cellWidth, options.columns, effectiveLabelMode(options.labels, options.columns));
+  const connectorRows = spatialConnectorRows(
+    layout.edges.filter((edge) => visibleNodeIds.has(edge.from) && visibleNodeIds.has(edge.to)),
+    ranks,
+    cellWidth,
+    options.columns,
+    effectiveLabelMode(options.labels, options.columns)
+  );
   if (connectorRows.length > 0) {
     rows.push(...connectorRows);
   }
@@ -648,7 +696,7 @@ function laneNodes(nodes: BaseLayoutNode[], rankById: Map<string, number>): Map<
   return laneById;
 }
 
-function layoutGroups(nodes: GraphLayoutNode[]): GraphLayoutGroup[] {
+function layoutGroups(nodes: GraphLayoutNode[], collapsedGroupIds: Set<string>): GraphLayoutGroup[] {
   const groups = new Map<string, GraphLayoutGroup>();
   for (const node of nodes) {
     if (!node.groupId) {
@@ -657,12 +705,84 @@ function layoutGroups(nodes: GraphLayoutNode[]): GraphLayoutGroup[] {
     const group = groups.get(node.groupId) ?? {
       id: node.groupId,
       label: node.groupLabel ?? node.groupId,
-      nodeIds: []
+      nodeIds: [],
+      collapsed: collapsedGroupIds.has(node.groupId),
+      selectedDescendant: false,
+      status: "mixed"
     };
     group.nodeIds.push(node.id);
+    group.selectedDescendant = group.selectedDescendant || node.selected;
+    group.status = mergeGroupStatus(group.status, node.status);
+    group.risk = mergeGroupRisk(group.risk, node.risk);
     groups.set(group.id, group);
   }
   return [...groups.values()];
+}
+
+function visibleNodesForGroups(
+  nodes: GraphLayoutNode[],
+  collapsedGroupIds: Set<string>
+): GraphLayoutNode[] {
+  if (collapsedGroupIds.size === 0) {
+    return nodes;
+  }
+  return nodes.filter((node) => !node.groupId || !collapsedGroupIds.has(node.groupId));
+}
+
+function collapsedGroupRows(layout: GraphLayoutModel, columns: number): GraphWorkbenchRow[] {
+  return layout.groups
+    .filter((group) => group.collapsed)
+    .map((group) => ({
+      text: truncateText(
+        `[+] ${group.label} ${group.nodeIds.length} node${group.nodeIds.length === 1 ? "" : "s"} status ${group.status} risk ${group.risk ?? "-"}${group.selectedDescendant ? " selected-descendant" : ""}`,
+        columns
+      ),
+      selected: group.selectedDescendant,
+      tone: graphGroupTone(group)
+    }));
+}
+
+function graphGroupTone(group: GraphLayoutGroup): GraphWorkbenchRow["tone"] {
+  if (group.risk === "high" || group.status === "failed" || group.status === "deviated") {
+    return "danger";
+  }
+  if (group.risk === "medium" || group.status === "blocked") {
+    return "warning";
+  }
+  if (group.status === "completed") {
+    return "success";
+  }
+  return "info";
+}
+
+function mergeGroupStatus(current: string, next: string): string {
+  if (current === "mixed") {
+    return next;
+  }
+  if (current === next) {
+    return current;
+  }
+  if (current === "failed" || next === "failed") {
+    return "failed";
+  }
+  if (current === "blocked" || next === "blocked") {
+    return "blocked";
+  }
+  if (current === "running" || next === "running") {
+    return "running";
+  }
+  return "mixed";
+}
+
+function mergeGroupRisk(current: string | undefined, next: string | undefined): string | undefined {
+  const order = ["low", "medium", "high", "blocking"];
+  if (!next) {
+    return current;
+  }
+  if (!current) {
+    return next;
+  }
+  return order.indexOf(next) > order.indexOf(current) ? next : current;
 }
 
 function layoutActions(node: BaseLayoutNode): GraphLayoutAction[] {

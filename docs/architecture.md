@@ -546,11 +546,12 @@ compact fallback rows from the `ExecutionTraceGraph` DTO, while
 `packages/core/src/tui-read-model.ts` supplies selected graph-node details for
 incoming links, outgoing links, evidence, deviations, and commands. The
 renderer owns percentage-like zoom density, label policy (`auto`, `compact`,
-`full`, `off`), local viewport rank, and `/graph focus <node-id>` state only;
-these controls select and frame local graph nodes without querying SQLite,
-running agents, or duplicating TaskRunner/RoleCall orchestration. When the
-projection is unavailable, the existing RoleCall compatibility view remains the
-fallback. Remaining
+`full`, `off`), local viewport rank, grouped subgraph containers, collapsed
+group ids, and `/graph focus <node-id>` state only; these controls select,
+frame, group, and collapse local graph nodes without querying SQLite, running
+agents, mutating PlanGraph/ExecutionTraceGraph records, or duplicating
+TaskRunner/RoleCall orchestration. When the projection is unavailable, the
+existing RoleCall compatibility view remains the fallback. Remaining
 terminal graph fidelity work is isolated to the CLI/TUI renderer and read-model
 boundary in `docs/plan-graph-tui-workflow-dag-roadmap.md`, rather than the
 broader PlanGraph lifecycle roadmap; it must preserve the same no-SQLite,

@@ -663,6 +663,21 @@ function longWorkflowDagTraceFixture(): ExecutionTraceGraph {
     baseNodes: [
       ...trace.baseNodes,
       {
+        id: "fallback_fix",
+        kind: "implement",
+        role: "codex",
+        title: "Fallback fix",
+        instructions: "Run a fallback fix.",
+        acceptanceCriteria: ["Fallback is inspectable."],
+        riskLevel: "medium",
+        required: false,
+        execution: {
+          mode: "primary_run",
+          expectedAdapter: "codex",
+          worktreePolicy: "isolated"
+        }
+      },
+      {
         id: "best_result",
         kind: "handoff",
         role: "reviewer",
@@ -687,6 +702,7 @@ function longWorkflowDagTraceFixture(): ExecutionTraceGraph {
     ],
     baseEdges: [
       ...trace.baseEdges,
+      { from: "codex_run", to: "fallback_fix", type: "fallback", label: "if failed" },
       { from: "compare_results", to: "best_result", type: "primary", label: "best" },
       { from: "best_result", to: "handoff", type: "primary", label: "handoff" }
     ]
@@ -900,10 +916,59 @@ describe("Ink TUI renderer", () => {
     });
     const byId = new Map(layout.nodes.map((node) => [node.id, node]));
 
-    expect(layout.groups.map((group) => group.id)).toEqual(["role-call", "comparison"]);
+    expect(layout.groups.map((group) => group.id)).toEqual(["parallel", "role-call", "comparison"]);
     expect(byId.get("trace_node:role_call:call_1")?.groupId).toBe("role-call");
     expect(byId.get("trace_node:comparison:comparison_1")?.groupId).toBe("comparison");
     expect(byId.get("trace_node:comparison:comparison_1")?.displayWidth).toBe(39);
+  });
+
+  it("derives separate Workflow DAG subgraph groups for parallel, fallback, and comparison branches", () => {
+    const layout = buildGraphLayout(longWorkflowDagTraceFixture(), {
+      mode: "overlay",
+      columns: 154,
+      selectedIndex: 0,
+      layout: "ranked",
+      labels: "compact",
+      fold: "grouped",
+      zoom: "82%"
+    });
+
+    expect(layout.groups.map((group) => group.id)).toEqual([
+      "parallel",
+      "fallback",
+      "role-call",
+      "comparison"
+    ]);
+  });
+
+  it("renders expanded and collapsed Workflow DAG subgraph summaries", () => {
+    const expanded = renderGraphWorkbench(workflowDagTraceFixture(), {
+      mode: "overlay",
+      columns: 118,
+      selectedIndex: 0,
+      layout: "ranked",
+      labels: "compact",
+      fold: "grouped",
+      zoom: "82%"
+    });
+    const collapsed = renderGraphWorkbench(workflowDagTraceFixture(), {
+      mode: "overlay",
+      columns: 118,
+      selectedIndex: 5,
+      layout: "ranked",
+      labels: "compact",
+      fold: "grouped",
+      zoom: "82%",
+      collapsedGroupIds: ["role-call"]
+    });
+    const expandedText = expanded.rows.map((row) => row.text).join("\n");
+    const collapsedText = collapsed.rows.map((row) => row.text).join("\n");
+
+    expect(expandedText).toContain(". . . RoleCall branch . . .");
+    expect(expandedText).toContain("trace_node:role...");
+    expect(collapsedText).toContain("[+] RoleCall branch 1 node status completed risk - selected-descendant");
+    expect(collapsedText).not.toContain("trace_node:role...");
+    expect(collapsed.rows.find((row) => row.text.includes("RoleCall branch"))?.selected).toBe(true);
   });
 
   it("keeps compact Workflow DAG fallback below the width threshold", () => {
@@ -1358,6 +1423,26 @@ describe("Ink TUI renderer", () => {
     expect(state.graphFold).toBe("grouped");
     state = reduceInkState(state, "toggle_graph_zoom", baseModel);
     expect(state.graphZoom).toBe("100%");
+  });
+
+  it("toggles Workflow DAG group collapse for the selected graph group", () => {
+    const model = {
+      ...baseModel,
+      executionTrace: workflowDagTraceFixture()
+    };
+    let state = {
+      ...createInitialInkState(),
+      focus: "graph" as const,
+      selectedRoleCallIndex: 5
+    };
+
+    state = reduceInkState(state, "toggle_graph_fold", model);
+    expect(state.graphFold).toBe("grouped");
+    expect(state.collapsedGraphGroupIds).toEqual([]);
+    state = reduceInkState(state, "toggle_graph_fold", model);
+    expect(state.collapsedGraphGroupIds).toEqual(["role-call"]);
+    state = reduceInkState(state, "toggle_graph_fold", model);
+    expect(state.collapsedGraphGroupIds).toEqual([]);
   });
 
   it("keeps slash completion suggestions inside the terminal row budget", () => {

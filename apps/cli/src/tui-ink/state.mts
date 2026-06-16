@@ -31,6 +31,7 @@ export interface TuiInkState {
   graphFold: "expanded" | "grouped";
   graphZoom: "67%" | "82%" | "100%";
   graphViewportRank: number;
+  collapsedGraphGroupIds: string[];
   selectedRunIndex: number;
   selectedRunId?: string;
   selectedRoleCallIndex: number;
@@ -144,6 +145,7 @@ export function createInitialInkState(composer = ""): TuiInkState {
     graphFold: "expanded",
     graphZoom: "82%",
     graphViewportRank: 0,
+    collapsedGraphGroupIds: [],
     selectedRunIndex: 0,
     selectedRoleCallIndex: 0,
     selectedTaskIndex: 0,
@@ -197,6 +199,7 @@ export function reduceInkState(
     graphFold: state.graphFold ?? "expanded",
     graphZoom: state.graphZoom ?? "82%",
     graphViewportRank: Math.max(0, state.graphViewportRank ?? 0),
+    collapsedGraphGroupIds: [...(state.collapsedGraphGroupIds ?? [])],
     selectedWorkBlockIndex: state.selectedWorkBlockIndex ?? 0,
     workSelectionAnchor: state.workSelectionAnchor ?? false,
     selectedMemoryItemIndex: state.selectedMemoryItemIndex ?? 0,
@@ -312,7 +315,15 @@ export function reduceInkState(
     return next;
   }
   if (key === "toggle_graph_fold") {
-    next.graphFold = next.graphFold === "grouped" ? "expanded" : "grouped";
+    const selectedGroupId = selectedGraphGroupId(model, next);
+    if (next.graphFold !== "grouped") {
+      next.graphFold = "grouped";
+    } else if (selectedGroupId) {
+      next.collapsedGraphGroupIds = toggleId(next.collapsedGraphGroupIds, selectedGroupId);
+    } else {
+      next.graphFold = "expanded";
+      next.collapsedGraphGroupIds = [];
+    }
     next.statusMessage = `Workflow DAG fold: ${next.graphFold}.`;
     return next;
   }
@@ -722,6 +733,39 @@ function graphSelectionCount(
     return model.executionTrace.dynamicNodes.length;
   }
   return model.executionTrace.baseNodes.length + model.executionTrace.dynamicNodes.length;
+}
+
+function selectedGraphGroupId(
+  model: TuiCurrentContextModel,
+  state: TuiInkState
+): string | undefined {
+  const trace = model.executionTrace;
+  if (!trace || state.graphMode === "plan") {
+    return undefined;
+  }
+  const selectedIndex = Math.min(
+    Math.max(state.selectedRoleCallIndex ?? 0, 0),
+    Math.max(0, graphSelectionCount(model, state) - 1)
+  );
+  const node = state.graphMode === "trace"
+    ? trace.dynamicNodes[selectedIndex]
+    : trace.dynamicNodes[selectedIndex - trace.baseNodes.length];
+  if (!node) {
+    return undefined;
+  }
+  if (node.sourceType === "role_call" || node.sourceType === "role_call_event") {
+    return "role-call";
+  }
+  if (node.sourceType === "comparison_report") {
+    return "comparison";
+  }
+  return undefined;
+}
+
+function toggleId(values: string[], id: string): string[] {
+  return values.includes(id)
+    ? values.filter((value) => value !== id)
+    : [...values, id];
 }
 
 function moveDetailScroll(
