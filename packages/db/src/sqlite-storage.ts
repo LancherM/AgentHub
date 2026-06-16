@@ -1184,7 +1184,7 @@ CREATE TABLE IF NOT EXISTS plan_graphs (
   task_id TEXT NOT NULL,
   task_brief_artifact_id TEXT,
   version INTEGER NOT NULL CHECK (version >= 1),
-  status TEXT NOT NULL CHECK (status IN ('active', 'superseded', 'failed')),
+  status TEXT NOT NULL CHECK (status IN ('proposed', 'active', 'superseded', 'failed')),
   planner_node_id TEXT NOT NULL,
   created_by_role TEXT NOT NULL CHECK (created_by_role = 'planner'),
   created_at TEXT NOT NULL,
@@ -1312,6 +1312,64 @@ ALTER TABLE run_metadata
       json_valid(plan_binding_json) AND json_type(plan_binding_json) = 'object'
     )
   );
+`
+  },
+  {
+    version: 20,
+    transaction: false,
+    sql: `
+PRAGMA foreign_keys = OFF;
+BEGIN;
+
+CREATE TABLE plan_graphs_new (
+  id TEXT PRIMARY KEY,
+  task_id TEXT NOT NULL,
+  task_brief_artifact_id TEXT,
+  version INTEGER NOT NULL CHECK (version >= 1),
+  status TEXT NOT NULL CHECK (status IN ('proposed', 'active', 'superseded', 'failed')),
+  planner_node_id TEXT NOT NULL,
+  created_by_role TEXT NOT NULL CHECK (created_by_role = 'planner'),
+  created_at TEXT NOT NULL,
+  FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE,
+  FOREIGN KEY (task_brief_artifact_id) REFERENCES run_artifacts(id) ON DELETE SET NULL,
+  UNIQUE (task_id, version)
+);
+
+INSERT INTO plan_graphs_new (
+  id,
+  task_id,
+  task_brief_artifact_id,
+  version,
+  status,
+  planner_node_id,
+  created_by_role,
+  created_at
+)
+SELECT
+  id,
+  task_id,
+  task_brief_artifact_id,
+  version,
+  status,
+  planner_node_id,
+  created_by_role,
+  created_at
+FROM plan_graphs;
+
+DROP TABLE plan_graphs;
+ALTER TABLE plan_graphs_new RENAME TO plan_graphs;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_plan_graphs_one_active
+  ON plan_graphs(task_id)
+  WHERE status = 'active';
+CREATE INDEX IF NOT EXISTS idx_plan_graphs_task_version
+  ON plan_graphs(task_id, version);
+
+INSERT INTO schema_migrations (version, applied_at)
+VALUES (20, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));
+
+COMMIT;
+PRAGMA foreign_keys = ON;
 `
   }
 ];

@@ -487,11 +487,10 @@ that path so callee runs inherit the source PlanGraph plus the dynamic trace
 node id created for the accepted RoleCall.
 `packages/core/src/plan-graph-amendments.ts` keeps amendments versioned and
 audit-safe. The core contract models a proposed amendment as a `proposed`
-PlanGraph version that must not supersede the active graph on create; the
-follow-up roadmap tracks the SQLite status-constraint alignment required before
-that proposed state is fully durable on SQLite. Activation revalidates
-same-task and version-increase rules, requires explicit approval when required
-execution nodes are added, removed, or changed, and then calls the repository
+PlanGraph version that is durable in memory and SQLite and must not supersede
+the active graph on create. Activation revalidates same-task and
+version-increase rules, requires explicit approval when required execution
+nodes are added, removed, or changed, and then calls the repository
 supersession path so old graph versions remain readable.
 `packages/safety` consumes optional PlanGraph, current PlanNode, and
 ExecutionTraceGraph inputs when producing a RiskReport. Plan-aware findings are
@@ -1068,6 +1067,6 @@ The reference-gap follow-up is documented in
 implementation-prompt convention.
 The remaining PlanGraph and ExecutionTraceGraph semantic gaps are tracked in
 `docs/plan-graph-execution-trace-followup-roadmap.md`. That roadmap includes
-publishable implementation prompts for durable PlanGraph status alignment,
-run-bound trace lookup, graph scheduling, planner policy, evidence completion,
-the TUI DAG workbench, and an end-to-end acceptance sweep.
+publishable implementation prompts for run-bound trace lookup, graph
+scheduling, planner policy, evidence completion, the TUI DAG workbench, and an
+end-to-end acceptance sweep.

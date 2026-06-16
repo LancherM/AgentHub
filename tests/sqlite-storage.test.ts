@@ -51,7 +51,7 @@ describe("SQLite storage", () => {
 
     await database.ensureInitialized();
 
-    expect(SQLITE_MIGRATIONS.at(-1)?.version).toBe(19);
+    expect(SQLITE_MIGRATIONS.at(-1)?.version).toBe(20);
     await expect(
       database.query<{ version: number }>(
         "SELECT version FROM schema_migrations ORDER BY version ASC;"
@@ -75,7 +75,8 @@ describe("SQLite storage", () => {
       { version: 16 },
       { version: 17 },
       { version: 18 },
-      { version: 19 }
+      { version: 19 },
+      { version: 20 }
     ]);
     await expect(
       database.query<{ name: string }>(
@@ -130,6 +131,130 @@ describe("SQLite storage", () => {
     );
     await expect(database.query<{ journal_mode: string }>("PRAGMA journal_mode;"))
       .resolves.toEqual([{ journal_mode: "wal" }]);
+    await database.close();
+  });
+
+  it("migrates the legacy PlanGraph status constraint to allow proposed graphs", async () => {
+    const databasePath = path.join(
+      await createTestDirectory("sqlite-plan-graph-status-migration"),
+      "agent-hub.sqlite"
+    );
+    const legacy = new TestSqlite(databasePath);
+    legacy.exec(`
+CREATE TABLE schema_migrations (
+  version INTEGER PRIMARY KEY,
+  applied_at TEXT NOT NULL
+);
+${Array.from({ length: 19 }, (_, index) => `INSERT INTO schema_migrations (version, applied_at) VALUES (${index + 1}, '${createdAt}');`).join("\n")}
+
+CREATE TABLE projects (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  root_path TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE tasks (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL,
+  title TEXT NOT NULL,
+  description TEXT,
+  status TEXT NOT NULL CHECK (status IN ('open', 'running', 'completed', 'cancelled')),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+);
+
+CREATE TABLE run_artifacts (
+  id TEXT PRIMARY KEY,
+  task_run_id TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  path TEXT NOT NULL,
+  summary TEXT,
+  created_at TEXT NOT NULL
+);
+
+CREATE TABLE plan_graphs (
+  id TEXT PRIMARY KEY,
+  task_id TEXT NOT NULL,
+  task_brief_artifact_id TEXT,
+  version INTEGER NOT NULL CHECK (version >= 1),
+  status TEXT NOT NULL CHECK (status IN ('active', 'superseded', 'failed')),
+  planner_node_id TEXT NOT NULL,
+  created_by_role TEXT NOT NULL CHECK (created_by_role = 'planner'),
+  created_at TEXT NOT NULL,
+  FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE,
+  UNIQUE (task_id, version)
+);
+
+CREATE UNIQUE INDEX idx_plan_graphs_one_active
+  ON plan_graphs(task_id)
+  WHERE status = 'active';
+CREATE INDEX idx_plan_graphs_task_version
+  ON plan_graphs(task_id, version);
+
+INSERT INTO projects (id, name, root_path, created_at, updated_at)
+VALUES ('project_legacy_plan', 'Legacy Plan', '/tmp/legacy-plan', '${createdAt}', '${createdAt}');
+INSERT INTO tasks (id, project_id, title, status, created_at, updated_at)
+VALUES ('task_legacy_plan', 'project_legacy_plan', 'Legacy plan task', 'open', '${createdAt}', '${createdAt}');
+INSERT INTO plan_graphs (
+  id,
+  task_id,
+  task_brief_artifact_id,
+  version,
+  status,
+  planner_node_id,
+  created_by_role,
+  created_at
+) VALUES (
+  'plan_graph:task_legacy_plan:v1',
+  'task_legacy_plan',
+  NULL,
+  1,
+  'active',
+  'plan_graph:task_legacy_plan:v1:planner',
+  'planner',
+  '${createdAt}'
+);
+`);
+    legacy.close();
+
+    const { database } = createSqliteRepositories({ databasePath });
+    await database.execute(`
+INSERT INTO plan_graphs (
+  id,
+  task_id,
+  task_brief_artifact_id,
+  version,
+  status,
+  planner_node_id,
+  created_by_role,
+  created_at
+) VALUES (
+  'plan_graph:task_legacy_plan:v2',
+  'task_legacy_plan',
+  NULL,
+  2,
+  'proposed',
+  'plan_graph:task_legacy_plan:v2:planner',
+  'planner',
+  '${createdAt}'
+);
+`);
+    await expect(
+      database.query<{ version: number }>(
+        "SELECT version FROM schema_migrations WHERE version = 20;"
+      )
+    ).resolves.toEqual([{ version: 20 }]);
+    await expect(
+      database.query<{ id: string; status: string }>(
+        "SELECT id, status FROM plan_graphs ORDER BY version ASC;"
+      )
+    ).resolves.toEqual([
+      { id: "plan_graph:task_legacy_plan:v1", status: "active" },
+      { id: "plan_graph:task_legacy_plan:v2", status: "proposed" }
+    ]);
     await database.close();
   });
 
@@ -659,7 +784,8 @@ INSERT INTO context_eval_events (
 
     const graph1 = sqlitePlanGraph("task_plan_graph", 1);
     const graph2 = sqlitePlanGraph("task_plan_graph", 2);
-    const graph3 = sqlitePlanGraph("task_plan_graph", 3, "failed");
+    const graph3 = sqlitePlanGraph("task_plan_graph", 3, "proposed");
+    const graph4 = sqlitePlanGraph("task_plan_graph", 4, "failed");
     await first.planGraphRepository.create(graph1);
     await first.planGraphRepository.create(graph2);
     await expect(first.planGraphRepository.getActiveByTaskId("task_plan_graph"))
@@ -671,7 +797,14 @@ INSERT INTO context_eval_events (
       ]);
 
     await first.planGraphRepository.create(graph3);
+    await expect(first.planGraphRepository.getActiveByTaskId("task_plan_graph"))
+      .resolves.toMatchObject({ id: graph2.id, status: "active" });
+    await expect(first.planGraphRepository.get(graph3.id))
+      .resolves.toMatchObject({ id: graph3.id, status: "proposed" });
     await first.planGraphRepository.supersede(graph2.id, graph3.id);
+    await expect(first.planGraphRepository.getActiveByTaskId("task_plan_graph"))
+      .resolves.toMatchObject({ id: graph3.id, status: "active" });
+    await first.planGraphRepository.create(graph4);
     await expect(first.planGraphRepository.getActiveByTaskId("task_plan_graph"))
       .resolves.toMatchObject({ id: graph3.id, status: "active" });
 
@@ -1836,7 +1969,8 @@ VALUES (
       { version: 16 },
       { version: 17 },
       { version: 18 },
-      { version: 19 }
+      { version: 19 },
+      { version: 20 }
     ]);
   });
 
@@ -1895,7 +2029,8 @@ VALUES (
       { version: 16 },
       { version: 17 },
       { version: 18 },
-      { version: 19 }
+      { version: 19 },
+      { version: 20 }
     ]);
     await expect(repositories.database.execute(`
 INSERT INTO tasks (id, project_id, title, status, created_at, updated_at)
@@ -1976,7 +2111,8 @@ VALUES ('message_summary_legacy', 'thread_summary_legacy', 0, 'user', 'text', 'P
       { version: 16 },
       { version: 17 },
       { version: 18 },
-      { version: 19 }
+      { version: 19 },
+      { version: 20 }
     ]);
   });
 
@@ -2017,7 +2153,8 @@ ALTER TABLE task_runs
       { version: 16 },
       { version: 17 },
       { version: 18 },
-      { version: 19 }
+      { version: 19 },
+      { version: 20 }
     ]);
     await expect(
       repositories.database.query<{ name: string }>(

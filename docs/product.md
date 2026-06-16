@@ -551,14 +551,13 @@ isolated planner worktree, requires structured PlanGraph JSON, validates it
 against the current task/version before activation, and fails before the
 primary adapter starts when output is invalid. `manual` planner mode accepts a
 caller-supplied PlanGraph only after the same validation. The core amendment
-contract supports `proposed` graph versions; the follow-up roadmap tracks the
-SQLite status-constraint alignment needed before proposed amendments are fully
-durable on SQLite. Activation supersedes the old active graph only after
-validation, and changes to required execution nodes require an explicit
-approval flag. Additional primary PlanNodes can be scheduled explicitly through
-`RunTaskInput.planGraphBinding`; automatic topological fan-out orchestration and
-a dedicated desktop graph canvas remain follow-on extensions beyond the current
-read-only Trace tab.
+contract supports durable `proposed` graph versions in memory and SQLite.
+Creating a proposed graph does not replace the current active graph; activation
+supersedes the old active graph only after validation, and changes to required
+execution nodes require an explicit approval flag. Additional primary PlanNodes
+can be scheduled explicitly through `RunTaskInput.planGraphBinding`; automatic
+topological fan-out orchestration and a dedicated desktop graph canvas remain
+follow-on extensions beyond the current read-only Trace tab.
 
 Plan and trace evidence now feeds review governance without creating an
 automatic acceptance path. Risk reports can include plan-aware findings for
