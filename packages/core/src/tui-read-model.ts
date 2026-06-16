@@ -2383,76 +2383,175 @@ function graphSelectionDetails(trace: ExecutionTraceGraph | undefined): {
   if (!trace) {
     return { overlay: [], plan: [], trace: [] };
   }
-  const planDetails = trace.baseNodes.map((node) => ({
-    id: node.id,
-    kind: "graph_node" as const,
-    title: node.title,
-    subtitle: `${node.kind} @${node.role} ${node.execution.mode}`,
-    sections: [
-      {
-        id: "plan-node",
-        title: "Plan Node",
-        lines: [
-          `id: ${node.id}`,
-          `kind: ${node.kind}`,
-          `role: ${node.role}`,
-          `mode: ${node.execution.mode}`,
-          `required: ${node.required}`,
-          `risk: ${node.riskLevel}`
-        ]
-      },
-      {
-        id: "instructions",
-        title: "Instructions",
-        lines: [node.instructions]
-      },
-      {
-        id: "acceptance",
-        title: "Acceptance",
-        lines: node.acceptanceCriteria
-      }
-    ],
-    commands: [
-      `agent-hub execution-trace show --plan-graph-id ${trace.planGraphId}`
-    ],
-    actions: []
-  }));
-  const traceDetails = trace.dynamicNodes.map((node) => ({
-    id: node.id,
-    kind: "graph_node" as const,
-    title: node.title,
-    subtitle: `${node.kind} ${node.status}`,
-    sections: [
-      {
-        id: "trace-node",
-        title: "Trace Node",
-        lines: [
-          `id: ${node.id}`,
-          `kind: ${node.kind}`,
-          `status: ${node.status}`,
-          `source_plan_node: ${node.sourcePlanNodeId ?? "none"}`,
-          `role: ${node.role ?? "none"}`,
-          `source: ${node.sourceType ?? "event"}:${node.sourceId ?? "none"}`
-        ]
-      },
-      {
-        id: "evidence",
-        title: "Evidence",
-        lines: trace.evidence
-          .filter((evidence) => evidence.traceNodeId === node.id)
-          .map((evidence) => `${evidence.sourceType}:${evidence.sourceId} ${evidence.summary ?? ""}`.trim())
-      }
-    ],
-    commands: [
-      `agent-hub execution-trace show --plan-graph-id ${trace.planGraphId}`
-    ],
-    actions: []
-  }));
+  const traceCommand = `agent-hub execution-trace show --plan-graph-id ${trace.planGraphId}`;
+  const planDetails = trace.baseNodes.map((node) => {
+    const commands = [traceCommand];
+    return {
+      id: node.id,
+      kind: "graph_node" as const,
+      title: node.title,
+      subtitle: `${node.kind} @${node.role} ${node.execution.mode}`,
+      sections: [
+        {
+          id: "plan-node",
+          title: "Plan Node",
+          lines: [
+            `id: ${node.id}`,
+            `kind: ${node.kind}`,
+            `role: ${node.role}`,
+            `mode: ${node.execution.mode}`,
+            `required: ${node.required}`,
+            `risk: ${node.riskLevel}`
+          ]
+        },
+        {
+          id: "incoming",
+          title: "Incoming",
+          lines: graphIncomingLines(trace, node.id)
+        },
+        {
+          id: "outgoing",
+          title: "Outgoing",
+          lines: graphOutgoingLines(trace, node.id)
+        },
+        {
+          id: "evidence",
+          title: "Evidence",
+          lines: graphEvidenceLines(trace, { planNodeId: node.id })
+        },
+        {
+          id: "deviations",
+          title: "Deviations",
+          tone: graphDeviationLines(trace, { planNodeId: node.id }).length > 0
+            ? "warning" as const
+            : undefined,
+          lines: graphDeviationLines(trace, { planNodeId: node.id })
+        },
+        {
+          id: "instructions",
+          title: "Instructions",
+          lines: [node.instructions],
+          collapsedByDefault: true
+        },
+        {
+          id: "acceptance",
+          title: "Acceptance",
+          lines: node.acceptanceCriteria,
+          collapsedByDefault: true
+        }
+      ],
+      commands,
+      actions: detailActions(commands)
+    };
+  });
+  const traceDetails = trace.dynamicNodes.map((node) => {
+    const commands = [traceCommand];
+    return {
+      id: node.id,
+      kind: "graph_node" as const,
+      title: node.title,
+      subtitle: `${node.kind} ${node.status}`,
+      sections: [
+        {
+          id: "trace-node",
+          title: "Trace Node",
+          lines: [
+            `id: ${node.id}`,
+            `kind: ${node.kind}`,
+            `status: ${node.status}`,
+            `source_plan_node: ${node.sourcePlanNodeId ?? "none"}`,
+            `role: ${node.role ?? "none"}`,
+            `source: ${node.sourceType ?? "event"}:${node.sourceId ?? "none"}`
+          ]
+        },
+        {
+          id: "incoming",
+          title: "Incoming",
+          lines: graphIncomingLines(trace, node.id)
+        },
+        {
+          id: "outgoing",
+          title: "Outgoing",
+          lines: graphOutgoingLines(trace, node.id)
+        },
+        {
+          id: "evidence",
+          title: "Evidence",
+          lines: graphEvidenceLines(trace, { traceNodeId: node.id })
+        },
+        {
+          id: "deviations",
+          title: "Deviations",
+          tone: graphDeviationLines(trace, { traceNodeId: node.id }).length > 0
+            ? "warning" as const
+            : undefined,
+          lines: graphDeviationLines(trace, { traceNodeId: node.id })
+        }
+      ],
+      commands,
+      actions: detailActions(commands)
+    };
+  });
   return {
     overlay: [...planDetails, ...traceDetails],
     plan: planDetails,
     trace: traceDetails
   };
+}
+
+function graphIncomingLines(trace: ExecutionTraceGraph, nodeId: string): string[] {
+  const lines = [
+    ...trace.baseEdges
+      .filter((edge) => edge.to === nodeId)
+      .map((edge) => `plan ${edge.from} -> ${edge.to} ${edge.type}${edge.label ? ` ${edge.label}` : ""}`),
+    ...trace.dynamicEdges
+      .filter((edge) => edge.to === nodeId)
+      .map((edge) => `trace ${edge.from} -> ${edge.to} ${edge.type}${edge.label ? ` ${edge.label}` : ""}`),
+    ...trace.dynamicNodes
+      .filter((node) => node.id === nodeId && node.sourcePlanNodeId)
+      .map((node) => `runtime ${node.sourcePlanNodeId} -> ${node.id} ${node.kind}`)
+  ];
+  return lines.length > 0 ? lines : ["root or not linked in current trace"];
+}
+
+function graphOutgoingLines(trace: ExecutionTraceGraph, nodeId: string): string[] {
+  const lines = [
+    ...trace.baseEdges
+      .filter((edge) => edge.from === nodeId)
+      .map((edge) => `plan ${edge.from} -> ${edge.to} ${edge.type}${edge.label ? ` ${edge.label}` : ""}`),
+    ...trace.dynamicEdges
+      .filter((edge) => edge.from === nodeId)
+      .map((edge) => `trace ${edge.from} -> ${edge.to} ${edge.type}${edge.label ? ` ${edge.label}` : ""}`),
+    ...trace.dynamicNodes
+      .filter((node) => node.sourcePlanNodeId === nodeId)
+      .map((node) => `runtime ${nodeId} -> ${node.id} ${node.kind} ${node.status}`)
+  ];
+  return lines.length > 0 ? lines : ["leaf or no outgoing links in current trace"];
+}
+
+function graphEvidenceLines(
+  trace: ExecutionTraceGraph,
+  filter: { planNodeId?: string; traceNodeId?: string }
+): string[] {
+  const lines = trace.evidence
+    .filter((evidence) =>
+      (filter.planNodeId !== undefined && evidence.planNodeId === filter.planNodeId) ||
+      (filter.traceNodeId !== undefined && evidence.traceNodeId === filter.traceNodeId)
+    )
+    .map((evidence) => `${evidence.sourceType}:${evidence.sourceId} ${evidence.summary ?? ""}`.trim());
+  return lines.length > 0 ? lines : ["no evidence linked to this graph node"];
+}
+
+function graphDeviationLines(
+  trace: ExecutionTraceGraph,
+  filter: { planNodeId?: string; traceNodeId?: string }
+): string[] {
+  return trace.deviations
+    .filter((deviation) =>
+      (filter.planNodeId !== undefined && deviation.planNodeId === filter.planNodeId) ||
+      (filter.traceNodeId !== undefined && deviation.traceNodeId === filter.traceNodeId)
+    )
+    .map((deviation) => `${deviation.severity} ${deviation.type}: ${deviation.description}`);
 }
 
 function workBlockDetail(block: TuiWorkBlock): TuiSelectionDetail {

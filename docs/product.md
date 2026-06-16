@@ -540,10 +540,14 @@ required nodes, missing verification evidence, unplanned RoleCall trace nodes,
 and superseded plan versions; pending or manual-blocked scheduler nodes are not
 mislabeled as skipped. The read-only
 `execution-trace show` CLI command exposes that projection by task id or
-PlanGraph id. The terminal workbench Execution Trace focus now consumes the
-same projection when available and exposes Overlay, Plan, and Trace modes while
-falling back to legacy RoleCall evidence for older tasks. The desktop Workgroup
-Inspector exposes the same projection through a
+PlanGraph id. The terminal workbench Graph focus now presents this projection
+as `Graph - Workflow DAG`: Overlay, Plan, and Trace modes render bounded
+terminal node boxes, visible edge labels, selected-node highlighting, toolbar
+state for mode/labels/fold/zoom, a mini-map, a legend, and a compact fallback
+for narrow terminals while falling back to legacy RoleCall evidence for older
+tasks. Selected graph-node details synchronize with the same read model and
+show incoming links, outgoing links, evidence, deviations, and inspection
+commands. The desktop Workgroup Inspector exposes the same projection through a
 read-only Trace tab backed by Electron main-process IPC; the renderer displays
 plan nodes, runtime trace nodes, evidence counts, and deviations without
 reading SQLite or rebuilding orchestration state.
@@ -602,11 +606,11 @@ The current CLI exposes these command groups:
   `threads list`, `threads show`, `rooms list`, `rooms create`, `rooms use`,
   `rooms send`, and `rooms timeline`.
 - Terminal workbench: `tui` opens a keyboard-first read-only view over the
-  current thread or room context, with focus modes for work, execution trace,
-  runs, review, tasks, memory, and help. The trace focus uses existing
-  RoleCall evidence as the legacy compatibility path when no PlanGraph-backed
-  trace projection is available, and shows Overlay/Plan/Trace modes for current
-  graph-backed tasks.
+  current thread or room context, with focus modes for work, graph, runs,
+  review, tasks, memory, and help. The Graph focus uses existing RoleCall
+  evidence as the legacy compatibility path when no PlanGraph-backed trace
+  projection is available, and shows a bounded Workflow DAG workbench with
+  Overlay/Plan/Trace modes for current graph-backed tasks.
 - Team roles: `team roles list`, `team roles show`, `team roles save`, and
   `team roles executor`. Saved roles can reference default skills with
   `--skill [scope:]id`, and custom RoleCall fan-out is configured with

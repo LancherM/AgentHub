@@ -536,10 +536,14 @@ task. Projection failures are displayed as unavailable rather than blocking the
 underlying review decision output.
 The TUI read model optionally attaches that same projection to
 `TuiCurrentContextModel.executionTrace` for the current task. The Ink Graph
-focus renders Overlay, Plan, and Trace modes from that read model only; it does
-not query SQLite, run agents, or duplicate TaskRunner/RoleCall orchestration in
-the renderer. When the projection is unavailable, the existing RoleCall
-compatibility view remains the fallback.
+focus renders the `Graph - Workflow DAG` workbench from that read model only:
+`apps/cli/src/tui-ink/graph-layout.mts` derives bounded node rows, edge labels,
+mini-map, legend, compact fallback rows, and selected state from the
+`ExecutionTraceGraph` DTO, while `packages/core/src/tui-read-model.ts` supplies
+selected graph-node details for incoming links, outgoing links, evidence,
+deviations, and commands. The renderer does not query SQLite, run agents, or
+duplicate TaskRunner/RoleCall orchestration. When the projection is unavailable,
+the existing RoleCall compatibility view remains the fallback.
 The desktop Workgroup Inspector consumes the same core projection through
 `ReviewService.getExecutionTrace`, the `agent-hub:review:execution-trace` IPC
 channel, and the sandboxed preload API. The React renderer owns only the
@@ -566,9 +570,9 @@ This boundary should preserve the current TaskRunner and RoleCall ownership:
 - Plan amendments create a new proposed graph version rather than mutating old
   plan evidence in place, and required execution-node changes need explicit
   activation approval.
-- TUI and desktop graph views should render Plan, Trace, and Overlay modes from
-  read models. Renderer code must not query SQLite or infer execution state
-  outside core/main-process services.
+- TUI and desktop graph views render Plan, Trace, and Overlay modes from read
+  models. Renderer code must not query SQLite or infer execution state outside
+  core/main-process services.
 
 ## Desktop IPC Boundary
 
@@ -1081,5 +1085,4 @@ The reference-gap follow-up is documented in
 implementation-prompt convention.
 The remaining PlanGraph and ExecutionTraceGraph semantic gaps are tracked in
 `docs/plan-graph-execution-trace-followup-roadmap.md`. That roadmap includes
-publishable implementation prompts for the TUI DAG workbench and an end-to-end
-acceptance sweep.
+publishable implementation prompts for the end-to-end acceptance sweep.

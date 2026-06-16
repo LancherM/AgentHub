@@ -26,6 +26,10 @@ export type TuiInkFocus =
 export interface TuiInkState {
   focus: TuiInkFocus;
   graphMode: "overlay" | "plan" | "trace";
+  graphLayout: "ranked";
+  graphLabels: "compact" | "full";
+  graphFold: "expanded" | "grouped";
+  graphZoom: "fit" | "detail";
   selectedRunIndex: number;
   selectedRunId?: string;
   selectedRoleCallIndex: number;
@@ -103,6 +107,9 @@ export type TuiInkKey =
   | "toggle_notify"
   | "toggle_timeline"
   | "cycle_graph_mode"
+  | "toggle_graph_labels"
+  | "toggle_graph_fold"
+  | "toggle_graph_zoom"
   | "cancel"
   | "accept_review"
   | "reject_review"
@@ -131,6 +138,10 @@ export function createInitialInkState(composer = ""): TuiInkState {
   return {
     focus: "work",
     graphMode: "overlay",
+    graphLayout: "ranked",
+    graphLabels: "compact",
+    graphFold: "expanded",
+    graphZoom: "fit",
     selectedRunIndex: 0,
     selectedRoleCallIndex: 0,
     selectedTaskIndex: 0,
@@ -179,6 +190,10 @@ export function reduceInkState(
 ): TuiInkState {
   const next: TuiInkState = {
     ...state,
+    graphLayout: state.graphLayout ?? "ranked",
+    graphLabels: state.graphLabels ?? "compact",
+    graphFold: state.graphFold ?? "expanded",
+    graphZoom: state.graphZoom ?? "fit",
     selectedWorkBlockIndex: state.selectedWorkBlockIndex ?? 0,
     workSelectionAnchor: state.workSelectionAnchor ?? false,
     selectedMemoryItemIndex: state.selectedMemoryItemIndex ?? 0,
@@ -284,8 +299,23 @@ export function reduceInkState(
   }
   if (key === "cycle_graph_mode") {
     next.graphMode = nextGraphMode(next.graphMode ?? "overlay");
-    next.statusMessage = `Execution Trace mode: ${next.graphMode}.`;
+    next.statusMessage = `Workflow DAG mode: ${next.graphMode}.`;
     resetDetailScroll(next);
+    return next;
+  }
+  if (key === "toggle_graph_labels") {
+    next.graphLabels = next.graphLabels === "full" ? "compact" : "full";
+    next.statusMessage = `Workflow DAG labels: ${next.graphLabels}.`;
+    return next;
+  }
+  if (key === "toggle_graph_fold") {
+    next.graphFold = next.graphFold === "grouped" ? "expanded" : "grouped";
+    next.statusMessage = `Workflow DAG fold: ${next.graphFold}.`;
+    return next;
+  }
+  if (key === "toggle_graph_zoom") {
+    next.graphZoom = next.graphZoom === "detail" ? "fit" : "detail";
+    next.statusMessage = `Workflow DAG zoom: ${next.graphZoom}.`;
     return next;
   }
   if (key === "cancel") {

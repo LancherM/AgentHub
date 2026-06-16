@@ -204,6 +204,44 @@ describe("TUI current-context read model", () => {
         title: "TaskRun run_trace"
       })
     ]);
+    const implementDetail = model.selectionDetails.graph.overlay.find(
+      (detail) => detail.id === "plan_node_trace"
+    );
+    expect(implementDetail?.sections).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: "incoming",
+        lines: ["plan plan_graph_trace:planner -> plan_node_trace primary"]
+      }),
+      expect.objectContaining({
+        id: "outgoing",
+        lines: expect.arrayContaining([
+          "runtime plan_node_trace -> trace_node:run:run_trace task_run completed"
+        ])
+      }),
+      expect.objectContaining({
+        id: "evidence",
+        lines: expect.arrayContaining([
+          expect.stringContaining("task_run:run_trace")
+        ])
+      })
+    ]));
+    const runDetail = model.selectionDetails.graph.overlay.find(
+      (detail) => detail.id === "trace_node:run:run_trace"
+    );
+    expect(runDetail?.sections).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: "incoming",
+        lines: expect.arrayContaining([
+          "runtime plan_node_trace -> trace_node:run:run_trace task_run"
+        ])
+      }),
+      expect.objectContaining({
+        id: "evidence",
+        lines: expect.arrayContaining([
+          expect.stringContaining("task_run:run_trace")
+        ])
+      })
+    ]));
   });
 
   it("summarizes transcript, runs, RoleCalls, tasks, team, memory, and skills in stable order", async () => {
