@@ -121,7 +121,7 @@ export interface GraphLayoutModel {
 
 const narrowColumnThreshold = 92;
 const spatialColumnThreshold = 120;
-const spatialGapWidth = 3;
+const spatialRankGapWidth = 3;
 const compactNodeWidth = 31;
 const detailNodeWidth = 39;
 
@@ -215,7 +215,7 @@ export function renderGraphWorkbench(
     narrow: layout.viewport.narrow,
     legend: [
       "legend: [P] plan  [T] trace  ! deviation  * selected",
-      "edges: --> primary  ==> parallel  -?> optional  -!> fallback  ..> evidence"
+      "flow: primary ↓ next step; branch → target; compact uses --> ==> -?> -!> ..>"
     ],
     miniMap,
     itemCount: layout.nodes.length
@@ -465,159 +465,106 @@ function spatialDagRows(
   const nodes = visibleNodesForGroups(layout.nodes, collapsedGroupIds);
   const visibleNodeIds = new Set(nodes.map((node) => node.id));
   const nodeById = new Map(nodes.map((node) => [node.id, node]));
-  const ranks = [...new Set(nodes.filter((node) => node.viewportIncluded).map((node) => node.rank))].sort((a, b) => a - b);
-  if (ranks.length <= 1) {
-    return undefined;
-  }
-  const cellWidth = spatialCellWidth(options.columns, ranks.length);
-  if (!cellWidth) {
-    return undefined;
-  }
   const rows: GraphWorkbenchRow[] = collapsedGroupRows(layout, options.columns);
   const edgesByFrom = groupEdgesByFrom(
     layout.edges.filter((edge) => visibleNodeIds.has(edge.from) && visibleNodeIds.has(edge.to))
   );
-  const maxLane = nodes.reduce((max, node) => Math.max(max, node.lane), 0);
   const effectiveLabels = effectiveLabelMode(options.labels, options.columns);
   rows.push({
-    text: truncateText(`ranks ${ranks.map((rank) => `r${rank}${rank === 0 ? ":root" : ""}`).join(" ─▶ ")}`, options.columns),
+    text: truncateText("flow: top-down steps; indented rows show branches and runtime evidence", options.columns),
     tone: "muted"
   });
-  for (let lane = 0; lane <= maxLane; lane += 1) {
-    const laneNodes = ranks.map((rank) =>
-      nodes.find((node) => node.viewportIncluded && node.rank === rank && node.lane === lane)
-    );
-    if (laneNodes.every((node) => !node)) {
-      continue;
-    }
-    const laneBoxes = laneNodes.map((node) => spatialNodeBox(node, cellWidth, effectiveLabels));
-    const selectedInLane = laneNodes.some((node) => node?.selected);
-    for (let boxRow = 0; boxRow < 4; boxRow += 1) {
-      rows.push({
-        text: truncateText(
-          laneBoxes.map((box, index) => {
-            const connector = boxRow === 1
-              ? laneConnector(laneNodes[index], laneNodes[index + 1], layout.edges)
-              : " ".repeat(spatialGapWidth);
-            return `${box[boxRow] ?? "".padEnd(cellWidth)}${index < laneBoxes.length - 1 ? connector : ""}`;
-          }).join(""),
-          options.columns
-        ),
-        selected: boxRow === 1 && selectedInLane,
-        tone: boxRow === 1
-          ? laneNodes.find((node) => node?.selected)
-            ? nodeTone(laneNodes.find((node) => node?.selected) as GraphLayoutNode)
-            : undefined
-          : undefined
-      });
-    }
-    rows.push(...graphicalEdgeRows(
-      laneNodes.filter((node): node is GraphLayoutNode => Boolean(node)),
-      edgesByFrom,
-      nodeById,
-      visibleNodeIds,
-      effectiveLabels,
-      options.columns
-    ));
-  }
-  return rows;
-}
-
-function spatialCellWidth(columns: number, rankCount: number): number | undefined {
-  const totalGapWidth = Math.max(0, rankCount - 1) * spatialGapWidth;
-  const width = Math.floor((columns - totalGapWidth) / rankCount);
-  if (width < 18) {
+  const visibleRanks = [...new Set(nodes.filter((node) => node.viewportIncluded).map((node) => node.rank))].sort((a, b) => a - b);
+  if (visibleRanks.length === 0) {
     return undefined;
   }
-  return Math.min(detailNodeWidth + 2, width);
-}
-
-function spatialNodeCell(
-  node: GraphLayoutNode | undefined,
-  cellWidth: number,
-  labels: ResolvedGraphLabelMode
-): string {
-  if (!node) {
-    return "".padEnd(cellWidth);
-  }
-  const nodeWidth = Math.max(16, Math.min(node.displayWidth, cellWidth - 2));
-  return nodeBoxLine(node, nodeWidth, node.selected, labels).padEnd(cellWidth);
-}
-
-function spatialNodeBox(
-  node: GraphLayoutNode | undefined,
-  cellWidth: number,
-  labels: ResolvedGraphLabelMode
-): string[] {
-  if (!node) {
-    return Array.from({ length: 4 }, () => "".padEnd(cellWidth));
-  }
-  const innerWidth = Math.max(8, cellWidth - 2);
-  const title = truncateText(`${node.selected ? "*" : " "}${nodeKindMarker(node)} ${statusGlyph(node.status)} ${nodeTitleForLabelMode(node, labels)}`, innerWidth);
-  const meta = truncateText(`r${node.rank}.${node.lane} ${node.source === "plan" ? `${node.required ? "req" : "opt"} ${node.risk ?? "risk"}` : node.status}`, innerWidth);
-  return [
-    `┌${"─".repeat(innerWidth)}┐`,
-    `│${title.padEnd(innerWidth)}│`,
-    `│${meta.padEnd(innerWidth)}│`,
-    `└${"─".repeat(innerWidth)}┘`
-  ];
-}
-
-function laneConnector(
-  from: GraphLayoutNode | undefined,
-  to: GraphLayoutNode | undefined,
-  edges: GraphLayoutEdge[]
-): string {
-  if (!from || !to) {
-    return " ".repeat(spatialGapWidth);
-  }
-  const edge = edges.find((candidate) => candidate.from === from.id && candidate.to === to.id);
-  if (!edge) {
-    return " ".repeat(spatialGapWidth);
-  }
-  if (edge.type === "parallel") {
-    return "═▶ ";
-  }
-  if (edge.type === "fallback" || edge.type === "deviation") {
-    return "!▶ ";
-  }
-  if (edge.type === "runtime" || edge.type === "evidence") {
-    return "·▶ ";
-  }
-  return "─▶ ";
-}
-
-function graphicalEdgeRows(
-  sources: GraphLayoutNode[],
-  edgesByFrom: ReadonlyMap<string, GraphLayoutEdge[]>,
-  nodeById: ReadonlyMap<string, GraphLayoutNode>,
-  visibleNodeIds: ReadonlySet<string>,
-  labels: ResolvedGraphLabelMode,
-  columns: number
-): GraphWorkbenchRow[] {
-  const rows: GraphWorkbenchRow[] = [];
-  for (const source of sources) {
-    const edges = edgesByFrom.get(source.id) ?? [];
-    const visibleEdges = edges
-      .filter((edge) => visibleNodeIds.has(edge.to))
-      .sort((left, right) =>
-        (nodeById.get(left.to)?.rank ?? left.toRank) - (nodeById.get(right.to)?.rank ?? right.toRank) ||
-        (nodeById.get(left.to)?.lane ?? left.toLane) - (nodeById.get(right.to)?.lane ?? right.toLane)
-      );
-    if (visibleEdges.length === 0) {
-      continue;
-    }
-    visibleEdges.forEach((edge, index) => {
-      rows.push({
-        text: truncateText(
-          `  r${source.rank}.${source.lane} ${nodeInlineLabel(source, labels)} ${edgeBranchGlyph(index, visibleEdges.length)} ${hierarchyEdgeLabel(edge, nodeById, labels)}`,
-          columns
-        ),
-        tone: edge.type === "fallback" || edge.type === "deviation" ? "warning" : "muted"
-      });
+  for (const rank of visibleRanks) {
+    const rankNodes = nodes
+      .filter((node) => node.viewportIncluded && node.rank === rank)
+      .sort((left, right) => left.lane - right.lane);
+    rows.push({
+      text: truncateText(`step ${rank}`, options.columns),
+      tone: "muted"
     });
+    for (const [nodeIndex, node] of rankNodes.entries()) {
+      const singleNode = rankNodes.length === 1;
+      const lastNode = nodeIndex === rankNodes.length - 1;
+      const nodePrefix = singleNode ? "●" : lastNode ? "└●" : "├●";
+      const edgePrefix = singleNode ? "  " : lastNode ? "   " : "│  ";
+      rows.push({
+        text: truncateText(flowNodeLine(node, effectiveLabels, nodePrefix), options.columns),
+        selected: node.selected,
+        tone: nodeTone(node)
+      });
+      const outgoing = uniqueFlowEdges(edgesByFrom.get(node.id) ?? [], nodeById, visibleNodeIds);
+      for (const [edgeIndex, edge] of outgoing.entries()) {
+        const branch = edgeIndex === outgoing.length - 1 ? "└─" : "├─";
+        rows.push({
+          text: truncateText(`${edgePrefix}${branch} ${flowEdgeLabel(edge, nodeById, effectiveLabels)}`, options.columns),
+          tone: edge.type === "fallback" || edge.type === "deviation" ? "warning" : "muted"
+        });
+      }
+    }
   }
   return rows;
+}
+
+function flowNodeLine(
+  node: GraphLayoutNode,
+  labels: ResolvedGraphLabelMode,
+  prefix: string
+): string {
+  const coordinate = `r${node.rank}.${node.lane}`;
+  const marker = node.selected ? "*" : " ";
+  const source = nodeKindMarker(node);
+  const status = statusGlyph(node.status);
+  const meta = node.source === "plan"
+    ? `${node.required ? "req" : "opt"} ${node.risk ?? "risk"}`
+    : node.status;
+  return `${prefix} ${marker}${coordinate} [${source} ${status}] ${nodeInlineLabel(node, labels)} (${meta})`;
+}
+
+function uniqueFlowEdges(
+  edges: GraphLayoutEdge[],
+  nodeById: ReadonlyMap<string, GraphLayoutNode>,
+  visibleNodeIds: ReadonlySet<string>
+): GraphLayoutEdge[] {
+  const unique = new Map<string, GraphLayoutEdge>();
+  for (const edge of edges) {
+    if (!visibleNodeIds.has(edge.to)) {
+      continue;
+    }
+    const key = `${edge.type}:${edge.to}`;
+    if (!unique.has(key)) {
+      unique.set(key, edge);
+    }
+  }
+  return [...unique.values()].sort((left, right) =>
+    (nodeById.get(left.to)?.rank ?? left.toRank) - (nodeById.get(right.to)?.rank ?? right.toRank) ||
+    (nodeById.get(left.to)?.lane ?? left.toLane) - (nodeById.get(right.to)?.lane ?? right.toLane)
+  );
+}
+
+function flowEdgeLabel(
+  edge: GraphLayoutEdge,
+  nodeById: ReadonlyMap<string, GraphLayoutNode>,
+  labels: ResolvedGraphLabelMode
+): string {
+  const target = nodeById.get(edge.to);
+  const targetCoordinate = target ? `r${target.rank}.${target.lane}` : `r${edge.toRank}.${edge.toLane}`;
+  const targetLabel = nodeInlineLabel(target, labels, edge.to);
+  const connector = edge.type === "primary" && target && target.rank > edge.fromRank ? "↓" : "→";
+  return `${flowEdgeTypeLabel(edge)} ${connector} ${targetCoordinate} ${targetLabel}`;
+}
+
+function flowEdgeTypeLabel(edge: GraphLayoutEdge): string {
+  if (edge.type === "primary") {
+    return edge.label ? `primary:${edge.label}` : "primary";
+  }
+  if (edge.type === "runtime" || edge.type === "evidence") {
+    return edge.type;
+  }
+  return edge.label && edge.label !== edge.type ? `${edge.type}:${edge.label}` : edge.type;
 }
 
 function narrowRows(
@@ -694,7 +641,7 @@ function toolbarText(
     `focus ${selectedNode ? nodeInlineLabel(selectedNode, effectiveLabelMode(options.labels, options.columns)) : nodeCount === 0 ? "none" : "unknown"}`,
     `labels ${options.labels}`,
     `fold ${options.fold}`,
-    narrow ? "compact" : "dag",
+    narrow ? "compact" : "flow",
     `plan ${trace.baseNodes.length}`,
     `trace ${trace.dynamicNodes.length}`,
     `evidence ${trace.evidence.length}`,
@@ -761,22 +708,6 @@ function edgeLabelText(
   return prefix ? `${prefix} ${target}` : target;
 }
 
-function hierarchyEdgeLabel(
-  edge: GraphLayoutEdge,
-  nodeById: ReadonlyMap<string, GraphLayoutNode>,
-  labels: ResolvedGraphLabelMode
-): string {
-  const target = nodeById.get(edge.to);
-  const type = edge.type === "primary" ? "primary" : edge.type;
-  const label = edge.label && edge.label !== edge.type ? `:${edge.label}` : "";
-  const targetCoordinate = target ? `r${target.rank}.${target.lane}` : `r${edge.toRank}.${edge.toLane}`;
-  return `${type}${label} -> ${targetCoordinate} ${nodeInlineLabel(target, labels, edge.to)}`;
-}
-
-function edgeBranchGlyph(index: number, total: number): string {
-  return index === total - 1 ? "└─" : "├─";
-}
-
 function nodeTitleForLabelMode(
   node: GraphLayoutNode,
   labels: ResolvedGraphLabelMode
@@ -820,7 +751,7 @@ function viewportRanksForColumns(
 
 function spatialRankCapacity(columns: number): number {
   const minimumCellWidth = 18;
-  return Math.max(1, Math.floor((columns + spatialGapWidth) / (minimumCellWidth + spatialGapWidth)));
+  return Math.max(1, Math.floor((columns + spatialRankGapWidth) / (minimumCellWidth + spatialRankGapWidth)));
 }
 
 function rankNodes(nodes: BaseLayoutNode[], edges: BaseLayoutEdge[]): Map<string, number> {

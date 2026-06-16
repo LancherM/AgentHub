@@ -1099,7 +1099,7 @@ describe("Ink TUI renderer", () => {
     expect(workbench.rows.every((row) => row.text.length <= 80)).toBe(true);
   });
 
-  it("renders wide Workflow DAG ranks as graphical node boxes with readable links", () => {
+  it("renders wide Workflow DAG as a top-down flow with readable branches", () => {
     const workbench = renderGraphWorkbench(workflowDagTraceFixture(), {
       mode: "overlay",
       columns: 154,
@@ -1111,19 +1111,21 @@ describe("Ink TUI renderer", () => {
     });
     const text = workbench.rows.map((row) => row.text).join("\n");
     const roleCallConnector = workbench.rows.find((row) =>
-      row.text.includes("runtime:role_call ->") && row.text.includes("Implement subgraph")
+      row.text.includes("runtime →") && row.text.includes("Implement subgraph")
     );
 
     expect(workbench.narrow).toBe(false);
-    expect(text).toContain("ranks r0:root");
-    expect(text).toContain("┌");
-    expect(text).toContain("│ P ✓ Capture request");
-    expect(text).toContain("│ P ✓ Plan workflow");
-    expect(text).toContain("│*P ✓ Codex");
-    expect(text).toContain("parallel:codex -> r2.0 Codex implementation");
-    expect(text).toContain("parallel:claude -> r2.1 Claude implementa");
-    expect(text).toContain("primary:candidate -> r3.0 Compare results");
-    expect(roleCallConnector?.text).toContain("runtime:role_call -> r3.1 Implement subgraph");
+    expect(workbench.toolbar).toContain("flow");
+    expect(text).toContain("flow: top-down steps");
+    expect(text).toContain("step 2");
+    expect(text).toContain("●  r0.0 [P ✓] Capture request");
+    expect(text).toContain("●  r1.0 [P ✓] Plan workflow");
+    expect(text).toContain("├● *r2.0 [P ✓] Codex implementation");
+    expect(text).toContain("└●  r2.1 [P ✓] Claude implementa");
+    expect(text).toContain("parallel:codex → r2.0 Codex implementation");
+    expect(text).toContain("parallel:claude → r2.1 Claude implementa");
+    expect(text).toContain("primary:candidate ↓ r3.0 Compare results");
+    expect(roleCallConnector?.text).toContain("runtime → r3.1 Implement subgraph");
     expect(workbench.rows.every((row) => row.text.length <= 154)).toBe(true);
   });
 
@@ -1227,7 +1229,7 @@ describe("Ink TUI renderer", () => {
 
     expect(auto.toolbar).toContain("labels auto");
     expect(autoText).toContain("Capture request");
-    expect(offText).toContain("parallel:codex -> r2.0 codex_run");
+    expect(offText).toContain("parallel:codex → r2.0 codex_run");
     expect(offText).not.toContain("codex codex_run");
   });
 
@@ -1562,9 +1564,9 @@ describe("Ink TUI renderer", () => {
     expect(overlay).toContain("mini-map z82%");
     expect(overlay).toContain("P");
     expect(overlay).toContain("plan_node_imple");
-    expect(overlay).toContain("ranks r0:root");
-    expect(overlay).toContain("│*P ✓ Implement graph view");
-    expect(overlay).toContain("primary:then -> r1.0 Verify graph view");
+    expect(overlay).toContain("flow: top-down steps");
+    expect(overlay).toContain("● *r0.0 [P ✓] Implement graph view");
+    expect(overlay).toContain("primary:then ↓ r1.0 Verify graph view");
     expect(overlay).toContain("T");
     expect(overlay).toContain("TaskRun run_1");
     expect(overlay).toContain("legend: [P] plan");

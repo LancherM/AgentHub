@@ -46,23 +46,24 @@ boxes, so internal setup or Codex diagnostic lines remain in raw evidence rather
 than the operator-facing summary.
 The Graph focus now presents the current execution-trace projection as
 `Graph - Workflow DAG`: graph-backed tasks show bounded Overlay, Plan, and
-Trace modes with wide node-box DAG rows, local outgoing link rows,
+Trace modes with wide top-down flow rows, per-step sibling groups,
+local outgoing branch rows,
 selected-node details, real toolbar state, a structural mini-map, a legend, and
 bounded medium or narrow-terminal fallback. The terminal graph renderer uses a
 deterministic local layout model so selection, rank/lane placement, grouping,
 percentage-like zoom density, label policy, viewport rank, and focus command
-behavior stay stable across renders. Wide Graph rows render ranks as columns
-and lanes as rows of boxed nodes, connect same-lane adjacent nodes with
-terminal arrows, and place local `primary`, `parallel`, `runtime`, `fallback`,
-or `evidence` link rows directly under the source lane so parent-child
-relationships remain readable.
+behavior stay stable across renders. Wide Graph rows render visible ranks as
+top-down `step` groups, show same-step lanes as sibling nodes, and indent local
+`primary`, `parallel`, `runtime`, `fallback`, or `evidence` links directly under
+their source node so branch ownership is readable without scanning a separate
+edge list.
 The mini-map shows symbolic rank/lane
 occupancy, selected-node position, current zoom density, and viewport coverage,
 and compresses or hides when the terminal cannot spare space. Grouped mode
 derives local subgraph containers for parallel, fallback, RoleCall, and
 comparison branches; collapsed groups render summary rows with node count,
 status, risk, and selected descendant state without mutating PlanGraph or trace
-evidence. The default graph surface is title-first: node boxes, toolbar focus,
+evidence. The default graph surface is title-first: flow rows, toolbar focus,
 connector labels, and selected-node relationship rows use human-readable plan
 or trace titles, while long PlanGraph and trace IDs are shortened to secondary
 keys or kept inside explicit commands. `/graph focus <node-id>` selects a node
@@ -570,12 +571,12 @@ mislabeled as skipped. The read-only
 `execution-trace show` CLI command exposes that projection by task id or
 PlanGraph id. The terminal workbench Graph focus now presents this projection
 as `Graph - Workflow DAG`: Overlay, Plan, and Trace modes render bounded
-terminal node boxes, graphical rank/lane rows, visible outgoing edge labels,
+terminal top-down flow rows, grouped same-step branches, visible outgoing edge labels,
 selected-node highlighting, toolbar state for mode/labels/fold/zoom, a
 structural rank/lane mini-map with selected
 viewport state, a legend, and a compact fallback for narrow terminals while
 falling back to legacy RoleCall evidence for older tasks. The default terminal
-rendering prioritizes node titles in boxes, edge rows, toolbar focus, and
+rendering prioritizes node titles in flow rows, edge rows, toolbar focus, and
 relationship details; raw graph IDs are shortened to secondary keys unless the
 operator opens a command-oriented action. Selected graph-node details
 synchronize with the same read model and show incoming links, outgoing links,
