@@ -68,6 +68,63 @@ function planGraph(overrides: Partial<PlanGraph> = {}): PlanGraph {
   };
 }
 
+function versionedPlanGraph(version: number, status: PlanGraph["status"] = "active"): PlanGraph {
+  const graphId = `plan_graph_${version}`;
+  const plannerId = `${graphId}:planner`;
+  const implementId = `plan_node_implement_${version}`;
+  const verifyId = `plan_node_verify_${version}`;
+  return planGraph({
+    id: graphId,
+    version,
+    status,
+    plannerNodeId: plannerId,
+    nodes: [
+      {
+        id: plannerId,
+        kind: "planner",
+        role: "planner",
+        title: "Create graph",
+        instructions: "Create a valid graph.",
+        acceptanceCriteria: ["Graph is valid."],
+        riskLevel: "low",
+        required: true,
+        execution: { mode: "system" },
+        outputPlanGraphId: graphId
+      },
+      {
+        id: implementId,
+        kind: "implement",
+        role: "engineer",
+        title: `Implement change v${version}`,
+        instructions: "Implement the requested change.",
+        acceptanceCriteria: ["Run completes."],
+        riskLevel: "medium",
+        required: true,
+        execution: {
+          mode: "primary_run",
+          expectedAdapter: "fake",
+          worktreePolicy: "isolated"
+        }
+      },
+      {
+        id: verifyId,
+        kind: "verify",
+        role: "engineer",
+        title: `Verify change v${version}`,
+        instructions: "Run verification.",
+        acceptanceCriteria: ["Checks pass."],
+        riskLevel: "low",
+        required: true,
+        execution: { mode: "manual" }
+      }
+    ],
+    edges: [
+      { from: plannerId, to: implementId, type: "primary" },
+      { from: implementId, to: verifyId, type: "primary" }
+    ]
+  });
+}
+
 function taskRun(overrides: Partial<TaskRun> = {}): TaskRun {
   return {
     id: "run_1",
@@ -157,6 +214,59 @@ describe("execution trace read model", () => {
         planNodeId: "plan_node_implement"
       })
     ]);
+  });
+
+  it("resolves run-rooted traces from the run metadata PlanGraph binding", async () => {
+    const repos = repositories();
+    const oldGraph = versionedPlanGraph(1);
+    const activeGraph = versionedPlanGraph(2);
+    await repos.planGraphRepository.create(oldGraph);
+    await repos.planGraphRepository.create(activeGraph);
+    await repos.taskRunRepository.create(taskRun({ id: "run_old" }));
+    await repos.taskRunRepository.create(taskRun({ id: "run_new" }));
+    await repos.runMetadataRepository.save({
+      runId: "run_old",
+      planBinding: {
+        planGraphId: oldGraph.id,
+        planGraphVersion: oldGraph.version,
+        planNodeId: "plan_node_implement_1",
+        allowedNextPlanNodeIds: ["plan_node_verify_1"]
+      }
+    });
+    await repos.runMetadataRepository.save({
+      runId: "run_new",
+      planBinding: {
+        planGraphId: activeGraph.id,
+        planGraphVersion: activeGraph.version,
+        planNodeId: "plan_node_implement_2",
+        allowedNextPlanNodeIds: ["plan_node_verify_2"]
+      }
+    });
+
+    const trace = await buildExecutionTraceGraph(repos, {
+      runId: "run_old",
+      now: createdAt
+    });
+
+    expect(trace).toEqual(expect.objectContaining({
+      planGraphId: oldGraph.id,
+      planGraphVersion: oldGraph.version,
+      baseNodes: expect.arrayContaining([
+        expect.objectContaining({ id: "plan_node_implement_1" })
+      ]),
+      dynamicNodes: [
+        expect.objectContaining({
+          sourceId: "run_old",
+          sourcePlanNodeId: "plan_node_implement_1"
+        })
+      ]
+    }));
+    expect(trace.baseNodes).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "plan_node_implement_2" })
+    ]));
+    expect(trace.dynamicNodes).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ sourceId: "run_new" })
+    ]));
   });
 
   it("projects verification, risk, and diff evidence from run metadata", async () => {
@@ -415,5 +525,26 @@ describe("execution trace read model", () => {
         ]
       })
     );
+  });
+
+  it("falls back to a legacy trace for runs without PlanGraph bindings", async () => {
+    const repos = repositories();
+    await repos.taskRunRepository.create(taskRun());
+
+    const trace = await buildExecutionTraceGraph(repos, {
+      runId: "run_1",
+      now: createdAt
+    });
+
+    expect(trace).toEqual(expect.objectContaining({
+      taskId: "task_1",
+      planGraphId: "legacy:task_1",
+      dynamicNodes: [
+        expect.objectContaining({
+          kind: "task_run",
+          sourceId: "run_1"
+        })
+      ]
+    }));
   });
 });

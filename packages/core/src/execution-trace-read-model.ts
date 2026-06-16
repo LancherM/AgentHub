@@ -29,23 +29,25 @@ export interface ExecutionTraceReadModelRepositories {
 export interface BuildExecutionTraceGraphInput {
   taskId?: string;
   planGraphId?: string;
+  runId?: string;
   now?: string;
+}
+
+export interface ResolvedExecutionTraceGraphRoot {
+  taskId: string;
+  graph?: PlanGraph;
 }
 
 export async function buildExecutionTraceGraph(
   repositories: ExecutionTraceReadModelRepositories,
   input: BuildExecutionTraceGraphInput
 ): Promise<ExecutionTraceGraph> {
-  if (!input.taskId && !input.planGraphId) {
-    throw new Error("taskId or planGraphId is required");
-  }
-  const graph = input.planGraphId
-    ? await requirePlanGraph(repositories.planGraphRepository, input.planGraphId)
-    : await repositories.planGraphRepository.getActiveByTaskId(input.taskId as string);
+  const root = await resolveExecutionTraceGraphRoot(repositories, input);
+  const graph = root.graph;
 
   if (!graph) {
     return buildLegacyExecutionTraceGraph(repositories, {
-      taskId: input.taskId as string,
+      taskId: root.taskId,
       now: input.now ?? nowIso()
     });
   }
@@ -83,6 +85,53 @@ export async function buildExecutionTraceGraph(
     evidence: sortTraceEvidence([...evidence.values()]),
     deviations
   });
+}
+
+export async function resolveExecutionTraceGraphRoot(
+  repositories: ExecutionTraceReadModelRepositories,
+  input: BuildExecutionTraceGraphInput
+): Promise<ResolvedExecutionTraceGraphRoot> {
+  if (!input.taskId && !input.planGraphId && !input.runId) {
+    throw new Error("taskId, planGraphId, or runId is required");
+  }
+  if (input.planGraphId) {
+    const graph = await requirePlanGraph(
+      repositories.planGraphRepository,
+      input.planGraphId
+    );
+    return { taskId: graph.taskId, graph };
+  }
+  if (input.runId) {
+    const run = await repositories.taskRunRepository.get(input.runId);
+    if (!run) {
+      throw new Error(`task run ${input.runId} not found`);
+    }
+    if (input.taskId && input.taskId !== run.taskId) {
+      throw new Error(`task run ${input.runId} does not belong to task ${input.taskId}`);
+    }
+    const metadata = await repositories.runMetadataRepository.get(input.runId);
+    if (metadata?.planBinding) {
+      const graph = await requirePlanGraph(
+        repositories.planGraphRepository,
+        metadata.planBinding.planGraphId
+      );
+      if (graph.taskId !== run.taskId) {
+        throw new Error(
+          `task run ${input.runId} is bound to plan graph ${graph.id} from task ${graph.taskId}`
+        );
+      }
+      return { taskId: run.taskId, graph };
+    }
+    return {
+      taskId: run.taskId,
+      graph: await repositories.planGraphRepository.getActiveByTaskId(run.taskId)
+    };
+  }
+  const taskId = input.taskId as string;
+  return {
+    taskId,
+    graph: await repositories.planGraphRepository.getActiveByTaskId(taskId)
+  };
 }
 
 async function requirePlanGraph(

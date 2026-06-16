@@ -512,7 +512,10 @@ generated verification/risk/diff evidence from run metadata, deterministic
 deviations for failed required nodes, skipped required primary-run nodes after
 execution has begun, missing verification evidence, unplanned RoleCall trace
 nodes, superseded plan versions, and a synthetic legacy plan-unavailable node
-for tasks that have run evidence but no PlanGraph.
+for tasks that have run evidence but no PlanGraph. Task-id projections use the
+task's current active PlanGraph. Run-rooted projections resolve the selected
+run first, use `run_metadata.planBinding.planGraphId` when present, and fall
+back to the task active graph only for legacy runs without a binding.
 The CLI `execution-trace show` command is read-only and delegates to this core
 projection instead of reconstructing state from transcript prose.
 The CLI `reviews show` command remains an audit/read command over review
@@ -530,8 +533,8 @@ The desktop Workgroup Inspector consumes the same core projection through
 `ReviewService.getExecutionTrace`, the `agent-hub:review:execution-trace` IPC
 channel, and the sandboxed preload API. The React renderer owns only the
 read-only Trace tab presentation; it receives a bounded `ExecutionTraceGraph`
-DTO and does not reach into SQLite, shell, git, TaskRunner, or RoleCall
-orchestration services.
+DTO for the selected run's bound graph and does not reach into SQLite, shell,
+git, TaskRunner, or RoleCall orchestration services.
 
 This boundary should preserve the current TaskRunner and RoleCall ownership:
 
@@ -1067,6 +1070,5 @@ The reference-gap follow-up is documented in
 implementation-prompt convention.
 The remaining PlanGraph and ExecutionTraceGraph semantic gaps are tracked in
 `docs/plan-graph-execution-trace-followup-roadmap.md`. That roadmap includes
-publishable implementation prompts for run-bound trace lookup, graph
-scheduling, planner policy, evidence completion, the TUI DAG workbench, and an
-end-to-end acceptance sweep.
+publishable implementation prompts for graph scheduling, planner policy,
+evidence completion, the TUI DAG workbench, and an end-to-end acceptance sweep.

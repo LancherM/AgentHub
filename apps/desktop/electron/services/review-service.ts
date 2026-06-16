@@ -266,9 +266,9 @@ class RepositoryReviewService implements ReviewService {
   }
 
   async getExecutionTrace(runId: string): Promise<ExecutionTraceGraph> {
-    const { run } = await this.requireRunAndTask(runId);
+    await this.requireRunAndTask(runId);
     return buildExecutionTraceGraph(this.context.repositories, {
-      taskId: run.taskId
+      runId
     });
   }
 

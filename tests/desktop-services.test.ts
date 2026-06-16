@@ -971,6 +971,130 @@ describe("desktop services", () => {
     });
   });
 
+  it("uses the selected run PlanGraph binding for desktop execution traces", async () => {
+    const fixture = await createFixture();
+    const context = createDesktopServiceContext(fixture.repositories);
+    const projects = createProjectService(context);
+    const review = createReviewService(context);
+    const project = await projects.open(fixture.projectRoot);
+    const now = context.now();
+    const task = await fixture.repositories.taskRepository.create(
+      validateTask({
+        id: "task_desktop_trace_binding",
+        projectId: project.id,
+        title: "Implement run-bound trace lookup",
+        status: "completed",
+        createdAt: now,
+        updatedAt: now
+      })
+    );
+    const oldRun = await fixture.repositories.taskRunRepository.create(
+      validateTaskRun({
+        id: "run_desktop_trace_old",
+        taskId: task.id,
+        agentKind: "fake",
+        status: "succeeded",
+        createdAt: now,
+        updatedAt: now
+      })
+    );
+    const newRun = await fixture.repositories.taskRunRepository.create(
+      validateTaskRun({
+        id: "run_desktop_trace_new",
+        taskId: task.id,
+        agentKind: "fake",
+        status: "succeeded",
+        createdAt: now,
+        updatedAt: now
+      })
+    );
+    const oldGraph = createDeterministicPlanGraph({
+      task,
+      taskBrief: {
+        taskId: task.id,
+        taskTitle: task.title,
+        taskPrompt: "Implement the first execution trace lookup.",
+        renderedContent: "Implement the first execution trace lookup.",
+        contextPackId: "context_pack_desktop_trace_old",
+        createdAt: now
+      },
+      createdAt: now,
+      version: 1,
+      expectedAdapter: "fake",
+      roleHandle: "engineer"
+    });
+    const newGraph = createDeterministicPlanGraph({
+      task,
+      taskBrief: {
+        taskId: task.id,
+        taskTitle: task.title,
+        taskPrompt: "Implement the newer execution trace lookup.",
+        renderedContent: "Implement the newer execution trace lookup.",
+        contextPackId: "context_pack_desktop_trace_new",
+        createdAt: now
+      },
+      createdAt: now,
+      version: 2,
+      expectedAdapter: "fake",
+      roleHandle: "engineer"
+    });
+    await fixture.repositories.planGraphRepository.create(oldGraph);
+    await fixture.repositories.planGraphRepository.create(newGraph);
+    const oldExecutionNode = oldGraph.nodes.find(
+      (node) => node.execution.mode === "primary_run"
+    );
+    const newExecutionNode = newGraph.nodes.find(
+      (node) => node.execution.mode === "primary_run"
+    );
+    if (!oldExecutionNode || !newExecutionNode) {
+      throw new Error("expected primary run nodes");
+    }
+    await fixture.repositories.runMetadataRepository.save({
+      runId: oldRun.id,
+      planBinding: {
+        planGraphId: oldGraph.id,
+        planGraphVersion: oldGraph.version,
+        planNodeId: oldExecutionNode.id,
+        allowedNextPlanNodeIds: []
+      }
+    });
+    await fixture.repositories.runMetadataRepository.save({
+      runId: newRun.id,
+      planBinding: {
+        planGraphId: newGraph.id,
+        planGraphVersion: newGraph.version,
+        planNodeId: newExecutionNode.id,
+        allowedNextPlanNodeIds: []
+      }
+    });
+
+    await expect(
+      fixture.repositories.planGraphRepository.getActiveByTaskId(task.id)
+    ).resolves.toMatchObject({ id: newGraph.id });
+    const trace = await review.getExecutionTrace(oldRun.id);
+
+    expect(trace).toMatchObject({
+      taskId: task.id,
+      planGraphId: oldGraph.id,
+      planGraphVersion: oldGraph.version,
+      dynamicNodes: [
+        expect.objectContaining({
+          sourceId: oldRun.id,
+          sourcePlanNodeId: oldExecutionNode.id
+        })
+      ]
+    });
+    expect(trace.baseNodes).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: oldExecutionNode.id })
+    ]));
+    expect(trace.baseNodes).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: newExecutionNode.id })
+    ]));
+    expect(trace.dynamicNodes).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ sourceId: newRun.id })
+    ]));
+  });
+
   it("lists knowledge workspace memory, thread summaries, and review decisions", async () => {
     const fixture = await createFixture();
     const context = createDesktopServiceContext(fixture.repositories);
