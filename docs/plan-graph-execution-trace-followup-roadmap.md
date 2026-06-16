@@ -11,10 +11,10 @@ Graph-specific terminal UI fidelity work is tracked in
 
 This document turns the remaining PlanGraph and ExecutionTraceGraph gaps into
 small implementation slices. It assumes the current branch already has the
-shared graph contracts, deterministic planner, optional local adapter-backed
-planner, primary-run plan binding, RoleCall trace links, execution-trace read
-model, CLI inspection, the `Graph - Workflow DAG` TUI workbench, desktop Trace
-tab, and plan-aware risk findings.
+shared graph contracts, system `@planner` adapter path, primary-run plan
+binding, RoleCall trace links, execution-trace read model, CLI inspection, the
+`Graph - Workflow DAG` TUI workbench, desktop Trace tab, and plan-aware risk
+findings.
 
 The goal of the follow-up work is not to replace that foundation. The goal is
 to close the semantic gaps between the current implementation and the target
@@ -37,10 +37,11 @@ Implemented:
 - domain validation for planner metadata, DAG topology, safe instructions,
   trace links, evidence links, and deviations;
 - in-memory and SQLite repositories for PlanGraphs and trace-link source rows;
-- deterministic PlanGraph creation before the primary adapter run;
-- opt-in `agent_adapter` planner mode that runs a special local `@planner`
-  role in an isolated planner worktree and validates structured JSON output;
-- manual PlanGraph input mode after validation;
+- system `@planner` PlanGraph creation before real primary adapter runs;
+- `agent_adapter` planner mode that runs a special local `@planner` role in an
+  isolated planner worktree and validates structured JSON output;
+- adapter selection for the planner, while planner persona, prompt, role
+  metadata, and output contract remain system-generated and non-customizable;
 - primary run binding to the first planned `primary_run` node;
 - runtime injection of PlanGraph, current plan node, allowed next nodes, and
   plan-following rules;
@@ -63,9 +64,9 @@ Remaining product diffs:
 3. TaskRunner does not yet act as a full PlanGraph scheduler. It binds the
    current run to one plan node, while downstream `primary_run` nodes require
    explicit caller binding.
-4. The default planner path is deterministic and represented by a planner node.
-   A stricter product mode where every task uses an actual adapter-backed
-   `@planner` role remains optional and needs a product switch.
+4. The planner path is now adapter-backed for real runs. Remaining work is
+   surface-level planner adapter selection and clearer inspection copy, not a
+   deterministic-vs-adapter product choice.
 5. ExecutionTraceGraph does not yet attach every available evidence class as a
    first-class trace source, especially run artifacts, review decisions, and
    comparison/best-result outcomes.
@@ -296,31 +297,30 @@ Verification:
 - Run typecheck, lint, and git diff --check.
 ```
 
-## Phase 4: Planner Role Policy
+## Phase 4: Planner Adapter Policy
 
-Goal: decide and implement whether `@planner` should always be adapter-backed
-or remain deterministic by default with an opt-in adapter-backed mode.
+Goal: keep `@planner` as a system role executed by an agent/LLM adapter, while
+allowing users to choose which adapter runs it.
 
-Recommended product decision:
+Product decision:
 
-- Keep deterministic planner as the default MVP path because it is stable,
-  local, fast, testable, and does not require an authenticated Codex or Claude
-  CLI before every run.
-- Add a project or run policy that can require `agent_adapter` planner mode for
-  users who want every task to be planned by an actual local `@planner` role.
-- Keep both modes represented by the same planner node contract so downstream
-  graph logic does not care how the plan was produced.
+- `@planner` must not be deterministic, human/manual, or a normal
+  user-customizable role.
+- Users may choose the planner adapter, such as Codex, Claude Code, or a
+  future LLM adapter.
+- Agent Hub generates the planner prompt, planner role metadata, safety
+  boundaries, and JSON output contract.
+- Dry-run and internal fake-adapter compatibility paths may disable PlanGraph
+  creation, but they must not pretend to be planner-generated graphs.
 
 Scope:
 
-- Add explicit planner policy configuration if not already present at the
-  desired surface.
-- Make run output and inspection clear about whether the planner was
-  deterministic, manual, or adapter-backed.
+- Add explicit planner adapter selection at the desired surfaces.
+- Make run output and inspection clear which adapter executed `@planner`.
 - Ensure adapter-backed planner failures stop before primary execution and
   preserve planner evidence.
-- Keep dry-run behavior explicit: adapter-backed planning cannot run in
-  dry-run mode unless a future fake/local adapter policy says otherwise.
+- Keep dry-run behavior explicit: adapter-backed planning cannot run in dry-run
+  mode unless a future local LLM policy says otherwise.
 
 Implementation areas:
 
@@ -333,12 +333,14 @@ Implementation areas:
 
 Tests:
 
-- deterministic default remains available;
-- policy requires adapter-backed planner and fails clearly when no planner
-  adapter is configured;
+- default real-adapter runs use adapter-backed `@planner`;
+- planner adapter selection fails clearly when the selected planner adapter is
+  not configured;
 - valid adapter-backed planner output activates the graph;
 - invalid planner output prevents primary execution;
-- planner mode is visible in persisted events and inspection output.
+- planner adapter identity is visible in persisted events and inspection
+  output;
+- planner JSON is filtered out of assistant-facing primary output.
 
 Exit criteria:
 
@@ -352,18 +354,18 @@ Implementation prompt:
 You are working in /Users/lan/agent-hub.
 
 Implement Phase 4 of docs/plan-graph-execution-trace-followup-roadmap.md.
-Harden planner role policy so the product can clearly support deterministic default planning and optional required adapter-backed @planner planning.
+Harden planner adapter selection so the product clearly supports a system @planner role executed by a user-selected local adapter.
 
 Constraints:
-- Do not remove deterministic mode unless product docs and tests are updated together.
-- Keep @planner local-only and worktree-isolated.
+- Keep @planner local-only, worktree-isolated, and adapter-backed for real runs.
+- Users may choose the adapter but must not customize planner persona, prompt, role metadata, or output format.
 - Do not add remote model APIs or cloud planner execution.
 - Preserve structured output validation before activation.
 
 Deliverables:
-- A clear planner policy surface or explicit run configuration.
-- Planner mode visible in events and inspection.
-- Tests for deterministic, required adapter-backed, missing adapter, and invalid output paths.
+- A clear planner adapter-selection surface or explicit run configuration.
+- Planner adapter identity visible in events and inspection.
+- Tests for default adapter-backed planning, selected planner adapter, missing adapter, invalid output, and planner-output filtering.
 
 Verification:
 - Run focused TaskRunner and CLI tests.

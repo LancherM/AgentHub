@@ -132,7 +132,7 @@ describe("task runner", () => {
     await expect(fs.readdir(projectRoot)).resolves.toEqual(before);
   });
 
-  it("creates an active PlanGraph before adapter execution when enabled", async () => {
+  it("creates an active PlanGraph through @planner before adapter execution when enabled", async () => {
     const projectRoot = await createTestDirectory("agent-hub-plan-project");
     const runRoot = await createTestDirectory("agent-hub-plan-runs");
     const planGraphRepository = new InMemoryPlanGraphRepository();
@@ -143,7 +143,18 @@ describe("task runner", () => {
       async detect() {
         return { available: true, version: "plan-aware" };
       },
-      async *run(): AsyncIterable<AgentRunEvent> {
+      async *run(input: AgentRunInput): AsyncIterable<AgentRunEvent> {
+        if (input.role?.roleHandle === "planner") {
+          yield {
+            type: "message",
+            message: JSON.stringify({
+              planGraph: testPlannerGraph(input.taskId, 1, input.taskTitle)
+            }),
+            metadata: { assistantOutput: true }
+          };
+          yield { type: "exit", message: "@planner completed", exitCode: 0 };
+          return;
+        }
         activeGraphSeenByAdapter =
           await planGraphRepository.getActiveByTaskId("task_plan_first");
         yield {
@@ -168,7 +179,9 @@ describe("task runner", () => {
       projectRoot,
       taskPrompt: "Implement a parser fix",
       agentKind: "fake",
-      taskId: "task_plan_first"
+      taskId: "task_plan_first",
+      planGraphMode: "agent_adapter",
+      plannerAgentKind: "fake"
     });
 
     expect(result.status).toBe("succeeded");
@@ -176,11 +189,8 @@ describe("task runner", () => {
     expect(activeGraphSeenByAdapter?.id).toBe(result.planGraph?.id);
     expect(result.planGraph?.nodes.map((node) => node.kind)).toEqual([
       "planner",
-      "research",
       "implement",
-      "verify",
-      "review",
-      "handoff"
+      "verify"
     ]);
     const planEventIndex = result.events.findIndex((event) =>
       event.metadata?.desktopEventType === "plan_graph_created"
@@ -223,7 +233,7 @@ describe("task runner", () => {
     )).toBe(false);
   });
 
-  it("fails inspectably before adapter execution when planner output is invalid", async () => {
+  it("fails inspectably before adapter execution when @planner output is invalid", async () => {
     const projectRoot = await createTestDirectory("agent-hub-plan-invalid-project");
     const runRoot = await createTestDirectory("agent-hub-plan-invalid-runs");
     let adapterStarted = false;
@@ -233,7 +243,12 @@ describe("task runner", () => {
       async detect() {
         return { available: true, version: "unused" };
       },
-      async *run(): AsyncIterable<AgentRunEvent> {
+      async *run(input: AgentRunInput): AsyncIterable<AgentRunEvent> {
+        if (input.role?.roleHandle === "planner") {
+          yield { type: "stdout", message: "not json" };
+          yield { type: "exit", message: "@planner completed", exitCode: 0 };
+          return;
+        }
         adapterStarted = true;
         yield { type: "exit", message: "unexpected adapter start", exitCode: 0 };
       }
@@ -244,17 +259,6 @@ describe("task runner", () => {
       diffCollector: new StaticDiffCollector(),
       verificationRunner: new VerificationRunner(new MockShellExecutor()),
       agentRegistry: new DefaultAgentRegistry([adapter]),
-      planGraphPlanner: (input) => ({
-        id: `invalid:${input.task.id}`,
-        taskId: input.task.id,
-        version: input.version,
-        status: "active",
-        plannerNodeId: "missing_planner",
-        createdByRole: "planner",
-        createdAt: input.createdAt,
-        nodes: [],
-        edges: []
-      }),
       idGenerator: new SequenceIdGenerator(),
       clock: new FixedClock("2026-01-01T00:00:00.000Z")
     });
@@ -263,11 +267,14 @@ describe("task runner", () => {
       projectRoot,
       taskPrompt: "Implement with invalid planner output",
       agentKind: "fake",
-      taskId: "task_plan_invalid"
+      taskId: "task_plan_invalid",
+      planGraphMode: "agent_adapter",
+      plannerAgentKind: "fake"
     });
 
     expect(result.status).toBe("failed");
     expect(result.error).toContain("plan graph creation failed");
+    expect(result.error).toContain("planner output was not valid JSON");
     expect(adapterStarted).toBe(false);
     expect(result.events).toEqual(
       expect.arrayContaining([
@@ -339,6 +346,13 @@ describe("task runner", () => {
     ]);
     expect(adapterInputs).toHaveLength(2);
     expect(adapterInputs[0].role?.roleHandle).toBe("planner");
+    expect(adapterInputs[0].role?.persona).toContain("System-owned planning role");
+    expect(adapterInputs[0].taskPrompt).toContain(
+      "You are Agent Hub's system @planner role."
+    );
+    expect(adapterInputs[0].taskPrompt).toContain(
+      "adapter choice never changes your planner identity"
+    );
     expect(adapterInputs[0].worktreePath).not.toBe(projectRoot);
     expect(adapterInputs[1].currentPlanNode?.id).toBe(
       planNodeIdForPlanGraph(result.planGraph?.id ?? "", "implement", 1)
@@ -407,7 +421,7 @@ describe("task runner", () => {
     expect(primaryStarted).toBe(false);
   });
 
-  it("fails clearly when adapter-backed planner policy has no planner adapter configured", async () => {
+  it("fails clearly when the selected planner adapter is not registered", async () => {
     const projectRoot = await createTestDirectory("agent-hub-agent-planner-missing-project");
     const runRoot = await createTestDirectory("agent-hub-agent-planner-missing-runs");
     let primaryStarted = false;
@@ -437,12 +451,13 @@ describe("task runner", () => {
       taskPrompt: "Require adapter-backed planning without a planner adapter.",
       agentKind: "fake",
       taskId: "task_agent_planner_missing",
-      planGraphMode: "agent_adapter"
+      planGraphMode: "agent_adapter",
+      plannerAgentKind: "codex"
     });
 
     expect(result.status).toBe("failed");
     expect(result.error).toContain(
-      "agent_adapter PlanGraph mode requires plannerAgentKind"
+      "planner agent codex is not registered"
     );
     expect(primaryStarted).toBe(false);
     expect(result.events).toEqual(expect.arrayContaining([
@@ -455,7 +470,7 @@ describe("task runner", () => {
     ]));
   });
 
-  it("can activate a manually supplied PlanGraph after validation", async () => {
+  it("rejects manually supplied PlanGraphs as a runtime planning mode", async () => {
     const projectRoot = await createTestDirectory("agent-hub-manual-plan-project");
     const runRoot = await createTestDirectory("agent-hub-manual-plan-runs");
     const manualGraph = testPlannerGraph("task_manual_plan", 1, "Manual plan task");
@@ -465,12 +480,8 @@ describe("task runner", () => {
       async detect() {
         return { available: true, version: "manual-plan" };
       },
-      async *run(input: AgentRunInput): AsyncIterable<AgentRunEvent> {
-        yield {
-          type: "status",
-          message: `manual node ${input.currentPlanNode?.id ?? "none"}`
-        };
-        yield { type: "exit", message: "manual plan completed", exitCode: 0 };
+      async *run(): AsyncIterable<AgentRunEvent> {
+        yield { type: "exit", message: "unexpected manual plan execution", exitCode: 0 };
       }
     };
     const runner = new TaskRunner({
@@ -489,21 +500,12 @@ describe("task runner", () => {
       title: "Manual plan task",
       agentKind: "fake",
       taskId: "task_manual_plan",
-      planGraphMode: "manual",
+      planGraphMode: "manual" as never,
       manualPlanGraph: manualGraph
-    });
+    } as never);
 
-    expect(result.status).toBe("succeeded");
-    expect(result.planGraph).toEqual(manualGraph);
-    expect(result.events).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          message: expect.stringContaining(
-            planNodeIdForPlanGraph(manualGraph.id, "implement", 1)
-          )
-        })
-      ])
-    );
+    expect(result.status).toBe("failed");
+    expect(result.error).toContain("unsupported PlanGraph mode manual");
   });
 
   it("schedules a primary-run PlanGraph chain through isolated TaskRunner runs", async () => {
@@ -764,6 +766,7 @@ describe("task runner", () => {
       diffCollector: new StaticDiffCollector(),
       verificationRunner: new VerificationRunner(new MockShellExecutor()),
       traceLinkRepository,
+      agentRegistry: new DefaultAgentRegistry([new CapturingAgentAdapter()]),
       idGenerator: new SequenceIdGenerator(),
       clock: new FixedClock("2026-01-01T00:00:00.000Z")
     });
@@ -773,6 +776,8 @@ describe("task runner", () => {
       taskPrompt: "Implement memory-linked plan trace evidence",
       agentKind: "fake",
       taskId: "task_plan_memory",
+      planGraphMode: "agent_adapter",
+      plannerAgentKind: "fake",
       verificationCommands: [
         {
           id: "unit",
@@ -1446,7 +1451,8 @@ describe("task runner", () => {
       }).run({
         projectRoot,
         taskPrompt: "Run codex",
-        agentKind: "codex"
+        agentKind: "codex",
+        planGraphMode: "disabled"
       })
     ).resolves.toMatchObject({
       ok: false,
@@ -1724,6 +1730,7 @@ describe("task runner", () => {
     const result = await runner.run({
       projectRoot,
       rawPrompt: "@codex cancel process",
+      planGraphMode: "disabled",
       signal: controller.signal
     });
 
@@ -2968,6 +2975,7 @@ describe("task runner", () => {
     const result = await runner.run({
       projectRoot,
       rawPrompt: "@codex use explicit environment",
+      planGraphMode: "disabled",
       environmentOverrides
     });
 
@@ -2999,7 +3007,8 @@ describe("task runner", () => {
 
       const result = await runner.run({
         projectRoot,
-        rawPrompt: "@codex use default environment"
+        rawPrompt: "@codex use default environment",
+        planGraphMode: "disabled"
       });
 
       expect(result.status).toBe("succeeded");
@@ -3038,7 +3047,8 @@ describe("task runner", () => {
 
     const result = await runner.run({
       projectRoot,
-      rawPrompt: "@codex generate dangerous instruction"
+      rawPrompt: "@codex generate dangerous instruction",
+      planGraphMode: "disabled"
     });
 
     expect(result.riskReport?.level).toBe("blocking");
@@ -3898,12 +3908,17 @@ describe("task runner", () => {
       projectRoot,
       taskPrompt: "Run as a role-backed participant",
       agentKind: "fake",
+      planGraphMode: "agent_adapter",
+      plannerAgentKind: "fake",
       role,
       teamRoles: [role, reviewer]
     });
 
     expect(result.status).toBe("succeeded");
-    expect(adapter.inputs[0]).toMatchObject({
+    const primaryInput = adapter.inputs.find((input) =>
+      input.role?.roleHandle === "engineer"
+    );
+    expect(primaryInput).toMatchObject({
       planGraph: expect.objectContaining({
         id: "plan_graph:task_0001:v1",
         version: 1
@@ -3913,7 +3928,7 @@ describe("task runner", () => {
         role: "engineer",
         execution: expect.objectContaining({ mode: "primary_run" })
       }),
-      allowedNextPlanNodeIds: ["plan_graph:task_0001:v1:verify:3"],
+      allowedNextPlanNodeIds: ["plan_graph:task_0001:v1:verify:2"],
       role: expect.objectContaining({
         roleHandle: "engineer",
         displayName: "Engineer",
@@ -3934,8 +3949,8 @@ describe("task runner", () => {
         planBinding: expect.objectContaining({
           planGraphId: "plan_graph:task_0001:v1",
           planGraphVersion: 1,
-          planNodeId: "plan_graph:task_0001:v1:implement:2",
-          allowedNextPlanNodeIds: ["plan_graph:task_0001:v1:verify:3"]
+          planNodeId: "plan_graph:task_0001:v1:implement:1",
+          allowedNextPlanNodeIds: ["plan_graph:task_0001:v1:verify:2"]
         })
       })
     );
@@ -4163,6 +4178,21 @@ class CapturingAgentAdapter implements AgentAdapter {
 
   async *run(input: AgentRunInput): AsyncIterable<AgentRunEvent> {
     this.inputs.push(input);
+    if (input.role?.roleHandle === "planner") {
+      yield {
+        type: "message",
+        message: JSON.stringify({
+          planGraph: testPlannerGraph(input.taskId, 1, input.taskTitle)
+        }),
+        metadata: { assistantOutput: true }
+      };
+      yield {
+        type: "exit",
+        message: "capturing planner completed",
+        exitCode: 0
+      };
+      return;
+    }
     yield {
       type: "message",
       message: `capturing adapter role ${input.role?.roleHandle ?? "none"}`,

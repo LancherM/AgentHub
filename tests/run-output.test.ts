@@ -91,4 +91,42 @@ describe("extractAgentFacingOutput", () => {
 
     expect(output).toBe("full adapter output");
   });
+
+  it("filters planner events out of assistant-facing output", () => {
+    const output = extractAgentFacingOutput(
+      {
+        events: [
+          {
+            type: "message",
+            message: "{\"planGraph\":{\"id\":\"plan_graph:task:v1\"}}",
+            metadata: {
+              assistantOutput: true,
+              plannerEvent: true
+            }
+          },
+          {
+            type: "exit",
+            message: "planner completed",
+            metadata: {
+              output: "{\"planGraph\":{\"id\":\"plan_graph:task:v1\"}}",
+              plannerEvent: true
+            }
+          },
+          {
+            type: "stdout",
+            message: "{\"planGraph\":{\"id\":\"plan_graph:task:v1\"}}\n",
+            metadata: { plannerEvent: true }
+          },
+          {
+            type: "message",
+            message: "primary assistant output",
+            metadata: { assistantOutput: true }
+          }
+        ]
+      },
+      { preferExplicitOutput: true }
+    );
+
+    expect(output).toBe("primary assistant output");
+  });
 });

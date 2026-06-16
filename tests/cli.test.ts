@@ -19,9 +19,14 @@ import type {
 } from "@agent-hub/task-runner";
 import {
   presetWorkgroupRoles,
+  planGraphIdForTaskVersion,
+  plannerNodeIdForPlanGraph,
+  planNodeIdForPlanGraph,
   validateContextIndexEntry,
   validateConversationThreadSummary,
+  validatePlanGraph,
   validateProject,
+  type PlanGraph,
   type RiskReport,
   type WorkgroupRole
 } from "@agent-hub/core";
@@ -34,7 +39,7 @@ import type {
   WorkspaceManager,
   WorkspaceSession
 } from "@agent-hub/task-runner";
-import { createTestDirectory, MockProcessRunner, MockShellExecutor } from "./helpers";
+import { createTestDirectory, MockShellExecutor } from "./helpers";
 
 describe("CLI", () => {
   it("runs fake tasks and lists in-memory tasks and runs", async () => {
@@ -120,6 +125,22 @@ describe("CLI", () => {
     await expect(
       main(["run", "@fake", "implement cli plan graph inspection"], io, projectRoot, runtime)
     ).resolves.toBe(0);
+    const graph = createCliTestPlanGraph("task_0001", 1);
+    await runtime.planGraphRepository.create(graph);
+    const implementNode = graph.nodes.find((node) => node.kind === "implement");
+    const verifyNode = graph.nodes.find((node) => node.kind === "verify");
+    if (!implementNode || !verifyNode) {
+      throw new Error("expected implement and verify nodes");
+    }
+    await runtime.runMetadataRepository.save({
+      runId: "run_0002",
+      planBinding: {
+        planGraphId: graph.id,
+        planGraphVersion: graph.version,
+        planNodeId: implementNode.id,
+        allowedNextPlanNodeIds: [verifyNode.id]
+      }
+    });
     output.length = 0;
 
     await expect(
@@ -403,7 +424,7 @@ describe("CLI", () => {
       workspaceManager: new TestWorkspaceManager(runRoot),
       diffCollector: new StaticDiffCollector(),
       verificationRunner: new VerificationRunner(new MockShellExecutor()),
-      processRunner: new MockProcessRunner([
+      processRunner: new PlannerAwareProcessRunner([
         [
           { type: "stdout", data: "{\"type\":\"thread.started\"}\n" },
           { type: "stdout", data: "{\"type\":\"turn.started\"}\n" },
@@ -910,7 +931,7 @@ describe("CLI", () => {
     expect(queryOutput.join("")).toContain(`${taskId}\tcompleted\t${projectId}\tRegistered fake task`);
     expect(queryOutput.join("")).toContain(`Task ${taskId}`);
     expect(queryOutput.join("")).toContain("runs: 1");
-    expect(queryOutput.join("")).toContain("events: 10");
+    expect(queryOutput.join("")).toContain("events: 8");
   });
 
   it("keeps ad-hoc SQLite projects scoped to their repository roots", async () => {
@@ -1841,7 +1862,7 @@ describe("CLI", () => {
       risks: [],
       nextSteps: ["none"]
     });
-    const processRunner = new MockProcessRunner([
+    const processRunner = new PlannerAwareProcessRunner([
       [
         {
           type: "stdout",
@@ -1964,7 +1985,7 @@ describe("CLI", () => {
     );
 
     expect(errors.join("")).toBe("");
-    expect(processRunner.runCalls).toHaveLength(3);
+    expect(primaryProcessRunCalls(processRunner.runCalls)).toHaveLength(3);
     expect(pmBrief?.content).toContain("role_call_protocol:");
     expect(pmBrief?.content).toContain("available_role_calls:");
     expect(pmBrief?.content).toContain("@researcher:");
@@ -2016,7 +2037,7 @@ describe("CLI", () => {
       await createTestDirectory("cli-rolecall-intent-directory-runs"),
       "runs"
     );
-    const processRunner = new MockProcessRunner([
+    const processRunner = new PlannerAwareProcessRunner([
       [
         {
           type: "stdout",
@@ -2121,7 +2142,7 @@ describe("CLI", () => {
       .find((line) => line.includes("available_role_calls:"));
 
     expect(errors.join("")).toBe("");
-    expect(processRunner.runCalls).toHaveLength(1);
+    expect(processRunner.runCalls).toHaveLength(2);
     expect(availableRoleCallsLine).toContain("available_role_calls: none");
     expect(availableRoleCallsLine).not.toContain("@reviewer");
     expect(await runtime.roleCallRepository.list({ threadId: thread?.id ?? "" }))
@@ -2140,7 +2161,7 @@ describe("CLI", () => {
       risks: [],
       nextSteps: ["none"]
     });
-    const processRunner = new MockProcessRunner([
+    const processRunner = new PlannerAwareProcessRunner([
       [
         {
           type: "stdout",
@@ -2245,7 +2266,7 @@ describe("CLI", () => {
     );
 
     expect(errors.join("")).toBe("");
-    expect(processRunner.runCalls).toHaveLength(3);
+    expect(primaryProcessRunCalls(processRunner.runCalls)).toHaveLength(3);
     expect(engineerBrief?.content).toContain("role_call_protocol:");
     expect(engineerBrief?.content).toContain("@operator:");
     expect(engineerBrief?.content).toContain("@reviewer:");
@@ -3657,6 +3678,183 @@ async function waitForCondition(
   throw new Error("timed out waiting for condition");
 }
 
+function createCliTestPlanGraph(
+  taskId: string,
+  version: number,
+  expectedAdapter = "fake"
+): PlanGraph {
+  const graphId = planGraphIdForTaskVersion(taskId, version);
+  const plannerId = plannerNodeIdForPlanGraph(graphId);
+  const researchId = planNodeIdForPlanGraph(graphId, "research", 1);
+  const implementId = planNodeIdForPlanGraph(graphId, "implement", 2);
+  const verifyId = planNodeIdForPlanGraph(graphId, "verify", 3);
+  const reviewId = planNodeIdForPlanGraph(graphId, "review", 4);
+  const handoffId = planNodeIdForPlanGraph(graphId, "handoff", 5);
+  return validatePlanGraph({
+    id: graphId,
+    taskId,
+    version,
+    status: "active",
+    plannerNodeId: plannerId,
+    createdByRole: "planner",
+    createdAt: "2026-01-01T00:00:00.000Z",
+    nodes: [
+      {
+        id: plannerId,
+        kind: "planner",
+        role: "planner",
+        title: "Create execution plan",
+        instructions: "Create a structured local execution plan.",
+        acceptanceCriteria: ["PlanGraph JSON is valid and local-only."],
+        riskLevel: "low",
+        required: true,
+        execution: { mode: "system" },
+        outputPlanGraphId: graphId
+      },
+      {
+        id: researchId,
+        kind: "research",
+        role: "researcher",
+        title: "Inspect relevant context",
+        instructions: "Inspect context before implementation.",
+        acceptanceCriteria: ["Relevant context has been inspected."],
+        riskLevel: "low",
+        required: true,
+        execution: { mode: "manual" }
+      },
+      {
+        id: implementId,
+        kind: "implement",
+        role: "engineer",
+        title: "Implement scoped change",
+        instructions: "Make the requested local change in the isolated worktree.",
+        acceptanceCriteria: ["The requested behavior is implemented."],
+        riskLevel: "low",
+        required: true,
+        execution: {
+          mode: "primary_run",
+          expectedAdapter,
+          worktreePolicy: "isolated"
+        }
+      },
+      {
+        id: verifyId,
+        kind: "verify",
+        role: "reviewer",
+        title: "Verify evidence",
+        instructions: "Run or inspect relevant evidence before handoff.",
+        acceptanceCriteria: ["Verification evidence is recorded."],
+        riskLevel: "low",
+        required: true,
+        execution: { mode: "manual" }
+      },
+      {
+        id: reviewId,
+        kind: "review",
+        role: "reviewer",
+        title: "Review readiness",
+        instructions: "Review the implementation evidence.",
+        acceptanceCriteria: ["Review notes are recorded."],
+        riskLevel: "low",
+        required: true,
+        execution: { mode: "manual" }
+      },
+      {
+        id: handoffId,
+        kind: "handoff",
+        role: "operator",
+        title: "Summarize handoff",
+        instructions: "Summarize what changed and what evidence was collected.",
+        acceptanceCriteria: ["Handoff is concise and evidence-backed."],
+        riskLevel: "low",
+        required: true,
+        execution: { mode: "non_executable" }
+      }
+    ],
+    edges: [
+      { from: plannerId, to: researchId, type: "primary" },
+      { from: researchId, to: implementId, type: "primary" },
+      { from: implementId, to: verifyId, type: "primary" },
+      { from: verifyId, to: reviewId, type: "primary" },
+      { from: reviewId, to: handoffId, type: "primary" }
+    ]
+  });
+}
+
+class PlannerAwareProcessRunner implements ProcessRunner {
+  readonly runCalls: ProcessRunInput[] = [];
+  readonly detectCalls: ProcessDetectionInput[] = [];
+
+  constructor(
+    private readonly primaryResponses: Array<
+      ProcessRunEvent[] | ((input: ProcessRunInput) => ProcessRunEvent[])
+    >,
+    private readonly detectResponses: Array<
+      Partial<ProcessDetectionResult> |
+        ((input: ProcessDetectionInput) => Partial<ProcessDetectionResult>)
+    > = []
+  ) {}
+
+  async *run(input: ProcessRunInput): AsyncIterable<ProcessRunEvent> {
+    this.runCalls.push(input);
+    const plannerGraph = plannerGraphFromProcessInput(input);
+    if (plannerGraph) {
+      yield plannerProcessMessage(plannerGraph);
+      yield { type: "exit", exitCode: 0, signal: null };
+      return;
+    }
+
+    const next = this.primaryResponses.shift();
+    const events = typeof next === "function" ? next(input) : next ?? [
+      { type: "exit", exitCode: 0, signal: null }
+    ];
+    for (const event of events) {
+      yield event;
+    }
+  }
+
+  async detect(input: ProcessDetectionInput): Promise<ProcessDetectionResult> {
+    this.detectCalls.push(input);
+    const next = this.detectResponses.shift();
+    const partial = typeof next === "function" ? next(input) : next ?? {};
+    return {
+      available: true,
+      version: "mock",
+      ...partial
+    };
+  }
+}
+
+function plannerGraphFromProcessInput(input: ProcessRunInput): PlanGraph | undefined {
+  const stdin = input.stdin ?? "";
+  if (!stdin.includes("You are Agent Hub's system @planner role.")) {
+    return undefined;
+  }
+  const taskId = stdin.match(/planGraph\.taskId must be ([^.\n]+)\./)?.[1];
+  const versionText = stdin.match(/planGraph\.version must be (\d+)\./)?.[1];
+  if (!taskId || !versionText) {
+    throw new Error("planner stdin did not include expected task identity");
+  }
+  const expectedAdapter =
+    stdin.match(/execution\.expectedAdapter to ([a-z-]+)\b/)?.[1] ??
+    input.executable;
+  return createCliTestPlanGraph(taskId, Number(versionText), expectedAdapter);
+}
+
+function plannerProcessMessage(graph: PlanGraph): ProcessRunEvent {
+  return {
+    type: "stdout",
+    data: JSON.stringify({
+      type: "result",
+      result: JSON.stringify({ planGraph: graph })
+    }) + "\n"
+  };
+}
+
+function primaryProcessRunCalls(calls: readonly ProcessRunInput[]): ProcessRunInput[] {
+  return calls.filter((call) => !plannerGraphFromProcessInput(call));
+}
+
 class ControlledProcessRunner implements ProcessRunner {
   readonly runCalls: ProcessRunInput[] = [];
   readonly detectCalls: ProcessDetectionInput[] = [];
@@ -3667,6 +3865,12 @@ class ControlledProcessRunner implements ProcessRunner {
 
   async *run(input: ProcessRunInput): AsyncIterable<ProcessRunEvent> {
     this.runCalls.push(input);
+    const plannerGraph = plannerGraphFromProcessInput(input);
+    if (plannerGraph) {
+      yield plannerProcessMessage(plannerGraph);
+      yield { type: "exit", exitCode: 0, signal: null };
+      return;
+    }
     for (const event of this.runEvents) {
       this.firstRunEventYielded.resolve();
       yield event;

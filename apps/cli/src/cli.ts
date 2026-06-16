@@ -609,8 +609,8 @@ function cliCommandRoutes(debug: boolean): CliCommandRoute<CliCommandContext>[] 
     {
       patterns: [["run"]],
       usage: [
-        `  agent-hub [--db <path>] run --task <task-id> --agent ${agentChoices} [--workspace-base <path>] [--skill [scope:]id]`,
-        `  agent-hub [--db <path>] run [--repo <path>] [--workspace-base <path>] [--retain-on-failure] [--continue-from-run <run-id>|--continue-from-message <message-id>] [--skill [scope:]id] "${promptAgentChoices} <task>"`
+        `  agent-hub [--db <path>] run --task <task-id> --agent ${agentChoices} [--planner-agent ${agentChoices}] [--workspace-base <path>] [--skill [scope:]id]`,
+        `  agent-hub [--db <path>] run [--repo <path>] [--planner-agent ${agentChoices}] [--workspace-base <path>] [--retain-on-failure] [--continue-from-run <run-id>|--continue-from-message <message-id>] [--skill [scope:]id] "${promptAgentChoices} <task>"`
       ],
       run: (args, context) =>
         runCommand(args, context.io, context.cwd, context.runtime, context.debug)
@@ -6438,6 +6438,7 @@ interface ParsedRunArgs {
   taskId?: string;
   registeredTask: boolean;
   agentKind?: string;
+  plannerAgentKind?: string;
   projectPath?: string;
   title?: string;
   prompt?: string;
@@ -6460,6 +6461,9 @@ async function resolveRunInput(
   debug = false
 ): Promise<RunTaskInput> {
   const continueFrom = await resolveRunContinuation(options, runtime);
+  const plannerAgentKind = options.plannerAgentKind
+    ? parseAvailableAgent(options.plannerAgentKind, debug)
+    : undefined;
   const selectedSkillReferences =
     options.selectedSkillReferences.length > 0
       ? options.selectedSkillReferences
@@ -6487,6 +6491,7 @@ async function resolveRunInput(
       title: task.title,
       taskPrompt: task.description ?? task.title,
       agentKind,
+      plannerAgentKind,
       agentHubHome: options.agentHubHome,
       selectedSkillReferences,
       continueFrom
@@ -6508,6 +6513,7 @@ async function resolveRunInput(
       title: options.title,
       taskPrompt,
       agentKind,
+      plannerAgentKind,
       agentHubHome: options.agentHubHome,
       selectedSkillReferences,
       continueFrom
@@ -6526,6 +6532,7 @@ async function resolveRunInput(
     projectRoot: options.projectRoot,
     taskPrompt: parsed.prompt,
     agentKind: parsed.agentKind,
+    plannerAgentKind,
     agentHubHome: options.agentHubHome,
     selectedSkillReferences,
     continueFrom
@@ -6566,6 +6573,7 @@ function parseRunArgs(args: string[], cwd: string): ParsedRunArgs {
   let taskId: string | undefined;
   let registeredTask = false;
   let agentKind: string | undefined;
+  let plannerAgentKind: string | undefined;
   let projectPath: string | undefined;
   let title: string | undefined;
   let prompt: string | undefined;
@@ -6633,6 +6641,15 @@ function parseRunArgs(args: string[], cwd: string): ParsedRunArgs {
         throw new Error("--agent requires an agent kind");
       }
       agentKind = value;
+      index += 1;
+      continue;
+    }
+    if (parsingFlags && arg === "--planner-agent") {
+      const value = args[index + 1];
+      if (!value) {
+        throw new Error("--planner-agent requires an agent kind");
+      }
+      plannerAgentKind = value;
       index += 1;
       continue;
     }
@@ -6743,6 +6760,7 @@ function parseRunArgs(args: string[], cwd: string): ParsedRunArgs {
     taskId,
     registeredTask,
     agentKind,
+    plannerAgentKind,
     projectPath,
     title,
     prompt,

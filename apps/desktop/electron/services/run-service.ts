@@ -643,6 +643,7 @@ class RepositoryRunService implements RunService {
       projectRoot: project.rootPath,
       taskPrompt: input.prompt,
       agentKind: run.agentKind,
+      plannerAgentKind: run.agentKind === "fake" ? undefined : run.agentKind,
       agentAvailability: this.context.agentAvailability,
       taskId: task.id,
       projectId: task.projectId,
