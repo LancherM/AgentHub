@@ -179,7 +179,7 @@ export interface RunTaskInput {
   taskId?: string;
   projectId?: string;
   title?: string;
-  taskStatusMode?: "single_run" | "shared_task";
+  taskStatusMode?: "single_run" | "shared_task" | "plan_graph_scheduler";
   deliveryMode?: RunContextDeliveryMode;
   contextStoreRoot?: string;
   agentHubHome?: string;
@@ -567,7 +567,7 @@ export class TaskRunner {
           originalPrompt: taskPrompt
         }),
         agentKind: agentKindForPlanNode(next.node, agentKind),
-        taskStatusMode: "shared_task",
+        taskStatusMode: "plan_graph_scheduler",
         planGraphMode: "disabled",
         planGraphBinding: {
           planGraphId: planGraph.id,
@@ -586,9 +586,6 @@ export class TaskRunner {
     }
 
     const status = scheduledPlanGraphStatus(planGraph, schedule, scheduledRuns, maxRuns);
-    if (status !== "completed") {
-      await this.reopenScheduledTaskIfRunning(planGraph.taskId);
-    }
     return {
       ok: status === "completed",
       status,
@@ -1909,7 +1906,10 @@ export class TaskRunner {
     updatedAt: string,
     mode: NonNullable<RunTaskInput["taskStatusMode"]>
   ): Promise<Task> {
-    if (mode === "shared_task" && task.status === "running") {
+    if (
+      (mode === "shared_task" || mode === "plan_graph_scheduler") &&
+      task.status === "running"
+    ) {
       return task;
     }
     return this.taskRepository.updateStatus(task.id, "running", updatedAt);
@@ -1971,7 +1971,9 @@ export class TaskRunner {
       throw new TaskRunnerError(`task ${taskId} not found`);
     }
     const nextStatus =
-      mode === "shared_task"
+      mode === "plan_graph_scheduler"
+        ? "open"
+        : mode === "shared_task"
         ? await this.sharedTaskStatus(taskId)
         : runStatus === "succeeded"
           ? "completed"
@@ -1987,10 +1989,6 @@ export class TaskRunner {
     const runs = await this.taskRunRepository.listByTaskId(taskId);
     if (runs.some((run) => run.status === "queued" || run.status === "running")) {
       return "running";
-    }
-    const planStatus = await this.sharedTaskPlanStatus(taskId, runs);
-    if (planStatus) {
-      return planStatus;
     }
     const expectedRunCount = metadataNumber(
       task?.metadata,
@@ -2013,51 +2011,6 @@ export class TaskRunner {
       return "completed";
     }
     return "open";
-  }
-
-  private async sharedTaskPlanStatus(
-    taskId: string,
-    runs: readonly TaskRun[]
-  ): Promise<Task["status"] | undefined> {
-    const graph = await this.planGraphRepository.getActiveByTaskId(taskId);
-    if (!graph) {
-      return undefined;
-    }
-    const primaryNodeIds = graph.nodes
-      .filter((node) => node.execution.mode === "primary_run")
-      .map((node) => node.id);
-    if (primaryNodeIds.length === 0) {
-      return undefined;
-    }
-    const primaryNodeIdSet = new Set(primaryNodeIds);
-    const successfulNodeIds = new Set<string>();
-    let relevantRunCount = 0;
-    for (const run of runs) {
-      const metadata = await this.runMetadataRepository.get(run.id);
-      const binding = metadata?.planBinding;
-      if (
-        !binding ||
-        binding.planGraphId !== graph.id ||
-        !primaryNodeIdSet.has(binding.planNodeId)
-      ) {
-        continue;
-      }
-      relevantRunCount += 1;
-      if (run.status === "succeeded") {
-        successfulNodeIds.add(binding.planNodeId);
-      }
-    }
-    if (relevantRunCount === 0) {
-      return undefined;
-    }
-    return successfulNodeIds.size === primaryNodeIds.length ? "open" : "running";
-  }
-
-  private async reopenScheduledTaskIfRunning(taskId: string): Promise<void> {
-    const task = await this.taskRepository.get(taskId);
-    if (task?.status === "running") {
-      await this.taskRepository.updateStatus(taskId, "open", this.clock.now());
-    }
   }
 
   private async resolveContinuation(
