@@ -407,6 +407,54 @@ describe("task runner", () => {
     expect(primaryStarted).toBe(false);
   });
 
+  it("fails clearly when adapter-backed planner policy has no planner adapter configured", async () => {
+    const projectRoot = await createTestDirectory("agent-hub-agent-planner-missing-project");
+    const runRoot = await createTestDirectory("agent-hub-agent-planner-missing-runs");
+    let primaryStarted = false;
+    const adapter: AgentAdapter = {
+      kind: "fake",
+      displayName: "Primary Fake",
+      async detect() {
+        return { available: true, version: "primary" };
+      },
+      async *run(): AsyncIterable<AgentRunEvent> {
+        primaryStarted = true;
+        yield { type: "exit", message: "unexpected primary start", exitCode: 0 };
+      }
+    };
+    const runner = new TaskRunner({
+      defaultRunRoot: runRoot,
+      workspaceManager: new TestWorkspaceManager(runRoot),
+      diffCollector: new StaticDiffCollector(),
+      verificationRunner: new VerificationRunner(new MockShellExecutor()),
+      agentRegistry: new DefaultAgentRegistry([adapter]),
+      idGenerator: new SequenceIdGenerator(),
+      clock: new FixedClock("2026-01-01T00:00:00.000Z")
+    });
+
+    const result = await runner.run({
+      projectRoot,
+      taskPrompt: "Require adapter-backed planning without a planner adapter.",
+      agentKind: "fake",
+      taskId: "task_agent_planner_missing",
+      planGraphMode: "agent_adapter"
+    });
+
+    expect(result.status).toBe("failed");
+    expect(result.error).toContain(
+      "agent_adapter PlanGraph mode requires plannerAgentKind"
+    );
+    expect(primaryStarted).toBe(false);
+    expect(result.events).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        metadata: expect.objectContaining({
+          desktopEventType: "run_failed",
+          phase: "planner"
+        })
+      })
+    ]));
+  });
+
   it("can activate a manually supplied PlanGraph after validation", async () => {
     const projectRoot = await createTestDirectory("agent-hub-manual-plan-project");
     const runRoot = await createTestDirectory("agent-hub-manual-plan-runs");

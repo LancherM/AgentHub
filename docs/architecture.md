@@ -1079,5 +1079,5 @@ The reference-gap follow-up is documented in
 implementation-prompt convention.
 The remaining PlanGraph and ExecutionTraceGraph semantic gaps are tracked in
 `docs/plan-graph-execution-trace-followup-roadmap.md`. That roadmap includes
-publishable implementation prompts for planner policy, evidence completion, the
-TUI DAG workbench, and an end-to-end acceptance sweep.
+publishable implementation prompts for evidence completion, the TUI DAG
+workbench, and an end-to-end acceptance sweep.
