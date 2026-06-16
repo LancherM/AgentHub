@@ -3,6 +3,12 @@
 Status: planning follow-up for the current PlanGraph implementation branch
 Last updated: 2026-06-16
 
+Current note: several phases in this original follow-up roadmap have now landed
+on the PlanGraph implementation branch. Use `docs/product.md` and
+`docs/architecture.md` for current shipped behavior. The remaining
+Graph-specific terminal UI fidelity work is tracked in
+`docs/plan-graph-tui-workflow-dag-roadmap.md`.
+
 This document turns the remaining PlanGraph and ExecutionTraceGraph gaps into
 small implementation slices. It assumes the current branch already has the
 shared graph contracts, deterministic planner, optional local adapter-backed

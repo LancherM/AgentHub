@@ -547,7 +547,10 @@ state for mode/labels/fold/zoom, a mini-map, a legend, and a compact fallback
 for narrow terminals while falling back to legacy RoleCall evidence for older
 tasks. Selected graph-node details synchronize with the same read model and
 show incoming links, outgoing links, evidence, deviations, and inspection
-commands. The desktop Workgroup Inspector exposes the same projection through a
+commands. Remaining terminal graph fidelity work, including spatial rank
+layout, viewport/focus commands, subgraph containers, node actions, and visual
+QA fixtures, is tracked in `docs/plan-graph-tui-workflow-dag-roadmap.md`. The
+desktop Workgroup Inspector exposes the same projection through a
 read-only Trace tab backed by Electron main-process IPC; the renderer displays
 plan nodes, runtime trace nodes, evidence counts, and deviations without
 reading SQLite or rebuilding orchestration state.
@@ -848,6 +851,7 @@ Roadmaps for future work live in `docs/local-ai-workgroup-roadmap.md`,
 `docs/tui-optimization-roadmap.md`, `docs/tui-v3-roadmap.md`,
 `docs/tui-v3-reference-gap-roadmap.md`,
 `docs/plan-graph-execution-trace-followup-roadmap.md`,
+`docs/plan-graph-tui-workflow-dag-roadmap.md`,
 `docs/memory-automation-roadmap.md`, and the Adaptive Role Calls specification
 documents. Those files describe direction; this document describes the current
 product state. The

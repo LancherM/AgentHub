@@ -544,7 +544,10 @@ mini-map, legend, compact fallback rows, and selected state from the
 selected graph-node details for incoming links, outgoing links, evidence,
 deviations, and commands. The renderer does not query SQLite, run agents, or
 duplicate TaskRunner/RoleCall orchestration. When the projection is unavailable,
-the existing RoleCall compatibility view remains the fallback.
+the existing RoleCall compatibility view remains the fallback. Remaining
+terminal graph fidelity work is isolated to the CLI/TUI renderer and read-model
+boundary in `docs/plan-graph-tui-workflow-dag-roadmap.md`; it must preserve the
+same no-SQLite, no-shell, no-TaskRunner renderer boundary.
 The desktop Workgroup Inspector consumes the same core projection through
 `ReviewService.getExecutionTrace`, the `agent-hub:review:execution-trace` IPC
 channel, and the sandboxed preload API. The React renderer owns only the
@@ -1090,3 +1093,7 @@ acceptance sweep covers task-brief creation, graph-scheduled fake runs,
 RoleCall trace expansion, verification/risk/diff/artifact/review/comparison
 evidence, CLI JSON inspection, and TUI read-model consumption; remaining work is
 future polish or capability expansion rather than an unproven lifecycle gap.
+The TUI-specific reference-fidelity follow-up is tracked separately in
+`docs/plan-graph-tui-workflow-dag-roadmap.md`, with prompts for spatial DAG
+layout, viewport/focus controls, subgraph folding, selected-node actions,
+structural mini-map, and visual QA fixtures.
