@@ -112,6 +112,8 @@ export interface GraphLayoutModel {
 }
 
 const narrowColumnThreshold = 92;
+const spatialColumnThreshold = 120;
+const spatialGapWidth = 3;
 const compactNodeWidth = 31;
 const detailNodeWidth = 39;
 
@@ -188,7 +190,7 @@ export function renderGraphWorkbench(
   const layout = buildGraphLayout(trace, options);
   const rows = layout.viewport.narrow
     ? narrowRows(layout.nodes, layout.edges, options.columns, options.labels)
-    : dagRows(layout.nodes, layout.edges, options);
+    : dagRows(layout, options);
   const miniMap = layout.nodes.length === 0
     ? "mini-map empty"
     : `mini-map ${layout.selectedIndex + 1}/${layout.nodes.length} ${layout.nodes.map((node) => statusGlyph(node.status)).join("")}`;
@@ -311,12 +313,16 @@ function runtimeBindingEdges(trace: ExecutionTraceGraph): BaseLayoutEdge[] {
 }
 
 function dagRows(
-  nodes: GraphLayoutNode[],
-  edges: GraphLayoutEdge[],
+  layout: GraphLayoutModel,
   options: GraphWorkbenchOptions
 ): GraphWorkbenchRow[] {
+  const { nodes, edges } = layout;
   if (nodes.length === 0) {
     return [{ text: "no graph nodes available", tone: "muted" }];
+  }
+  const spatialRows = spatialDagRows(layout, options);
+  if (spatialRows) {
+    return spatialRows;
   }
   const rows: GraphWorkbenchRow[] = [];
   const edgeByFrom = groupEdgesByFrom(edges);
@@ -342,6 +348,98 @@ function dagRows(
     }
   }
   return rows;
+}
+
+function spatialDagRows(
+  layout: GraphLayoutModel,
+  options: GraphWorkbenchOptions
+): GraphWorkbenchRow[] | undefined {
+  if (options.columns < spatialColumnThreshold) {
+    return undefined;
+  }
+  const ranks = [...new Set(layout.nodes.map((node) => node.rank))].sort((a, b) => a - b);
+  if (ranks.length <= 1) {
+    return undefined;
+  }
+  const cellWidth = spatialCellWidth(options.columns, ranks.length);
+  if (!cellWidth) {
+    return undefined;
+  }
+  const maxLane = layout.nodes.reduce((max, node) => Math.max(max, node.lane), 0);
+  const rows: GraphWorkbenchRow[] = [];
+  for (let lane = 0; lane <= maxLane; lane += 1) {
+    const lineNodes = ranks.map((rank) =>
+      layout.nodes.find((node) => node.rank === rank && node.lane === lane)
+    );
+    if (lineNodes.every((node) => !node)) {
+      continue;
+    }
+    const selectedNode = lineNodes.find((node) => node?.selected);
+    const toneNode = selectedNode ?? lineNodes.find((node): node is GraphLayoutNode => Boolean(node));
+    rows.push({
+      text: truncateText(
+        lineNodes.map((node) => spatialNodeCell(node, cellWidth, options.labels)).join(" ".repeat(spatialGapWidth)),
+        options.columns
+      ),
+      selected: lineNodes.some((node) => node?.selected),
+      tone: toneNode ? nodeTone(toneNode) : undefined
+    });
+  }
+  const connectorRows = spatialConnectorRows(layout.edges, ranks, cellWidth, options.columns);
+  if (connectorRows.length > 0) {
+    rows.push(...connectorRows);
+  }
+  return rows;
+}
+
+function spatialCellWidth(columns: number, rankCount: number): number | undefined {
+  const totalGapWidth = Math.max(0, rankCount - 1) * spatialGapWidth;
+  const width = Math.floor((columns - totalGapWidth) / rankCount);
+  if (width < 18) {
+    return undefined;
+  }
+  return Math.min(detailNodeWidth + 2, width);
+}
+
+function spatialNodeCell(
+  node: GraphLayoutNode | undefined,
+  cellWidth: number,
+  labels: GraphLabelMode
+): string {
+  if (!node) {
+    return "".padEnd(cellWidth);
+  }
+  const nodeWidth = Math.max(16, Math.min(node.displayWidth, cellWidth - 2));
+  return nodeBoxLine(node, nodeWidth, node.selected, labels).padEnd(cellWidth);
+}
+
+function spatialConnectorRows(
+  edges: GraphLayoutEdge[],
+  ranks: number[],
+  cellWidth: number,
+  columns: number
+): GraphWorkbenchRow[] {
+  const rankIndex = new Map(ranks.map((rank, index) => [rank, index]));
+  return edges.map((edge) => {
+    const cells = ranks.map(() => "".padEnd(cellWidth));
+    const fromIndex = rankIndex.get(edge.fromRank);
+    const toIndex = rankIndex.get(edge.toRank);
+    if (fromIndex === undefined || toIndex === undefined) {
+      return {
+        text: truncateText(`${compactId(edge.from)} ${edgeGlyph(edge.type)} ${edge.label ?? edge.type} ${compactId(edge.to)}`, columns),
+        tone: edge.type === "fallback" || edge.type === "deviation" ? "warning" as const : "muted" as const
+      };
+    }
+    cells[fromIndex] = truncateText(`${compactId(edge.from)} ${edgeGlyph(edge.type)}`, cellWidth).padEnd(cellWidth);
+    for (let index = fromIndex + 1; index < toIndex; index += 1) {
+      cells[index] = "-".repeat(Math.min(cellWidth, 12)).padEnd(cellWidth);
+    }
+    cells[toIndex] = truncateText(`${edge.label ?? edge.type} ${compactId(edge.to)}`, cellWidth).padEnd(cellWidth);
+    return {
+      text: truncateText(cells.join(" ".repeat(spatialGapWidth)), columns),
+      tone: edge.type === "fallback" || edge.type === "deviation" ? "warning" : "muted"
+    };
+  });
 }
 
 function narrowRows(

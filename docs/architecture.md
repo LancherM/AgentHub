@@ -541,12 +541,13 @@ focus renders the `Graph - Workflow DAG` workbench from that read model only:
 `apps/cli/src/tui-ink/graph-layout.mts` derives a deterministic renderer-local
 layout model with node rank/lane, bounded width, connector anchors, group ids,
 selected/focused state, viewport inclusion, safe action descriptors, bounded
-node rows, edge labels, mini-map, legend, and compact fallback rows from the
-`ExecutionTraceGraph` DTO, while `packages/core/src/tui-read-model.ts` supplies
-selected graph-node details for incoming links, outgoing links, evidence,
-deviations, and commands. The renderer does not query SQLite, run agents, or
-duplicate TaskRunner/RoleCall orchestration. When the projection is unavailable,
-the existing RoleCall compatibility view remains the fallback. Remaining
+wide spatial rank rows, connector rows, edge labels, mini-map, legend, and
+compact fallback rows from the `ExecutionTraceGraph` DTO, while
+`packages/core/src/tui-read-model.ts` supplies selected graph-node details for
+incoming links, outgoing links, evidence, deviations, and commands. The
+renderer does not query SQLite, run agents, or duplicate TaskRunner/RoleCall
+orchestration. When the projection is unavailable, the existing RoleCall
+compatibility view remains the fallback. Remaining
 terminal graph fidelity work is isolated to the CLI/TUI renderer and read-model
 boundary in `docs/plan-graph-tui-workflow-dag-roadmap.md`, rather than the
 broader PlanGraph lifecycle roadmap; it must preserve the same no-SQLite,

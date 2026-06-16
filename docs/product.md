@@ -46,13 +46,13 @@ boxes, so internal setup or Codex diagnostic lines remain in raw evidence rather
 than the operator-facing summary.
 The Graph focus now presents the current execution-trace projection as
 `Graph - Workflow DAG`: graph-backed tasks show bounded Overlay, Plan, and
-Trace modes with node rows, edge labels, selected-node details, toolbar state,
-a mini-map, a legend, and compact narrow-terminal fallback. The terminal graph
-renderer uses a deterministic local layout model so selection, rank/lane
-placement, grouping, and future viewport/action affordances stay stable across
-renders. Legacy tasks that predate PlanGraph evidence remain inspectable
-through the RoleCall/run compatibility trace instead of showing an empty future
-graph.
+Trace modes with wide horizontal rank rows, connector rows, edge labels,
+selected-node details, toolbar state, a mini-map, a legend, and bounded medium
+or narrow-terminal fallback. The terminal graph renderer uses a deterministic
+local layout model so selection, rank/lane placement, grouping, and future
+viewport/action affordances stay stable across renders. Legacy tasks that
+predate PlanGraph evidence remain inspectable through the RoleCall/run
+compatibility trace instead of showing an empty future graph.
 Continuation helpers prepare an explicit composer prompt; they do not continue
 work in the background.
 Review decisions can be recorded with `agent-hub reviews accept|reject` or the

@@ -885,6 +885,49 @@ describe("Ink TUI renderer", () => {
     expect(workbench.rows.every((row) => row.text.length <= 80)).toBe(true);
   });
 
+  it("renders wide Workflow DAG ranks horizontally with connector rows", () => {
+    const workbench = renderGraphWorkbench(workflowDagTraceFixture(), {
+      mode: "overlay",
+      columns: 154,
+      selectedIndex: 2,
+      layout: "ranked",
+      labels: "compact",
+      fold: "expanded",
+      zoom: "fit"
+    });
+    const primaryLane = workbench.rows[0]?.text ?? "";
+    const codexConnector = workbench.rows.find((row) =>
+      row.text.includes("pm_plan ==>") && row.text.includes("codex codex_run")
+    );
+    const roleCallConnector = workbench.rows.find((row) =>
+      row.text.includes("codex_run ..>") && row.text.includes("role_call trace_node:role...")
+    );
+
+    expect(workbench.narrow).toBe(false);
+    expect(primaryLane.indexOf("user_req")).toBeLessThan(primaryLane.indexOf("pm_plan"));
+    expect(primaryLane.indexOf("pm_plan")).toBeLessThan(primaryLane.indexOf("codex_run"));
+    expect(primaryLane.indexOf("codex_run")).toBeLessThan(primaryLane.indexOf("compare_results"));
+    expect(codexConnector?.text).toContain("codex codex_run");
+    expect(roleCallConnector?.text).toContain("role_call trace_node:role...");
+    expect(workbench.rows.every((row) => row.text.length <= 154)).toBe(true);
+  });
+
+  it("keeps medium Workflow DAG layouts bounded when spatial ranks do not fit", () => {
+    const workbench = renderGraphWorkbench(workflowDagTraceFixture(), {
+      mode: "overlay",
+      columns: 118,
+      selectedIndex: 0,
+      layout: "ranked",
+      labels: "compact",
+      fold: "expanded",
+      zoom: "fit"
+    });
+
+    expect(workbench.narrow).toBe(false);
+    expect(workbench.rows.some((row) => row.text.includes("--> plan pm_plan"))).toBe(true);
+    expect(workbench.rows.every((row) => row.text.length <= 118)).toBe(true);
+  });
+
   it("keeps common selected Workflow DAG nodes stable across overlay and plan modes", () => {
     const trace = workflowDagTraceFixture();
     const overlay = buildGraphLayout(trace, {
@@ -1151,7 +1194,8 @@ describe("Ink TUI renderer", () => {
     expect(overlay).toContain("mini-map 1/4");
     expect(overlay).toContain("P");
     expect(overlay).toContain("plan_node_imple");
-    expect(overlay).toContain("--> then plan_node_verify");
+    expect(overlay).toContain("plan_node_imple... -->");
+    expect(overlay).toContain("then plan_node_verify");
     expect(overlay).toContain("T");
     expect(overlay).toContain("trace_node:run:");
     expect(overlay).toContain("legend: [P] plan");
