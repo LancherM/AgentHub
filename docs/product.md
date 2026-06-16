@@ -46,12 +46,16 @@ boxes, so internal setup or Codex diagnostic lines remain in raw evidence rather
 than the operator-facing summary.
 The Graph focus now presents the current execution-trace projection as
 `Graph - Workflow DAG`: graph-backed tasks show bounded Overlay, Plan, and
-Trace modes with wide horizontal rank rows, connector rows, edge labels,
+Trace modes with wide rank hierarchy rows, per-node outgoing edge rows,
 selected-node details, real toolbar state, a structural mini-map, a legend, and
 bounded medium or narrow-terminal fallback. The terminal graph renderer uses a
 deterministic local layout model so selection, rank/lane placement, grouping,
 percentage-like zoom density, label policy, viewport rank, and focus command
-behavior stay stable across renders. The mini-map shows symbolic rank/lane
+behavior stay stable across renders. Wide Graph rows label each stage as
+`rank N`, assign visible coordinates like `r2.1`, and list each node's
+outgoing `primary`, `parallel`, `runtime`, `fallback`, or `evidence` edges
+directly under the source node so parent-child relationships remain readable.
+The mini-map shows symbolic rank/lane
 occupancy, selected-node position, current zoom density, and viewport coverage,
 and compresses or hides when the terminal cannot spare space. Grouped mode
 derives local subgraph containers for parallel, fallback, RoleCall, and
@@ -565,8 +569,9 @@ mislabeled as skipped. The read-only
 `execution-trace show` CLI command exposes that projection by task id or
 PlanGraph id. The terminal workbench Graph focus now presents this projection
 as `Graph - Workflow DAG`: Overlay, Plan, and Trace modes render bounded
-terminal node boxes, visible edge labels, selected-node highlighting, toolbar
-state for mode/labels/fold/zoom, a structural rank/lane mini-map with selected
+terminal node boxes, rank hierarchy rows, visible outgoing edge labels,
+selected-node highlighting, toolbar state for mode/labels/fold/zoom, a
+structural rank/lane mini-map with selected
 viewport state, a legend, and a compact fallback for narrow terminals while
 falling back to legacy RoleCall evidence for older tasks. The default terminal
 rendering prioritizes node titles in boxes, edge rows, toolbar focus, and

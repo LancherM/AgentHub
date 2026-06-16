@@ -473,38 +473,51 @@ function spatialDagRows(
   if (!cellWidth) {
     return undefined;
   }
-  const maxLane = nodes.reduce((max, node) => Math.max(max, node.lane), 0);
   const rows: GraphWorkbenchRow[] = collapsedGroupRows(layout, options.columns);
-  for (let lane = 0; lane <= maxLane; lane += 1) {
-    const lineNodes = ranks.map((rank) =>
-      nodes.find((node) => node.rank === rank && node.lane === lane)
-    );
-    if (lineNodes.every((node) => !node)) {
+  const edgesByFrom = groupEdgesByFrom(
+    layout.edges.filter((edge) => visibleNodeIds.has(edge.from) && visibleNodeIds.has(edge.to))
+  );
+  for (const rank of ranks) {
+    const rankNodes = nodes
+      .filter((node) => node.viewportIncluded && node.rank === rank)
+      .sort((left, right) => left.lane - right.lane);
+    if (rankNodes.length === 0) {
       continue;
     }
-    const selectedNode = lineNodes.find((node) => node?.selected);
-    const toneNode = selectedNode ?? lineNodes.find((node): node is GraphLayoutNode => Boolean(node));
+    const selectedInRank = rankNodes.some((node) => node.selected);
     rows.push({
       text: truncateText(
-        lineNodes.map((node) => spatialNodeCell(node, cellWidth, effectiveLabelMode(options.labels, options.columns))).join(" ".repeat(spatialGapWidth)),
+        `rank ${rank}${rank === 0 ? " root" : ""} | ${rankNodes.map((node) => `r${node.rank}.${node.lane} ${nodeInlineLabel(node, effectiveLabelMode(options.labels, options.columns))}`).join("  ")}`,
         options.columns
       ),
-      selected: lineNodes.some((node) => node?.selected),
-      tone: toneNode ? nodeTone(toneNode) : undefined
+      selected: selectedInRank,
+      tone: selectedInRank ? "info" : "muted"
     });
-    const laneConnectorRows = spatialConnectorRows(
-      layout.edges.filter((edge) =>
-        visibleNodeIds.has(edge.from) &&
-        visibleNodeIds.has(edge.to) &&
-        (nodeById.get(edge.from)?.lane ?? -1) === lane
-      ),
-      ranks,
-      cellWidth,
-      options.columns,
-      effectiveLabelMode(options.labels, options.columns),
-      nodeById
-    );
-    rows.push(...laneConnectorRows);
+    for (const node of rankNodes) {
+      rows.push({
+        text: truncateText(
+          `  ${node.selected ? "*" : " "} r${node.rank}.${node.lane} ${spatialNodeCell(node, cellWidth, effectiveLabelMode(options.labels, options.columns)).trimEnd()}`,
+          options.columns
+        ),
+        selected: node.selected,
+        tone: nodeTone(node)
+      });
+      const outgoing = (edgesByFrom.get(node.id) ?? [])
+        .filter((edge) => visibleNodeIds.has(edge.to))
+        .sort((left, right) =>
+          (nodeById.get(left.to)?.rank ?? left.toRank) - (nodeById.get(right.to)?.rank ?? right.toRank) ||
+          (nodeById.get(left.to)?.lane ?? left.toLane) - (nodeById.get(right.to)?.lane ?? right.toLane)
+        );
+      outgoing.forEach((edge, index) => {
+        rows.push({
+          text: truncateText(
+            `      ${edgeBranchGlyph(index, outgoing.length)} ${hierarchyEdgeLabel(edge, nodeById, effectiveLabelMode(options.labels, options.columns))}`,
+            options.columns
+          ),
+          tone: edge.type === "fallback" || edge.type === "deviation" ? "warning" : "muted"
+        });
+      });
+    }
   }
   return rows;
 }
@@ -528,41 +541,6 @@ function spatialNodeCell(
   }
   const nodeWidth = Math.max(16, Math.min(node.displayWidth, cellWidth - 2));
   return nodeBoxLine(node, nodeWidth, node.selected, labels).padEnd(cellWidth);
-}
-
-function spatialConnectorRows(
-  edges: GraphLayoutEdge[],
-  ranks: number[],
-  cellWidth: number,
-  columns: number,
-  labels: ResolvedGraphLabelMode,
-  nodeById: ReadonlyMap<string, GraphLayoutNode>
-): GraphWorkbenchRow[] {
-  const rankIndex = new Map(ranks.map((rank, index) => [rank, index]));
-  const visibleRankSet = new Set(ranks);
-  return edges.filter((edge) => visibleRankSet.has(edge.fromRank) && visibleRankSet.has(edge.toRank)).map((edge) => {
-    const cells = ranks.map(() => "".padEnd(cellWidth));
-    const fromIndex = rankIndex.get(edge.fromRank);
-    const toIndex = rankIndex.get(edge.toRank);
-    if (fromIndex === undefined || toIndex === undefined) {
-      return {
-        text: truncateText(`${compactId(edge.from)} ${edgeGlyph(edge.type)} ${edgeLabelText(edge, labels)}`, columns),
-        tone: edge.type === "fallback" || edge.type === "deviation" ? "warning" as const : "muted" as const
-      };
-    }
-    cells[fromIndex] = truncateText(
-      `${nodeInlineLabel(nodeById.get(edge.from), labels)} ${edgeGlyph(edge.type)}`,
-      cellWidth
-    ).padEnd(cellWidth);
-    for (let index = fromIndex + 1; index < toIndex; index += 1) {
-      cells[index] = "-".repeat(Math.min(cellWidth, 12)).padEnd(cellWidth);
-    }
-    cells[toIndex] = truncateText(edgeLabelText(edge, labels, nodeById), cellWidth).padEnd(cellWidth);
-    return {
-      text: truncateText(cells.join(" ".repeat(spatialGapWidth)), columns),
-      tone: edge.type === "fallback" || edge.type === "deviation" ? "warning" : "muted"
-    };
-  });
 }
 
 function narrowRows(
@@ -704,6 +682,22 @@ function edgeLabelText(
   const target = nodeInlineLabel(nodeById?.get(edge.to), labels, edge.to);
   const prefix = edge.label ?? (edge.type === "primary" ? "" : edge.type);
   return prefix ? `${prefix} ${target}` : target;
+}
+
+function hierarchyEdgeLabel(
+  edge: GraphLayoutEdge,
+  nodeById: ReadonlyMap<string, GraphLayoutNode>,
+  labels: ResolvedGraphLabelMode
+): string {
+  const target = nodeById.get(edge.to);
+  const type = edge.type === "primary" ? "primary" : edge.type;
+  const label = edge.label && edge.label !== edge.type ? `:${edge.label}` : "";
+  const targetCoordinate = target ? `r${target.rank}.${target.lane}` : `r${edge.toRank}.${edge.toLane}`;
+  return `${type}${label} -> ${targetCoordinate} ${nodeInlineLabel(target, labels, edge.to)}`;
+}
+
+function edgeBranchGlyph(index: number, total: number): string {
+  return index === total - 1 ? "└─" : "├─";
 }
 
 function nodeTitleForLabelMode(
