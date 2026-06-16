@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   buildExecutionTraceGraph,
+  InMemoryComparisonReportRepository,
   InMemoryPlanGraphRepository,
+  InMemoryRunArtifactRepository,
   InMemoryRunMetadataRepository,
   InMemoryTaskRunRepository,
   InMemoryTraceLinkRepository,
@@ -142,7 +144,9 @@ function repositories() {
     planGraphRepository: new InMemoryPlanGraphRepository(),
     traceLinkRepository: new InMemoryTraceLinkRepository(),
     taskRunRepository: new InMemoryTaskRunRepository(),
-    runMetadataRepository: new InMemoryRunMetadataRepository()
+    runMetadataRepository: new InMemoryRunMetadataRepository(),
+    runArtifactRepository: new InMemoryRunArtifactRepository(),
+    comparisonReportRepository: new InMemoryComparisonReportRepository()
   };
 }
 
@@ -349,6 +353,99 @@ describe("execution trace read model", () => {
         planNodeId: "plan_node_implement"
       })
     ]);
+  });
+
+  it("projects run artifact, review decision, and comparison evidence", async () => {
+    const repos = repositories();
+    await repos.planGraphRepository.create(planGraph());
+    await repos.taskRunRepository.create(taskRun({ id: "run_baseline" }));
+    await repos.taskRunRepository.create(taskRun({ id: "run_candidate" }));
+    for (const runId of ["run_baseline", "run_candidate"]) {
+      await repos.runMetadataRepository.save({
+        runId,
+        planBinding: {
+          planGraphId: "plan_graph_1",
+          planGraphVersion: 1,
+          planNodeId: "plan_node_implement",
+          allowedNextPlanNodeIds: ["plan_node_verify"]
+        }
+      });
+    }
+    await repos.runArtifactRepository.create({
+      id: "artifact_task_brief",
+      taskRunId: "run_baseline",
+      kind: "task_brief",
+      content: "Implement the baseline branch.\n\nFull body is stored outside trace.",
+      metadata: { summary: "Task brief summary only." },
+      createdAt
+    });
+    await repos.runArtifactRepository.create({
+      id: "artifact_review_decision",
+      taskRunId: "run_baseline",
+      kind: "review_decision",
+      content: "accepted: baseline branch is safe to inspect.",
+      metadata: { acceptedAt: createdAt },
+      createdAt
+    });
+    await repos.comparisonReportRepository.create({
+      id: "comparison_1",
+      taskId: "task_1",
+      baselineRunId: "run_baseline",
+      candidateRunId: "run_candidate",
+      summary: "Candidate has stronger verification evidence.",
+      details: {
+        score: {
+          baseline: 72,
+          candidate: 91,
+          winner: "candidate"
+        }
+      },
+      createdAt
+    });
+
+    const trace = await buildExecutionTraceGraph(repos, {
+      planGraphId: "plan_graph_1",
+      now: createdAt
+    });
+
+    expect(trace.dynamicNodes).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: "trace_node:comparison:comparison_1",
+        kind: "review",
+        sourceType: "comparison_report",
+        sourceId: "comparison_1"
+      })
+    ]));
+    expect(trace.evidence).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        sourceType: "run_artifact",
+        sourceId: "artifact_task_brief",
+        summary: "Run artifact task_brief: Task brief summary only."
+      }),
+      expect.objectContaining({
+        sourceType: "review_decision",
+        sourceId: "artifact_review_decision",
+        summary: "Review decision: accepted: baseline branch is safe to inspect."
+      }),
+      expect.objectContaining({
+        sourceType: "comparison_report",
+        sourceId: "comparison_1",
+        traceNodeId: "trace_node:comparison:comparison_1",
+        summary: "Candidate has stronger verification evidence. Winner: candidate."
+      })
+    ]));
+    expect(trace.dynamicEdges).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        to: "trace_node:comparison:comparison_1",
+        type: "evidence",
+        label: "baseline"
+      }),
+      expect.objectContaining({
+        to: "trace_node:comparison:comparison_1",
+        type: "evidence",
+        label: "candidate"
+      })
+    ]));
   });
 
   it("projects RoleCall tool events and accepted dynamic trace nodes", async () => {

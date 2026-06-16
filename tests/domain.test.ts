@@ -188,6 +188,14 @@ function executionTraceFixture(): ExecutionTraceGraph {
         traceNodeId: "trace_run_1",
         summary: "Run completed.",
         createdAt
+      },
+      {
+        id: "evidence_comparison_1",
+        planGraphId: graph.id,
+        sourceType: "comparison_report",
+        sourceId: "comparison_1",
+        summary: "Comparison report is linked as bounded trace evidence.",
+        createdAt
       }
     ],
     deviations: [

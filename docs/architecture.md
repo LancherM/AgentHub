@@ -516,10 +516,12 @@ repository.
 `ExecutionTraceGraph` projection from local repositories only. It overlays base
 PlanGraph nodes and edges with stored trace links, generated primary TaskRun
 trace nodes from run metadata, RoleCall tool event nodes, task-run evidence,
-generated verification/risk/diff evidence from run metadata, deterministic
-deviations for failed required nodes, missing verification evidence, unplanned
-RoleCall trace nodes, superseded plan versions, and a synthetic legacy
-plan-unavailable node for tasks that have run evidence but no PlanGraph.
+generated verification/risk/diff evidence from run metadata, bounded run
+artifact and review-decision evidence, comparison-report evidence nodes for
+same-task run comparisons, deterministic deviations for failed required nodes,
+missing verification evidence, unplanned RoleCall trace nodes, superseded plan
+versions, and a synthetic legacy plan-unavailable node for tasks that have run
+evidence but no PlanGraph.
 Pending or manual-blocked scheduler nodes remain pending/blocked scheduler
 state rather than skipped trace deviations. Task-id projections use the
 task's current active PlanGraph. Run-rooted projections resolve the selected
@@ -1079,5 +1081,5 @@ The reference-gap follow-up is documented in
 implementation-prompt convention.
 The remaining PlanGraph and ExecutionTraceGraph semantic gaps are tracked in
 `docs/plan-graph-execution-trace-followup-roadmap.md`. That roadmap includes
-publishable implementation prompts for evidence completion, the TUI DAG
-workbench, and an end-to-end acceptance sweep.
+publishable implementation prompts for the TUI DAG workbench and an end-to-end
+acceptance sweep.

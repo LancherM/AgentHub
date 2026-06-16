@@ -3,16 +3,20 @@ import {
   validateExecutionTraceGraph,
   type Deviation,
   type ExecutionTraceGraph,
+  type ComparisonReport,
   type PlanGraph,
   type RoleCallToolEvent,
+  type RunArtifact,
   type TaskRun,
   type TraceEdge,
   type TraceEvidence,
   type TraceNode
 } from "./domain";
 import type {
+  ComparisonReportRepository,
   PlanGraphRepository,
   RoleCallRepository,
+  RunArtifactRepository,
   RunMetadataRepository,
   TaskRunRepository,
   TraceLinkRepository
@@ -23,6 +27,8 @@ export interface ExecutionTraceReadModelRepositories {
   traceLinkRepository: TraceLinkRepository;
   taskRunRepository: TaskRunRepository;
   runMetadataRepository: RunMetadataRepository;
+  runArtifactRepository?: RunArtifactRepository;
+  comparisonReportRepository?: ComparisonReportRepository;
   roleCallRepository?: RoleCallRepository;
 }
 
@@ -66,6 +72,11 @@ export async function buildExecutionTraceGraph(
   addRoleCallToolEventNodes(traceRows.roleCallToolEvents, baseNodeIds, {
     dynamicNodes,
     dynamicEdges
+  });
+  await addComparisonReportEvidence(repositories, graph, {
+    dynamicNodes,
+    dynamicEdges,
+    evidence
   });
 
   const deviations = buildDeviations(
@@ -269,6 +280,81 @@ async function addPrimaryRunTraceNodes(
         createdAt: run.updatedAt
       });
     }
+    if (repositories.runArtifactRepository) {
+      const artifacts = await repositories.runArtifactRepository.listByRunId(run.id);
+      for (const artifact of artifacts) {
+        target.evidence.set(
+          `trace_evidence:artifact:${artifact.id}`,
+          runArtifactEvidence({
+            artifact,
+            planGraphId: graph.id,
+            planNodeId: binding.planNodeId,
+            traceNodeId
+          })
+        );
+      }
+    }
+  }
+}
+
+async function addComparisonReportEvidence(
+  repositories: ExecutionTraceReadModelRepositories,
+  graph: PlanGraph,
+  target: {
+    dynamicNodes: Map<string, TraceNode>;
+    dynamicEdges: Map<string, TraceEdge>;
+    evidence: Map<string, TraceEvidence>;
+  }
+): Promise<void> {
+  if (!repositories.comparisonReportRepository) {
+    return;
+  }
+  const reports = await repositories.comparisonReportRepository.listByTaskId(graph.taskId);
+  for (const report of reports) {
+    const bindings = await comparisonRunBindings(repositories, graph, report);
+    if (bindings.length === 0) {
+      continue;
+    }
+    const traceNodeId = traceNodeIdForComparison(report.id);
+    const firstBinding = bindings[0];
+    target.dynamicNodes.set(traceNodeId, {
+      id: traceNodeId,
+      planGraphId: graph.id,
+      kind: "review",
+      title: `Comparison ${report.id}`,
+      status: "completed",
+      sourcePlanNodeId: firstBinding.planNodeId,
+      sourceType: "comparison_report",
+      sourceId: report.id,
+      createdAt: report.createdAt
+    });
+    for (const binding of bindings) {
+      const runTraceNodeId = traceNodeIdForRun(binding.runId);
+      if (!target.dynamicNodes.has(runTraceNodeId)) {
+        continue;
+      }
+      target.dynamicEdges.set(
+        `trace_edge:comparison:${report.id}:${binding.role}`,
+        {
+          id: `trace_edge:comparison:${report.id}:${binding.role}`,
+          planGraphId: graph.id,
+          from: runTraceNodeId,
+          to: traceNodeId,
+          type: "evidence",
+          label: binding.role
+        }
+      );
+    }
+    target.evidence.set(`trace_evidence:comparison:${report.id}`, {
+      id: `trace_evidence:comparison:${report.id}`,
+      planGraphId: graph.id,
+      sourceType: "comparison_report",
+      sourceId: report.id,
+      planNodeId: firstBinding.planNodeId,
+      traceNodeId,
+      summary: comparisonEvidenceSummary(report),
+      createdAt: report.createdAt
+    });
   }
 }
 
@@ -440,8 +526,132 @@ function taskRunEvidence(input: {
   };
 }
 
+function runArtifactEvidence(input: {
+  artifact: RunArtifact;
+  planGraphId: string;
+  planNodeId: string;
+  traceNodeId: string;
+}): TraceEvidence {
+  return {
+    id: `trace_evidence:artifact:${input.artifact.id}`,
+    planGraphId: input.planGraphId,
+    sourceType: input.artifact.kind === "review_decision"
+      ? "review_decision"
+      : "run_artifact",
+    sourceId: input.artifact.id,
+    planNodeId: input.planNodeId,
+    traceNodeId: input.traceNodeId,
+    summary: runArtifactEvidenceSummary(input.artifact),
+    createdAt: input.artifact.createdAt
+  };
+}
+
+async function comparisonRunBindings(
+  repositories: ExecutionTraceReadModelRepositories,
+  graph: PlanGraph,
+  report: ComparisonReport
+): Promise<Array<{ role: "baseline" | "candidate"; runId: string; planNodeId: string }>> {
+  const runIds = [
+    report.baselineRunId ? { role: "baseline" as const, runId: report.baselineRunId } : undefined,
+    report.candidateRunId ? { role: "candidate" as const, runId: report.candidateRunId } : undefined
+  ].filter((item): item is { role: "baseline" | "candidate"; runId: string } =>
+    item !== undefined
+  );
+  const bindings: Array<{ role: "baseline" | "candidate"; runId: string; planNodeId: string }> = [];
+  for (const item of runIds) {
+    const metadata = await repositories.runMetadataRepository.get(item.runId);
+    const binding = metadata?.planBinding;
+    if (!binding || binding.planGraphId !== graph.id) {
+      continue;
+    }
+    bindings.push({
+      role: item.role,
+      runId: item.runId,
+      planNodeId: binding.planNodeId
+    });
+  }
+  return bindings;
+}
+
+function runArtifactEvidenceSummary(artifact: RunArtifact): string {
+  const metadataSummary =
+    metadataString(artifact.metadata, "summary") ??
+    metadataString(artifact.metadata, "title");
+  if (metadataSummary) {
+    return boundedSummary(`Run artifact ${artifact.kind}: ${metadataSummary}`);
+  }
+  if (artifact.kind === "git_diff") {
+    const count = metadataArrayLength(artifact.metadata, "changedFiles");
+    return boundedSummary(
+      count === undefined
+        ? "Run artifact git_diff: bounded diff artifact."
+        : `Run artifact git_diff: ${count} changed file(s).`
+    );
+  }
+  if (artifact.kind === "review_decision") {
+    return boundedSummary(
+      `Review decision: ${firstContentLine(artifact.content) ?? artifact.id}`
+    );
+  }
+  return boundedSummary(
+    `Run artifact ${artifact.kind}: ${firstContentLine(artifact.content) ?? artifact.id}`
+  );
+}
+
+function comparisonEvidenceSummary(report: ComparisonReport): string {
+  const winner = comparisonWinner(report);
+  return boundedSummary(
+    winner ? `${report.summary} Winner: ${winner}.` : report.summary
+  );
+}
+
+function comparisonWinner(report: ComparisonReport): string | undefined {
+  const score = report.details?.score;
+  if (!score || typeof score !== "object" || Array.isArray(score)) {
+    return undefined;
+  }
+  const winner = (score as Record<string, unknown>).winner;
+  return typeof winner === "string" && winner.trim().length > 0
+    ? winner
+    : undefined;
+}
+
+function metadataString(
+  metadata: RunArtifact["metadata"],
+  key: string
+): string | undefined {
+  const value = metadata?.[key];
+  return typeof value === "string" && value.trim().length > 0
+    ? value
+    : undefined;
+}
+
+function metadataArrayLength(
+  metadata: RunArtifact["metadata"],
+  key: string
+): number | undefined {
+  const value = metadata?.[key];
+  return Array.isArray(value) ? value.length : undefined;
+}
+
+function firstContentLine(content: string): string | undefined {
+  return content
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .find((line) => line.length > 0);
+}
+
+function boundedSummary(value: string): string {
+  const compact = value.replace(/\s+/g, " ").trim();
+  return compact.length <= 240 ? compact : `${compact.slice(0, 237)}...`;
+}
+
 function traceNodeIdForRun(runId: string): string {
   return `trace_node:run:${runId}`;
+}
+
+function traceNodeIdForComparison(reportId: string): string {
+  return `trace_node:comparison:${reportId}`;
 }
 
 function traceNodeIdForRoleCallToolEvent(eventId: string): string {

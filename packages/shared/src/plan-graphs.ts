@@ -121,7 +121,8 @@ export const traceEvidenceSourceTypes = [
   "risk",
   "diff",
   "memory_proposal",
-  "review_decision"
+  "review_decision",
+  "comparison_report"
 ] as const;
 export type TraceEvidenceSourceType = (typeof traceEvidenceSourceTypes)[number];
 

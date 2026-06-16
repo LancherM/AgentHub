@@ -533,10 +533,12 @@ plan node plus dynamic trace node id in runtime context. A local
 lookups, the run-bound PlanGraph from `runMetadata.planBinding` for run
 inspectors, persisted trace nodes/edges/evidence, primary run bindings,
 RoleCall tool events, simple deterministic deviations, generated
-verification/risk/diff evidence from run metadata, and legacy no-plan run
-evidence. Deviations include failed required nodes, missing verification
-evidence, unplanned RoleCall trace nodes, and superseded plan versions; pending
-or manual-blocked scheduler nodes are not mislabeled as skipped. The read-only
+verification/risk/diff evidence from run metadata, bounded run artifact and
+review-decision evidence, comparison-report evidence for same-task run
+comparisons, and legacy no-plan run evidence. Deviations include failed
+required nodes, missing verification evidence, unplanned RoleCall trace nodes,
+and superseded plan versions; pending or manual-blocked scheduler nodes are not
+mislabeled as skipped. The read-only
 `execution-trace show` CLI command exposes that projection by task id or
 PlanGraph id. The terminal workbench Execution Trace focus now consumes the
 same projection when available and exposes Overlay, Plan, and Trace modes while
