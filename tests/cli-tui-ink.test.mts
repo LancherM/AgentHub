@@ -1099,7 +1099,7 @@ describe("Ink TUI renderer", () => {
     expect(workbench.rows.every((row) => row.text.length <= 80)).toBe(true);
   });
 
-  it("renders wide Workflow DAG ranks as readable hierarchy rows", () => {
+  it("renders wide Workflow DAG ranks as graphical node boxes with readable links", () => {
     const workbench = renderGraphWorkbench(workflowDagTraceFixture(), {
       mode: "overlay",
       columns: 154,
@@ -1110,17 +1110,16 @@ describe("Ink TUI renderer", () => {
       zoom: "82%"
     });
     const text = workbench.rows.map((row) => row.text).join("\n");
-    const rank0Index = text.indexOf("rank 0 root | r0.0 Capture request");
-    const rank1Index = text.indexOf("rank 1 | r1.0 Plan workflow");
-    const rank2Index = text.indexOf("rank 2 | r2.0 Codex implementation");
     const roleCallConnector = workbench.rows.find((row) =>
       row.text.includes("runtime:role_call ->") && row.text.includes("Implement subgraph")
     );
 
     expect(workbench.narrow).toBe(false);
-    expect(rank0Index).toBeGreaterThanOrEqual(0);
-    expect(rank0Index).toBeLessThan(rank1Index);
-    expect(rank1Index).toBeLessThan(rank2Index);
+    expect(text).toContain("ranks r0:root");
+    expect(text).toContain("┌");
+    expect(text).toContain("│ P ✓ Capture request");
+    expect(text).toContain("│ P ✓ Plan workflow");
+    expect(text).toContain("│*P ✓ Codex");
     expect(text).toContain("parallel:codex -> r2.0 Codex implementation");
     expect(text).toContain("parallel:claude -> r2.1 Claude implementa");
     expect(text).toContain("primary:candidate -> r3.0 Compare results");
@@ -1563,7 +1562,8 @@ describe("Ink TUI renderer", () => {
     expect(overlay).toContain("mini-map z82%");
     expect(overlay).toContain("P");
     expect(overlay).toContain("plan_node_imple");
-    expect(overlay).toContain("rank 0 root | r0.0 Implement graph view");
+    expect(overlay).toContain("ranks r0:root");
+    expect(overlay).toContain("│*P ✓ Implement graph view");
     expect(overlay).toContain("primary:then -> r1.0 Verify graph view");
     expect(overlay).toContain("T");
     expect(overlay).toContain("TaskRun run_1");

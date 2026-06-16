@@ -541,16 +541,17 @@ focus renders the `Graph - Workflow DAG` workbench from that read model only:
 `apps/cli/src/tui-ink/graph-layout.mts` derives a deterministic renderer-local
 layout model with node rank/lane, bounded width, connector anchors, group ids,
 selected/focused state, viewport inclusion, safe action descriptors, bounded
-wide rank hierarchy rows, per-node outgoing edge rows, edge labels, structural mini-map,
+wide node-box DAG rows, local outgoing link rows, edge labels, structural mini-map,
 legend, and compact fallback rows from the `ExecutionTraceGraph` DTO, while
 `packages/core/src/tui-read-model.ts` supplies selected graph-node details for
 incoming links, outgoing links, evidence, deviations, and commands. The
 renderer and read model keep default graph text title-first: node boxes,
 rank summaries, outgoing edge labels, toolbar focus, and relationship rows use
-plan/trace titles. Wide rows label stages as `rank N`, expose visible
-coordinates such as `r2.1`, and list each source node's outgoing edges directly
-under that node; long PlanGraph or trace node ids are shortened to local
-secondary keys unless a command needs the full identifier. The
+plan/trace titles. Wide rows render ranks as columns and lanes as rows of
+boxed nodes, connect same-lane adjacent nodes with terminal arrows, and keep
+local link rows under the source lane for parallel, runtime, fallback,
+evidence, or cross-lane edges; long PlanGraph or trace node ids are shortened
+to local secondary keys unless a command needs the full identifier. The
 renderer owns percentage-like zoom density, label policy (`auto`, `compact`,
 `full`, `off`), local viewport rank, grouped subgraph containers, collapsed
 group ids, structural mini-map compression, and `/graph focus <node-id>` state

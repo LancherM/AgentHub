@@ -477,47 +477,48 @@ function spatialDagRows(
   const edgesByFrom = groupEdgesByFrom(
     layout.edges.filter((edge) => visibleNodeIds.has(edge.from) && visibleNodeIds.has(edge.to))
   );
-  for (const rank of ranks) {
-    const rankNodes = nodes
-      .filter((node) => node.viewportIncluded && node.rank === rank)
-      .sort((left, right) => left.lane - right.lane);
-    if (rankNodes.length === 0) {
+  const maxLane = nodes.reduce((max, node) => Math.max(max, node.lane), 0);
+  const effectiveLabels = effectiveLabelMode(options.labels, options.columns);
+  rows.push({
+    text: truncateText(`ranks ${ranks.map((rank) => `r${rank}${rank === 0 ? ":root" : ""}`).join(" ─▶ ")}`, options.columns),
+    tone: "muted"
+  });
+  for (let lane = 0; lane <= maxLane; lane += 1) {
+    const laneNodes = ranks.map((rank) =>
+      nodes.find((node) => node.viewportIncluded && node.rank === rank && node.lane === lane)
+    );
+    if (laneNodes.every((node) => !node)) {
       continue;
     }
-    const selectedInRank = rankNodes.some((node) => node.selected);
-    rows.push({
-      text: truncateText(
-        `rank ${rank}${rank === 0 ? " root" : ""} | ${rankNodes.map((node) => `r${node.rank}.${node.lane} ${nodeInlineLabel(node, effectiveLabelMode(options.labels, options.columns))}`).join("  ")}`,
-        options.columns
-      ),
-      selected: selectedInRank,
-      tone: selectedInRank ? "info" : "muted"
-    });
-    for (const node of rankNodes) {
+    const laneBoxes = laneNodes.map((node) => spatialNodeBox(node, cellWidth, effectiveLabels));
+    const selectedInLane = laneNodes.some((node) => node?.selected);
+    for (let boxRow = 0; boxRow < 4; boxRow += 1) {
       rows.push({
         text: truncateText(
-          `  ${node.selected ? "*" : " "} r${node.rank}.${node.lane} ${spatialNodeCell(node, cellWidth, effectiveLabelMode(options.labels, options.columns)).trimEnd()}`,
+          laneBoxes.map((box, index) => {
+            const connector = boxRow === 1
+              ? laneConnector(laneNodes[index], laneNodes[index + 1], layout.edges)
+              : " ".repeat(spatialGapWidth);
+            return `${box[boxRow] ?? "".padEnd(cellWidth)}${index < laneBoxes.length - 1 ? connector : ""}`;
+          }).join(""),
           options.columns
         ),
-        selected: node.selected,
-        tone: nodeTone(node)
-      });
-      const outgoing = (edgesByFrom.get(node.id) ?? [])
-        .filter((edge) => visibleNodeIds.has(edge.to))
-        .sort((left, right) =>
-          (nodeById.get(left.to)?.rank ?? left.toRank) - (nodeById.get(right.to)?.rank ?? right.toRank) ||
-          (nodeById.get(left.to)?.lane ?? left.toLane) - (nodeById.get(right.to)?.lane ?? right.toLane)
-        );
-      outgoing.forEach((edge, index) => {
-        rows.push({
-          text: truncateText(
-            `      ${edgeBranchGlyph(index, outgoing.length)} ${hierarchyEdgeLabel(edge, nodeById, effectiveLabelMode(options.labels, options.columns))}`,
-            options.columns
-          ),
-          tone: edge.type === "fallback" || edge.type === "deviation" ? "warning" : "muted"
-        });
+        selected: boxRow === 1 && selectedInLane,
+        tone: boxRow === 1
+          ? laneNodes.find((node) => node?.selected)
+            ? nodeTone(laneNodes.find((node) => node?.selected) as GraphLayoutNode)
+            : undefined
+          : undefined
       });
     }
+    rows.push(...graphicalEdgeRows(
+      laneNodes.filter((node): node is GraphLayoutNode => Boolean(node)),
+      edgesByFrom,
+      nodeById,
+      visibleNodeIds,
+      effectiveLabels,
+      options.columns
+    ));
   }
   return rows;
 }
@@ -541,6 +542,82 @@ function spatialNodeCell(
   }
   const nodeWidth = Math.max(16, Math.min(node.displayWidth, cellWidth - 2));
   return nodeBoxLine(node, nodeWidth, node.selected, labels).padEnd(cellWidth);
+}
+
+function spatialNodeBox(
+  node: GraphLayoutNode | undefined,
+  cellWidth: number,
+  labels: ResolvedGraphLabelMode
+): string[] {
+  if (!node) {
+    return Array.from({ length: 4 }, () => "".padEnd(cellWidth));
+  }
+  const innerWidth = Math.max(8, cellWidth - 2);
+  const title = truncateText(`${node.selected ? "*" : " "}${nodeKindMarker(node)} ${statusGlyph(node.status)} ${nodeTitleForLabelMode(node, labels)}`, innerWidth);
+  const meta = truncateText(`r${node.rank}.${node.lane} ${node.source === "plan" ? `${node.required ? "req" : "opt"} ${node.risk ?? "risk"}` : node.status}`, innerWidth);
+  return [
+    `┌${"─".repeat(innerWidth)}┐`,
+    `│${title.padEnd(innerWidth)}│`,
+    `│${meta.padEnd(innerWidth)}│`,
+    `└${"─".repeat(innerWidth)}┘`
+  ];
+}
+
+function laneConnector(
+  from: GraphLayoutNode | undefined,
+  to: GraphLayoutNode | undefined,
+  edges: GraphLayoutEdge[]
+): string {
+  if (!from || !to) {
+    return " ".repeat(spatialGapWidth);
+  }
+  const edge = edges.find((candidate) => candidate.from === from.id && candidate.to === to.id);
+  if (!edge) {
+    return " ".repeat(spatialGapWidth);
+  }
+  if (edge.type === "parallel") {
+    return "═▶ ";
+  }
+  if (edge.type === "fallback" || edge.type === "deviation") {
+    return "!▶ ";
+  }
+  if (edge.type === "runtime" || edge.type === "evidence") {
+    return "·▶ ";
+  }
+  return "─▶ ";
+}
+
+function graphicalEdgeRows(
+  sources: GraphLayoutNode[],
+  edgesByFrom: ReadonlyMap<string, GraphLayoutEdge[]>,
+  nodeById: ReadonlyMap<string, GraphLayoutNode>,
+  visibleNodeIds: ReadonlySet<string>,
+  labels: ResolvedGraphLabelMode,
+  columns: number
+): GraphWorkbenchRow[] {
+  const rows: GraphWorkbenchRow[] = [];
+  for (const source of sources) {
+    const edges = edgesByFrom.get(source.id) ?? [];
+    const visibleEdges = edges
+      .filter((edge) => visibleNodeIds.has(edge.to))
+      .sort((left, right) =>
+        (nodeById.get(left.to)?.rank ?? left.toRank) - (nodeById.get(right.to)?.rank ?? right.toRank) ||
+        (nodeById.get(left.to)?.lane ?? left.toLane) - (nodeById.get(right.to)?.lane ?? right.toLane)
+      );
+    if (visibleEdges.length === 0) {
+      continue;
+    }
+    visibleEdges.forEach((edge, index) => {
+      rows.push({
+        text: truncateText(
+          `  r${source.rank}.${source.lane} ${nodeInlineLabel(source, labels)} ${edgeBranchGlyph(index, visibleEdges.length)} ${hierarchyEdgeLabel(edge, nodeById, labels)}`,
+          columns
+        ),
+        tone: edge.type === "fallback" || edge.type === "deviation" ? "warning" : "muted"
+      });
+    });
+  }
+  return rows;
 }
 
 function narrowRows(
