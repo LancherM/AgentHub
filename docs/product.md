@@ -534,9 +534,9 @@ lookups, the run-bound PlanGraph from `runMetadata.planBinding` for run
 inspectors, persisted trace nodes/edges/evidence, primary run bindings,
 RoleCall tool events, simple deterministic deviations, generated
 verification/risk/diff evidence from run metadata, and legacy no-plan run
-evidence. Deviations include failed required nodes, skipped required
-primary-run nodes after execution has begun, missing verification evidence,
-unplanned RoleCall trace nodes, and superseded plan versions. The read-only
+evidence. Deviations include failed required nodes, missing verification
+evidence, unplanned RoleCall trace nodes, and superseded plan versions; pending
+or manual-blocked scheduler nodes are not mislabeled as skipped. The read-only
 `execution-trace show` CLI command exposes that projection by task id or
 PlanGraph id. The terminal workbench Execution Trace focus now consumes the
 same projection when available and exposes Overlay, Plan, and Trace modes while
@@ -557,9 +557,14 @@ contract supports durable `proposed` graph versions in memory and SQLite.
 Creating a proposed graph does not replace the current active graph; activation
 supersedes the old active graph only after validation, and changes to required
 execution nodes require an explicit approval flag. Additional primary PlanNodes
-can be scheduled explicitly through `RunTaskInput.planGraphBinding`; automatic
-topological fan-out orchestration and a dedicated desktop graph canvas remain
-follow-on extensions beyond the current read-only Trace tab.
+can be scheduled explicitly through `RunTaskInput.planGraphBinding`, and the
+bounded `TaskRunner.runPlanGraph()` scheduler can now walk an active PlanGraph
+locally: it treats system nodes as satisfied, blocks behind required manual
+nodes, runs eligible `primary_run` nodes through the existing isolated
+TaskRunner path, honors fallback edges only after failed or blocked sources,
+limits scheduled runs when requested, and requires an explicit rerun request
+before repeating successful plan nodes. A dedicated desktop graph canvas remains
+follow-on UI work beyond the current read-only Trace tab.
 
 Plan and trace evidence now feeds review governance without creating an
 automatic acceptance path. Risk reports can include plan-aware findings for

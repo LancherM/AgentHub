@@ -477,10 +477,18 @@ invalid. The planner is represented as the graph's `planner` node with
 node as the current primary run binding, persists that binding in
 `run_metadata.plan_binding_json`, emits planner lifecycle events, and passes
 the active PlanGraph, current plan node, and allowed next node ids through
-adapter runtime input. Additional primary PlanNodes can be scheduled by calling
-TaskRunner with `RunTaskInput.planGraphBinding`; downstream verification,
-review, memory, and handoff nodes are inspectable governance/evidence nodes
-unless a caller explicitly binds them to an executable run.
+adapter runtime input. Additional primary PlanNodes can still be scheduled by
+calling TaskRunner with `RunTaskInput.planGraphBinding`; the higher-level
+`TaskRunner.runPlanGraph()` scheduler evaluates persisted run metadata for the
+active graph, selects runnable `primary_run` nodes whose required upstream
+system or primary nodes are satisfied, blocks required downstream work behind
+manual nodes, activates fallback edges only after failed or blocked sources,
+and calls the same isolated `run()` path with explicit bindings. It does not
+mutate the PlanGraph, apply code, merge, push, approve memory, or export
+repository context, and it leaves explicit reruns opt-in for successful nodes.
+Downstream verification, review, memory, and handoff nodes are inspectable
+governance/evidence nodes unless a caller explicitly binds them to an
+executable run.
 `RunTaskInput.planGraphBinding` lets callers bind a run to an already-persisted
 PlanGraph and plan node instead of creating a new graph. RoleCall execution uses
 that path so callee runs inherit the source PlanGraph plus the dynamic trace
@@ -509,10 +517,11 @@ repository.
 PlanGraph nodes and edges with stored trace links, generated primary TaskRun
 trace nodes from run metadata, RoleCall tool event nodes, task-run evidence,
 generated verification/risk/diff evidence from run metadata, deterministic
-deviations for failed required nodes, skipped required primary-run nodes after
-execution has begun, missing verification evidence, unplanned RoleCall trace
-nodes, superseded plan versions, and a synthetic legacy plan-unavailable node
-for tasks that have run evidence but no PlanGraph. Task-id projections use the
+deviations for failed required nodes, missing verification evidence, unplanned
+RoleCall trace nodes, superseded plan versions, and a synthetic legacy
+plan-unavailable node for tasks that have run evidence but no PlanGraph.
+Pending or manual-blocked scheduler nodes remain pending/blocked scheduler
+state rather than skipped trace deviations. Task-id projections use the
 task's current active PlanGraph. Run-rooted projections resolve the selected
 run first, use `run_metadata.planBinding.planGraphId` when present, and fall
 back to the task active graph only for legacy runs without a binding.
@@ -1070,5 +1079,5 @@ The reference-gap follow-up is documented in
 implementation-prompt convention.
 The remaining PlanGraph and ExecutionTraceGraph semantic gaps are tracked in
 `docs/plan-graph-execution-trace-followup-roadmap.md`. That roadmap includes
-publishable implementation prompts for graph scheduling, planner policy,
-evidence completion, the TUI DAG workbench, and an end-to-end acceptance sweep.
+publishable implementation prompts for planner policy, evidence completion, the
+TUI DAG workbench, and an end-to-end acceptance sweep.

@@ -341,30 +341,6 @@ function buildDeviations(
       createdAt: now
     });
   }
-  const taskRunPlanNodeIds = new Set(
-    dynamicNodes
-      .filter((node) => node.kind === "task_run" && node.sourcePlanNodeId)
-      .map((node) => node.sourcePlanNodeId as string)
-  );
-  if (taskRunPlanNodeIds.size > 0) {
-    for (const node of graph.nodes) {
-      if (
-        node.required &&
-        node.execution.mode === "primary_run" &&
-        !taskRunPlanNodeIds.has(node.id)
-      ) {
-        deviations.push({
-          id: `deviation:${graph.id}:skipped_required:${node.id}`,
-          planGraphId: graph.id,
-          type: "skipped_required_node",
-          severity: node.riskLevel,
-          description: `Required primary_run plan node ${node.id} has no linked TaskRun evidence.`,
-          planNodeId: node.id,
-          createdAt: now
-        });
-      }
-    }
-  }
   for (const node of dynamicNodes) {
     if (node.kind === "role_call" && !node.sourcePlanNodeId) {
       deviations.push({

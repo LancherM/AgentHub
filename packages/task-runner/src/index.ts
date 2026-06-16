@@ -8,6 +8,7 @@ export * from "./context-fusion";
 export * from "./code-graph";
 export * from "./memory-proposals";
 export * from "./memory-automation";
+export * from "./plan-graph-scheduler";
 export * from "./run-review";
 export * from "./review-decisions";
 export * from "./role-call-executor";

@@ -155,6 +155,10 @@ import {
   type WorkspaceSession
 } from "./workspace";
 import { safeGitCommand, safeGitExecutionOptions } from "./git-safety";
+import {
+  evaluatePlanGraphSchedule,
+  type PlanGraphScheduleEvaluation
+} from "./plan-graph-scheduler";
 
 export type { AgentRunEvent } from "@agent-hub/agent-adapters";
 
@@ -228,6 +232,30 @@ export interface RunPlanGraphBindingInput {
   planNodeId: string;
   traceNodeId?: string;
   allowedNextPlanNodeIds?: readonly string[];
+}
+
+export interface RunPlanGraphInput extends Omit<
+  RunTaskInput,
+  "manualPlanGraph" | "planGraphBinding" | "planGraphMode" | "plannerAgentKind" | "rawPrompt"
+> {
+  planGraphId?: string;
+  maxScheduledRuns?: number;
+  rerunPlanNodeIds?: readonly string[];
+}
+
+export type RunPlanGraphStatus =
+  | "completed"
+  | "blocked"
+  | "failed"
+  | "limited";
+
+export interface RunPlanGraphResult {
+  ok: boolean;
+  status: RunPlanGraphStatus;
+  planGraph: PlanGraph;
+  scheduledRuns: RunResult[];
+  schedule: PlanGraphScheduleEvaluation;
+  warnings: string[];
 }
 
 export interface CodeStateProvenance {
@@ -499,6 +527,76 @@ export class TaskRunner {
       selectedSkillReferences: input.selectedSkillReferences,
       roleSkillReferences: input.roleSkillReferences
     });
+  }
+
+  async runPlanGraph(input: RunPlanGraphInput): Promise<RunPlanGraphResult> {
+    const planGraph = await this.resolvePlanGraphForScheduling(input);
+    const task = await this.taskRepository.get(planGraph.taskId);
+    if (!task) {
+      throw new TaskRunnerError(`task ${planGraph.taskId} not found`);
+    }
+    const {
+      maxScheduledRuns,
+      planGraphId: _planGraphId,
+      rerunPlanNodeIds,
+      taskPrompt,
+      agentKind,
+      ...runInput
+    } = input;
+    const rerunNodeIds = new Set(rerunPlanNodeIds ?? []);
+    const scheduledRuns: RunResult[] = [];
+    const warnings: string[] = [];
+    let schedule = await evaluatePlanGraphSchedule(this, {
+      graph: planGraph,
+      rerunPlanNodeIds: [...rerunNodeIds]
+    });
+    const maxRuns = maxScheduledRuns ?? Number.POSITIVE_INFINITY;
+
+    while (scheduledRuns.length < maxRuns) {
+      const next = schedule.runnable[0];
+      if (!next) {
+        break;
+      }
+      const result = await this.run({
+        ...runInput,
+        taskId: planGraph.taskId,
+        taskPrompt: scheduledPlanNodePrompt({
+          task,
+          graph: planGraph,
+          node: next.node,
+          originalPrompt: taskPrompt
+        }),
+        agentKind: agentKindForPlanNode(next.node, agentKind),
+        taskStatusMode: "shared_task",
+        planGraphMode: "disabled",
+        planGraphBinding: {
+          planGraphId: planGraph.id,
+          planGraphVersion: planGraph.version,
+          planNodeId: next.node.id,
+          allowedNextPlanNodeIds: next.allowedNextPlanNodeIds
+        }
+      });
+      scheduledRuns.push(result);
+      warnings.push(...result.warnings);
+      rerunNodeIds.delete(next.node.id);
+      schedule = await evaluatePlanGraphSchedule(this, {
+        graph: planGraph,
+        rerunPlanNodeIds: [...rerunNodeIds]
+      });
+    }
+
+    const status = scheduledPlanGraphStatus(planGraph, schedule, scheduledRuns, maxRuns);
+    if (status !== "completed") {
+      await this.reopenScheduledTaskIfRunning(planGraph.taskId);
+    }
+    return {
+      ok: status === "completed",
+      status,
+      planGraph,
+      scheduledRuns,
+      schedule,
+      warnings
+    };
   }
 
   private async refreshContextIndexes(input: {
@@ -1786,6 +1884,26 @@ export class TaskRunner {
     return graph;
   }
 
+  private async resolvePlanGraphForScheduling(
+    input: RunPlanGraphInput
+  ): Promise<PlanGraph> {
+    if (input.planGraphId) {
+      const graph = await this.planGraphRepository.get(input.planGraphId);
+      if (!graph) {
+        throw new TaskRunnerError(`plan graph ${input.planGraphId} not found`);
+      }
+      return graph;
+    }
+    if (!input.taskId) {
+      throw new TaskRunnerError("taskId or planGraphId is required for graph scheduling");
+    }
+    const graph = await this.planGraphRepository.getActiveByTaskId(input.taskId);
+    if (!graph) {
+      throw new TaskRunnerError(`active plan graph for task ${input.taskId} not found`);
+    }
+    return graph;
+  }
+
   private async markTaskRunning(
     task: Task,
     updatedAt: string,
@@ -1870,6 +1988,10 @@ export class TaskRunner {
     if (runs.some((run) => run.status === "queued" || run.status === "running")) {
       return "running";
     }
+    const planStatus = await this.sharedTaskPlanStatus(taskId, runs);
+    if (planStatus) {
+      return planStatus;
+    }
     const expectedRunCount = metadataNumber(
       task?.metadata,
       "executableAssignmentCount"
@@ -1891,6 +2013,51 @@ export class TaskRunner {
       return "completed";
     }
     return "open";
+  }
+
+  private async sharedTaskPlanStatus(
+    taskId: string,
+    runs: readonly TaskRun[]
+  ): Promise<Task["status"] | undefined> {
+    const graph = await this.planGraphRepository.getActiveByTaskId(taskId);
+    if (!graph) {
+      return undefined;
+    }
+    const primaryNodeIds = graph.nodes
+      .filter((node) => node.execution.mode === "primary_run")
+      .map((node) => node.id);
+    if (primaryNodeIds.length === 0) {
+      return undefined;
+    }
+    const primaryNodeIdSet = new Set(primaryNodeIds);
+    const successfulNodeIds = new Set<string>();
+    let relevantRunCount = 0;
+    for (const run of runs) {
+      const metadata = await this.runMetadataRepository.get(run.id);
+      const binding = metadata?.planBinding;
+      if (
+        !binding ||
+        binding.planGraphId !== graph.id ||
+        !primaryNodeIdSet.has(binding.planNodeId)
+      ) {
+        continue;
+      }
+      relevantRunCount += 1;
+      if (run.status === "succeeded") {
+        successfulNodeIds.add(binding.planNodeId);
+      }
+    }
+    if (relevantRunCount === 0) {
+      return undefined;
+    }
+    return successfulNodeIds.size === primaryNodeIds.length ? "open" : "running";
+  }
+
+  private async reopenScheduledTaskIfRunning(taskId: string): Promise<void> {
+    const task = await this.taskRepository.get(taskId);
+    if (task?.status === "running") {
+      await this.taskRepository.updateStatus(taskId, "open", this.clock.now());
+    }
   }
 
   private async resolveContinuation(
@@ -2295,6 +2462,65 @@ function selectBoundPlanNode(
       allowedNextPlanNodeIds
     }
   };
+}
+
+function scheduledPlanNodePrompt(input: {
+  task: Task;
+  graph: PlanGraph;
+  node: AnyPlanNode;
+  originalPrompt?: string;
+}): string {
+  return [
+    input.originalPrompt ?? input.task.description ?? input.task.title,
+    "",
+    `Scheduled PlanNode: ${input.node.title}`,
+    `PlanGraph: ${input.graph.id} v${input.graph.version}`,
+    `PlanNode: ${input.node.id}`,
+    "",
+    input.node.instructions,
+    "",
+    "Acceptance criteria:",
+    ...input.node.acceptanceCriteria.map((item) => `- ${item}`)
+  ].join("\n");
+}
+
+function agentKindForPlanNode(
+  node: AnyPlanNode,
+  fallback: AgentKind | undefined
+): AgentKind | undefined {
+  const expected = node.execution.expectedAdapter;
+  return isAgentKind(expected) ? expected : fallback;
+}
+
+function isAgentKind(value: string | undefined): value is AgentKind {
+  return value === "fake" || value === "codex" || value === "claude-code";
+}
+
+function scheduledPlanGraphStatus(
+  graph: PlanGraph,
+  schedule: PlanGraphScheduleEvaluation,
+  scheduledRuns: readonly RunResult[],
+  maxRuns: number
+): RunPlanGraphStatus {
+  if (schedule.runnable.length > 0 && scheduledRuns.length >= maxRuns) {
+    return "limited";
+  }
+  const primaryNodeIds = new Set(
+    graph.nodes
+      .filter((node) => node.execution.mode === "primary_run")
+      .map((node) => node.id)
+  );
+  const primaryStates = schedule.nodes.filter((node) => primaryNodeIds.has(node.nodeId));
+  if (
+    primaryStates.length > 0 &&
+    primaryStates.every((node) => node.status === "successful")
+  ) {
+    return "completed";
+  }
+  if (scheduledRuns.some((run) => run.status === "failed" || run.status === "cancelled")) {
+    return "failed";
+  }
+  return "blocked";
 }
 
 export async function runTask(input: RunTaskInput): Promise<RunResult> {

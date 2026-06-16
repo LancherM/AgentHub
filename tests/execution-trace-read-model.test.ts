@@ -432,7 +432,7 @@ describe("execution trace read model", () => {
     ]);
   });
 
-  it("marks skipped primary nodes and unplanned RoleCalls as deviations", async () => {
+  it("does not mark pending primary nodes as skipped deviations", async () => {
     const repos = repositories();
     await repos.planGraphRepository.create(planGraph({
       nodes: [
@@ -485,16 +485,12 @@ describe("execution trace read model", () => {
       now: createdAt
     });
 
-    expect(trace.deviations).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        type: "skipped_required_node",
-        planNodeId: "plan_node_docs"
-      }),
+    expect(trace.deviations).toEqual([
       expect.objectContaining({
         type: "unplanned_role_call",
         traceNodeId: "trace_role_call_unplanned"
       })
-    ]));
+    ]);
   });
 
   it("falls back to a legacy trace for tasks without PlanGraph evidence", async () => {
