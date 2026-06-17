@@ -64,6 +64,7 @@ import {
   createId,
   nowIso,
   planGraphIdForTaskVersion,
+  planNodeIdForPlanGraph,
   plannerNodeIdForPlanGraph,
   parseStructuredPlanGraphOutput,
   validateContextPack,
@@ -2250,6 +2251,80 @@ function plannerTaskBriefForGraphOutput(input: {
     input.plannerInput.version
   );
   const expectedPlannerNodeId = plannerNodeIdForPlanGraph(expectedGraphId);
+  const examplePrimaryNodeId = planNodeIdForPlanGraph(
+    expectedGraphId,
+    "implement",
+    1
+  );
+  const exampleVerifyNodeId = planNodeIdForPlanGraph(
+    expectedGraphId,
+    "verify",
+    2
+  );
+  const minimalValidPlanGraphJson = JSON.stringify({
+    planGraph: {
+      id: expectedGraphId,
+      taskId: input.task.id,
+      version: input.plannerInput.version,
+      status: "active",
+      plannerNodeId: expectedPlannerNodeId,
+      createdByRole: "planner",
+      createdAt: input.plannerInput.createdAt,
+      nodes: [
+        {
+          id: expectedPlannerNodeId,
+          kind: "planner",
+          role: "planner",
+          title: "Create execution plan",
+          instructions:
+            "Create a structured, task-bounded PlanGraph from the injected TaskBrief and context.",
+          acceptanceCriteria: [
+            "PlanGraph JSON is valid, planner-rooted, acyclic, and local-only."
+          ],
+          riskLevel: "low",
+          required: true,
+          execution: { mode: "system" },
+          outputPlanGraphId: expectedGraphId
+        },
+        {
+          id: examplePrimaryNodeId,
+          kind: "implement",
+          role: input.plannerInput.roleHandle ?? "engineer",
+          title: "Handle requested task",
+          instructions:
+            "Complete the requested task in the isolated worktree using the injected context.",
+          acceptanceCriteria: [
+            "The task request is handled within the stated scope."
+          ],
+          riskLevel: "low",
+          required: true,
+          execution: {
+            mode: "primary_run",
+            expectedAdapter: input.agentKind,
+            worktreePolicy: "isolated"
+          }
+        },
+        {
+          id: exampleVerifyNodeId,
+          kind: "verify",
+          role: "reviewer",
+          title: "Verify evidence",
+          instructions:
+            "Run configured checks or inspect evidence, then record any skipped checks or residual risk.",
+          acceptanceCriteria: [
+            "Verification evidence, skipped checks, and residual risks are explicit."
+          ],
+          riskLevel: "low",
+          required: true,
+          execution: { mode: "manual" }
+        }
+      ],
+      edges: [
+        { from: expectedPlannerNodeId, to: examplePrimaryNodeId, type: "primary" },
+        { from: examplePrimaryNodeId, to: exampleVerifyNodeId, type: "primary" }
+      ]
+    }
+  }, null, 2);
   const prompt = [
     "You are Agent Hub's system @planner role.",
     "",
@@ -2274,6 +2349,14 @@ function plannerTaskBriefForGraphOutput(input: {
     "- That node must have kind planner, role planner, required true, execution.mode system, and outputPlanGraphId equal to planGraph.id.",
     "- Do not create any other planner nodes.",
     "",
+    "Node schema requirements:",
+    "- Every node object must include id, kind, role, title, instructions, acceptanceCriteria, riskLevel, required, and execution.",
+    "- acceptanceCriteria must be a non-empty array of strings.",
+    "- riskLevel must be exactly one of low, medium, or high.",
+    "- execution must include mode. primary_run nodes must also include expectedAdapter and worktreePolicy isolated.",
+    "- The planner node must include outputPlanGraphId. Non-planner nodes must not include outputPlanGraphId.",
+    "- Do not omit instructions or acceptanceCriteria for simple tasks; use concise task-appropriate strings.",
+    "",
     "Planning requirements:",
     "- The graph must be acyclic, task-bounded, and small enough for a local TUI workflow.",
     "- Use only node kinds supported by Agent Hub: planner, intake, plan, research, implement, documentation, verify, review, memory, handoff.",
@@ -2287,7 +2370,11 @@ function plannerTaskBriefForGraphOutput(input: {
     "Safety boundaries:",
     "- Do not plan automatic merge, push, pull request creation, branch deletion, repository context export, memory approval, or repository-root context-file writes.",
     "- Do not include secrets, credentials, private key paths, or instructions to inspect credential files.",
-    "- Do not mutate the task brief or approved memory; RoleCalls are runtime events and are not edits to the PlanGraph."
+    "- Do not mutate the task brief or approved memory; RoleCalls are runtime events and are not edits to the PlanGraph.",
+    "",
+    "Minimal valid JSON template:",
+    "Copy this shape exactly and adapt node titles, instructions, acceptanceCriteria, riskLevel, roles, and edges to the task. Do not remove required fields.",
+    minimalValidPlanGraphJson
   ].join("\n");
   return validateTaskBrief({
     ...input.taskBrief,
@@ -2301,9 +2388,9 @@ function plannerTaskBriefForGraphOutput(input: {
       "",
       "## Required JSON Shape",
       "",
-      "{",
-      `  \"planGraph\": { \"id\": \"${expectedGraphId}\", \"taskId\": \"${input.task.id}\", \"version\": ${input.plannerInput.version}, \"status\": \"active\", \"plannerNodeId\": \"${expectedPlannerNodeId}\", \"createdByRole\": \"planner\", \"createdAt\": \"${input.plannerInput.createdAt}\", \"nodes\": [], \"edges\": [] }`,
-      "}"
+      minimalValidPlanGraphJson,
+      "",
+      "Copy this shape exactly and adapt node titles, instructions, acceptanceCriteria, riskLevel, roles, and edges to the task. Do not remove required fields."
     ].join("\n")
   });
 }

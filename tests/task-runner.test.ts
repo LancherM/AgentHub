@@ -353,6 +353,15 @@ describe("task runner", () => {
     expect(adapterInputs[0].taskPrompt).toContain(
       "adapter choice never changes your planner identity"
     );
+    expect(adapterInputs[0].taskPrompt).toContain(
+      "Every node object must include id, kind, role, title, instructions, acceptanceCriteria, riskLevel, required, and execution."
+    );
+    expect(adapterInputs[0].taskPrompt).toContain(
+      "The planner node must include outputPlanGraphId."
+    );
+    expect(adapterInputs[0].taskPrompt).toContain(
+      "\"acceptanceCriteria\":"
+    );
     expect(adapterInputs[0].worktreePath).not.toBe(projectRoot);
     expect(adapterInputs[1].currentPlanNode?.id).toBe(
       planNodeIdForPlanGraph(result.planGraph?.id ?? "", "implement", 1)

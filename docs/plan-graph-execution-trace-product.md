@@ -293,6 +293,10 @@ role, not a normal team persona.
 
 Planner output must be structured and validated. Invalid planner output should
 fail plan creation inspectably before any implementation run starts.
+The system planner prompt must include the complete PlanGraph/node required
+field contract and a minimal valid JSON template. Agent Hub should validate the
+adapter output; it should not silently fill missing node fields with
+deterministic defaults.
 
 Planner constraints:
 

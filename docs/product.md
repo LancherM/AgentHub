@@ -600,10 +600,12 @@ TaskRunner's planner path is agent-backed rather than deterministic or manual.
 configured local adapter inside its own isolated planner worktree, requires
 structured PlanGraph JSON, validates it against the current task/version before
 activation, filters planner JSON out of assistant-facing run output, and fails
-before the primary adapter starts when output is invalid. Unsupported planner
-modes fail inspectably instead of activating caller-supplied graphs. The core
-amendment contract supports durable `proposed` graph versions in memory and
-SQLite.
+before the primary adapter starts when output is invalid. The system planner
+prompt includes the full PlanGraph/node required-field contract and a minimal
+valid JSON template so adapter output is guided toward validator-compatible
+graphs without deterministic post-fill. Unsupported planner modes fail
+inspectably instead of activating caller-supplied graphs. The core amendment
+contract supports durable `proposed` graph versions in memory and SQLite.
 Creating a proposed graph does not replace the current active graph; activation
 supersedes the old active graph only after validation, and changes to required
 execution nodes require an explicit approval flag. Additional primary PlanNodes
