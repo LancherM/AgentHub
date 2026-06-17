@@ -700,6 +700,64 @@ describe("task runner", () => {
       .toBe(2);
   });
 
+  it("starts bounded parallel PlanGraph branches concurrently", async () => {
+    const release = deferred();
+    const adapter = new ConcurrentBranchAgentAdapter(release.promise);
+    const fixture = await createSchedulerFixture(
+      "scheduler_parallel_concurrent",
+      (taskId) => schedulerGraph({
+        taskId,
+        nodes: [
+          { key: "docs", kind: "documentation", mode: "primary_run" },
+          { key: "tests", kind: "verify", mode: "primary_run" },
+          { key: "review", kind: "review", mode: "primary_run" }
+        ],
+        edges: [
+          { from: "planner", to: "docs", type: "parallel" },
+          { from: "planner", to: "tests", type: "parallel" },
+          { from: "planner", to: "review", type: "parallel" }
+        ]
+      }),
+      adapter
+    );
+
+    const running = fixture.runner.runPlanGraph({
+      projectRoot: fixture.projectRoot,
+      projectId: fixture.task.projectId,
+      taskId: fixture.task.id,
+      taskPrompt: "Run two parallel branches at once.",
+      agentKind: "fake",
+      maxScheduledRuns: 2,
+      maxConcurrentRuns: 2
+    });
+    let waitError: unknown;
+    try {
+      await waitForCondition(
+        () => adapter.maxActive >= 2 && adapter.inputs.length >= 2,
+        "two concurrent PlanGraph branches"
+      );
+    } catch (error) {
+      waitError = error;
+    } finally {
+      release.resolve();
+    }
+    const result = await running;
+    if (waitError) {
+      throw waitError;
+    }
+
+    expect(result.status).toBe("limited");
+    expect(result.scheduledRuns).toHaveLength(2);
+    expect(adapter.maxActive).toBe(2);
+    expect(new Set(adapter.inputs.map((input) => input.currentPlanNode?.id)).size)
+      .toBe(2);
+    expect(
+      new Set(result.scheduledRuns.map((run) => run.run.branchName)).size
+    ).toBe(2);
+    expect(result.scheduledRuns.every((run) => run.run.branchName?.includes("/plan-")))
+      .toBe(true);
+  });
+
   it("activates fallback edges after a failed required PlanNode", async () => {
     const graphHolder: { graph?: PlanGraph } = {};
     const adapter: AgentAdapter = {
@@ -4251,6 +4309,33 @@ class BlockingFakeAgentAdapter {
   }
 }
 
+class ConcurrentBranchAgentAdapter implements AgentAdapter {
+  readonly kind = "fake";
+  readonly displayName = "Concurrent Branch Fake";
+  readonly inputs: AgentRunInput[] = [];
+  active = 0;
+  maxActive = 0;
+
+  constructor(private readonly release: Promise<void>) {}
+
+  async detect(): Promise<{ available: true; version: string }> {
+    return { available: true, version: "concurrent-branch" };
+  }
+
+  async *run(input: AgentRunInput): AsyncIterable<AgentRunEvent> {
+    this.inputs.push(input);
+    this.active += 1;
+    this.maxActive = Math.max(this.maxActive, this.active);
+    yield { type: "status", message: "concurrent branch entered" };
+    try {
+      await this.release;
+      yield { type: "exit", message: "concurrent branch completed", exitCode: 0 };
+    } finally {
+      this.active -= 1;
+    }
+  }
+}
+
 class CapturingAgentAdapter implements AgentAdapter {
   readonly kind = "fake";
   readonly displayName = "Capturing Fake";
@@ -4465,6 +4550,20 @@ function deferred(): {
     reject = promiseReject;
   });
   return { promise, resolve, reject };
+}
+
+async function waitForCondition(
+  predicate: () => boolean,
+  label: string
+): Promise<void> {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < 1_000) {
+    if (predicate()) {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error(`timed out waiting for ${label}`);
 }
 
 async function waitForPersistedRunEvent(

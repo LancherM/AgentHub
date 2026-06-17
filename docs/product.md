@@ -634,9 +634,13 @@ bounded `TaskRunner.runPlanGraph()` scheduler can now walk an active PlanGraph
 locally: it treats system nodes as satisfied, blocks behind required manual
 nodes, runs eligible `primary_run` nodes through the existing isolated
 TaskRunner path, honors fallback edges only after failed or blocked sources,
-limits scheduled runs when requested, and requires an explicit rerun request
-before repeating successful plan nodes. A dedicated desktop graph canvas remains
-follow-on UI work beyond the current read-only Trace tab.
+limits scheduled runs when requested, starts eligible independent branches in
+bounded concurrent batches, gives each scheduled branch a unique local worktree
+branch, and requires an explicit rerun request before repeating successful plan
+nodes. `maxConcurrentRuns` controls how many runnable branches start together;
+when it is omitted, `maxScheduledRuns` also bounds the batch size, and otherwise
+the scheduler preserves single-branch execution. A dedicated desktop graph
+canvas remains follow-on UI work beyond the current read-only Trace tab.
 
 The PlanGraph lifecycle now has local acceptance coverage: test planner
 fixtures create task briefs, use active planner-owned graphs to schedule

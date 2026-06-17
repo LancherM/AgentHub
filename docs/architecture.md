@@ -502,9 +502,17 @@ calling TaskRunner with `RunTaskInput.planGraphBinding`; the higher-level
 active graph, selects runnable `primary_run` nodes whose required upstream
 system or primary nodes are satisfied, blocks required downstream work behind
 manual nodes, activates fallback edges only after failed or blocked sources,
-and calls the same isolated `run()` path with explicit bindings. It does not
-mutate the PlanGraph, apply code, merge, push, approve memory, or export
-repository context, and it leaves explicit reruns opt-in for successful nodes.
+and calls the same isolated `run()` path with explicit bindings. Runnable
+independent branches are launched in bounded concurrent batches; `maxScheduledRuns`
+limits the total number of runs scheduled by one call, while `maxConcurrentRuns`
+limits how many runnable branches start at the same time before the scheduler
+re-evaluates downstream dependencies. If `maxConcurrentRuns` is omitted,
+`maxScheduledRuns` also bounds the batch size when present; otherwise the
+scheduler keeps single-branch execution. PlanGraph-scheduled runs use per-node,
+per-run branch names so same-agent parallel branches do not collide in git
+worktree setup. The scheduler does not mutate the PlanGraph, apply code, merge,
+push, approve memory, or export repository context, and it leaves explicit
+reruns opt-in for successful nodes.
 Downstream verification, review, memory, and handoff nodes are inspectable
 governance/evidence nodes unless a caller explicitly binds them to an
 executable run.

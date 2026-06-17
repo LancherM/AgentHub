@@ -238,6 +238,7 @@ export interface RunPlanGraphInput extends Omit<
 > {
   planGraphId?: string;
   maxScheduledRuns?: number;
+  maxConcurrentRuns?: number;
   rerunPlanNodeIds?: readonly string[];
 }
 
@@ -530,6 +531,7 @@ export class TaskRunner {
     }
     const {
       maxScheduledRuns,
+      maxConcurrentRuns,
       planGraphId: _planGraphId,
       rerunPlanNodeIds,
       taskPrompt,
@@ -544,34 +546,49 @@ export class TaskRunner {
       rerunPlanNodeIds: [...rerunNodeIds]
     });
     const maxRuns = maxScheduledRuns ?? Number.POSITIVE_INFINITY;
+    const maxConcurrent = normalizePlanGraphConcurrentRunLimit(
+      maxConcurrentRuns ?? maxScheduledRuns
+    );
 
     while (scheduledRuns.length < maxRuns) {
-      const next = schedule.runnable[0];
-      if (!next) {
+      const remainingRuns = maxRuns - scheduledRuns.length;
+      const batch = schedule.runnable.slice(
+        0,
+        Math.min(remainingRuns, maxConcurrent)
+      );
+      if (batch.length === 0) {
         break;
       }
-      const result = await this.run({
-        ...runInput,
-        taskId: planGraph.taskId,
-        taskPrompt: scheduledPlanNodePrompt({
-          task,
-          graph: planGraph,
-          node: next.node,
-          originalPrompt: taskPrompt
-        }),
-        agentKind: agentKindForPlanNode(next.node, agentKind),
-        taskStatusMode: "plan_graph_scheduler",
-        planGraphMode: "disabled",
-        planGraphBinding: {
-          planGraphId: planGraph.id,
-          planGraphVersion: planGraph.version,
-          planNodeId: next.node.id,
-          allowedNextPlanNodeIds: next.allowedNextPlanNodeIds
-        }
-      });
-      scheduledRuns.push(result);
-      warnings.push(...result.warnings);
-      rerunNodeIds.delete(next.node.id);
+      const batchResults = await Promise.all(
+        batch.map((next) =>
+          this.run({
+            ...runInput,
+            taskId: planGraph.taskId,
+            taskPrompt: scheduledPlanNodePrompt({
+              task,
+              graph: planGraph,
+              node: next.node,
+              originalPrompt: taskPrompt
+            }),
+            agentKind: agentKindForPlanNode(next.node, agentKind),
+            taskStatusMode: "plan_graph_scheduler",
+            planGraphMode: "disabled",
+            planGraphBinding: {
+              planGraphId: planGraph.id,
+              planGraphVersion: planGraph.version,
+              planNodeId: next.node.id,
+              allowedNextPlanNodeIds: next.allowedNextPlanNodeIds
+            }
+          })
+        )
+      );
+      scheduledRuns.push(...batchResults);
+      for (const result of batchResults) {
+        warnings.push(...result.warnings);
+      }
+      for (const next of batch) {
+        rerunNodeIds.delete(next.node.id);
+      }
       schedule = await evaluatePlanGraphSchedule(this, {
         graph: planGraph,
         rerunPlanNodeIds: [...rerunNodeIds]
@@ -1011,6 +1028,13 @@ export class TaskRunner {
         agentKind: parsed.agentKind,
         branchName: continuation
           ? continuationBranchName(task.id, parsed.agentKind, continuation.parentRunId, run.id)
+          : input.taskStatusMode === "plan_graph_scheduler" && input.planGraphBinding
+            ? scheduledPlanGraphBranchName(
+              task.id,
+              parsed.agentKind,
+              input.planGraphBinding.planNodeId,
+              run.id
+            )
           : input.taskStatusMode === "shared_task"
             ? sharedTaskBranchName(task.id, parsed.agentKind, run.id)
           : undefined,
@@ -2230,6 +2254,16 @@ function normalizePlanGraphMode(
   return mode;
 }
 
+function normalizePlanGraphConcurrentRunLimit(value: number | undefined): number {
+  if (value === undefined) {
+    return 1;
+  }
+  if (!Number.isInteger(value) || value < 1) {
+    throw new TaskRunnerError("maxConcurrentRuns must be a positive integer");
+  }
+  return value;
+}
+
 function shouldDisableDefaultPlanGraph(
   input: RunTaskInput,
   agentKind: AgentKind
@@ -3444,6 +3478,20 @@ function sharedTaskBranchName(
     sanitizeSegment(taskId),
     sanitizeSegment(agentKind),
     shortSegment(runId)
+  ].join("/");
+}
+
+function scheduledPlanGraphBranchName(
+  taskId: string,
+  agentKind: AgentKind,
+  planNodeId: string,
+  runId: string
+): string {
+  return [
+    "agent-hub",
+    sanitizeSegment(taskId),
+    sanitizeSegment(agentKind),
+    `plan-${shortSegment(planNodeId)}-${shortSegment(runId)}`
   ].join("/");
 }
 
