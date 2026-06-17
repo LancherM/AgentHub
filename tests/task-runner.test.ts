@@ -366,7 +366,13 @@ describe("task runner", () => {
       "For answer-only, conversational, status, explanation, question-answering, or no-repository-change requests"
     );
     expect(adapterInputs[0].taskPrompt).toContain(
+      "test, demonstrate, or inspect PlanGraph, Graph, role delegation, or simple planning behavior"
+    );
+    expect(adapterInputs[0].taskPrompt).toContain(
       "Do not place a required manual node before another required primary_run node"
+    );
+    expect(adapterInputs[0].taskPrompt).toContain(
+      "Do not copy repository workflow rules about committing, pushing, opening pull requests"
     );
     expect(adapterInputs[0].taskPrompt).toContain(
       "\"acceptanceCriteria\":"

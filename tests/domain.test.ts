@@ -336,6 +336,23 @@ describe("domain model validation", () => {
     };
     expect(validatePlanGraph(explicitNonGoal)).toBe(explicitNonGoal);
 
+    const unsafePullRequest = planGraphFixture();
+    unsafePullRequest.nodes[2] = {
+      ...unsafePullRequest.nodes[2],
+      instructions: "Summarize the result and then create a pull request."
+    };
+    expect(() => validatePlanGraph(unsafePullRequest)).toThrow(DomainValidationError);
+
+    const explicitPullRequestNonGoal = planGraphFixture();
+    explicitPullRequestNonGoal.nodes[2] = {
+      ...explicitPullRequestNonGoal.nodes[2],
+      instructions:
+        "Summarize local evidence only. Do not create a pull request or push changes."
+    };
+    expect(validatePlanGraph(explicitPullRequestNonGoal)).toBe(
+      explicitPullRequestNonGoal
+    );
+
     const unsupportedMode = planGraphFixture();
     unsupportedMode.nodes[1] = {
       ...unsupportedMode.nodes[1],

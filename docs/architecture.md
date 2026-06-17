@@ -482,10 +482,14 @@ repository-change template for work that needs runnable verification. TaskRunner
 passes configured verification commands into that prompt, but it does not
 deterministically classify the user request or fill missing node fields after
 the adapter returns. The prompt instructs the planner to keep no-change tasks to
-planner-plus-one-role graphs, to use `primary_run` for runnable verification
-when checks are configured, and to reserve required `manual` nodes for true
-human/operator gates that intentionally stop downstream scheduling. Planner
-events are marked as planner-phase
+planner-plus-one-role graphs, including PlanGraph/Graph/role-delegation test
+requests unless the user explicitly asks for repository file edits. It also
+instructs the planner not to copy repository workflow rules about commits,
+pushes, pull requests, branch publication, or merges into any PlanNode title,
+instructions, or acceptance criteria. The prompt tells the planner to use
+`primary_run` for runnable verification when checks are configured, and to
+reserve required `manual` nodes for true human/operator gates that intentionally
+stop downstream scheduling. Planner events are marked as planner-phase
 events and filtered out of assistant-facing output so PlanGraph JSON does not
 become a role response. The planner is represented as the graph's `planner`
 node with `execution.mode: "system"`. TaskRunner selects the first planned
