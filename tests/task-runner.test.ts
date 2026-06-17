@@ -366,7 +366,13 @@ describe("task runner", () => {
       "For answer-only, conversational, status, explanation, question-answering, or no-repository-change requests"
     );
     expect(adapterInputs[0].taskPrompt).toContain(
-      "test, demonstrate, or inspect PlanGraph, Graph, role delegation, or simple planning behavior"
+      "test, demonstrate, or inspect PlanGraph, Graph, role delegation, or planning behavior"
+    );
+    expect(adapterInputs[0].taskPrompt).toContain(
+      "If the user explicitly asks for a complex graph for testing"
+    );
+    expect(adapterInputs[0].taskPrompt).toContain(
+      "Memory nodes may only summarize memory proposal candidates"
     );
     expect(adapterInputs[0].taskPrompt).toContain(
       "Do not place a required manual node before another required primary_run node"

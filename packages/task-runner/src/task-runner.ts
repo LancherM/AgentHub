@@ -2300,6 +2300,21 @@ function plannerTaskBriefForGraphOutput(input: {
     "verify",
     2
   );
+  const exampleReviewNodeId = planNodeIdForPlanGraph(
+    expectedGraphId,
+    "review",
+    3
+  );
+  const exampleMemoryNodeId = planNodeIdForPlanGraph(
+    expectedGraphId,
+    "memory",
+    4
+  );
+  const exampleHandoffNodeId = planNodeIdForPlanGraph(
+    expectedGraphId,
+    "handoff",
+    5
+  );
   const verificationCommandLines = (input.verificationCommands ?? []).map((command) =>
     `${command.id}: ${formatShellCommand({ executable: command.command, args: command.args ?? [] })}`
   );
@@ -2429,6 +2444,121 @@ function plannerTaskBriefForGraphOutput(input: {
       ]
     }
   }, null, 2);
+  const complexTestingPlanGraphJson = JSON.stringify({
+    planGraph: {
+      id: expectedGraphId,
+      taskId: input.task.id,
+      version: input.plannerInput.version,
+      status: "active",
+      plannerNodeId: expectedPlannerNodeId,
+      createdByRole: "planner",
+      createdAt: input.plannerInput.createdAt,
+      nodes: [
+        {
+          id: expectedPlannerNodeId,
+          kind: "planner",
+          role: "planner",
+          title: "Create execution plan",
+          instructions:
+            "Create a structured, task-bounded PlanGraph from the injected TaskBrief and context.",
+          acceptanceCriteria: [
+            "PlanGraph JSON is valid, planner-rooted, acyclic, and local-only."
+          ],
+          riskLevel: "low",
+          required: true,
+          execution: { mode: "system" },
+          outputPlanGraphId: expectedGraphId
+        },
+        {
+          id: examplePrimaryNodeId,
+          kind: "research",
+          role: input.plannerInput.roleHandle ?? "engineer",
+          title: "Inspect graph test scenario",
+          instructions:
+            "Inspect the requested graph test scenario without changing repository files.",
+          acceptanceCriteria: [
+            "The graph test scope and expected visual branches are explicit."
+          ],
+          riskLevel: "low",
+          required: true,
+          execution: {
+            mode: "primary_run",
+            expectedAdapter: input.agentKind,
+            worktreePolicy: "isolated"
+          }
+        },
+        {
+          id: exampleVerifyNodeId,
+          kind: "verify",
+          role: input.plannerInput.roleHandle ?? "engineer",
+          title: "Exercise verification branch",
+          instructions:
+            "Collect local inspection evidence for the graph test without editing files.",
+          acceptanceCriteria: [
+            "Verification evidence is described as local inspection output."
+          ],
+          riskLevel: "low",
+          required: false,
+          execution: {
+            mode: "primary_run",
+            expectedAdapter: input.agentKind,
+            worktreePolicy: "isolated"
+          }
+        },
+        {
+          id: exampleReviewNodeId,
+          kind: "review",
+          role: "reviewer",
+          title: "Review graph readability",
+          instructions:
+            "Review the planned branches and identify any readability risks.",
+          acceptanceCriteria: [
+            "Readability risks are summarized for explicit operator review."
+          ],
+          riskLevel: "low",
+          required: false,
+          execution: { mode: "non_executable" }
+        },
+        {
+          id: exampleMemoryNodeId,
+          kind: "memory",
+          role: "memory",
+          title: "Record memory proposal candidate",
+          instructions:
+            "Summarize any memory proposal candidate for later explicit review without changing memory state.",
+          acceptanceCriteria: [
+            "Memory proposal candidates are recorded as proposals only."
+          ],
+          riskLevel: "low",
+          required: false,
+          execution: { mode: "non_executable" }
+        },
+        {
+          id: exampleHandoffNodeId,
+          kind: "handoff",
+          role: "operator",
+          title: "Summarize graph test handoff",
+          instructions:
+            "Summarize the synthetic graph test structure and residual risks.",
+          acceptanceCriteria: [
+            "Graph test branches and residual risks are clear."
+          ],
+          riskLevel: "low",
+          required: true,
+          execution: { mode: "non_executable" }
+        }
+      ],
+      edges: [
+        { from: expectedPlannerNodeId, to: examplePrimaryNodeId, type: "primary" },
+        { from: examplePrimaryNodeId, to: exampleVerifyNodeId, type: "parallel" },
+        { from: examplePrimaryNodeId, to: exampleReviewNodeId, type: "parallel" },
+        { from: exampleReviewNodeId, to: exampleMemoryNodeId, type: "optional" },
+        { from: examplePrimaryNodeId, to: exampleHandoffNodeId, type: "primary" },
+        { from: exampleVerifyNodeId, to: exampleHandoffNodeId, type: "optional" },
+        { from: exampleMemoryNodeId, to: exampleHandoffNodeId, type: "optional" }
+      ]
+    }
+  }, null, 2);
   const prompt = [
     "You are Agent Hub's system @planner role.",
     "",
@@ -2472,10 +2602,14 @@ function plannerTaskBriefForGraphOutput(input: {
     `- primary_run nodes should set execution.expectedAdapter to ${input.agentKind} unless the task clearly requires a different available adapter.`,
     "- primary_run nodes must set execution.worktreePolicy to isolated.",
     "- Classify the task before adding nodes:",
-    "  - For requests whose purpose is to test, demonstrate, or inspect PlanGraph, Graph, role delegation, or simple planning behavior, classify as no-repository-change unless the user explicitly asks to edit repository files.",
-    "  - For answer-only, conversational, status, explanation, question-answering, or no-repository-change requests, return only the planner node plus one required primary_run node that answers or inspects. Do not add required verify, review, handoff, memory, or manual nodes.",
+    "  - For requests whose purpose is to test, demonstrate, or inspect PlanGraph, Graph, role delegation, or planning behavior, classify as no-repository-change unless the user explicitly asks to edit repository files.",
+    "  - If the user explicitly asks for a complex graph for testing, create a richer synthetic PlanGraph with safe parallel/optional/fallback branches. The graph may include research, verify, review, memory, and handoff nodes, but every node must stay local, inspectable, and side-effect-free unless the user explicitly requested repository edits.",
+    "  - For answer-only, conversational, status, explanation, question-answering, or no-repository-change requests without an explicit complex-graph testing request, return only the planner node plus one required primary_run node that answers or inspects. Do not add required verify, review, handoff, memory, or manual nodes.",
     "  - For code, docs, config, or file-changing requests, include implementation/documentation nodes and verification/review nodes that are justified by configured commands, changed-file risk, or explicit user request.",
     "  - For high-risk or ambiguous repository changes, prefer a small required primary_run verification/review node over a manual blocker when the selected adapter can gather evidence.",
+    "- Memory node requirements:",
+    "  - Memory nodes may only summarize memory proposal candidates, memory evidence, or explicit-review handoff notes.",
+    "  - Never ask a PlanGraph node to approve, auto-promote, or write approved memory. Use wording such as memory proposal candidate, memory evidence, or explicit memory review.",
     "- Use manual only for true non-agent inspection or approval gates that must stop automation until a human acts.",
     "- Do not place a required manual node before another required primary_run node; it will intentionally block downstream scheduling.",
     "- Use non_executable only for pure summaries that do not need an adapter run and are not required to unlock downstream work.",
@@ -2494,7 +2628,11 @@ function plannerTaskBriefForGraphOutput(input: {
     "",
     "Valid JSON template for repository-changing tasks with runnable verification:",
     "Use this shape only when the task changes code/docs/config or has configured evidence requirements. Adapt titles, instructions, acceptanceCriteria, riskLevel, roles, and edges to the task.",
-    changeTaskPlanGraphJson
+    changeTaskPlanGraphJson,
+    "",
+    "Valid JSON template for complex graph testing without repository changes:",
+    "Use this shape when the user explicitly asks for a richer graph to test or inspect Graph/PlanGraph behavior. Keep it synthetic and local-only; memory nodes are proposals/evidence only.",
+    complexTestingPlanGraphJson
   ].join("\n");
   return validateTaskBrief({
     ...input.taskBrief,
@@ -2513,6 +2651,10 @@ function plannerTaskBriefForGraphOutput(input: {
       "## Repository-Change JSON Shape",
       "",
       changeTaskPlanGraphJson,
+      "",
+      "## Complex Graph Testing JSON Shape",
+      "",
+      complexTestingPlanGraphJson,
       "",
       "Choose the smallest appropriate shape for the task. Do not add required manual verification/review/handoff gates for answer-only or no-change requests."
     ].join("\n")
