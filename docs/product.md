@@ -563,7 +563,14 @@ for file edits. Complex graph testing requests may produce richer synthetic
 local-only graphs with parallel, optional, or fallback branches. Memory nodes in
 those graphs may describe memory proposal candidates, memory evidence, or
 explicit-review handoff notes, but they must not request memory approval or
-promotion. Repository workflow rules about commits, pushes, pull requests,
+promotion, and planner prompt wording avoids reusable memory-approval phrases
+that adapters tend to copy into node text. If a planner output fails only
+because it requests a prohibited local side effect such as memory approval,
+push, merge, pull request creation, repository export, or repository-root
+context-file writes, Agent Hub asks the same `@planner` adapter for one full
+replacement PlanGraph JSON object with a shorter correction prompt. Agent Hub
+does not locally patch missing fields or rewrite the graph deterministically.
+Repository workflow rules about commits, pushes, pull requests,
 branch publication, or merges are not copied into PlanNode titles,
 instructions, or acceptance criteria; repository-changing tasks may add
 verification or review nodes only when configured commands, changed-file risk,
@@ -636,7 +643,10 @@ prompt includes the full PlanGraph/node required-field contract and a minimal
 valid JSON template plus a separate repository-change template, with explicit
 task-classification, complex graph testing, memory proposal, and
 verification-command guidance so adapter output is guided toward
-validator-compatible, non-blocking graphs without deterministic post-fill.
+validator-compatible, non-blocking graphs without deterministic post-fill. A
+single same-adapter retry is allowed when the first planner output uses
+prohibited side-effect wording; the retry must return a complete replacement
+PlanGraph JSON object and is still validated before activation.
 Unsupported planner modes fail
 inspectably instead of activating caller-supplied graphs. The core amendment
 contract supports durable `proposed` graph versions in memory and SQLite.

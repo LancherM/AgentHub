@@ -376,6 +376,7 @@ describe("task runner", () => {
     expect(adapterInputs[0].taskPrompt).toContain(
       "Memory nodes may only summarize memory proposal candidates"
     );
+    expect(adapterInputs[0].taskPrompt).not.toContain("memory approval");
     expect(adapterInputs[0].taskPrompt).toContain(
       "Do not place a required manual node before another required primary_run node"
     );
@@ -406,6 +407,92 @@ describe("task runner", () => {
       ])
     );
     await expect(planGraphRepository.getActiveByTaskId("task_agent_planner"))
+      .resolves.toMatchObject({ id: result.planGraph?.id, status: "active" });
+  });
+
+  it("retries planner output once when a generated graph requests memory-side effects", async () => {
+    const projectRoot = await createTestDirectory("agent-hub-agent-planner-retry-project");
+    const runRoot = await createTestDirectory("agent-hub-agent-planner-retry-runs");
+    const planGraphRepository = new InMemoryPlanGraphRepository();
+    const adapterInputs: AgentRunInput[] = [];
+    let plannerAttempts = 0;
+    const adapter: AgentAdapter = {
+      kind: "fake",
+      displayName: "Retry Planner Fake",
+      async detect() {
+        return { available: true, version: "retry-planner" };
+      },
+      async *run(input: AgentRunInput): AsyncIterable<AgentRunEvent> {
+        adapterInputs.push(input);
+        if (input.role?.roleHandle === "planner") {
+          plannerAttempts += 1;
+          const graph = testPlannerGraph(input.taskId, 1, input.taskTitle);
+          yield {
+            type: "message",
+            message: JSON.stringify({
+              planGraph: plannerAttempts === 1
+                ? {
+                  ...graph,
+                  nodes: graph.nodes.map((node) =>
+                    node.kind === "implement"
+                      ? {
+                        ...node,
+                        instructions: "Request memory approval before continuing."
+                      }
+                      : node
+                  )
+                }
+                : graph
+            }),
+            metadata: { assistantOutput: true }
+          };
+          yield { type: "exit", message: "@planner completed", exitCode: 0 };
+          return;
+        }
+        yield { type: "status", message: "primary adapter started" };
+        yield { type: "exit", message: "primary completed", exitCode: 0 };
+      }
+    };
+    const runner = new TaskRunner({
+      defaultRunRoot: runRoot,
+      workspaceManager: new TestWorkspaceManager(runRoot),
+      diffCollector: new StaticDiffCollector(),
+      verificationRunner: new VerificationRunner(new MockShellExecutor()),
+      planGraphRepository,
+      agentRegistry: new DefaultAgentRegistry([adapter]),
+      idGenerator: new SequenceIdGenerator(),
+      clock: new FixedClock("2026-01-01T00:00:00.000Z")
+    });
+
+    const result = await runner.run({
+      projectRoot,
+      taskPrompt: "i mean a much more complex graph for testing",
+      agentKind: "fake",
+      taskId: "task_agent_planner_retry",
+      planGraphMode: "agent_adapter",
+      plannerAgentKind: "fake"
+    });
+
+    expect(result.status).toBe("succeeded");
+    expect(result.planGraph?.id).toBe("plan_graph:task_agent_planner_retry:v1");
+    expect(adapterInputs.filter((input) => input.role?.roleHandle === "planner"))
+      .toHaveLength(2);
+    expect(adapterInputs[1].taskPrompt).toContain(
+      "Your previous PlanGraph JSON failed validation"
+    );
+    expect(adapterInputs[1].taskPrompt).toContain(
+      "must not contain approve, approval"
+    );
+    expect(result.events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          metadata: expect.objectContaining({
+            desktopEventType: "planner_retry_started"
+          })
+        })
+      ])
+    );
+    await expect(planGraphRepository.getActiveByTaskId("task_agent_planner_retry"))
       .resolves.toMatchObject({ id: result.planGraph?.id, status: "active" });
   });
 

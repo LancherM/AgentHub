@@ -481,12 +481,18 @@ valid JSON template for answer-only or no-change work and a separate
 repository-change template for work that needs runnable verification. TaskRunner
 passes configured verification commands into that prompt, but it does not
 deterministically classify the user request or fill missing node fields after
-the adapter returns. The prompt instructs the planner to keep ordinary no-change
+the adapter returns. If validation fails only because the planner requested a
+prohibited local side effect, TaskRunner can call the same planner adapter once
+more with a shorter correction prompt and require a complete replacement
+PlanGraph JSON object; the replacement is validated normally before activation.
+The prompt instructs the planner to keep ordinary no-change
 tasks to planner-plus-one-role graphs, while allowing explicit complex
 Graph/PlanGraph testing requests to produce richer synthetic local-only graphs
 with safe parallel, optional, or fallback branches. Memory nodes in those
 synthetic graphs may describe proposal candidates or evidence for explicit
-review, but not memory approval or promotion. It also instructs the planner not
+review, but not memory approval or promotion, and memory node text is directed
+toward proposal/evidence/review wording instead of approved-memory state
+changes. It also instructs the planner not
 to copy repository workflow rules about commits, pushes, pull requests, branch
 publication, or merges into any PlanNode title, instructions, or acceptance
 criteria. The prompt tells the planner to use `primary_run` for runnable

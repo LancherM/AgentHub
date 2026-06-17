@@ -61,6 +61,7 @@ import {
   type AgentAvailabilityOptions
 } from "@agent-hub/shared";
 import {
+  DomainValidationError,
   createId,
   nowIso,
   planGraphIdForTaskVersion,
@@ -1831,7 +1832,6 @@ export class TaskRunner {
 
     let plannerSession: WorkspaceSession | undefined;
     let plannerSucceeded = false;
-    const plannerEvents: AgentRunEvent[] = [];
     try {
       plannerSession = await this.workspaceManager.createSession({
         sourceRepositoryPath: input.projectRoot,
@@ -1864,44 +1864,72 @@ export class TaskRunner {
         "tasks",
         input.task.id
       );
-      await materializeWorktreeOverlay({
-        worktreePath: plannerSession.workspace.path,
-        taskId: input.task.id,
-        contextPack: input.contextPack,
-        taskBrief: plannerTaskBrief,
-        contextMarkdown: input.contextMarkdown,
-        includeAgentFiles: false
-      });
+      const plannerWorkspace = plannerSession.workspace;
+      const runPlannerAttempt = async (
+        taskBrief: TaskBrief
+      ): Promise<AgentRunEvent[]> => {
+        await materializeWorktreeOverlay({
+          worktreePath: plannerWorkspace.path,
+          taskId: input.task.id,
+          contextPack: input.contextPack,
+          taskBrief,
+          contextMarkdown: input.contextMarkdown,
+          includeAgentFiles: false
+        });
+        const attemptEvents: AgentRunEvent[] = [];
+        for await (const event of plannerAdapter.run({
+          originalProjectRoot: input.projectRoot,
+          worktreePath: plannerWorkspace.path,
+          taskBriefPath: path.join(plannerRuntimeDirectory, "brief.md"),
+          contextPackPath: path.join(plannerRuntimeDirectory, "context-pack.json"),
+          contextBundle: input.contextBundle,
+          contextMarkdown: input.contextMarkdown,
+          role: plannerRoleMetadata(),
+          runtimeDirectory: plannerRuntimeDirectory,
+          taskId: input.task.id,
+          taskTitle: input.task.title,
+          taskPrompt: taskBrief.taskPrompt ?? input.task.description ?? input.task.title,
+          environment: input.environment,
+          signal: input.signal
+        })) {
+          attemptEvents.push(event);
+          await input.emitRunEvent(plannerEvent(event));
+        }
+        const exitEvent = findLastExitEvent(attemptEvents);
+        if (!exitEvent || exitEvent.exitCode !== 0) {
+          throw new Error(
+            exitEvent?.message ?? "@planner adapter did not report a successful exit"
+          );
+        }
+        return attemptEvents;
+      };
 
-      for await (const event of plannerAdapter.run({
-        originalProjectRoot: input.projectRoot,
-        worktreePath: plannerSession.workspace.path,
-        taskBriefPath: path.join(plannerRuntimeDirectory, "brief.md"),
-        contextPackPath: path.join(plannerRuntimeDirectory, "context-pack.json"),
-        contextBundle: input.contextBundle,
-        contextMarkdown: input.contextMarkdown,
-        role: plannerRoleMetadata(),
-        runtimeDirectory: plannerRuntimeDirectory,
-        taskId: input.task.id,
-        taskTitle: input.task.title,
-        taskPrompt: plannerTaskBrief.taskPrompt ?? input.task.description ?? input.task.title,
-        environment: input.environment,
-        signal: input.signal
-      })) {
-        plannerEvents.push(event);
-        await input.emitRunEvent(plannerEvent(event));
-      }
-
-      const exitEvent = findLastExitEvent(plannerEvents);
-      if (!exitEvent || exitEvent.exitCode !== 0) {
-        throw new Error(
-          exitEvent?.message ?? "@planner adapter did not report a successful exit"
+      let graph: PlanGraph;
+      const plannerEvents = await runPlannerAttempt(plannerTaskBrief);
+      try {
+        graph = parseStructuredPlanGraphOutput(
+          input.plannerInput,
+          plannerOutputFromEvents(plannerEvents)
+        );
+      } catch (error) {
+        if (!shouldRetryPlannerOutput(error)) {
+          throw error;
+        }
+        await input.emitRunEvent(
+          progressEvent("planner_retry_started", "@planner adapter retrying invalid PlanGraph output.", {
+            phase: "planner",
+            plannerMode: "agent_adapter",
+            plannerAgentKind: input.plannerAgentKind,
+            retryReason: plannerRetryReason(error)
+          })
+        );
+        const retryTaskBrief = plannerRetryTaskBriefForGraphOutput(input, error);
+        const retryEvents = await runPlannerAttempt(retryTaskBrief);
+        graph = parseStructuredPlanGraphOutput(
+          input.plannerInput,
+          plannerOutputFromEvents(retryEvents)
         );
       }
-      const graph = parseStructuredPlanGraphOutput(
-        input.plannerInput,
-        plannerOutputFromEvents(plannerEvents)
-      );
       plannerSucceeded = true;
       return graph;
     } finally {
@@ -2723,7 +2751,8 @@ function plannerTaskBriefForGraphOutput(input: {
     "  - For high-risk or ambiguous repository changes, prefer a small required primary_run verification/review node over a manual blocker when the selected adapter can gather evidence.",
     "- Memory node requirements:",
     "  - Memory nodes may only summarize memory proposal candidates, memory evidence, or explicit-review handoff notes.",
-    "  - Never ask a PlanGraph node to approve, auto-promote, or write approved memory. Use wording such as memory proposal candidate, memory evidence, or explicit memory review.",
+    "  - Memory node title, instructions, and acceptanceCriteria must use proposal/evidence/review wording only.",
+    "  - Do not use approve, approval, auto-approve, approved, promote, promotion, or auto-promote wording in memory node text.",
     "- Use manual only for true non-agent inspection or approval gates that must stop automation until a human acts.",
     "- Do not place a required manual node before another required primary_run node; it will intentionally block downstream scheduling.",
     "- Use non_executable only for pure summaries that do not need an adapter run and are not required to unlock downstream work.",
@@ -2731,7 +2760,7 @@ function plannerTaskBriefForGraphOutput(input: {
     "- If verification commands are configured, model runnable verification as primary_run so TaskRunner can collect concrete evidence in an isolated worktree.",
     "",
     "Safety boundaries:",
-    "- Do not plan automatic merge, push, pull request creation, branch deletion, repository context export, memory approval, or repository-root context-file writes.",
+    "- Do not plan automatic merge, push, pull request creation, branch deletion, repository context export, approved-memory store changes, or repository-root context-file writes.",
     "- Do not copy repository workflow rules about committing, pushing, opening pull requests, publishing branches, or merging into any node title, instructions, or acceptanceCriteria; use local evidence or local handoff wording instead.",
     "- Do not include secrets, credentials, private key paths, or instructions to inspect credential files.",
     "- Do not mutate the task brief or approved memory; RoleCalls are runtime events and are not edits to the PlanGraph.",
@@ -2773,6 +2802,102 @@ function plannerTaskBriefForGraphOutput(input: {
       "Choose the smallest appropriate shape for the task. Do not add required manual verification/review/handoff gates for answer-only or no-change requests."
     ].join("\n")
   });
+}
+
+function plannerRetryTaskBriefForGraphOutput(
+  input: {
+    task: Task;
+    taskBrief: TaskBrief;
+    agentKind: AgentKind;
+    plannerInput: PlanGraphPlannerInput;
+  },
+  error: unknown
+): TaskBrief {
+  const expectedGraphId = planGraphIdForTaskVersion(
+    input.task.id,
+    input.plannerInput.version
+  );
+  const expectedPlannerNodeId = plannerNodeIdForPlanGraph(expectedGraphId);
+  const prompt = [
+    "You are Agent Hub's system @planner role.",
+    "",
+    "Your previous PlanGraph JSON failed validation. Return a full replacement JSON object and no prose, markdown, comments, or code fences.",
+    "Do not explain the failure. Do not return a patch or partial graph.",
+    "",
+    "Required identity:",
+    `- planGraph.id: ${expectedGraphId}`,
+    `- planGraph.taskId: ${input.task.id}`,
+    `- planGraph.version: ${input.plannerInput.version}`,
+    "- planGraph.status: active",
+    "- planGraph.createdByRole: planner",
+    `- planner node id: ${expectedPlannerNodeId}`,
+    "- planner node execution.mode: system",
+    "- planner node outputPlanGraphId must equal planGraph.id",
+    "",
+    "Correction requirements:",
+    "- Keep the graph local, acyclic, planner-rooted, and task-bounded.",
+    "- Every node must include id, kind, role, title, instructions, acceptanceCriteria, riskLevel, required, and execution.",
+    "- acceptanceCriteria must be a non-empty array of strings.",
+    "- riskLevel must be low, medium, or high.",
+    "- primary_run nodes must include expectedAdapter and worktreePolicy isolated.",
+    `- primary_run expectedAdapter should be ${input.agentKind} unless the task requires another available adapter.`,
+    "- For complex graph testing requests, produce a richer synthetic graph with safe parallel, optional, or fallback branches.",
+    "- For simple no-change requests, use planner plus one required primary_run node.",
+    "- Memory nodes may describe proposal candidates, evidence, or later review notes only.",
+    "- Memory node title, instructions, and acceptanceCriteria must not contain approve, approval, auto-approve, approved, promote, promotion, or auto-promote wording.",
+    "- Do not include automatic merge, push, pull request, branch publication, repository export, approved-memory store changes, repository-root context-file writes, secrets, or credential-file inspection.",
+    "",
+    "Original task:",
+    input.task.description,
+    "",
+    "Validation category:",
+    plannerRetryReason(error)
+  ].join("\n");
+  return validateTaskBrief({
+    ...input.taskBrief,
+    taskPrompt: prompt,
+    renderedContent: [
+      input.taskBrief.renderedContent.trim(),
+      "",
+      "## Planner Retry Output Contract",
+      "",
+      prompt
+    ].join("\n")
+  });
+}
+
+function shouldRetryPlannerOutput(error: unknown): boolean {
+  if (!(error instanceof DomainValidationError)) {
+    return false;
+  }
+  return error.issues.some((issue) =>
+    /must not request (?:memory approval|automatic git push|automatic merge|automatic pull request creation|repository export|repository-root context file writes)/i.test(issue)
+  );
+}
+
+function plannerRetryReason(error: unknown): string {
+  if (!(error instanceof DomainValidationError)) {
+    return "planner output validation failed";
+  }
+  if (error.issues.some((issue) => /memory approval/i.test(issue))) {
+    return "planner output requested a forbidden memory-side-effect phrase";
+  }
+  if (error.issues.some((issue) => /automatic git push/i.test(issue))) {
+    return "planner output requested a forbidden push side effect";
+  }
+  if (error.issues.some((issue) => /automatic merge/i.test(issue))) {
+    return "planner output requested a forbidden merge side effect";
+  }
+  if (error.issues.some((issue) => /automatic pull request creation/i.test(issue))) {
+    return "planner output requested a forbidden pull request side effect";
+  }
+  if (error.issues.some((issue) => /repository export/i.test(issue))) {
+    return "planner output requested a forbidden repository export side effect";
+  }
+  if (error.issues.some((issue) => /repository-root context file writes/i.test(issue))) {
+    return "planner output requested a forbidden repository-root context write";
+  }
+  return "planner output validation failed";
 }
 
 function plannerRoleMetadata(): WorkgroupRoleRunMetadata {
