@@ -158,7 +158,9 @@ import {
 import { safeGitCommand, safeGitExecutionOptions } from "./git-safety";
 import {
   evaluatePlanGraphSchedule,
-  type PlanGraphScheduleEvaluation
+  type PlanGraphScheduleEvaluation,
+  type PlanGraphSchedulerRepositories,
+  type RunnablePlanNode
 } from "./plan-graph-scheduler";
 
 export type { AgentRunEvent } from "@agent-hub/agent-adapters";
@@ -950,7 +952,7 @@ export class TaskRunner {
             edgeCount: planGraph.edges.length
           })
         );
-        scheduledPlanNode = selectPrimaryPlanNode(planGraph);
+        scheduledPlanNode = await selectPrimaryPlanNode(this, planGraph);
       } catch (error) {
         const message = `plan graph creation failed: ${errorMessage(error)}`;
         await emitRunEvent({ type: "error", message });
@@ -2572,26 +2574,47 @@ function sanitizeGitBranchSegment(value: string): string {
   return sanitized || "item";
 }
 
-function selectPrimaryPlanNode(graph: PlanGraph): ScheduledPlanNode | undefined {
-  const node = graph.nodes.find((candidate) =>
-    candidate.execution.mode === "primary_run"
-  );
-  if (!node) {
+async function selectPrimaryPlanNode(
+  repositories: PlanGraphSchedulerRepositories,
+  graph: PlanGraph
+): Promise<ScheduledPlanNode | undefined> {
+  const schedule = await evaluatePlanGraphSchedule(repositories, { graph });
+  const runnable = schedule.runnable[0];
+  if (!runnable) {
+    if (graph.nodes.some((node) => node.execution.mode === "primary_run")) {
+      throw new Error(noRunnablePrimaryPlanNodeMessage(schedule));
+    }
     return undefined;
   }
-  const allowedNextPlanNodeIds = graph.edges
-    .filter((edge) => edge.from === node.id)
-    .map((edge) => edge.to);
+  return scheduledPlanNodeFromRunnable(graph, runnable);
+}
+
+function scheduledPlanNodeFromRunnable(
+  graph: PlanGraph,
+  runnable: RunnablePlanNode
+): ScheduledPlanNode {
   return {
-    node,
-    allowedNextPlanNodeIds,
+    node: runnable.node,
+    allowedNextPlanNodeIds: runnable.allowedNextPlanNodeIds,
     binding: {
       planGraphId: graph.id,
       planGraphVersion: graph.version,
-      planNodeId: node.id,
-      allowedNextPlanNodeIds
+      planNodeId: runnable.node.id,
+      allowedNextPlanNodeIds: runnable.allowedNextPlanNodeIds
     }
   };
+}
+
+function noRunnablePrimaryPlanNodeMessage(
+  schedule: PlanGraphScheduleEvaluation
+): string {
+  const nodeReasons = schedule.nodes
+    .map((node) => `${node.nodeId}: ${node.reason}`)
+    .join("; ");
+  return [
+    "no runnable primary_run PlanNode is available after planner creation",
+    nodeReasons
+  ].filter(Boolean).join(": ");
 }
 
 function selectBoundPlanNode(

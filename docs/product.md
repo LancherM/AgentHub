@@ -563,10 +563,12 @@ verification as `primary_run`, and prevents required `manual` gates from being
 placed before required executable downstream work. A run-input switch can still
 disable graph creation for
 legacy compatibility, dry runs, and internal fake-adapter tests. The current
-primary adapter run is bound to the first planned `primary_run` node when one
-exists, records that binding in run metadata, and receives a runtime-injected
-PlanGraph/current-node block with allowed next node ids. Role-backed assistant
-output that creates a RoleCall now
+primary adapter run is bound only after the local PlanGraph scheduler confirms
+that a `primary_run` node is runnable. Required manual gates therefore stop the
+initial adapter run instead of being bypassed by a first-node shortcut. The
+selected binding is recorded in run metadata, and the adapter receives a
+runtime-injected PlanGraph/current-node block with allowed next node ids.
+Role-backed assistant output that creates a RoleCall now
 links back to the source run's plan binding when one exists: Agent Hub records a
 RoleCall tool event, stores plan trace context on the RoleCall, creates a
 dynamic `role_call` trace node for accepted RoleCalls, and records a dynamic
@@ -613,9 +615,10 @@ TaskRunner's planner path is agent-backed rather than deterministic or manual.
 configured local adapter inside its own isolated planner worktree, requires
 structured PlanGraph JSON, validates it against the current task/version before
 activation, filters planner JSON out of assistant-facing run output, and fails
-before the primary adapter starts when output is invalid. The system planner
-prompt includes the full PlanGraph/node required-field contract and a minimal
-valid JSON template plus a separate repository-change template, with explicit
+before the primary adapter starts when output is invalid or the resulting graph
+has no scheduler-runnable `primary_run` node. The system planner prompt includes
+the full PlanGraph/node required-field contract and a minimal valid JSON
+template plus a separate repository-change template, with explicit
 task-classification and verification-command guidance so adapter output is
 guided toward validator-compatible, non-blocking graphs without deterministic
 post-fill. Unsupported planner modes fail
