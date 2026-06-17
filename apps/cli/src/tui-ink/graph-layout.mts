@@ -285,7 +285,7 @@ function workbenchGraph(
     : trace.baseEdges.map((edge) => layoutPlanEdge(edge));
   const planNodes = mode === "trace"
     ? []
-    : withPlanBranchGroups(trace.baseNodes.map((node) => layoutPlanNode(node)), planEdges, fold);
+    : withPlanBranchGroups(trace.baseNodes.map((node) => layoutPlanNode(trace, node)), planEdges, fold);
   const traceNodes = mode === "plan"
     ? []
     : trace.dynamicNodes.map((node) => layoutTraceNode(node, fold));
@@ -347,16 +347,55 @@ interface BaseLayoutEdge {
   label?: string;
 }
 
-function layoutPlanNode(node: AnyPlanNode): BaseLayoutNode {
+function layoutPlanNode(trace: ExecutionTraceGraph, node: AnyPlanNode): BaseLayoutNode {
   return {
     id: node.id,
     source: "plan",
     title: node.title,
     subtitle: `${node.kind} @${node.role} ${node.execution.mode}`,
-    status: node.execution.mode,
+    status: planNodeDisplayStatus(trace, node),
     risk: node.riskLevel,
     required: node.required
   };
+}
+
+function planNodeDisplayStatus(
+  trace: ExecutionTraceGraph,
+  node: AnyPlanNode
+): string {
+  const linkedTraceNodes = trace.dynamicNodes.filter((candidate) =>
+    candidate.sourcePlanNodeId === node.id
+  );
+  if (linkedTraceNodes.length > 0) {
+    return mergeTraceStatuses(linkedTraceNodes.map((candidate) => candidate.status));
+  }
+  if (node.id === trace.baseNodes.find((candidate) => candidate.kind === "planner")?.id) {
+    return "completed";
+  }
+  if (node.execution.mode === "system") {
+    return "completed";
+  }
+  return "planned";
+}
+
+function mergeTraceStatuses(statuses: readonly string[]): string {
+  const order = [
+    "failed",
+    "blocked",
+    "deviated",
+    "running",
+    "queued",
+    "completed",
+    "skipped",
+    "planned",
+    "unknown"
+  ];
+  for (const status of order) {
+    if (statuses.includes(status)) {
+      return status;
+    }
+  }
+  return statuses[0] ?? "planned";
 }
 
 function layoutTraceNode(node: TraceNode, fold: GraphFoldMode): BaseLayoutNode {
@@ -939,7 +978,7 @@ function nodeKindMarker(node: GraphLayoutNode): string {
 }
 
 function statusGlyph(status: string): string {
-  if (status === "completed" || status === "succeeded" || status === "primary_run" || status === "system") {
+  if (status === "completed" || status === "succeeded" || status === "system") {
     return "✓";
   }
   if (status === "running" || status === "queued") {
@@ -950,6 +989,9 @@ function statusGlyph(status: string): string {
   }
   if (status === "blocked" || status === "manual") {
     return "■";
+  }
+  if (status === "skipped") {
+    return "○";
   }
   return "·";
 }
@@ -980,7 +1022,7 @@ function nodeTone(node: GraphLayoutNode): GraphWorkbenchRow["tone"] {
   if (node.status === "blocked" || node.risk === "medium") {
     return "warning";
   }
-  if (node.status === "completed" || node.status === "primary_run") {
+  if (node.status === "completed") {
     return "success";
   }
   if (node.groupId) {

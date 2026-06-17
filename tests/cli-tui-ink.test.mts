@@ -1013,6 +1013,10 @@ describe("Ink TUI renderer", () => {
     ]);
     expect(byId.get("pm_plan")?.actions.map((action) => action.id)).toEqual(["inspect", "focus"]);
     expect(byId.get("pm_plan")?.actions.every((action) => action.safe)).toBe(true);
+    expect(byId.get("pm_plan")?.status).toBe("completed");
+    expect(byId.get("codex_run")?.status).toBe("completed");
+    expect(byId.get("claude_run")?.status).toBe("planned");
+    expect(byId.get("compare_results")?.status).toBe("completed");
     expect(layout.viewport.includedNodeIds).toEqual(layout.nodes.map((node) => node.id));
   });
 
@@ -1121,7 +1125,7 @@ describe("Ink TUI renderer", () => {
     expect(text).toContain("●  r0.0 [P ✓] Capture request");
     expect(text).toContain("●  r1.0 [P ✓] Plan workflow");
     expect(text).toContain("├● *r2.0 [P ✓] Codex implementation");
-    expect(text).toContain("└●  r2.1 [P ✓] Claude implementa");
+    expect(text).toContain("└●  r2.1 [P ·] Claude implementa");
     expect(text).toContain("parallel:codex → r2.0 Codex implementation");
     expect(text).toContain("parallel:claude → r2.1 Claude implementa");
     expect(text).toContain("primary:candidate ↓ r3.0 Compare results");
@@ -1567,6 +1571,7 @@ describe("Ink TUI renderer", () => {
     expect(overlay).toContain("flow: top-down steps");
     expect(overlay).toContain("● *r0.0 [P ✓] Implement graph view");
     expect(overlay).toContain("primary:then ↓ r1.0 Verify graph view");
+    expect(overlay).not.toContain("[P ■] Verify graph view");
     expect(overlay).toContain("T");
     expect(overlay).toContain("TaskRun run_1");
     expect(overlay).toContain("legend: [P] plan");

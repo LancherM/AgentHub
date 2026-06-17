@@ -477,8 +477,15 @@ instead of activating caller-supplied graphs. Agent-backed planner output must
 be structured JSON matching the current task/version/id and is rejected before
 any primary adapter execution when it is invalid. The system planner prompt
 contains the complete PlanGraph/node required-field contract plus a minimal
-valid JSON template; TaskRunner does not deterministically fill missing node
-fields after the adapter returns. Planner events are marked as planner-phase
+valid JSON template for answer-only or no-change work and a separate
+repository-change template for work that needs runnable verification. TaskRunner
+passes configured verification commands into that prompt, but it does not
+deterministically classify the user request or fill missing node fields after
+the adapter returns. The prompt instructs the planner to keep no-change tasks to
+planner-plus-one-role graphs, to use `primary_run` for runnable verification
+when checks are configured, and to reserve required `manual` nodes for true
+human/operator gates that intentionally stop downstream scheduling. Planner
+events are marked as planner-phase
 events and filtered out of assistant-facing output so PlanGraph JSON does not
 become a role response. The planner is represented as the graph's `planner`
 node with `execution.mode: "system"`. TaskRunner selects the first planned
@@ -547,9 +554,10 @@ The TUI read model optionally attaches that same projection to
 `TuiCurrentContextModel.executionTrace` for the current task. The Ink Graph
 focus renders the `Graph - Workflow DAG` workbench from that read model only:
 `apps/cli/src/tui-ink/graph-layout.mts` derives a deterministic renderer-local
-layout model with node rank/lane, bounded width, connector anchors, group ids,
-selected/focused state, viewport inclusion, safe action descriptors, bounded
-wide top-down flow rows, local outgoing branch rows, edge labels, structural mini-map,
+layout model with renderer-local plan-node display status, node rank/lane,
+bounded width, connector anchors, group ids, selected/focused state, viewport
+inclusion, safe action descriptors, bounded wide top-down flow rows, local
+outgoing branch rows, edge labels, structural mini-map,
 legend, and compact fallback rows from the `ExecutionTraceGraph` DTO, while
 `packages/core/src/tui-read-model.ts` supplies selected graph-node details for
 incoming links, outgoing links, evidence, deviations, and commands. The
@@ -560,6 +568,11 @@ show same-rank lanes as sibling node rows, and keep local link rows indented
 under the source node for primary, parallel, runtime, fallback, evidence, or
 cross-lane edges; long PlanGraph or trace node ids are shortened
 to local secondary keys unless a command needs the full identifier. The
+renderer projects plan-node glyphs from linked trace evidence before falling
+back to `planned`, so unstarted `primary_run` nodes are not shown as completed
+and unstarted `manual` gates are not shown as blocked merely because of their
+execution mode. This display status is not persisted and does not alter
+TaskRunner scheduling semantics. The
 renderer owns percentage-like zoom density, label policy (`auto`, `compact`,
 `full`, `off`), local viewport rank, grouped subgraph containers, collapsed
 group ids, structural mini-map compression, and `/graph focus <node-id>` state

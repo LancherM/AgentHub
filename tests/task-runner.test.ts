@@ -360,6 +360,15 @@ describe("task runner", () => {
       "The planner node must include outputPlanGraphId."
     );
     expect(adapterInputs[0].taskPrompt).toContain(
+      "No verification commands are configured for this run."
+    );
+    expect(adapterInputs[0].taskPrompt).toContain(
+      "For answer-only, conversational, status, explanation, question-answering, or no-repository-change requests"
+    );
+    expect(adapterInputs[0].taskPrompt).toContain(
+      "Do not place a required manual node before another required primary_run node"
+    );
+    expect(adapterInputs[0].taskPrompt).toContain(
       "\"acceptanceCriteria\":"
     );
     expect(adapterInputs[0].worktreePath).not.toBe(projectRoot);
@@ -384,6 +393,66 @@ describe("task runner", () => {
     );
     await expect(planGraphRepository.getActiveByTaskId("task_agent_planner"))
       .resolves.toMatchObject({ id: result.planGraph?.id, status: "active" });
+  });
+
+  it("includes configured verification commands in the system planner prompt", async () => {
+    const projectRoot = await createTestDirectory("agent-hub-agent-planner-verification-project");
+    const runRoot = await createTestDirectory("agent-hub-agent-planner-verification-runs");
+    let plannerPrompt = "";
+    const adapter: AgentAdapter = {
+      kind: "fake",
+      displayName: "Planner Verification Fake",
+      async detect() {
+        return { available: true, version: "planner-verification" };
+      },
+      async *run(input: AgentRunInput): AsyncIterable<AgentRunEvent> {
+        if (input.role?.roleHandle === "planner") {
+          plannerPrompt = input.taskPrompt;
+          yield {
+            type: "message",
+            message: JSON.stringify({
+              planGraph: testPlannerGraph(input.taskId, 1, input.taskTitle)
+            }),
+            metadata: { assistantOutput: true }
+          };
+          yield { type: "exit", message: "@planner completed", exitCode: 0 };
+          return;
+        }
+        yield { type: "exit", message: "primary completed", exitCode: 0 };
+      }
+    };
+    const runner = new TaskRunner({
+      defaultRunRoot: runRoot,
+      workspaceManager: new TestWorkspaceManager(runRoot),
+      diffCollector: new StaticDiffCollector(),
+      verificationRunner: new VerificationRunner(new MockShellExecutor()),
+      agentRegistry: new DefaultAgentRegistry([adapter]),
+      idGenerator: new SequenceIdGenerator(),
+      clock: new FixedClock("2026-01-01T00:00:00.000Z")
+    });
+
+    const result = await runner.run({
+      projectRoot,
+      taskPrompt: "Implement and verify a planner-backed parser fix",
+      agentKind: "fake",
+      taskId: "task_agent_planner_verification",
+      planGraphMode: "agent_adapter",
+      plannerAgentKind: "fake",
+      verificationCommands: [
+        { id: "unit", command: "pnpm", args: ["vitest", "run", "tests/parser.test.ts"] }
+      ]
+    });
+
+    expect(result.status).toBe("succeeded");
+    expect(plannerPrompt).toContain(
+      "Configured verification commands are available to downstream runs:"
+    );
+    expect(plannerPrompt).toContain(
+      "unit: pnpm vitest run tests/parser.test.ts"
+    );
+    expect(plannerPrompt).toContain(
+      "model runnable verification as primary_run"
+    );
   });
 
   it("rejects invalid planner adapter JSON before the primary adapter starts", async () => {
