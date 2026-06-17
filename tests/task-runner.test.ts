@@ -455,6 +455,60 @@ describe("task runner", () => {
     );
   });
 
+  it("does not start a primary PlanNode blocked by a required manual planner gate", async () => {
+    const projectRoot = await createTestDirectory("agent-hub-agent-planner-manual-gate-project");
+    const runRoot = await createTestDirectory("agent-hub-agent-planner-manual-gate-runs");
+    let primaryStarted = false;
+    const adapter: AgentAdapter = {
+      kind: "fake",
+      displayName: "Planner Manual Gate Fake",
+      async detect() {
+        return { available: true, version: "planner-manual-gate" };
+      },
+      async *run(input: AgentRunInput): AsyncIterable<AgentRunEvent> {
+        if (input.role?.roleHandle === "planner") {
+          yield {
+            type: "message",
+            message: JSON.stringify({
+              planGraph: testPlannerGraphWithRequiredManualGate(
+                input.taskId,
+                1,
+                input.taskTitle
+              )
+            }),
+            metadata: { assistantOutput: true }
+          };
+          yield { type: "exit", message: "@planner completed", exitCode: 0 };
+          return;
+        }
+        primaryStarted = true;
+        yield { type: "exit", message: "unexpected primary start", exitCode: 0 };
+      }
+    };
+    const runner = new TaskRunner({
+      defaultRunRoot: runRoot,
+      workspaceManager: new TestWorkspaceManager(runRoot),
+      diffCollector: new StaticDiffCollector(),
+      verificationRunner: new VerificationRunner(new MockShellExecutor()),
+      agentRegistry: new DefaultAgentRegistry([adapter]),
+      idGenerator: new SequenceIdGenerator(),
+      clock: new FixedClock("2026-01-01T00:00:00.000Z")
+    });
+
+    const result = await runner.run({
+      projectRoot,
+      taskPrompt: "Require manual approval before implementation",
+      agentKind: "fake",
+      taskId: "task_agent_planner_manual_gate",
+      planGraphMode: "agent_adapter",
+      plannerAgentKind: "fake"
+    });
+
+    expect(result.status).toBe("failed");
+    expect(result.error).toContain("no runnable primary_run PlanNode");
+    expect(primaryStarted).toBe(false);
+  });
+
   it("rejects invalid planner adapter JSON before the primary adapter starts", async () => {
     const projectRoot = await createTestDirectory("agent-hub-agent-planner-invalid-project");
     const runRoot = await createTestDirectory("agent-hub-agent-planner-invalid-runs");
@@ -4371,6 +4425,70 @@ function testPlannerGraph(
     edges: [
       { from: plannerId, to: implementId, type: "primary" },
       { from: implementId, to: verifyId, type: "primary" }
+    ]
+  });
+}
+
+function testPlannerGraphWithRequiredManualGate(
+  taskId: string,
+  version: number,
+  title = "Planner task"
+): PlanGraph {
+  const graphId = planGraphIdForTaskVersion(taskId, version);
+  const plannerId = plannerNodeIdForPlanGraph(graphId);
+  const reviewId = planNodeIdForPlanGraph(graphId, "review", 1);
+  const implementId = planNodeIdForPlanGraph(graphId, "implement", 2);
+  return validatePlanGraph({
+    id: graphId,
+    taskId,
+    version,
+    status: "active",
+    plannerNodeId: plannerId,
+    createdByRole: "planner",
+    createdAt: "2026-01-01T00:00:00.000Z",
+    nodes: [
+      {
+        id: plannerId,
+        kind: "planner",
+        role: "planner",
+        title: "Create execution plan",
+        instructions: `Create a structured execution plan for ${title}.`,
+        acceptanceCriteria: ["PlanGraph JSON is valid and local-only."],
+        riskLevel: "low",
+        required: true,
+        execution: { mode: "system" },
+        outputPlanGraphId: graphId
+      },
+      {
+        id: reviewId,
+        kind: "review",
+        role: "reviewer",
+        title: "Approve implementation",
+        instructions: "Approve the requested work before an agent modifies files.",
+        acceptanceCriteria: ["Manual approval is recorded before implementation."],
+        riskLevel: "medium",
+        required: true,
+        execution: { mode: "manual" }
+      },
+      {
+        id: implementId,
+        kind: "implement",
+        role: "engineer",
+        title: "Implement after approval",
+        instructions: "Make the requested local change after manual approval.",
+        acceptanceCriteria: ["The requested behavior is implemented."],
+        riskLevel: "low",
+        required: true,
+        execution: {
+          mode: "primary_run",
+          expectedAdapter: "fake",
+          worktreePolicy: "isolated"
+        }
+      }
+    ],
+    edges: [
+      { from: plannerId, to: reviewId, type: "primary" },
+      { from: reviewId, to: implementId, type: "primary" }
     ]
   });
 }

@@ -464,7 +464,7 @@ stored rows are source evidence and stable links, not a cached LLM summary.
 `packages/core/src/plan-graph-planner.ts` provides structured
 planner-output parsing and activation validation. TaskRunner builds the
 existing runtime context and TaskBrief, then creates, validates, and persists
-an active PlanGraph before selecting and starting the primary adapter. The
+an active PlanGraph before scheduling and starting the primary adapter. The
 default `RunTaskInput.planGraphMode` resolves to `agent_adapter` for real
 adapters: the special local `@planner` system role runs through the selected
 planner adapter in its own isolated planner worktree before the primary run
@@ -488,10 +488,14 @@ human/operator gates that intentionally stop downstream scheduling. Planner
 events are marked as planner-phase
 events and filtered out of assistant-facing output so PlanGraph JSON does not
 become a role response. The planner is represented as the graph's `planner`
-node with `execution.mode: "system"`. TaskRunner selects the first planned
-`primary_run` node as the current primary run binding, persists that binding in
-`run_metadata.plan_binding_json`, emits planner lifecycle events, and passes
-the active PlanGraph, current plan node, and allowed next node ids through
+node with `execution.mode: "system"`. TaskRunner immediately evaluates the
+created graph with the same local scheduler used by `runPlanGraph()` and binds
+the current primary adapter only to the first scheduler-runnable `primary_run`
+node. If required manual gates or other dependencies leave no primary node
+runnable, the run fails inspectably before adapter execution instead of
+bypassing the gate. Runnable-node bindings are persisted in
+`run_metadata.plan_binding_json`, planner lifecycle events are emitted, and the
+active PlanGraph, current plan node, and allowed next node ids pass through
 adapter runtime input. Additional primary PlanNodes can still be scheduled by
 calling TaskRunner with `RunTaskInput.planGraphBinding`; the higher-level
 `TaskRunner.runPlanGraph()` scheduler evaluates persisted run metadata for the

@@ -3719,8 +3719,8 @@ function createCliTestPlanGraph(
         instructions: "Inspect context before implementation.",
         acceptanceCriteria: ["Relevant context has been inspected."],
         riskLevel: "low",
-        required: true,
-        execution: { mode: "manual" }
+        required: false,
+        execution: { mode: "non_executable" }
       },
       {
         id: implementId,
@@ -3772,8 +3772,8 @@ function createCliTestPlanGraph(
       }
     ],
     edges: [
-      { from: plannerId, to: researchId, type: "primary" },
-      { from: researchId, to: implementId, type: "primary" },
+      { from: plannerId, to: researchId, type: "optional" },
+      { from: plannerId, to: implementId, type: "primary" },
       { from: implementId, to: verifyId, type: "primary" },
       { from: verifyId, to: reviewId, type: "primary" },
       { from: reviewId, to: handoffId, type: "primary" }
