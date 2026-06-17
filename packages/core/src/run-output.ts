@@ -47,13 +47,17 @@ export function extractAgentFacingOutput(
   }
 
   return input.events
-    .filter((event) => event.type === "stdout" || event.type === "stderr")
+    .filter((event) =>
+      !isPlannerEvent(event) &&
+      (event.type === "stdout" || event.type === "stderr")
+    )
     .flatMap((event) => humanReadableRawLines(event.message))
     .join("\n");
 }
 
 function explicitOutputFromEvents(events: AgentOutputEvent[]): string | undefined {
   return events
+    .filter((event) => !isPlannerEvent(event))
     .map((event) => event.metadata?.output)
     .find((output): output is string =>
       typeof output === "string" && output.trim().length > 0
@@ -64,6 +68,9 @@ function isStructuredOutputEvent(
   event: AgentOutputEvent,
   options: { includeTerminalSummaries: boolean }
 ): boolean {
+  if (isPlannerEvent(event)) {
+    return false;
+  }
   if (event.metadata?.assistantOutput === false) {
     return false;
   }
@@ -88,6 +95,10 @@ function isStructuredOutputEvent(
     desktopType === "run_failed" ||
     desktopType === "run_cancelled"
   );
+}
+
+function isPlannerEvent(event: AgentOutputEvent): boolean {
+  return event.metadata?.plannerEvent === true;
 }
 
 function eventText(event: AgentOutputEvent): string {

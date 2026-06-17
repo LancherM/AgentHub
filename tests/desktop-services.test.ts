@@ -6,7 +6,6 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { describe, expect, it, vi } from "vitest";
 import {
-  createDeterministicPlanGraph,
   validateConversationMessage,
   validateConversationThreadSummary,
   validateConversationThread,
@@ -14,6 +13,7 @@ import {
   validateRunArtifact,
   validateRiskReport,
   validateTask,
+  validatePlanGraph,
   validateTaskRun,
   validateVerificationResult
 } from "@agent-hub/core";
@@ -67,8 +67,12 @@ import {
 } from "@agent-hub/task-runner";
 import { buildContextArtifacts } from "@agent-hub/context-compiler";
 import {
+  planGraphIdForTaskVersion,
+  plannerNodeIdForPlanGraph,
+  planNodeIdForPlanGraph,
   presetWorkgroupRoles,
   toWorkgroupRoleRunMetadata,
+  type PlanGraph,
   type WorkgroupRole
 } from "@agent-hub/shared";
 
@@ -893,16 +897,10 @@ describe("desktop services", () => {
         updatedAt: now
       })
     );
-    const graph = createDeterministicPlanGraph({
-      task,
-      taskBrief: {
-        taskId: task.id,
-        taskTitle: task.title,
-        taskPrompt: "Implement the desktop execution trace tab.",
-        renderedContent: "Implement the desktop execution trace tab.",
-        contextPackId: "context_pack_desktop_trace",
-        createdAt: now
-      },
+    const graph = createTestPlanGraph({
+      taskId: task.id,
+      title: task.title,
+      prompt: "Implement the desktop execution trace tab.",
       createdAt: now,
       version: 1,
       expectedAdapter: "fake",
@@ -1008,31 +1006,19 @@ describe("desktop services", () => {
         updatedAt: now
       })
     );
-    const oldGraph = createDeterministicPlanGraph({
-      task,
-      taskBrief: {
-        taskId: task.id,
-        taskTitle: task.title,
-        taskPrompt: "Implement the first execution trace lookup.",
-        renderedContent: "Implement the first execution trace lookup.",
-        contextPackId: "context_pack_desktop_trace_old",
-        createdAt: now
-      },
+    const oldGraph = createTestPlanGraph({
+      taskId: task.id,
+      title: task.title,
+      prompt: "Implement the first execution trace lookup.",
       createdAt: now,
       version: 1,
       expectedAdapter: "fake",
       roleHandle: "engineer"
     });
-    const newGraph = createDeterministicPlanGraph({
-      task,
-      taskBrief: {
-        taskId: task.id,
-        taskTitle: task.title,
-        taskPrompt: "Implement the newer execution trace lookup.",
-        renderedContent: "Implement the newer execution trace lookup.",
-        contextPackId: "context_pack_desktop_trace_new",
-        createdAt: now
-      },
+    const newGraph = createTestPlanGraph({
+      taskId: task.id,
+      title: task.title,
+      prompt: "Implement the newer execution trace lookup.",
       createdAt: now,
       version: 2,
       expectedAdapter: "fake",
@@ -2164,7 +2150,7 @@ describe("desktop services", () => {
     unsubscribe();
 
     expect(cancelled.status).toBe("cancelled");
-    expect(processRunner.runCalls[0].signal?.aborted).toBe(true);
+    expect(processRunner.runCalls.at(-1)?.signal?.aborted).toBe(true);
     expect(cancelled.events).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -2225,7 +2211,7 @@ describe("desktop services", () => {
     await expect(review.getDiff(run.id)).resolves.toMatchObject({
       files: [],
       empty: true,
-      message: "No real repository files were modified."
+      message: "No retained worktree or persisted real diff is available for this run."
     });
   });
 
@@ -4063,7 +4049,7 @@ describe("desktop services", () => {
     const projects = createProjectService(context);
     const memory = createMemoryService(context);
     const review = createReviewService(context, { memoryService: memory });
-    const processRunner = new MockProcessRunner(
+    const processRunner = new PlannerAwareProcessRunner(
       [[{ type: "exit", exitCode: 0, signal: null }]],
       [{ available: true, version: "codex-test" }]
     );
@@ -4194,7 +4180,7 @@ describe("desktop services", () => {
       risks: [],
       nextSteps: ["none"]
     });
-    const processRunner = new MockProcessRunner(
+    const processRunner = new PlannerAwareProcessRunner(
       [
         [
           {
@@ -4405,7 +4391,7 @@ describe("desktop services", () => {
     const projects = createProjectService(context);
     const memory = createMemoryService(context);
     const review = createReviewService(context, { memoryService: memory });
-    const processRunner = new MockProcessRunner(
+    const processRunner = new PlannerAwareProcessRunner(
       [
         [
           {
@@ -4468,8 +4454,8 @@ describe("desktop services", () => {
     }
     await waitForRun(runs, secondRun.runId, "completed");
 
-    expect(processRunner.runCalls[0].args).toEqual(["exec", "--json", "-"]);
-    expect(processRunner.runCalls[1].args).toEqual([
+    expect(processRunner.runCalls[1].args).toEqual(["exec", "--json", "-"]);
+    expect(processRunner.runCalls[3].args).toEqual([
       "exec",
       "resume",
       "--json",
@@ -5072,6 +5058,152 @@ function createTestRunService(
   });
 }
 
+function createTestPlanGraph(input: {
+  taskId: string;
+  title: string;
+  prompt: string;
+  createdAt: string;
+  version: number;
+  expectedAdapter?: string;
+  roleHandle?: string;
+}): PlanGraph {
+  const graphId = planGraphIdForTaskVersion(input.taskId, input.version);
+  const plannerId = plannerNodeIdForPlanGraph(graphId);
+  const executionId = planNodeIdForPlanGraph(graphId, "implement", 1);
+  const verifyId = planNodeIdForPlanGraph(graphId, "verify", 2);
+  return validatePlanGraph({
+    id: graphId,
+    taskId: input.taskId,
+    version: input.version,
+    status: "active",
+    plannerNodeId: plannerId,
+    createdByRole: "planner",
+    createdAt: input.createdAt,
+    nodes: [
+      {
+        id: plannerId,
+        kind: "planner",
+        role: "planner",
+        title: "Create execution plan",
+        instructions: `Create a structured execution plan for ${input.title}.`,
+        acceptanceCriteria: ["PlanGraph JSON is valid and local-only."],
+        riskLevel: "low",
+        required: true,
+        execution: { mode: "system" },
+        outputPlanGraphId: graphId
+      },
+      {
+        id: executionId,
+        kind: "implement",
+        role: input.roleHandle ?? "engineer",
+        title: "Implement scoped change",
+        instructions: input.prompt,
+        acceptanceCriteria: ["The requested behavior is implemented."],
+        riskLevel: "low",
+        required: true,
+        execution: {
+          mode: "primary_run",
+          expectedAdapter: input.expectedAdapter ?? "fake",
+          worktreePolicy: "isolated"
+        }
+      },
+      {
+        id: verifyId,
+        kind: "verify",
+        role: "reviewer",
+        title: "Verify evidence",
+        instructions: "Inspect the persisted evidence before handoff.",
+        acceptanceCriteria: ["Verification evidence is recorded."],
+        riskLevel: "low",
+        required: true,
+        execution: { mode: "manual" }
+      }
+    ],
+    edges: [
+      { from: plannerId, to: executionId, type: "primary" },
+      { from: executionId, to: verifyId, type: "primary" }
+    ]
+  });
+}
+
+class PlannerAwareProcessRunner implements ProcessRunner {
+  readonly runCalls: ProcessRunInput[] = [];
+  readonly detectCalls: ProcessDetectionInput[] = [];
+
+  constructor(
+    private readonly primaryResponses: Array<
+      ProcessRunEvent[] | ((input: ProcessRunInput) => ProcessRunEvent[])
+    >,
+    private readonly detectResponses: Array<
+      Partial<ProcessDetectionResult> |
+        ((input: ProcessDetectionInput) => Partial<ProcessDetectionResult>)
+    > = []
+  ) {}
+
+  async *run(input: ProcessRunInput): AsyncIterable<ProcessRunEvent> {
+    this.runCalls.push(input);
+    const plannerGraph = plannerGraphFromProcessInput(input);
+    if (plannerGraph) {
+      yield plannerProcessMessage(plannerGraph);
+      yield { type: "exit", exitCode: 0, signal: null };
+      return;
+    }
+
+    const next = this.primaryResponses.shift();
+    const events = typeof next === "function" ? next(input) : next ?? [
+      { type: "exit", exitCode: 0, signal: null }
+    ];
+    for (const event of events) {
+      yield event;
+    }
+  }
+
+  async detect(input: ProcessDetectionInput): Promise<ProcessDetectionResult> {
+    this.detectCalls.push(input);
+    const next = this.detectResponses.shift();
+    const partial = typeof next === "function" ? next(input) : next ?? {};
+    return {
+      available: true,
+      version: "mock",
+      ...partial
+    };
+  }
+}
+
+function plannerGraphFromProcessInput(input: ProcessRunInput): PlanGraph | undefined {
+  const stdin = input.stdin ?? "";
+  if (!stdin.includes("You are Agent Hub's system @planner role.")) {
+    return undefined;
+  }
+  const taskId = stdin.match(/planGraph\.taskId must be ([^.\n]+)\./)?.[1];
+  const versionText = stdin.match(/planGraph\.version must be (\d+)\./)?.[1];
+  if (!taskId || !versionText) {
+    throw new Error("planner stdin did not include expected task identity");
+  }
+  const expectedAdapter =
+    stdin.match(/execution\.expectedAdapter to ([a-z-]+)\b/)?.[1] ??
+    input.executable;
+  return createTestPlanGraph({
+    taskId,
+    title: "Planner process fixture",
+    prompt: "Run the primary adapter from a planner-aware process fixture.",
+    createdAt: "2026-01-01T00:00:00.000Z",
+    version: Number(versionText),
+    expectedAdapter,
+    roleHandle: "engineer"
+  });
+}
+
+function plannerProcessMessage(graph: PlanGraph): ProcessRunEvent {
+  return {
+    type: "stdout",
+    data: JSON.stringify({
+      type: "result",
+      result: JSON.stringify({ planGraph: graph })
+    }) + "\n"
+  };
+}
+
 function createStartFailureRunService(
   context: ReturnType<typeof createDesktopServiceContext>
 ): RunService {
@@ -5180,6 +5312,12 @@ class DesktopAbortProcessRunner implements ProcessRunner {
 
   async *run(input: ProcessRunInput): AsyncIterable<ProcessRunEvent> {
     this.runCalls.push(input);
+    const plannerGraph = plannerGraphFromProcessInput(input);
+    if (plannerGraph) {
+      yield plannerProcessMessage(plannerGraph);
+      yield { type: "exit", exitCode: 0, signal: null };
+      return;
+    }
     yield { type: "stdout", data: "started\n" };
     await new Promise<void>((resolve) => {
       if (input.signal?.aborted) {

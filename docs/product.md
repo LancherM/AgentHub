@@ -44,15 +44,42 @@ signals, and the next action without exposing raw logs or full patches. Compact
 run stage/latest summaries use the same TUI presentation filter as active-run
 boxes, so internal setup or Codex diagnostic lines remain in raw evidence rather
 than the operator-facing summary.
-The Execution Trace focus currently shows the legacy RoleCall evidence path:
-bounded loop state, including iteration count, pending/waiting/active counts,
-convergence reason, max-iteration stops, blocking-risk stops, and
-waiting-for-approval or waiting-for-context stops. Tasks that predate
-PlanGraph evidence, or tasks that have not yet emitted RoleCalls, remain
-inspectable through this compatibility trace instead of showing an empty future
-graph.
+The Graph focus now presents the current execution-trace projection as
+`Graph - Workflow DAG`: graph-backed tasks show bounded Overlay, Plan, and
+Trace modes with wide top-down flow rows, per-step sibling groups,
+local outgoing branch rows,
+selected-node details, real toolbar state, a structural mini-map, a legend, and
+bounded medium or narrow-terminal fallback. The terminal graph renderer uses a
+deterministic local layout model so selection, rank/lane placement, grouping,
+percentage-like zoom density, label policy, viewport rank, and focus command
+behavior stay stable across renders. Wide Graph rows render visible ranks as
+top-down `step` groups, show same-step lanes as sibling nodes, and indent local
+`primary`, `parallel`, `runtime`, `fallback`, or `evidence` links directly under
+their source node so branch ownership is readable without scanning a separate
+edge list.
+The mini-map shows symbolic rank/lane
+occupancy, selected-node position, current zoom density, and viewport coverage,
+and compresses or hides when the terminal cannot spare space. Grouped mode
+derives local subgraph containers for parallel, fallback, RoleCall, and
+comparison branches; collapsed groups render summary rows with node count,
+status, risk, and selected descendant state without mutating PlanGraph or trace
+evidence. The default graph surface is title-first: flow rows, toolbar focus,
+connector labels, and selected-node relationship rows use human-readable plan
+or trace titles, while long PlanGraph and trace IDs are shortened to secondary
+keys or kept inside explicit commands. `/graph focus <node-id>` selects a node
+and moves the local viewport around it without running agents or mutating task
+state. Selected graph-node details expose safe read-only commands for trace,
+run, RoleCall, and comparison evidence plus prepared focus, fold, and
+rerun-from-here prompts; none of these graph actions auto-run agents, apply
+code, merge, push, create PRs, or approve memory. Legacy tasks that predate
+PlanGraph evidence remain inspectable through
+the RoleCall/run compatibility trace instead of showing an empty future graph.
 Continuation helpers prepare an explicit composer prompt; they do not continue
-work in the background.
+work in the background. The Graph workflow now has deterministic visual QA
+fixtures for plan-only chains, primary TaskRuns, RoleCall-expanded subgraphs,
+parallel comparisons, failed required nodes with fallback paths, narrow
+terminal fallback, and CJK labels; future Graph changes should also use
+`docs/tui-workflow-dag-manual-checklist.md` for PTY verification.
 Review decisions can be recorded with `agent-hub reviews accept|reject` or the
 TUI review shortcuts. These decisions create local `review_decision` artifacts
 only; they do not apply files, alter run status, merge, push, approve memory,
@@ -509,20 +536,62 @@ dynamic trace nodes, and derives `ExecutionTraceGraph` deterministically as an
 overlay of the original plan plus persisted runtime evidence. This keeps the
 expected workflow separate from actual execution while preserving RoleCalls as
 the dynamic delegation mechanism. The full product contract is tracked in
-`docs/plan-graph-execution-trace-product.md`; the remaining implementation
-diffs and phase prompts are tracked in
-`docs/plan-graph-execution-trace-followup-roadmap.md`.
+`docs/plan-graph-execution-trace-product.md`; remaining lifecycle and semantic
+implementation diffs are tracked in
+`docs/plan-graph-execution-trace-followup-roadmap.md`, while TUI-specific
+Workflow DAG reference fidelity is tracked separately in
+`docs/plan-graph-tui-workflow-dag-roadmap.md`.
 The shared domain contract and core validators for `PlanGraph`,
 `PlanNode`, `PlanEdge`, trace nodes, evidence links, deviations, and
 `ExecutionTraceGraph` are implemented. SQLite and in-memory repositories can
 persist PlanGraph versions, active graph lookup, dynamic trace nodes and edges,
 trace evidence links, and RoleCall tool events. TaskRunner now creates and
-persists a deterministic planner-owned `PlanGraph` before primary adapter
-execution by default, with a run-input switch to disable graph creation for
-legacy compatibility. The current primary adapter run is bound to the first
-planned `primary_run` node when one exists, records that binding in run
-metadata, and receives a runtime-injected PlanGraph/current-node block with
-allowed next node ids. Role-backed assistant output that creates a RoleCall now
+persists a system `@planner`-owned `PlanGraph` before real primary adapter
+execution. The planner is run through a selected local agent adapter in an
+isolated planner worktree: by default the planner adapter follows the primary
+adapter, and CLI callers can choose a different planner adapter with
+`--planner-agent`. Users can choose the adapter, but they cannot customize the
+planner persona, planner role metadata, output contract, or prompt; those are
+generated by Agent Hub. The generated planner prompt directs `@planner` to
+classify the request before adding nodes: answer-only, conversational, status,
+explanation, and other no-repository-change tasks should produce only the
+planner node plus one required executable role node unless the user explicitly
+asks for a complex graph to test the Graph or PlanGraph surface. Requests that
+are only testing or demonstrating PlanGraph, Graph, role delegation, or planning
+behavior are treated as no-repository-change unless the user explicitly asks
+for file edits. Complex graph testing requests may produce richer synthetic
+local-only graphs with parallel, optional, or fallback branches. Memory nodes in
+those graphs may describe memory proposal candidates, memory evidence, or
+explicit-review handoff notes, but they must not request memory approval or
+promotion, and planner prompt wording avoids reusable memory-approval phrases
+that adapters tend to copy into node text. If a planner output fails only
+because it requests a prohibited local side effect such as memory approval,
+push, merge, pull request creation, repository export, or repository-root
+context-file writes, Agent Hub asks the same `@planner` adapter for one full
+replacement PlanGraph JSON object with a shorter correction prompt. Agent Hub
+does not locally patch missing fields or rewrite the graph deterministically.
+Repository workflow rules about commits, pushes, pull requests,
+branch publication, or merges are not copied into PlanNode titles,
+instructions, or acceptance criteria; repository-changing tasks may add
+verification or review nodes only when configured commands, changed-file risk,
+or the user's request justify them. The prompt also includes the current
+verification-command context, tells the planner to model runnable verification
+as `primary_run`, and prevents required `manual` gates from being placed before
+required executable downstream work. A run-input switch can still disable graph
+creation for
+legacy compatibility, dry runs, and internal fake-adapter tests. The current
+primary adapter run is bound to the first planned `primary_run` node when one
+exists, records that binding in run metadata, and receives a runtime-injected
+PlanGraph/current-node block with allowed next node ids. After that root run
+finalizes and its plan binding is durable, TaskRunner automatically invokes the
+local PlanGraph scheduler to continue the remaining runnable DAG nodes through
+the same isolated TaskRunner path. Scheduler child runs inherit the active
+PlanGraph with explicit node bindings and graph creation disabled, so the DAG
+continues without recursively asking `@planner` to create new graphs. If the
+remaining graph completes, the task remains completed; if the scheduler is
+blocked, limited, or failed, the task returns to open for inspection and
+follow-up. Role-backed assistant
+output that creates a RoleCall now
 links back to the source run's plan binding when one exists: Agent Hub records a
 RoleCall tool event, stores plan trace context on the RoleCall, creates a
 dynamic `role_call` trace node for accepted RoleCalls, and records a dynamic
@@ -542,45 +611,69 @@ mislabeled as skipped. The read-only
 `execution-trace show` CLI command exposes that projection by task id or
 PlanGraph id. The terminal workbench Graph focus now presents this projection
 as `Graph - Workflow DAG`: Overlay, Plan, and Trace modes render bounded
-terminal node boxes, visible edge labels, selected-node highlighting, toolbar
-state for mode/labels/fold/zoom, a mini-map, a legend, and a compact fallback
-for narrow terminals while falling back to legacy RoleCall evidence for older
-tasks. Selected graph-node details synchronize with the same read model and
-show incoming links, outgoing links, evidence, deviations, and inspection
-commands. Remaining terminal graph fidelity work, including spatial rank
-layout, viewport/focus commands, subgraph containers, node actions, and visual
-QA fixtures, is tracked in `docs/plan-graph-tui-workflow-dag-roadmap.md`. The
+terminal top-down flow rows, grouped same-step branches, visible outgoing edge labels,
+selected-node highlighting, toolbar state for mode/labels/fold/zoom, a
+structural rank/lane mini-map with selected
+viewport state, a legend, and a compact fallback for narrow terminals while
+falling back to legacy RoleCall evidence for older tasks. The default terminal
+rendering prioritizes node titles in flow rows, edge rows, toolbar focus, and
+relationship details; raw graph IDs are shortened to secondary keys unless the
+operator opens a command-oriented action. Plan-node glyphs are projected from
+runtime evidence rather than raw execution mode: a planned `primary_run` or
+`manual` node stays pending until linked trace evidence completes, so unstarted
+work is no longer rendered as completed or blocked just because of its mode.
+Selected graph-node details
+synchronize with the same read model and show incoming links, outgoing links,
+evidence, deviations, and inspection commands. Remaining terminal graph
+fidelity work is tracked in `docs/plan-graph-tui-workflow-dag-roadmap.md`, and
+future Graph changes should use `docs/tui-workflow-dag-manual-checklist.md` as
+the manual PTY verification checklist. The
 desktop Workgroup Inspector exposes the same projection through a
 read-only Trace tab backed by Electron main-process IPC; the renderer displays
 plan nodes, runtime trace nodes, evidence counts, and deviations without
 reading SQLite or rebuilding orchestration state.
 
-TaskRunner also supports the first opt-in planner alternatives. The default
-planner mode remains deterministic. `agent_adapter` planner mode runs the
-special local `@planner` role through a configured local adapter inside its own
-isolated planner worktree, requires structured PlanGraph JSON, validates it
-against the current task/version before activation, and fails before the
-primary adapter starts when output is invalid. `manual` planner mode accepts a
-caller-supplied PlanGraph only after the same validation. The core amendment
+TaskRunner's planner path is agent-backed rather than deterministic or manual.
+`agent_adapter` planner mode runs the special local `@planner` role through a
+configured local adapter inside its own isolated planner worktree, requires
+structured PlanGraph JSON, validates it against the current task/version before
+activation, filters planner JSON out of assistant-facing run output, and fails
+before the primary adapter starts when output is invalid. The system planner
+prompt includes the full PlanGraph/node required-field contract and a minimal
+valid JSON template plus a separate repository-change template, with explicit
+task-classification, complex graph testing, memory proposal, and
+verification-command guidance so adapter output is guided toward
+validator-compatible, non-blocking graphs without deterministic post-fill. A
+single same-adapter retry is allowed when the first planner output uses
+prohibited side-effect wording; the retry must return a complete replacement
+PlanGraph JSON object and is still validated before activation.
+Unsupported planner modes fail
+inspectably instead of activating caller-supplied graphs. The core amendment
 contract supports durable `proposed` graph versions in memory and SQLite.
 Creating a proposed graph does not replace the current active graph; activation
 supersedes the old active graph only after validation, and changes to required
-execution nodes require an explicit approval flag. Additional primary PlanNodes
-can be scheduled explicitly through `RunTaskInput.planGraphBinding`, and the
-bounded `TaskRunner.runPlanGraph()` scheduler can now walk an active PlanGraph
-locally: it treats system nodes as satisfied, blocks behind required manual
-nodes, runs eligible `primary_run` nodes through the existing isolated
-TaskRunner path, honors fallback edges only after failed or blocked sources,
-limits scheduled runs when requested, and requires an explicit rerun request
-before repeating successful plan nodes. A dedicated desktop graph canvas remains
-follow-on UI work beyond the current read-only Trace tab.
+execution nodes require an explicit approval flag. After the first
+planner-backed primary node finalizes, the bounded `TaskRunner.runPlanGraph()`
+scheduler automatically walks the rest of the active PlanGraph. The same
+scheduler remains available as an explicit recovery, resume, limited-run, or
+rerun API through `RunTaskInput.planGraphBinding` and `TaskRunner.runPlanGraph()`:
+it treats system nodes as satisfied, blocks behind required manual nodes, runs
+eligible `primary_run` nodes through the existing isolated TaskRunner path,
+honors fallback edges only after failed or blocked sources, limits scheduled
+runs when requested, starts eligible independent branches in bounded concurrent
+batches, gives each scheduled branch a unique local worktree branch, and
+requires an explicit rerun request before repeating successful plan nodes.
+`maxConcurrentRuns` controls how many runnable branches start together;
+when it is omitted, `maxScheduledRuns` also bounds the batch size, and otherwise
+the scheduler preserves single-branch execution. A dedicated desktop graph
+canvas remains follow-on UI work beyond the current read-only Trace tab.
 
-The PlanGraph lifecycle now has deterministic local acceptance coverage: a
-fake-adapter fixture creates a task brief, uses an active planner-owned graph to
-schedule primary runs, records runtime RoleCall expansion, attaches
-verification, risk, diff, artifact, review, and comparison evidence, and proves
-the resulting `ExecutionTraceGraph` is inspectable through the core projection,
-CLI JSON, and TUI read model.
+The PlanGraph lifecycle now has local acceptance coverage: test planner
+fixtures create task briefs, use active planner-owned graphs to schedule
+primary runs, record runtime RoleCall expansion, attach verification, risk,
+diff, artifact, review, and comparison evidence, and prove the resulting
+`ExecutionTraceGraph` is inspectable through the core projection, CLI JSON, and
+TUI read model.
 
 Plan and trace evidence now feeds review governance without creating an
 automatic acceptance path. Risk reports can include plan-aware findings for
@@ -603,7 +696,7 @@ The current CLI exposes these command groups:
   `context export`, `skills global create`, `skills global list`.
 - Plan inspection: `plan-graphs list --task-id <task-id>`,
   `plan-graphs show <plan-graph-id> [--json]`, and
-  `plan-graphs validate <plan-graph-id>` expose deterministic planner output
+  `plan-graphs validate <plan-graph-id>` expose persisted planner output
   without scheduling or mutating runs.
 - Execution trace inspection: `execution-trace show --task-id <task-id>
   [--json]` and `execution-trace show --plan-graph-id <plan-graph-id> [--json]`
@@ -611,7 +704,8 @@ The current CLI exposes these command groups:
 - Agent execution: `run --task ...`, ad-hoc `run "@codex ..."`,
   `run "@claude-code ..."`, `run event add`, and explicit continuation with
   `--continue-from-run` or `--continue-from-message`. Runs can select explicit
-  skills with `--skill [scope:]id`.
+  skills with `--skill [scope:]id` and choose the system planner adapter with
+  `--planner-agent codex|claude-code`.
 - Persistent chat and rooms: bare `agent-hub` interactive mode, `chat`,
   `threads list`, `threads show`, `rooms list`, `rooms create`, `rooms use`,
   `rooms send`, and `rooms timeline`.

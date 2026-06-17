@@ -199,8 +199,9 @@ interface PlanNode {
 Execution modes distinguish scheduled work from display or governance nodes:
 
 - `primary_run`: the node should create a primary TaskRun when scheduled.
-- `system`: Agent Hub executes the node through a local system path, such as a
-  deterministic MVP planner.
+- `system`: Agent Hub owns the node as a system step, such as the planner root
+  represented in the graph after the system `@planner` adapter returns valid
+  output.
 - `manual`: the node waits for explicit human input or confirmation.
 - `non_executable`: the node represents evidence, artifacts, or summary state
   and is not scheduled directly.
@@ -283,13 +284,19 @@ The product should expose `@planner` as a special local role represented by a
 planner node. The planner node creates the PlanGraph from the TaskBrief and is
 the root of the graph lifecycle rather than an external pre-step.
 
-MVP behavior can use a deterministic local planner implementation while still
-recording the product role as `planner`. This keeps tests stable and avoids
-making every run depend on an additional agent call. Later, an executable
-agent-backed planner can be added behind the same contract.
+Planner behavior must be agent-backed. Agent Hub runs `@planner` through a
+selected local agent/LLM adapter such as Codex, Claude Code, or a future LLM
+adapter. Users may choose the adapter, but they must not customize planner
+persona, role metadata, system prompt, safety rules, or output format. Agent
+Hub generates the complete planner prompt and treats `@planner` as a system
+role, not a normal team persona.
 
 Planner output must be structured and validated. Invalid planner output should
 fail plan creation inspectably before any implementation run starts.
+The system planner prompt must include the complete PlanGraph/node required
+field contract and a minimal valid JSON template. Agent Hub should validate the
+adapter output; it should not silently fill missing node fields with
+deterministic defaults.
 
 Planner constraints:
 
@@ -310,7 +317,8 @@ Planner constraints:
 When a task run starts:
 
 1. TaskRunner builds the context pack and TaskBrief as it does today.
-2. Agent Hub schedules the PlannerNode run or deterministic system planner.
+2. Agent Hub runs the system `@planner` role through the selected planner
+   adapter in an isolated planner worktree.
 3. The planner output becomes a PlanGraph with `plannerNodeId`, planned
    execution nodes, and plan edges.
 4. The PlanGraph is validated and persisted.
@@ -662,15 +670,18 @@ Exit criteria:
 - CLI/core code can persist and read PlanGraph data through repositories.
 - No execution path depends on graph persistence yet.
 
-### Phase 3: Deterministic Planner MVP
+### Phase 3: System Planner Adapter MVP
 
-Goal: create a PlanGraph before execution without adding a new agent dependency.
+Goal: create a PlanGraph before execution through the special system
+`@planner` role.
 
 Scope:
 
-- Add a deterministic local planner that converts the current TaskBrief and
-  task metadata into a simple planner-rooted DAG.
-- Represent the deterministic planner as a planner node with `execution.mode:
+- Add a system-generated planner prompt that converts the current TaskBrief and
+  injected context into a bounded planner-rooted DAG.
+- Run the planner through a selected local agent/LLM adapter in an isolated
+  planner worktree.
+- Represent the system planner as a planner node with `execution.mode:
   "system"`.
 - Persist planner success or failure evidence.
 - Add read-only CLI inspection for PlanGraph records.
@@ -711,8 +722,7 @@ agent-hub plan-graphs validate <plan-graph-id>
 
 Tests:
 
-- Deterministic planner snapshot tests for code, docs, review-only, and memory
-  tasks.
+- Structured planner output parsing and validation tests.
 - CLI JSON output tests.
 - TaskRunner tests proving plan creation happens before adapter execution when
   enabled.
@@ -983,11 +993,12 @@ Implementation areas:
 - `tests/process-adapters.test.ts`
 - `tests/task-runner.test.ts`
 
-Planner modes:
+Planner mode:
 
-- `deterministic`: default, stable, test-friendly.
-- `agent_adapter`: opt-in, local-only, validated structured output.
-- `manual`: user-provided or imported plan graph after validation.
+- `agent_adapter`: default for real runs, local-only, worktree-isolated,
+  adapter-selectable, and validated through structured output. The planner
+  prompt, persona, role metadata, and output contract are system-generated and
+  not user-customizable.
 
 Amendment rules:
 

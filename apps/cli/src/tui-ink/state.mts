@@ -27,9 +27,11 @@ export interface TuiInkState {
   focus: TuiInkFocus;
   graphMode: "overlay" | "plan" | "trace";
   graphLayout: "ranked";
-  graphLabels: "compact" | "full";
+  graphLabels: "auto" | "compact" | "full" | "off";
   graphFold: "expanded" | "grouped";
-  graphZoom: "fit" | "detail";
+  graphZoom: "67%" | "82%" | "100%";
+  graphViewportRank: number;
+  collapsedGraphGroupIds: string[];
   selectedRunIndex: number;
   selectedRunId?: string;
   selectedRoleCallIndex: number;
@@ -139,9 +141,11 @@ export function createInitialInkState(composer = ""): TuiInkState {
     focus: "work",
     graphMode: "overlay",
     graphLayout: "ranked",
-    graphLabels: "compact",
+    graphLabels: "auto",
     graphFold: "expanded",
-    graphZoom: "fit",
+    graphZoom: "82%",
+    graphViewportRank: 0,
+    collapsedGraphGroupIds: [],
     selectedRunIndex: 0,
     selectedRoleCallIndex: 0,
     selectedTaskIndex: 0,
@@ -191,9 +195,11 @@ export function reduceInkState(
   const next: TuiInkState = {
     ...state,
     graphLayout: state.graphLayout ?? "ranked",
-    graphLabels: state.graphLabels ?? "compact",
+    graphLabels: state.graphLabels ?? "auto",
     graphFold: state.graphFold ?? "expanded",
-    graphZoom: state.graphZoom ?? "fit",
+    graphZoom: state.graphZoom ?? "82%",
+    graphViewportRank: Math.max(0, state.graphViewportRank ?? 0),
+    collapsedGraphGroupIds: [...(state.collapsedGraphGroupIds ?? [])],
     selectedWorkBlockIndex: state.selectedWorkBlockIndex ?? 0,
     workSelectionAnchor: state.workSelectionAnchor ?? false,
     selectedMemoryItemIndex: state.selectedMemoryItemIndex ?? 0,
@@ -304,17 +310,25 @@ export function reduceInkState(
     return next;
   }
   if (key === "toggle_graph_labels") {
-    next.graphLabels = next.graphLabels === "full" ? "compact" : "full";
+    next.graphLabels = nextGraphLabels(next.graphLabels ?? "auto");
     next.statusMessage = `Workflow DAG labels: ${next.graphLabels}.`;
     return next;
   }
   if (key === "toggle_graph_fold") {
-    next.graphFold = next.graphFold === "grouped" ? "expanded" : "grouped";
+    const selectedGroupId = selectedGraphGroupId(model, next);
+    if (next.graphFold !== "grouped") {
+      next.graphFold = "grouped";
+    } else if (selectedGroupId) {
+      next.collapsedGraphGroupIds = toggleId(next.collapsedGraphGroupIds, selectedGroupId);
+    } else {
+      next.graphFold = "expanded";
+      next.collapsedGraphGroupIds = [];
+    }
     next.statusMessage = `Workflow DAG fold: ${next.graphFold}.`;
     return next;
   }
   if (key === "toggle_graph_zoom") {
-    next.graphZoom = next.graphZoom === "detail" ? "fit" : "detail";
+    next.graphZoom = nextGraphZoom(next.graphZoom ?? "82%");
     next.statusMessage = `Workflow DAG zoom: ${next.graphZoom}.`;
     return next;
   }
@@ -719,6 +733,39 @@ function graphSelectionCount(
     return model.executionTrace.dynamicNodes.length;
   }
   return model.executionTrace.baseNodes.length + model.executionTrace.dynamicNodes.length;
+}
+
+function selectedGraphGroupId(
+  model: TuiCurrentContextModel,
+  state: TuiInkState
+): string | undefined {
+  const trace = model.executionTrace;
+  if (!trace || state.graphMode === "plan") {
+    return undefined;
+  }
+  const selectedIndex = Math.min(
+    Math.max(state.selectedRoleCallIndex ?? 0, 0),
+    Math.max(0, graphSelectionCount(model, state) - 1)
+  );
+  const node = state.graphMode === "trace"
+    ? trace.dynamicNodes[selectedIndex]
+    : trace.dynamicNodes[selectedIndex - trace.baseNodes.length];
+  if (!node) {
+    return undefined;
+  }
+  if (node.sourceType === "role_call" || node.sourceType === "role_call_event") {
+    return "role-call";
+  }
+  if (node.sourceType === "comparison_report") {
+    return "comparison";
+  }
+  return undefined;
+}
+
+function toggleId(values: string[], id: string): string[] {
+  return values.includes(id)
+    ? values.filter((value) => value !== id)
+    : [...values, id];
 }
 
 function moveDetailScroll(
@@ -1191,6 +1238,33 @@ function nextGraphMode(
     return "trace";
   }
   return "overlay";
+}
+
+function nextGraphLabels(
+  labels: TuiInkState["graphLabels"]
+): TuiInkState["graphLabels"] {
+  if (labels === "auto") {
+    return "compact";
+  }
+  if (labels === "compact") {
+    return "full";
+  }
+  if (labels === "full") {
+    return "off";
+  }
+  return "auto";
+}
+
+function nextGraphZoom(
+  zoom: TuiInkState["graphZoom"]
+): TuiInkState["graphZoom"] {
+  if (zoom === "82%") {
+    return "100%";
+  }
+  if (zoom === "100%") {
+    return "67%";
+  }
+  return "82%";
 }
 
 function transcriptScrollDelta(

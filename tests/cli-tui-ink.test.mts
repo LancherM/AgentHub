@@ -2,7 +2,9 @@ import React from "../apps/cli/node_modules/react/index.js";
 import { renderToString } from "../apps/cli/node_modules/ink/build/index.js";
 import { render } from "../apps/cli/node_modules/ink-testing-library/build/index.js";
 import { describe, expect, it, vi } from "vitest";
+import type { ExecutionTraceGraph } from "@agent-hub/core";
 import { TuiInkApp, TuiInkFrame } from "../apps/cli/src/tui-ink/App.mts";
+import { buildGraphLayout, renderGraphWorkbench } from "../apps/cli/src/tui-ink/graph-layout.mts";
 import {
   createInitialInkState,
   reduceInkState,
@@ -538,6 +540,287 @@ const baseModel = {
   warnings: []
 };
 
+function workflowDagTraceFixture(): ExecutionTraceGraph {
+  return {
+    taskId: "task_1",
+    planGraphId: "plan_graph:task_1:v1",
+    planGraphVersion: 1,
+    baseNodes: [
+      {
+        id: "user_req",
+        kind: "intake",
+        role: "user",
+        title: "Capture request",
+        instructions: "Capture the request.",
+        acceptanceCriteria: ["Request is clear."],
+        riskLevel: "low",
+        required: true,
+        execution: { mode: "system" }
+      },
+      {
+        id: "pm_plan",
+        kind: "plan",
+        role: "planner",
+        title: "Plan workflow",
+        instructions: "Plan the workflow.",
+        acceptanceCriteria: ["Plan is inspectable."],
+        riskLevel: "low",
+        required: true,
+        execution: { mode: "system" }
+      },
+      {
+        id: "codex_run",
+        kind: "implement",
+        role: "codex",
+        title: "Codex implementation",
+        instructions: "Implement with Codex.",
+        acceptanceCriteria: ["Implementation exists."],
+        riskLevel: "medium",
+        required: true,
+        execution: {
+          mode: "primary_run",
+          expectedAdapter: "codex",
+          worktreePolicy: "isolated"
+        }
+      },
+      {
+        id: "claude_run",
+        kind: "implement",
+        role: "claude",
+        title: "Claude implementation",
+        instructions: "Implement with Claude.",
+        acceptanceCriteria: ["Implementation exists."],
+        riskLevel: "medium",
+        required: false,
+        execution: {
+          mode: "primary_run",
+          expectedAdapter: "claude",
+          worktreePolicy: "isolated"
+        }
+      },
+      {
+        id: "compare_results",
+        kind: "review",
+        role: "reviewer",
+        title: "Compare results",
+        instructions: "Compare the implementations.",
+        acceptanceCriteria: ["Comparison is recorded."],
+        riskLevel: "low",
+        required: true,
+        execution: { mode: "manual" }
+      }
+    ],
+    baseEdges: [
+      { from: "user_req", to: "pm_plan", type: "primary", label: "plan" },
+      { from: "pm_plan", to: "codex_run", type: "parallel", label: "codex" },
+      { from: "pm_plan", to: "claude_run", type: "parallel", label: "claude" },
+      { from: "codex_run", to: "compare_results", type: "primary", label: "candidate" },
+      { from: "claude_run", to: "compare_results", type: "primary", label: "candidate" }
+    ],
+    dynamicNodes: [
+      {
+        id: "trace_node:role_call:call_1",
+        planGraphId: "plan_graph:task_1:v1",
+        kind: "role_call",
+        title: "Implement subgraph",
+        status: "completed",
+        sourcePlanNodeId: "codex_run",
+        sourceType: "role_call",
+        sourceId: "call_1",
+        createdAt: "2026-06-16T08:00:00.000Z"
+      },
+      {
+        id: "trace_node:comparison:comparison_1",
+        planGraphId: "plan_graph:task_1:v1",
+        kind: "review",
+        title: "Comparison comparison_1",
+        status: "completed",
+        sourcePlanNodeId: "compare_results",
+        sourceType: "comparison_report",
+        sourceId: "comparison_1",
+        createdAt: "2026-06-16T08:05:00.000Z"
+      }
+    ],
+    dynamicEdges: [
+      {
+        id: "trace_edge:call_1:comparison_1",
+        planGraphId: "plan_graph:task_1:v1",
+        from: "trace_node:role_call:call_1",
+        to: "trace_node:comparison:comparison_1",
+        type: "evidence",
+        label: "candidate"
+      }
+    ],
+    evidence: [],
+    deviations: []
+  };
+}
+
+function chainWorkflowDagTraceFixture(): ExecutionTraceGraph {
+  const trace = workflowDagTraceFixture();
+  return {
+    ...trace,
+    baseNodes: trace.baseNodes.filter((node) =>
+      ["user_req", "pm_plan", "codex_run", "compare_results"].includes(node.id)
+    ),
+    baseEdges: [
+      { from: "user_req", to: "pm_plan", type: "primary", label: "plan" },
+      { from: "pm_plan", to: "codex_run", type: "primary", label: "implement" },
+      { from: "codex_run", to: "compare_results", type: "primary", label: "review" }
+    ],
+    dynamicNodes: [],
+    dynamicEdges: []
+  };
+}
+
+function primaryRunWorkflowDagTraceFixture(): ExecutionTraceGraph {
+  const trace = chainWorkflowDagTraceFixture();
+  return {
+    ...trace,
+    dynamicNodes: [
+      {
+        id: "trace_node:run:run_visual_primary",
+        planGraphId: trace.planGraphId,
+        kind: "task_run",
+        title: "TaskRun run_visual_primary",
+        status: "completed",
+        sourcePlanNodeId: "codex_run",
+        sourceType: "task_run",
+        sourceId: "run_visual_primary",
+        createdAt: "2026-06-16T08:02:00.000Z"
+      }
+    ],
+    dynamicEdges: []
+  };
+}
+
+function failedFallbackWorkflowDagTraceFixture(): ExecutionTraceGraph {
+  const trace = longWorkflowDagTraceFixture();
+  return {
+    ...trace,
+    dynamicNodes: [
+      {
+        id: "trace_node:run:run_visual_failed",
+        planGraphId: trace.planGraphId,
+        kind: "task_run",
+        title: "TaskRun run_visual_failed",
+        status: "failed",
+        sourcePlanNodeId: "codex_run",
+        sourceType: "task_run",
+        sourceId: "run_visual_failed",
+        createdAt: "2026-06-16T08:03:00.000Z"
+      },
+      {
+        id: "trace_node:run:run_visual_fallback",
+        planGraphId: trace.planGraphId,
+        kind: "task_run",
+        title: "TaskRun run_visual_fallback",
+        status: "completed",
+        sourcePlanNodeId: "fallback_fix",
+        sourceType: "task_run",
+        sourceId: "run_visual_fallback",
+        createdAt: "2026-06-16T08:08:00.000Z"
+      }
+    ],
+    dynamicEdges: [
+      {
+        id: "trace_edge:run_visual_failed:fallback",
+        planGraphId: trace.planGraphId,
+        from: "trace_node:run:run_visual_failed",
+        to: "trace_node:run:run_visual_fallback",
+        type: "fallback",
+        label: "fallback run"
+      }
+    ],
+    deviations: [
+      {
+        id: "deviation:run_visual_failed",
+        planGraphId: trace.planGraphId,
+        type: "required_node_failed",
+        severity: "high",
+        description: "Required Codex implementation failed before fallback.",
+        planNodeId: "codex_run",
+        createdAt: "2026-06-16T08:09:00.000Z"
+      }
+    ]
+  };
+}
+
+function cjkWorkflowDagTraceFixture(): ExecutionTraceGraph {
+  const trace = chainWorkflowDagTraceFixture();
+  return {
+    ...trace,
+    baseNodes: trace.baseNodes.map((node) => {
+      if (node.id === "codex_run") {
+        return {
+          ...node,
+          title: "实现图谱视图"
+        };
+      }
+      if (node.id === "compare_results") {
+        return {
+          ...node,
+          title: "验证宽字符输出"
+        };
+      }
+      return node;
+    })
+  };
+}
+
+function longWorkflowDagTraceFixture(): ExecutionTraceGraph {
+  const trace = workflowDagTraceFixture();
+  return {
+    ...trace,
+    baseNodes: [
+      ...trace.baseNodes,
+      {
+        id: "fallback_fix",
+        kind: "implement",
+        role: "codex",
+        title: "Fallback fix",
+        instructions: "Run a fallback fix.",
+        acceptanceCriteria: ["Fallback is inspectable."],
+        riskLevel: "medium",
+        required: false,
+        execution: {
+          mode: "primary_run",
+          expectedAdapter: "codex",
+          worktreePolicy: "isolated"
+        }
+      },
+      {
+        id: "best_result",
+        kind: "handoff",
+        role: "reviewer",
+        title: "Best result handoff",
+        instructions: "Prepare the best result.",
+        acceptanceCriteria: ["Best result is clear."],
+        riskLevel: "low",
+        required: true,
+        execution: { mode: "manual" }
+      },
+      {
+        id: "handoff",
+        kind: "handoff",
+        role: "reviewer",
+        title: "Handoff",
+        instructions: "Record the handoff.",
+        acceptanceCriteria: ["Handoff is recorded."],
+        riskLevel: "low",
+        required: true,
+        execution: { mode: "manual" }
+      }
+    ],
+    baseEdges: [
+      ...trace.baseEdges,
+      { from: "codex_run", to: "fallback_fix", type: "fallback", label: "if failed" },
+      { from: "compare_results", to: "best_result", type: "primary", label: "best" },
+      { from: "best_result", to: "handoff", type: "primary", label: "handoff" }
+    ]
+  };
+}
+
 describe("Ink TUI renderer", () => {
   it("renders Work as a conversation terminal instead of an embedded dashboard", () => {
     const output = renderToString(
@@ -699,6 +982,350 @@ describe("Ink TUI renderer", () => {
     expect(output).toContain("legacy RoleCall evidence");
     expect(output).toContain("@engineer -> @reviewer");
     expect(output).toContain("Review execution trace");
+  });
+
+  it("derives deterministic Workflow DAG ranks, lanes, anchors, and actions", () => {
+    const layout = buildGraphLayout(workflowDagTraceFixture(), {
+      mode: "overlay",
+      columns: 154,
+      selectedIndex: 1,
+      layout: "ranked",
+      labels: "compact",
+      fold: "expanded",
+      zoom: "82%"
+    });
+    const byId = new Map(layout.nodes.map((node) => [node.id, node]));
+
+    expect(byId.get("user_req")?.rank).toBe(0);
+    expect(byId.get("pm_plan")?.rank).toBe(1);
+    expect(byId.get("codex_run")?.rank).toBe(2);
+    expect(byId.get("claude_run")?.rank).toBe(2);
+    expect(byId.get("compare_results")?.rank).toBe(3);
+    expect(byId.get("codex_run")?.lane).toBe(0);
+    expect(byId.get("claude_run")?.lane).toBe(1);
+    expect(byId.get("pm_plan")?.selected).toBe(true);
+    expect(byId.get("pm_plan")?.focused).toBe(true);
+    expect(byId.get("pm_plan")?.displayWidth).toBe(31);
+    expect(byId.get("pm_plan")?.incomingAnchors.map((anchor) => anchor.nodeId)).toEqual(["user_req"]);
+    expect(byId.get("pm_plan")?.outgoingAnchors.map((anchor) => anchor.nodeId)).toEqual([
+      "codex_run",
+      "claude_run"
+    ]);
+    expect(byId.get("pm_plan")?.actions.map((action) => action.id)).toEqual(["inspect", "focus"]);
+    expect(byId.get("pm_plan")?.actions.every((action) => action.safe)).toBe(true);
+    expect(byId.get("pm_plan")?.status).toBe("completed");
+    expect(byId.get("codex_run")?.status).toBe("completed");
+    expect(byId.get("claude_run")?.status).toBe("planned");
+    expect(byId.get("compare_results")?.status).toBe("completed");
+    expect(layout.viewport.includedNodeIds).toEqual(layout.nodes.map((node) => node.id));
+  });
+
+  it("derives comparison branch grouping for grouped Workflow DAG layouts", () => {
+    const layout = buildGraphLayout(workflowDagTraceFixture(), {
+      mode: "overlay",
+      columns: 154,
+      selectedIndex: 0,
+      layout: "ranked",
+      labels: "compact",
+      fold: "grouped",
+      zoom: "100%"
+    });
+    const byId = new Map(layout.nodes.map((node) => [node.id, node]));
+
+    expect(layout.groups.map((group) => group.id)).toEqual(["parallel", "role-call", "comparison"]);
+    expect(byId.get("trace_node:role_call:call_1")?.groupId).toBe("role-call");
+    expect(byId.get("trace_node:comparison:comparison_1")?.groupId).toBe("comparison");
+    expect(byId.get("trace_node:comparison:comparison_1")?.displayWidth).toBe(39);
+  });
+
+  it("derives separate Workflow DAG subgraph groups for parallel, fallback, and comparison branches", () => {
+    const layout = buildGraphLayout(longWorkflowDagTraceFixture(), {
+      mode: "overlay",
+      columns: 154,
+      selectedIndex: 0,
+      layout: "ranked",
+      labels: "compact",
+      fold: "grouped",
+      zoom: "82%"
+    });
+
+    expect(layout.groups.map((group) => group.id)).toEqual([
+      "parallel",
+      "fallback",
+      "role-call",
+      "comparison"
+    ]);
+  });
+
+  it("renders expanded and collapsed Workflow DAG subgraph summaries", () => {
+    const expanded = renderGraphWorkbench(workflowDagTraceFixture(), {
+      mode: "overlay",
+      columns: 118,
+      selectedIndex: 0,
+      layout: "ranked",
+      labels: "compact",
+      fold: "grouped",
+      zoom: "82%"
+    });
+    const collapsed = renderGraphWorkbench(workflowDagTraceFixture(), {
+      mode: "overlay",
+      columns: 118,
+      selectedIndex: 5,
+      layout: "ranked",
+      labels: "compact",
+      fold: "grouped",
+      zoom: "82%",
+      collapsedGroupIds: ["role-call"]
+    });
+    const expandedText = expanded.rows.map((row) => row.text).join("\n");
+    const collapsedText = collapsed.rows.map((row) => row.text).join("\n");
+
+    expect(expandedText).toContain(". . . RoleCall branch . . .");
+    expect(expandedText).toContain("Implement subgraph");
+    expect(collapsedText).toContain("[+] RoleCall branch 1 node status completed risk - selected-descendant");
+    expect(collapsedText).not.toContain("Implement subgraph");
+    expect(collapsed.rows.find((row) => row.text.includes("RoleCall branch"))?.selected).toBe(true);
+  });
+
+  it("keeps compact Workflow DAG fallback below the width threshold", () => {
+    const workbench = renderGraphWorkbench(workflowDagTraceFixture(), {
+      mode: "overlay",
+      columns: 80,
+      selectedIndex: 0,
+      layout: "ranked",
+      labels: "compact",
+      fold: "expanded",
+      zoom: "82%"
+    });
+
+    expect(workbench.narrow).toBe(true);
+    expect(workbench.rows.some((row) => row.text.includes("<="))).toBe(true);
+    expect(workbench.rows.every((row) => row.text.length <= 80)).toBe(true);
+  });
+
+  it("renders wide Workflow DAG as a top-down flow with readable branches", () => {
+    const workbench = renderGraphWorkbench(workflowDagTraceFixture(), {
+      mode: "overlay",
+      columns: 154,
+      selectedIndex: 2,
+      layout: "ranked",
+      labels: "compact",
+      fold: "expanded",
+      zoom: "82%"
+    });
+    const text = workbench.rows.map((row) => row.text).join("\n");
+    const roleCallConnector = workbench.rows.find((row) =>
+      row.text.includes("runtime →") && row.text.includes("Implement subgraph")
+    );
+
+    expect(workbench.narrow).toBe(false);
+    expect(workbench.toolbar).toContain("flow");
+    expect(text).toContain("flow: top-down steps");
+    expect(text).toContain("step 2");
+    expect(text).toContain("●  r0.0 [P ✓] Capture request");
+    expect(text).toContain("●  r1.0 [P ✓] Plan workflow");
+    expect(text).toContain("├● *r2.0 [P ✓] Codex implementation");
+    expect(text).toContain("└●  r2.1 [P ·] Claude implementa");
+    expect(text).toContain("parallel:codex → r2.0 Codex implementation");
+    expect(text).toContain("parallel:claude → r2.1 Claude implementa");
+    expect(text).toContain("primary:candidate ↓ r3.0 Compare results");
+    expect(roleCallConnector?.text).toContain("runtime → r3.1 Implement subgraph");
+    expect(workbench.rows.every((row) => row.text.length <= 154)).toBe(true);
+  });
+
+  it("keeps medium Workflow DAG layouts bounded when spatial ranks do not fit", () => {
+    const workbench = renderGraphWorkbench(workflowDagTraceFixture(), {
+      mode: "overlay",
+      columns: 118,
+      selectedIndex: 0,
+      layout: "ranked",
+      labels: "compact",
+      fold: "expanded",
+      zoom: "82%"
+    });
+
+    expect(workbench.narrow).toBe(false);
+    expect(workbench.rows.some((row) => row.text.includes("Capture request --> plan Plan workflow"))).toBe(true);
+    expect(workbench.rows.every((row) => row.text.length <= 118)).toBe(true);
+  });
+
+  it("keeps common selected Workflow DAG nodes stable across overlay and plan modes", () => {
+    const trace = workflowDagTraceFixture();
+    const overlay = buildGraphLayout(trace, {
+      mode: "overlay",
+      columns: 154,
+      selectedIndex: 1,
+      layout: "ranked",
+      labels: "compact",
+      fold: "expanded",
+      zoom: "82%"
+    });
+    const plan = buildGraphLayout(trace, {
+      mode: "plan",
+      columns: 154,
+      selectedIndex: 1,
+      layout: "ranked",
+      labels: "compact",
+      fold: "expanded",
+      zoom: "82%"
+    });
+
+    expect(overlay.selectedId).toBe("pm_plan");
+    expect(plan.selectedId).toBe("pm_plan");
+    expect(plan.nodes.find((node) => node.id === "pm_plan")?.selected).toBe(true);
+  });
+
+  it("maps Workflow DAG percentage zoom to bounded density levels", () => {
+    const trace = workflowDagTraceFixture();
+    const compact = buildGraphLayout(trace, {
+      mode: "overlay",
+      columns: 154,
+      selectedIndex: 0,
+      layout: "ranked",
+      labels: "compact",
+      fold: "expanded",
+      zoom: "67%"
+    });
+    const normal = buildGraphLayout(trace, {
+      mode: "overlay",
+      columns: 154,
+      selectedIndex: 0,
+      layout: "ranked",
+      labels: "compact",
+      fold: "expanded",
+      zoom: "82%"
+    });
+    const detail = buildGraphLayout(trace, {
+      mode: "overlay",
+      columns: 154,
+      selectedIndex: 0,
+      layout: "ranked",
+      labels: "compact",
+      fold: "expanded",
+      zoom: "100%"
+    });
+
+    expect(compact.nodes[0]?.displayWidth).toBeLessThan(normal.nodes[0]?.displayWidth ?? 0);
+    expect(detail.nodes[0]?.displayWidth).toBeGreaterThan(normal.nodes[0]?.displayWidth ?? 0);
+  });
+
+  it("applies auto and off Workflow DAG label policies predictably", () => {
+    const auto = renderGraphWorkbench(workflowDagTraceFixture(), {
+      mode: "overlay",
+      columns: 154,
+      selectedIndex: 0,
+      layout: "ranked",
+      labels: "auto",
+      fold: "expanded",
+      zoom: "82%"
+    });
+    const off = renderGraphWorkbench(workflowDagTraceFixture(), {
+      mode: "overlay",
+      columns: 154,
+      selectedIndex: 0,
+      layout: "ranked",
+      labels: "off",
+      fold: "expanded",
+      zoom: "82%"
+    });
+    const autoText = auto.rows.map((row) => row.text).join("\n");
+    const offText = off.rows.map((row) => row.text).join("\n");
+
+    expect(auto.toolbar).toContain("labels auto");
+    expect(autoText).toContain("Capture request");
+    expect(offText).toContain("parallel:codex → r2.0 codex_run");
+    expect(offText).not.toContain("codex codex_run");
+  });
+
+  it("uses viewport rank state when wide Workflow DAG ranks overflow", () => {
+    const layout = buildGraphLayout(longWorkflowDagTraceFixture(), {
+      mode: "overlay",
+      columns: 120,
+      selectedIndex: 5,
+      layout: "ranked",
+      labels: "compact",
+      fold: "expanded",
+      zoom: "82%",
+      viewportRank: 3
+    });
+
+    expect(layout.viewport.startRank).toBeGreaterThan(0);
+    expect(layout.viewport.includedNodeIds).not.toContain("user_req");
+    expect(layout.viewport.includedNodeIds).toContain("best_result");
+  });
+
+  it("renders a structural mini-map for linear Workflow DAG chains", () => {
+    const workbench = renderGraphWorkbench(chainWorkflowDagTraceFixture(), {
+      mode: "overlay",
+      columns: 118,
+      selectedIndex: 0,
+      layout: "ranked",
+      labels: "compact",
+      fold: "expanded",
+      zoom: "82%"
+    });
+
+    expect(workbench.miniMap).toContain("mini-map z82%");
+    expect(workbench.miniMap).toContain("vp[*###]");
+    expect(workbench.miniMap).toContain("lanes *-P-P-P");
+    expect(workbench.miniMap.length).toBeLessThanOrEqual(118);
+  });
+
+  it("renders branch occupancy in the Workflow DAG mini-map", () => {
+    const workbench = renderGraphWorkbench(workflowDagTraceFixture(), {
+      mode: "overlay",
+      columns: 154,
+      selectedIndex: 2,
+      layout: "ranked",
+      labels: "compact",
+      fold: "expanded",
+      zoom: "82%"
+    });
+
+    expect(workbench.miniMap).toContain("vp[##*##]");
+    expect(workbench.miniMap).toContain("lanes P-P-*P-PT-T");
+    expect(workbench.miniMap.length).toBeLessThanOrEqual(154);
+  });
+
+  it("moves the Workflow DAG mini-map selected viewport marker with focus", () => {
+    const first = renderGraphWorkbench(workflowDagTraceFixture(), {
+      mode: "overlay",
+      columns: 154,
+      selectedIndex: 0,
+      layout: "ranked",
+      labels: "compact",
+      fold: "expanded",
+      zoom: "82%"
+    });
+    const focused = renderGraphWorkbench(workflowDagTraceFixture(), {
+      mode: "overlay",
+      columns: 154,
+      selectedIndex: 4,
+      layout: "ranked",
+      labels: "compact",
+      fold: "expanded",
+      zoom: "82%"
+    });
+
+    expect(first.miniMap).toContain("vp[*####]");
+    expect(focused.miniMap).toContain("vp[###*#]");
+    expect(first.miniMap).not.toBe(focused.miniMap);
+  });
+
+  it("truncates the Workflow DAG mini-map safely in narrow terminals", () => {
+    const workbench = renderGraphWorkbench(longWorkflowDagTraceFixture(), {
+      mode: "overlay",
+      columns: 36,
+      selectedIndex: 6,
+      layout: "ranked",
+      labels: "compact",
+      fold: "expanded",
+      zoom: "67%",
+      viewportRank: 3
+    });
+
+    expect(workbench.miniMap).toContain("mini-map z67%");
+    expect(workbench.miniMap.length).toBeLessThanOrEqual(36);
   });
 
   it("renders Plan/Trace/Overlay Workflow DAG modes", () => {
@@ -938,12 +1565,15 @@ describe("Ink TUI renderer", () => {
 
     expect(overlay).toContain("Graph - Workflow DAG");
     expect(overlay).toContain("mode overlay");
-    expect(overlay).toContain("mini-map 1/4");
+    expect(overlay).toContain("mini-map z82%");
     expect(overlay).toContain("P");
     expect(overlay).toContain("plan_node_imple");
-    expect(overlay).toContain("--> then plan_node_verify");
+    expect(overlay).toContain("flow: top-down steps");
+    expect(overlay).toContain("● *r0.0 [P ✓] Implement graph view");
+    expect(overlay).toContain("primary:then ↓ r1.0 Verify graph view");
+    expect(overlay).not.toContain("[P ■] Verify graph view");
     expect(overlay).toContain("T");
-    expect(overlay).toContain("trace_node:run:");
+    expect(overlay).toContain("TaskRun run_1");
     expect(overlay).toContain("legend: [P] plan");
     expect(overlay).toContain("TaskRun run_1");
     expect(plan).toContain("mode plan");
@@ -981,11 +1611,33 @@ describe("Ink TUI renderer", () => {
     state = reduceInkState(state, "cycle_graph_mode", baseModel);
     expect(state.graphMode).toBe("trace");
     state = reduceInkState(state, "toggle_graph_labels", baseModel);
+    expect(state.graphLabels).toBe("compact");
+    state = reduceInkState(state, "toggle_graph_labels", baseModel);
     expect(state.graphLabels).toBe("full");
     state = reduceInkState(state, "toggle_graph_fold", baseModel);
     expect(state.graphFold).toBe("grouped");
     state = reduceInkState(state, "toggle_graph_zoom", baseModel);
-    expect(state.graphZoom).toBe("detail");
+    expect(state.graphZoom).toBe("100%");
+  });
+
+  it("toggles Workflow DAG group collapse for the selected graph group", () => {
+    const model = {
+      ...baseModel,
+      executionTrace: workflowDagTraceFixture()
+    };
+    let state = {
+      ...createInitialInkState(),
+      focus: "graph" as const,
+      selectedRoleCallIndex: 5
+    };
+
+    state = reduceInkState(state, "toggle_graph_fold", model);
+    expect(state.graphFold).toBe("grouped");
+    expect(state.collapsedGraphGroupIds).toEqual([]);
+    state = reduceInkState(state, "toggle_graph_fold", model);
+    expect(state.collapsedGraphGroupIds).toEqual(["role-call"]);
+    state = reduceInkState(state, "toggle_graph_fold", model);
+    expect(state.collapsedGraphGroupIds).toEqual([]);
   });
 
   it("keeps slash completion suggestions inside the terminal row budget", () => {
@@ -1942,6 +2594,118 @@ describe("Ink TUI renderer", () => {
     }
   });
 
+  it("renders Workflow DAG visual QA fixtures across reference sizes", () => {
+    const sizes = [
+      { columns: 154, rows: 42 },
+      { columns: 160, rows: 48 },
+      { columns: 120, rows: 36 },
+      { columns: 80, rows: 24 }
+    ];
+    const graphFixtures = [
+      {
+        name: "plan-only chain",
+        model: { ...baseModel, executionTrace: chainWorkflowDagTraceFixture() },
+        state: { ...createInitialInkState(), focus: "graph" as const, graphMode: "plan" as const, graphLabels: "full" as const },
+        expected: ["Graph - Workflow DAG", "mode plan", "mini-map z82%"],
+        wideExpected: ["Capture request", "Plan workflow", "Codex implementation"],
+        narrowExpected: ["<="]
+      },
+      {
+        name: "plan plus primary TaskRun",
+        model: { ...baseModel, executionTrace: primaryRunWorkflowDagTraceFixture() },
+        state: {
+          ...createInitialInkState(),
+          focus: "graph" as const,
+          selectedRoleCallIndex: 4,
+          graphLabels: "full" as const
+        },
+        expected: ["Graph - Workflow DAG", "mode overlay", "mini-map z82%"],
+        wideExpected: ["TaskRun run_visual"],
+        narrowExpected: ["<="]
+      },
+      {
+        name: "RoleCall-expanded subgraph",
+        model: { ...baseModel, executionTrace: workflowDagTraceFixture() },
+        state: {
+          ...createInitialInkState(),
+          focus: "graph" as const,
+          selectedRoleCallIndex: 5,
+          graphFold: "grouped" as const,
+          graphLabels: "full" as const
+        },
+        expected: ["Graph - Workflow DAG", "mini-map z82%", "Implement subgraph"],
+        wideExpected: ["Implement subgraph", "Comparison branch"],
+        narrowExpected: ["<="]
+      },
+      {
+        name: "parallel comparison branch",
+        model: { ...baseModel, executionTrace: workflowDagTraceFixture() },
+        state: {
+          ...createInitialInkState(),
+          focus: "graph" as const,
+          selectedRoleCallIndex: 2,
+          graphMode: "plan" as const
+        },
+        expected: ["Graph - Workflow DAG", "mode plan", "mini-map z82%"],
+        wideExpected: ["Claude implementation", "Compare results", "==> codex Codex implementation"],
+        narrowExpected: ["<="]
+      },
+      {
+        name: "failed required node with fallback",
+        model: { ...baseModel, executionTrace: failedFallbackWorkflowDagTraceFixture() },
+        state: {
+          ...createInitialInkState(),
+          focus: "graph" as const,
+          graphFold: "grouped" as const,
+          graphLabels: "full" as const
+        },
+        expected: ["Graph - Workflow DAG", "deviations", "mini-map z82%"],
+        wideExpected: ["Fallback fix", "TaskRun run_visual", "-!>"],
+        narrowExpected: ["<="]
+      },
+      {
+        name: "CJK graph labels",
+        model: { ...baseModel, executionTrace: cjkWorkflowDagTraceFixture() },
+        state: {
+          ...createInitialInkState(),
+          focus: "graph" as const,
+          graphMode: "plan" as const,
+          graphLabels: "full" as const
+        },
+        expected: ["Graph - Workflow DAG", "mode plan", "mini-map z82%"],
+        wideExpected: ["实现图谱视图", "验证宽字符输出"],
+        narrowExpected: ["<="]
+      }
+    ];
+
+    for (const fixture of graphFixtures) {
+      for (const terminal of sizes) {
+        const output = renderToString(
+          React.createElement(TuiInkFrame, {
+            model: fixture.model,
+            state: fixture.state,
+            terminal
+          }),
+          { columns: terminal.columns }
+        );
+        const lines = output.split("\n");
+        const expectedValues = [
+          ...fixture.expected,
+          ...(terminal.columns >= 140 ? fixture.wideExpected : []),
+          ...(terminal.columns < 92 ? fixture.narrowExpected : [])
+        ];
+
+        expect(output, `${fixture.name} ${terminal.columns}x${terminal.rows}`).toContain("AGENT HUB");
+        expect(output, `${fixture.name} ${terminal.columns}x${terminal.rows}`).toContain("> @codex prompt");
+        expect(output, `${fixture.name} ${terminal.columns}x${terminal.rows}`).toContain("keys:");
+        for (const value of expectedValues) {
+          expect(output, `${fixture.name} ${terminal.columns}x${terminal.rows}`).toContain(value);
+        }
+        expect(lines.every((value) => value.length <= terminal.columns)).toBe(true);
+      }
+    }
+  });
+
   it("caps chatty active run boxes to preserve terminal row budget", () => {
     const output = renderToString(
       React.createElement(TuiInkFrame, {
@@ -2464,6 +3228,77 @@ describe("Ink TUI renderer", () => {
     expect(instance.lastFrame()).toContain("Open Help");
     expect(instance.lastFrame()).toContain("agent-hub memory list --project-id project_1");
     expect(instance.lastFrame()).toContain("> @codex prompt");
+    instance.unmount();
+  });
+
+  it("focuses Workflow DAG nodes from the local graph slash command", async () => {
+    const submissions = [];
+    const graphModel = {
+      ...baseModel,
+      executionTrace: workflowDagTraceFixture()
+    };
+    const instance = render(
+      React.createElement(TuiInkApp, {
+        model: graphModel,
+        state: { ...createInitialInkState(), focus: "graph" },
+        terminal: { columns: 154, rows: 40 },
+        interactive: true,
+        submitPrompt: async (input) => {
+          submissions.push(input);
+          return { ok: true, message: "Submitted prompt.", model: graphModel };
+        }
+      })
+    );
+
+    for (const character of "/graph focus compare_results") {
+      instance.stdin.write(character);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+    instance.stdin.write("\r");
+    await waitForFrame(instance, "Graph focused compare_results.");
+
+    expect(submissions).toEqual([]);
+    expect(instance.lastFrame()).toContain("focus Compare results");
+    expect(instance.lastFrame()).toContain("> @codex prompt");
+
+    for (const character of "/graph focus missing_node") {
+      instance.stdin.write(character);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+    instance.stdin.write("\r");
+    await waitForFrame(instance, "Graph node not found: missing_node.");
+    expect(submissions).toEqual([]);
+    instance.unmount();
+  });
+
+  it("toggles Workflow DAG groups from the local graph fold slash command", async () => {
+    const submissions = [];
+    const graphModel = {
+      ...baseModel,
+      executionTrace: workflowDagTraceFixture()
+    };
+    const instance = render(
+      React.createElement(TuiInkApp, {
+        model: graphModel,
+        state: { ...createInitialInkState(), focus: "graph" },
+        terminal: { columns: 118, rows: 40 },
+        interactive: true,
+        submitPrompt: async (input) => {
+          submissions.push(input);
+          return { ok: true, message: "Submitted prompt.", model: graphModel };
+        }
+      })
+    );
+
+    for (const character of "/graph fold role-call") {
+      instance.stdin.write(character);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+    instance.stdin.write("\r");
+    await waitForFrame(instance, "Graph group collapsed: role-call.");
+
+    expect(instance.lastFrame()).toContain("[+] RoleCall branch");
+    expect(submissions).toEqual([]);
     instance.unmount();
   });
 

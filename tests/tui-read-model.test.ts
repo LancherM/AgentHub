@@ -207,38 +207,62 @@ describe("TUI current-context read model", () => {
     const implementDetail = model.selectionDetails.graph.overlay.find(
       (detail) => detail.id === "plan_node_trace"
     );
+    expect(implementDetail?.commands).toEqual(expect.arrayContaining([
+      "agent-hub execution-trace show --plan-graph-id plan_graph_trace",
+      "agent-hub plan-graphs show plan_graph_trace",
+      "/graph focus plan_node_trace"
+    ]));
     expect(implementDetail?.sections).toEqual(expect.arrayContaining([
       expect.objectContaining({
         id: "incoming",
-        lines: ["plan plan_graph_trace:planner -> plan_node_trace primary"]
+        lines: ["plan Create plan -> Implement trace primary"]
       }),
       expect.objectContaining({
         id: "outgoing",
         lines: expect.arrayContaining([
-          "runtime plan_node_trace -> trace_node:run:run_trace task_run completed"
+          "runtime Implement trace -> TaskRun run_trace task_run completed"
         ])
       }),
       expect.objectContaining({
         id: "evidence",
         lines: expect.arrayContaining([
           expect.stringContaining("task_run:run_trace")
+        ])
+      }),
+      expect.objectContaining({
+        id: "actions",
+        lines: expect.arrayContaining([
+          "focus node: /graph focus plan_node_trace",
+          expect.stringContaining("prepare rerun-from-here prompt: Rerun from graph node plan_node_trace")
         ])
       })
     ]));
     const runDetail = model.selectionDetails.graph.overlay.find(
       (detail) => detail.id === "trace_node:run:run_trace"
     );
+    expect(runDetail?.commands).toEqual(expect.arrayContaining([
+      "agent-hub runs show run_trace",
+      "agent-hub runs diff run_trace --stat",
+      "/graph focus trace_node:run:run_trace"
+    ]));
     expect(runDetail?.sections).toEqual(expect.arrayContaining([
       expect.objectContaining({
         id: "incoming",
         lines: expect.arrayContaining([
-          "runtime plan_node_trace -> trace_node:run:run_trace task_run"
+          "runtime Implement trace -> TaskRun run_trace task_run"
         ])
       }),
       expect.objectContaining({
         id: "evidence",
         lines: expect.arrayContaining([
           expect.stringContaining("task_run:run_trace")
+        ])
+      }),
+      expect.objectContaining({
+        id: "actions",
+        lines: expect.arrayContaining([
+          "open run: agent-hub runs show run_trace",
+          expect.stringContaining("prepare rerun-from-here prompt: Rerun from graph node plan_node_trace")
         ])
       })
     ]));
