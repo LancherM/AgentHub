@@ -344,6 +344,8 @@ describe("task runner", () => {
       "implement",
       "verify"
     ]);
+    expect(result.planGraphSchedule?.status).toBe("completed");
+    expect(result.planGraphSchedule?.scheduledRuns).toHaveLength(0);
     expect(adapterInputs).toHaveLength(2);
     expect(adapterInputs[0].role?.roleHandle).toBe("planner");
     expect(adapterInputs[0].role?.persona).toContain("System-owned planning role");
@@ -405,6 +407,211 @@ describe("task runner", () => {
     );
     await expect(planGraphRepository.getActiveByTaskId("task_agent_planner"))
       .resolves.toMatchObject({ id: result.planGraph?.id, status: "active" });
+  });
+
+  it("automatically schedules the remaining planner-backed PlanGraph DAG", async () => {
+    const projectRoot = await createTestDirectory("agent-hub-agent-planner-auto-project");
+    const runRoot = await createTestDirectory("agent-hub-agent-planner-auto-runs");
+    const taskRepository = new InMemoryTaskRepository();
+    const taskRunRepository = new InMemoryTaskRunRepository();
+    const runMetadataRepository = new InMemoryRunMetadataRepository();
+    const planGraphRepository = new InMemoryPlanGraphRepository();
+    const traceLinkRepository = new InMemoryTraceLinkRepository();
+    const adapterInputs: AgentRunInput[] = [];
+    const adapter: AgentAdapter = {
+      kind: "fake",
+      displayName: "Auto Scheduler Fake",
+      async detect() {
+        return { available: true, version: "auto-scheduler" };
+      },
+      async *run(input: AgentRunInput): AsyncIterable<AgentRunEvent> {
+        adapterInputs.push(input);
+        if (input.role?.roleHandle === "planner") {
+          yield {
+            type: "message",
+            message: JSON.stringify({
+              planGraph: schedulerGraph({
+                taskId: input.taskId,
+                nodes: [
+                  { key: "implement", kind: "implement", mode: "primary_run" },
+                  { key: "verify", kind: "verify", mode: "primary_run" }
+                ],
+                edges: [
+                  { from: "planner", to: "implement" },
+                  { from: "implement", to: "verify" }
+                ]
+              })
+            }),
+            metadata: { assistantOutput: true }
+          };
+          yield { type: "exit", message: "@planner completed", exitCode: 0 };
+          return;
+        }
+        yield {
+          type: "message",
+          message: `ran ${input.currentPlanNode?.kind ?? "unknown"}`,
+          metadata: { assistantOutput: true }
+        };
+        yield { type: "exit", message: "node completed", exitCode: 0 };
+      }
+    };
+    const runner = new TaskRunner({
+      taskRepository,
+      taskRunRepository,
+      runMetadataRepository,
+      planGraphRepository,
+      traceLinkRepository,
+      defaultRunRoot: runRoot,
+      workspaceManager: new TestWorkspaceManager(runRoot),
+      diffCollector: new StaticDiffCollector(),
+      verificationRunner: new VerificationRunner(new MockShellExecutor()),
+      agentRegistry: new DefaultAgentRegistry([adapter]),
+      idGenerator: new SequenceIdGenerator(),
+      clock: new FixedClock("2026-01-01T00:00:00.000Z")
+    });
+
+    const result = await runner.run({
+      projectRoot,
+      taskPrompt: "Implement then verify a planner-backed DAG.",
+      agentKind: "fake",
+      taskId: "task_agent_planner_auto",
+      planGraphMode: "agent_adapter",
+      plannerAgentKind: "fake"
+    });
+
+    const primaryNodeIds = result.planGraph?.nodes
+      .filter((node) => node.execution.mode === "primary_run")
+      .map((node) => node.id);
+    expect(result.status).toBe("succeeded");
+    expect(result.ok).toBe(true);
+    expect(result.planGraphSchedule?.status).toBe("completed");
+    expect(result.planGraphSchedule?.scheduledRuns).toHaveLength(1);
+    expect(adapterInputs.filter((input) => input.role?.roleHandle === "planner"))
+      .toHaveLength(1);
+    expect(adapterInputs.map((input) => input.currentPlanNode?.id).filter(Boolean))
+      .toEqual(primaryNodeIds);
+    expect(result.planGraphSchedule?.scheduledRuns[0]?.run.id)
+      .not.toBe(result.run.id);
+    await expect(runMetadataRepository.get(result.run.id))
+      .resolves.toMatchObject({
+        planBinding: {
+          planGraphId: result.planGraph?.id,
+          planNodeId: primaryNodeIds?.[0]
+        }
+      });
+    await expect(runMetadataRepository.get(
+      result.planGraphSchedule?.scheduledRuns[0]?.run.id ?? ""
+    )).resolves.toMatchObject({
+      planBinding: {
+        planGraphId: result.planGraph?.id,
+        planNodeId: primaryNodeIds?.[1]
+      }
+    });
+    const trace = await buildExecutionTraceGraph({
+      planGraphRepository,
+      traceLinkRepository,
+      taskRunRepository,
+      runMetadataRepository
+    }, {
+      planGraphId: result.planGraph?.id ?? "",
+      now: "2026-01-01T00:00:00.000Z"
+    });
+    expect(trace.dynamicNodes.filter((node) => node.kind === "task_run"))
+      .toHaveLength(2);
+    await expect(taskRepository.get("task_agent_planner_auto"))
+      .resolves.toMatchObject({ status: "completed" });
+  });
+
+  it("automatically schedules fallback branches after a failed planner-backed root node", async () => {
+    const projectRoot = await createTestDirectory("agent-hub-agent-planner-fallback-project");
+    const runRoot = await createTestDirectory("agent-hub-agent-planner-fallback-runs");
+    const taskRepository = new InMemoryTaskRepository();
+    const taskRunRepository = new InMemoryTaskRunRepository();
+    const runMetadataRepository = new InMemoryRunMetadataRepository();
+    const planGraphRepository = new InMemoryPlanGraphRepository();
+    const traceLinkRepository = new InMemoryTraceLinkRepository();
+    const adapterInputs: AgentRunInput[] = [];
+    const adapter: AgentAdapter = {
+      kind: "fake",
+      displayName: "Auto Fallback Fake",
+      async detect() {
+        return { available: true, version: "auto-fallback" };
+      },
+      async *run(input: AgentRunInput): AsyncIterable<AgentRunEvent> {
+        adapterInputs.push(input);
+        if (input.role?.roleHandle === "planner") {
+          yield {
+            type: "message",
+            message: JSON.stringify({
+              planGraph: schedulerGraph({
+                taskId: input.taskId,
+                nodes: [
+                  { key: "implement", kind: "implement", mode: "primary_run" },
+                  { key: "fallback", kind: "review", mode: "primary_run" }
+                ],
+                edges: [
+                  { from: "planner", to: "implement" },
+                  { from: "implement", to: "fallback", type: "fallback" }
+                ]
+              })
+            }),
+            metadata: { assistantOutput: true }
+          };
+          yield { type: "exit", message: "@planner completed", exitCode: 0 };
+          return;
+        }
+        if (input.currentPlanNode?.kind === "implement") {
+          yield { type: "exit", message: "implementation failed", exitCode: 1 };
+          return;
+        }
+        yield { type: "exit", message: "fallback completed", exitCode: 0 };
+      }
+    };
+    const runner = new TaskRunner({
+      taskRepository,
+      taskRunRepository,
+      runMetadataRepository,
+      planGraphRepository,
+      traceLinkRepository,
+      defaultRunRoot: runRoot,
+      workspaceManager: new TestWorkspaceManager(runRoot),
+      diffCollector: new StaticDiffCollector(),
+      verificationRunner: new VerificationRunner(new MockShellExecutor()),
+      agentRegistry: new DefaultAgentRegistry([adapter]),
+      idGenerator: new SequenceIdGenerator(),
+      clock: new FixedClock("2026-01-01T00:00:00.000Z")
+    });
+
+    const result = await runner.run({
+      projectRoot,
+      taskPrompt: "Run a planner-backed fallback DAG.",
+      agentKind: "fake",
+      taskId: "task_agent_planner_fallback",
+      planGraphMode: "agent_adapter",
+      plannerAgentKind: "fake"
+    });
+
+    const fallbackNode = result.planGraph?.nodes.find((node) =>
+      node.kind === "review"
+    );
+    expect(result.status).toBe("failed");
+    expect(result.ok).toBe(false);
+    expect(result.planGraphSchedule?.status).toBe("failed");
+    expect(result.planGraphSchedule?.scheduledRuns).toHaveLength(1);
+    expect(result.planGraphSchedule?.scheduledRuns[0]?.status).toBe("succeeded");
+    expect(adapterInputs.map((input) =>
+      input.role?.roleHandle ?? input.currentPlanNode?.kind
+    )).toEqual(["planner", "implement", "review"]);
+    await expect(runMetadataRepository.get(
+      result.planGraphSchedule?.scheduledRuns[0]?.run.id ?? ""
+    )).resolves.toMatchObject({
+      planBinding: {
+        planGraphId: result.planGraph?.id,
+        planNodeId: fallbackNode?.id
+      }
+    });
+    await expect(taskRepository.get("task_agent_planner_fallback"))
+      .resolves.toMatchObject({ status: "open" });
   });
 
   it("includes configured verification commands in the system planner prompt", async () => {

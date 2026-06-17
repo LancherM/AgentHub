@@ -575,7 +575,15 @@ creation for
 legacy compatibility, dry runs, and internal fake-adapter tests. The current
 primary adapter run is bound to the first planned `primary_run` node when one
 exists, records that binding in run metadata, and receives a runtime-injected
-PlanGraph/current-node block with allowed next node ids. Role-backed assistant
+PlanGraph/current-node block with allowed next node ids. After that root run
+finalizes and its plan binding is durable, TaskRunner automatically invokes the
+local PlanGraph scheduler to continue the remaining runnable DAG nodes through
+the same isolated TaskRunner path. Scheduler child runs inherit the active
+PlanGraph with explicit node bindings and graph creation disabled, so the DAG
+continues without recursively asking `@planner` to create new graphs. If the
+remaining graph completes, the task remains completed; if the scheduler is
+blocked, limited, or failed, the task returns to open for inspection and
+follow-up. Role-backed assistant
 output that creates a RoleCall now
 links back to the source run's plan binding when one exists: Agent Hub records a
 RoleCall tool event, stores plan trace context on the RoleCall, creates a
@@ -634,16 +642,18 @@ inspectably instead of activating caller-supplied graphs. The core amendment
 contract supports durable `proposed` graph versions in memory and SQLite.
 Creating a proposed graph does not replace the current active graph; activation
 supersedes the old active graph only after validation, and changes to required
-execution nodes require an explicit approval flag. Additional primary PlanNodes
-can be scheduled explicitly through `RunTaskInput.planGraphBinding`, and the
-bounded `TaskRunner.runPlanGraph()` scheduler can now walk an active PlanGraph
-locally: it treats system nodes as satisfied, blocks behind required manual
-nodes, runs eligible `primary_run` nodes through the existing isolated
-TaskRunner path, honors fallback edges only after failed or blocked sources,
-limits scheduled runs when requested, starts eligible independent branches in
-bounded concurrent batches, gives each scheduled branch a unique local worktree
-branch, and requires an explicit rerun request before repeating successful plan
-nodes. `maxConcurrentRuns` controls how many runnable branches start together;
+execution nodes require an explicit approval flag. After the first
+planner-backed primary node finalizes, the bounded `TaskRunner.runPlanGraph()`
+scheduler automatically walks the rest of the active PlanGraph. The same
+scheduler remains available as an explicit recovery, resume, limited-run, or
+rerun API through `RunTaskInput.planGraphBinding` and `TaskRunner.runPlanGraph()`:
+it treats system nodes as satisfied, blocks behind required manual nodes, runs
+eligible `primary_run` nodes through the existing isolated TaskRunner path,
+honors fallback edges only after failed or blocked sources, limits scheduled
+runs when requested, starts eligible independent branches in bounded concurrent
+batches, gives each scheduled branch a unique local worktree branch, and
+requires an explicit rerun request before repeating successful plan nodes.
+`maxConcurrentRuns` controls how many runnable branches start together;
 when it is omitted, `maxScheduledRuns` also bounds the batch size, and otherwise
 the scheduler preserves single-branch execution. A dedicated desktop graph
 canvas remains follow-on UI work beyond the current read-only Trace tab.

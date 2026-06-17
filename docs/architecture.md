@@ -499,13 +499,18 @@ node with `execution.mode: "system"`. TaskRunner selects the first planned
 `primary_run` node as the current primary run binding, persists that binding in
 `run_metadata.plan_binding_json`, emits planner lifecycle events, and passes
 the active PlanGraph, current plan node, and allowed next node ids through
-adapter runtime input. Additional primary PlanNodes can still be scheduled by
-calling TaskRunner with `RunTaskInput.planGraphBinding`; the higher-level
-`TaskRunner.runPlanGraph()` scheduler evaluates persisted run metadata for the
-active graph, selects runnable `primary_run` nodes whose required upstream
-system or primary nodes are satisfied, blocks required downstream work behind
-manual nodes, activates fallback edges only after failed or blocked sources,
-and calls the same isolated `run()` path with explicit bindings. Runnable
+adapter runtime input. Once that root run has finalized, stored its run status,
+and persisted the plan binding, TaskRunner automatically invokes
+`TaskRunner.runPlanGraph()` for the same active graph. The scheduler evaluates
+persisted run metadata, selects runnable `primary_run` nodes whose required
+upstream system or primary nodes are satisfied, blocks required downstream work
+behind manual nodes, activates fallback edges only after failed or blocked
+sources, and calls the same isolated `run()` path with explicit
+`RunTaskInput.planGraphBinding` values. Scheduler child runs set
+`planGraphMode: "disabled"`, so they inherit the current PlanGraph instead of
+recursively creating a replacement graph. The same scheduler remains available
+as an explicit recovery, resume, limited-run, or rerun API through
+`RunTaskInput.planGraphBinding` and `TaskRunner.runPlanGraph()`. Runnable
 independent branches are launched in bounded concurrent batches; `maxScheduledRuns`
 limits the total number of runs scheduled by one call, while `maxConcurrentRuns`
 limits how many runnable branches start at the same time before the scheduler
@@ -513,7 +518,9 @@ re-evaluates downstream dependencies. If `maxConcurrentRuns` is omitted,
 `maxScheduledRuns` also bounds the batch size when present; otherwise the
 scheduler keeps single-branch execution. PlanGraph-scheduled runs use per-node,
 per-run branch names so same-agent parallel branches do not collide in git
-worktree setup. The scheduler does not mutate the PlanGraph, apply code, merge,
+worktree setup. Automatic scheduling keeps the task completed only when the
+remaining DAG completes; blocked, limited, or failed schedules leave the task
+open for inspection. The scheduler does not mutate the PlanGraph, apply code, merge,
 push, approve memory, or export repository context, and it leaves explicit
 reruns opt-in for successful nodes.
 Downstream verification, review, memory, and handoff nodes are inspectable

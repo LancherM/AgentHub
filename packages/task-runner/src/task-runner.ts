@@ -298,6 +298,7 @@ export interface RunResult {
   verification?: VerificationSuiteResult;
   riskReport?: RiskReport;
   planGraph?: PlanGraph;
+  planGraphSchedule?: RunPlanGraphResult;
   contextRetrievalResult?: ContextRetrievalResult;
   workspaceCleanup?: WorkspaceCleanupResult;
   warnings: string[];
@@ -1580,11 +1581,20 @@ export class TaskRunner {
       status,
       completedAt
     );
+    const planGraphSchedulingContext = {
+      input,
+      planGraph,
+      scheduledPlanNode,
+      planGraphMode,
+      status
+    };
     const updatedTask = await this.updateTaskStatusAfterRun(
       currentTask.id,
       status,
       completedAt,
-      input.taskStatusMode ?? "single_run"
+      shouldAutoScheduleRemainingPlanGraph(planGraphSchedulingContext)
+        ? "plan_graph_scheduler"
+        : input.taskStatusMode ?? "single_run"
     );
     try {
       await this.contextEvalEventRepository.createMany(
@@ -1663,9 +1673,38 @@ export class TaskRunner {
       }
     }
 
+    let finalTask = updatedTask;
+    let planGraphSchedule: RunPlanGraphResult | undefined;
+    if (shouldAutoScheduleRemainingPlanGraph(planGraphSchedulingContext)) {
+      try {
+        planGraphSchedule = await this.runPlanGraph(
+          planGraphSchedulerInput({
+            input,
+            parsedTaskPrompt: parsed.taskPrompt,
+            parsedAgentKind: parsed.agentKind,
+            task: currentTask,
+            planGraph: planGraphSchedulingContext.planGraph
+          })
+        );
+        warnings.push(...planGraphSchedule.warnings);
+        finalTask = await this.updateTaskStatusAfterPlanGraphSchedule(
+          currentTask.id,
+          planGraphSchedule.status
+        );
+      } catch (error) {
+        warnings.push(`plan graph scheduling failed: ${errorMessage(error)}`);
+        finalTask = await this.updateTaskStatusAfterPlanGraphSchedule(
+          currentTask.id,
+          "failed"
+        );
+      }
+    }
+
     return this.result({
-      ok: status === "succeeded",
-      task: updatedTask,
+      ok:
+        status === "succeeded" &&
+        (planGraphSchedule === undefined || planGraphSchedule.ok),
+      task: finalTask,
       run: updatedRun,
       events,
       status,
@@ -1678,6 +1717,7 @@ export class TaskRunner {
       verification,
       riskReport,
       planGraph,
+      planGraphSchedule,
       workspaceCleanup,
       warnings,
       error:
@@ -1999,6 +2039,32 @@ export class TaskRunner {
     return this.taskRepository.updateStatus(task.id, nextStatus, updatedAt);
   }
 
+  private async updateTaskStatusAfterPlanGraphSchedule(
+    taskId: string,
+    scheduleStatus: RunPlanGraphStatus
+  ): Promise<Task> {
+    let task = await this.taskRepository.get(taskId);
+    if (!task) {
+      throw new TaskRunnerError(`task ${taskId} not found`);
+    }
+    if (scheduleStatus !== "completed") {
+      if (task.status === "running") {
+        return this.taskRepository.updateStatus(task.id, "open", this.clock.now());
+      }
+      return task;
+    }
+    if (task.status === "completed") {
+      return task;
+    }
+    if (task.status === "open") {
+      task = await this.taskRepository.updateStatus(task.id, "running", this.clock.now());
+    }
+    if (task.status === "running") {
+      return this.taskRepository.updateStatus(task.id, "completed", this.clock.now());
+    }
+    return task;
+  }
+
   private async sharedTaskStatus(taskId: string): Promise<Task["status"]> {
     const task = await this.taskRepository.get(taskId);
     const runs = await this.taskRunRepository.listByTaskId(taskId);
@@ -2275,6 +2341,54 @@ function shouldDisableDefaultPlanGraph(
     return true;
   }
   return agentKind === "fake" && input.plannerAgentKind === undefined;
+}
+
+function shouldAutoScheduleRemainingPlanGraph(input: {
+  input: RunTaskInput;
+  planGraph?: PlanGraph;
+  scheduledPlanNode?: ScheduledPlanNode;
+  planGraphMode: NormalizedPlanGraphMode;
+  status: RunStatus;
+}): input is {
+  input: RunTaskInput;
+  planGraph: PlanGraph;
+  scheduledPlanNode: ScheduledPlanNode;
+  planGraphMode: NormalizedPlanGraphMode;
+  status: RunStatus;
+} {
+  return Boolean(
+    input.planGraph &&
+    input.scheduledPlanNode &&
+    input.planGraphMode !== "disabled" &&
+    !input.input.planGraphBinding &&
+    input.input.taskStatusMode !== "plan_graph_scheduler" &&
+    input.status !== "cancelled"
+  );
+}
+
+function planGraphSchedulerInput(input: {
+  input: RunTaskInput;
+  parsedTaskPrompt: string;
+  parsedAgentKind: AgentKind;
+  task: Task;
+  planGraph: PlanGraph;
+}): RunPlanGraphInput {
+  const {
+    rawPrompt: _rawPrompt,
+    plannerAgentKind: _plannerAgentKind,
+    planGraphMode: _planGraphMode,
+    planGraphBinding: _planGraphBinding,
+    ...runInput
+  } = input.input;
+  return {
+    ...runInput,
+    projectRoot: input.input.projectRoot,
+    projectId: input.task.projectId,
+    taskId: input.task.id,
+    taskPrompt: input.parsedTaskPrompt,
+    agentKind: input.parsedAgentKind,
+    planGraphId: input.planGraph.id
+  };
 }
 
 function plannerTaskBriefForGraphOutput(input: {
@@ -2842,7 +2956,19 @@ function scheduledPlanGraphStatus(
       .filter((node) => node.execution.mode === "primary_run")
       .map((node) => node.id)
   );
+  const requiredPrimaryNodeIds = new Set(
+    graph.nodes
+      .filter((node) => node.execution.mode === "primary_run" && node.required)
+      .map((node) => node.id)
+  );
   const primaryStates = schedule.nodes.filter((node) => primaryNodeIds.has(node.nodeId));
+  if (
+    primaryStates.some((node) =>
+      requiredPrimaryNodeIds.has(node.nodeId) && node.status === "failed"
+    )
+  ) {
+    return "failed";
+  }
   if (
     primaryStates.length > 0 &&
     primaryStates.every((node) => node.status === "successful")
