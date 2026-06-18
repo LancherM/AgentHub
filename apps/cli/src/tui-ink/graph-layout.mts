@@ -198,6 +198,19 @@ export function buildGraphLayout(
   };
 }
 
+export function graphViewportRankForSelection(
+  trace: ExecutionTraceGraph,
+  options: Pick<GraphWorkbenchOptions, "mode" | "selectedIndex" | "fold">
+): number | undefined {
+  const graph = workbenchGraph(trace, options.mode, options.fold);
+  const selectedIndex = clampIndex(options.selectedIndex, graph.nodes.length);
+  const selectedId = graph.nodes[selectedIndex]?.id;
+  if (!selectedId) {
+    return undefined;
+  }
+  return rankNodes(graph.nodes, graph.edges).get(selectedId);
+}
+
 export function renderGraphWorkbench(
   trace: ExecutionTraceGraph,
   options: GraphWorkbenchOptions

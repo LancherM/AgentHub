@@ -66,9 +66,10 @@ status, risk, and selected descendant state without mutating PlanGraph or trace
 evidence. The default graph surface is title-first: flow rows, toolbar focus,
 connector labels, and selected-node relationship rows use human-readable plan
 or trace titles, while long PlanGraph and trace IDs are shortened to secondary
-keys or kept inside explicit commands. `/graph focus <node-id>` selects a node
-and moves the local viewport around it without running agents or mutating task
-state. Selected graph-node details expose safe read-only commands for trace,
+keys or kept inside explicit commands. Keyboard movement and
+`/graph focus <node-id>` select graph nodes and move the local viewport around
+the selected rank without running agents or mutating task state. Selected
+graph-node details expose safe read-only commands for trace,
 run, RoleCall, and comparison evidence plus prepared focus, fold, and
 rerun-from-here prompts; none of these graph actions auto-run agents, apply
 code, merge, push, create PRs, or approve memory. Legacy tasks that predate

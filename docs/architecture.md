@@ -604,8 +604,9 @@ TaskRunner scheduling semantics. The
 renderer owns percentage-like zoom density, label policy (`auto`, `compact`,
 `full`, `off`), local viewport rank, grouped subgraph containers, collapsed
 group ids, structural mini-map compression, and `/graph focus <node-id>` state
-only; these controls select, frame, group, collapse, and summarize local graph
-nodes without querying SQLite, running agents, mutating
+only; keyboard movement and focus commands keep the viewport rank synchronized
+with the selected graph node rank. These controls select, frame, group,
+collapse, and summarize local graph nodes without querying SQLite, running agents, mutating
 PlanGraph/ExecutionTraceGraph records, or duplicating
 TaskRunner/RoleCall orchestration. Graph-node detail actions are derived in
 `packages/core/src/tui-read-model.ts` when they depend on source ids: they add
