@@ -7,6 +7,7 @@ import {
   InMemoryRoleCallEventRepository,
   InMemoryRoleCallRepository,
   InMemoryRoleTodoRepository,
+  InMemoryTraceLinkRepository,
   RoleCallOrchestrator,
   type RoleCall,
   type RoleDefinition,
@@ -53,12 +54,14 @@ function createRepositories(): {
   roleTodoRepository: InMemoryRoleTodoRepository;
   roleCallRepository: InMemoryRoleCallRepository;
   roleCallEventRepository: InMemoryRoleCallEventRepository;
+  traceLinkRepository: InMemoryTraceLinkRepository;
 } {
   const roleTodoRepository = new InMemoryRoleTodoRepository();
   return {
     roleTodoRepository,
     roleCallRepository: new InMemoryRoleCallRepository(roleTodoRepository),
-    roleCallEventRepository: new InMemoryRoleCallEventRepository()
+    roleCallEventRepository: new InMemoryRoleCallEventRepository(),
+    traceLinkRepository: new InMemoryTraceLinkRepository()
   };
 }
 
@@ -174,6 +177,79 @@ describe("role call orchestrator ledger runtime", () => {
     ]);
   });
 
+  it("links accepted RoleCalls to the source PlanGraph node with dynamic trace nodes", async () => {
+    const repositories = createRepositories();
+    const orchestrator = createOrchestrator({ repositories });
+
+    await orchestrator.processRoleIntents({
+      threadId: "thread_1",
+      callerRole: "analyst",
+      intents: [delegateIntent()],
+      userGoal: "Fix a failed run.",
+      sourcePlanBinding: {
+        sourceRunId: "run_source",
+        planGraphId: "plan_graph_1",
+        planGraphVersion: 2,
+        planNodeId: "plan_node_implement",
+        allowedNextPlanNodeIds: ["plan_node_verify"]
+      }
+    });
+
+    await expect(repositories.roleCallRepository.get("role_call_1")).resolves.toEqual(
+      expect.objectContaining({
+        context: expect.objectContaining({
+          planTrace: expect.objectContaining({
+            planGraphId: "plan_graph_1",
+            planGraphVersion: 2,
+            sourcePlanNodeId: "plan_node_implement",
+            sourceRunId: "run_source",
+            traceNodeId: "trace_node_1",
+            allowedNextPlanNodeIds: ["plan_node_verify"]
+          })
+        })
+      })
+    );
+    await expect(
+      repositories.traceLinkRepository.listByPlanGraphId("plan_graph_1")
+    ).resolves.toEqual({
+      nodes: [
+        expect.objectContaining({
+          id: "trace_node_1",
+          kind: "role_call",
+          status: "queued",
+          sourcePlanNodeId: "plan_node_implement",
+          sourceType: "role_call",
+          sourceId: "role_call_1"
+        })
+      ],
+      edges: [
+        expect.objectContaining({
+          from: "plan_node_implement",
+          to: "trace_node_1",
+          type: "runtime"
+        })
+      ],
+      evidence: [
+        expect.objectContaining({
+          sourceType: "role_call",
+          sourceId: "role_call_1",
+          planNodeId: "plan_node_implement",
+          traceNodeId: "trace_node_1"
+        })
+      ],
+      roleCallToolEvents: [
+        expect.objectContaining({
+          planGraphId: "plan_graph_1",
+          sourcePlanNodeId: "plan_node_implement",
+          sourceRunId: "run_source",
+          targetRole: "operator",
+          status: "accepted",
+          createdTraceNodeIds: ["trace_node_1"]
+        })
+      ]
+    });
+  });
+
   it("creates deferred callee todos and caller-visible summaries", async () => {
     const repositories = createRepositories();
     const orchestrator = createOrchestrator({
@@ -242,6 +318,54 @@ describe("role call orchestrator ledger runtime", () => {
     await expect(repositories.roleTodoRepository.get("role_todo_1")).resolves.toEqual(
       expect.objectContaining({ status: "rejected", completedAt: createdAt })
     );
+  });
+
+  it("records rejected RoleCalls as tool events without dynamic trace nodes", async () => {
+    const repositories = createRepositories();
+    const orchestrator = createOrchestrator({
+      repositories,
+      decisionsByRole: {
+        operator: {
+          disposition: "rejected",
+          reason: "This request asks for unrelated work."
+        }
+      }
+    });
+
+    await orchestrator.processRoleIntents({
+      threadId: "thread_1",
+      callerRole: "analyst",
+      intents: [delegateIntent()],
+      userGoal: "Fix a failed run.",
+      sourcePlanBinding: {
+        sourceRunId: "run_source",
+        planGraphId: "plan_graph_1",
+        planGraphVersion: 1,
+        planNodeId: "plan_node_implement",
+        allowedNextPlanNodeIds: []
+      }
+    });
+
+    await expect(
+      repositories.traceLinkRepository.listByPlanGraphId("plan_graph_1")
+    ).resolves.toEqual({
+      nodes: [],
+      edges: [],
+      evidence: [
+        expect.objectContaining({
+          sourceType: "role_call",
+          sourceId: "role_call_1",
+          planNodeId: "plan_node_implement"
+        })
+      ],
+      roleCallToolEvents: [
+        expect.objectContaining({
+          status: "rejected",
+          targetRole: "operator",
+          createdTraceNodeIds: []
+        })
+      ]
+    });
   });
 
   it("uses policy guards to prevent depth, cycle, and duplicate runaway graphs", async () => {

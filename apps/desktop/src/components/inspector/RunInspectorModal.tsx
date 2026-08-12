@@ -1,5 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
+import type {
+  Deviation,
+  ExecutionTraceGraph,
+  PlanNode,
+  TraceNode
+} from "@agent-hub/shared";
 import { agentHubApi } from "../../lib/agentHubApi";
 import {
   buildReviewConclusion,
@@ -47,11 +53,18 @@ type LoadState<T> = {
   error?: string;
 };
 
-type InspectorViewTab = "brief" | "evidence" | "artifacts" | "memory" | "audit";
+type InspectorViewTab =
+  | "brief"
+  | "evidence"
+  | "trace"
+  | "artifacts"
+  | "memory"
+  | "audit";
 
 const tabs: Array<{ id: InspectorViewTab; label: string }> = [
   { id: "brief", label: "Brief" },
   { id: "evidence", label: "Evidence" },
+  { id: "trace", label: "Trace" },
   { id: "artifacts", label: "Artifacts" },
   { id: "memory", label: "Memory" },
   { id: "audit", label: "Audit" }
@@ -84,6 +97,8 @@ export function RunInspectorModal({
   const [diff, setDiff] = useState<LoadState<DiffSummary>>({ loading: false });
   const [verification, setVerification] =
     useState<LoadState<VerificationReportModel>>({ loading: false });
+  const [executionTrace, setExecutionTrace] =
+    useState<LoadState<ExecutionTraceGraph>>({ loading: false });
   const [risk, setRisk] = useState<LoadState<RiskReportModel>>({
     loading: false
   });
@@ -112,6 +127,7 @@ export function RunInspectorModal({
     setArtifacts({ loading: false });
     setDiff({ loading: false });
     setVerification({ loading: false });
+    setExecutionTrace({ loading: false });
     setRisk({ loading: false });
     setLifecycle({ loading: false });
     setHandoff({ loading: false });
@@ -125,7 +141,7 @@ export function RunInspectorModal({
   }, [initialTab, runId]);
 
   useEffect(() => {
-    if (activeTab === "brief" || activeTab === "memory") {
+    if (activeTab === "brief" || activeTab === "trace" || activeTab === "memory") {
       setDeepReviewMode(false);
     }
   }, [activeTab]);
@@ -175,6 +191,10 @@ export function RunInspectorModal({
         loadState(setHandoff, () => agentHubApi.review.getHandoff(runId)),
         loadComparison()
       ]);
+    } else if (tab === "trace") {
+      await loadState(setExecutionTrace, () =>
+        agentHubApi.review.getExecutionTrace(runId)
+      );
     } else if (tab === "memory") {
       await loadState(setMemory, () => agentHubApi.memory.listProposals(runId));
       await loadSummary();
@@ -454,6 +474,10 @@ export function RunInspectorModal({
               onCopyHandoff={(kind) => void copyHandoff(kind)}
               onCreateComparison={(candidateRunId) => void createComparison(candidateRunId)}
             />
+          ) : activeTab === "trace" ? (
+            <LoadSlot state={executionTrace}>
+              {(data) => <ExecutionTracePanel trace={data} />}
+            </LoadSlot>
           ) : activeTab === "memory" ? (
             <LoadSlot state={memory}>
               {(data) => (
@@ -745,6 +769,201 @@ function EvidenceSummary({
         value={context ? (context.available ? "available" : "unavailable") : "loading"}
       />
     </section>
+  );
+}
+
+function ExecutionTracePanel({
+  trace
+}: {
+  trace: ExecutionTraceGraph;
+}): JSX.Element {
+  const requiredNodes = trace.baseNodes.filter((node) => node.required).length;
+  const terminalRuntimeNodes = trace.dynamicNodes.filter((node) =>
+    node.status === "completed" || node.status === "failed"
+  ).length;
+  const deviationTone = trace.deviations.some((deviation) =>
+    deviation.severity === "high"
+  )
+    ? "unavailable"
+    : "ready";
+
+  return (
+    <div className="summary-stack execution-trace-panel">
+      <section>
+        <div className="summary-heading">
+          <div>
+            <div className="panel-label">Execution Trace</div>
+            <p>
+              Planned workflow and runtime evidence are projected from local
+              persisted records. The renderer does not run agents or query
+              SQLite directly.
+            </p>
+          </div>
+          <span className={`handoff-state ${deviationTone}`}>
+            {trace.deviations.length === 0 ? "aligned" : `${trace.deviations.length} deviation${trace.deviations.length === 1 ? "" : "s"}`}
+          </span>
+        </div>
+      </section>
+
+      <section className="summary-metrics wide">
+        <Metric label="Plan" value={`${trace.baseNodes.length} node${trace.baseNodes.length === 1 ? "" : "s"}`} />
+        <Metric label="Required" value={`${requiredNodes}`} />
+        <Metric label="Runtime" value={`${trace.dynamicNodes.length} node${trace.dynamicNodes.length === 1 ? "" : "s"}`} />
+        <Metric label="Terminal" value={`${terminalRuntimeNodes}`} />
+        <Metric label="Evidence" value={`${trace.evidence.length}`} />
+        <Metric label="Graph" value={`v${trace.planGraphVersion}`} />
+      </section>
+
+      <section>
+        <div className="review-section-head">
+          <div>
+            <div className="panel-label">Plan</div>
+            <p className="muted-copy">
+              {trace.planGraphId}
+            </p>
+          </div>
+        </div>
+        {trace.baseNodes.length === 0 ? (
+          <p className="muted-copy">No planned nodes are available.</p>
+        ) : (
+          <div className="trace-node-list">
+            {trace.baseNodes.map((node) => (
+              <PlanTraceRow key={node.id} node={node} trace={trace} />
+            ))}
+          </div>
+        )}
+      </section>
+
+      <section>
+        <div className="review-section-head">
+          <div>
+            <div className="panel-label">Runtime</div>
+            <p className="muted-copy">
+              TaskRuns, RoleCall tool events, and persisted evidence linked to
+              the active plan.
+            </p>
+          </div>
+        </div>
+        {trace.dynamicNodes.length === 0 ? (
+          <p className="muted-copy">No runtime trace nodes have been recorded yet.</p>
+        ) : (
+          <div className="trace-node-list">
+            {trace.dynamicNodes.map((node) => (
+              <RuntimeTraceRow key={node.id} node={node} trace={trace} />
+            ))}
+          </div>
+        )}
+      </section>
+
+      {trace.deviations.length > 0 ? (
+        <section>
+          <div className="panel-label">Deviations</div>
+          <div className="trace-deviation-list">
+            {trace.deviations.map((deviation) => (
+              <DeviationRow key={deviation.id} deviation={deviation} />
+            ))}
+          </div>
+        </section>
+      ) : null}
+    </div>
+  );
+}
+
+function PlanTraceRow({
+  node,
+  trace
+}: {
+  node: PlanNode;
+  trace: ExecutionTraceGraph;
+}): JSX.Element {
+  const linkedEvidence = trace.evidence.filter((evidence) => evidence.planNodeId === node.id);
+  return (
+    <div className="trace-node-row plan">
+      <div>
+        <strong>{node.title}</strong>
+        <span>{node.kind} / @{node.role}</span>
+      </div>
+      <div className="timeline-chip-row">
+        <span className="timeline-chip info">{node.execution.mode}</span>
+        <span className={`timeline-chip ${node.required ? "warning" : "neutral"}`}>
+          {node.required ? "required" : "optional"}
+        </span>
+        <span className="timeline-chip neutral">{node.riskLevel}</span>
+        {linkedEvidence.length > 0 ? (
+          <span className="timeline-chip success">
+            evidence {linkedEvidence.length}
+          </span>
+        ) : null}
+      </div>
+      <p>{node.instructions}</p>
+      {node.acceptanceCriteria.length > 0 ? (
+        <ul className="trace-criteria-list">
+          {node.acceptanceCriteria.slice(0, 3).map((criterion) => (
+            <li key={criterion}>{criterion}</li>
+          ))}
+        </ul>
+      ) : null}
+    </div>
+  );
+}
+
+function RuntimeTraceRow({
+  node,
+  trace
+}: {
+  node: TraceNode;
+  trace: ExecutionTraceGraph;
+}): JSX.Element {
+  const linkedEvidence = trace.evidence.filter((evidence) => evidence.traceNodeId === node.id);
+  return (
+    <div className={`trace-node-row runtime ${node.status}`}>
+      <div>
+        <strong>{node.title}</strong>
+        <span>{node.kind} / {node.status}</span>
+      </div>
+      <div className="timeline-chip-row">
+        <span className="timeline-chip info">{node.sourceType ?? "event"}</span>
+        <span className="timeline-chip neutral">
+          {node.sourceId ? shortId(node.sourceId) : "no source"}
+        </span>
+        {node.sourcePlanNodeId ? (
+          <span className="timeline-chip accent">
+            plan {shortId(node.sourcePlanNodeId)}
+          </span>
+        ) : null}
+        {linkedEvidence.length > 0 ? (
+          <span className="timeline-chip success">
+            evidence {linkedEvidence.length}
+          </span>
+        ) : null}
+      </div>
+      {linkedEvidence.length > 0 ? (
+        <ul className="trace-criteria-list">
+          {linkedEvidence.slice(0, 4).map((evidence) => (
+            <li key={evidence.id}>
+              {evidence.sourceType}:{shortId(evidence.sourceId)}
+              {evidence.summary ? ` - ${evidence.summary}` : ""}
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="muted-copy">No linked evidence rows.</p>
+      )}
+    </div>
+  );
+}
+
+function DeviationRow({ deviation }: { deviation: Deviation }): JSX.Element {
+  return (
+    <div className={`trace-deviation-row ${deviation.severity}`}>
+      <div>
+        <strong>{deviation.type}</strong>
+        <span className={`timeline-chip ${deviation.severity === "low" ? "neutral" : "warning"}`}>
+          {deviation.severity}
+        </span>
+      </div>
+      <p>{deviation.description}</p>
+    </div>
   );
 }
 
@@ -1680,7 +1899,13 @@ function toInspectorViewTab(tab: RunInspectorTab): InspectorViewTab {
   ) {
     return "evidence";
   }
-  if (normalized === "brief" || normalized === "artifacts" || normalized === "memory" || normalized === "audit") {
+  if (
+    normalized === "brief" ||
+    normalized === "trace" ||
+    normalized === "artifacts" ||
+    normalized === "memory" ||
+    normalized === "audit"
+  ) {
     return normalized;
   }
   return "brief";

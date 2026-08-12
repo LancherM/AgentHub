@@ -5,6 +5,8 @@ import {
   InMemoryRoleCallEventRepository,
   InMemoryRoleCallRepository,
   InMemoryRoleTodoRepository,
+  InMemoryRunMetadataRepository,
+  InMemoryTraceLinkRepository,
   processAssistantRoleCallOutput,
   validateConversationMessage,
   validateRoleDefinition,
@@ -54,6 +56,17 @@ describe("assistant RoleCall output processor", () => {
     const todos = new InMemoryRoleTodoRepository();
     const roleCalls = new InMemoryRoleCallRepository(todos);
     const roleCallEvents = new InMemoryRoleCallEventRepository();
+    const runMetadata = new InMemoryRunMetadataRepository();
+    const traceLinks = new InMemoryTraceLinkRepository();
+    await runMetadata.save({
+      runId: "run_source",
+      planBinding: {
+        planGraphId: "plan_graph_1",
+        planGraphVersion: 1,
+        planNodeId: "plan_node_implement",
+        allowedNextPlanNodeIds: ["plan_node_verify"]
+      }
+    });
     const message = await messages.create(validateConversationMessage({
       id: "message_role_output",
       threadId: "thread_1",
@@ -61,6 +74,7 @@ describe("assistant RoleCall output processor", () => {
       role: "assistant",
       kind: "text",
       content: "@researcher summarize evidence",
+      runId: "run_source",
       status: "succeeded",
       createdAt: "2026-01-01T00:00:00.000Z"
     }));
@@ -72,7 +86,9 @@ describe("assistant RoleCall output processor", () => {
         conversationMessageRepository: messages,
         roleCallRepository: roleCalls,
         roleCallEventRepository: roleCallEvents,
-        roleTodoRepository: todos
+        roleTodoRepository: todos,
+        runMetadataRepository: runMetadata,
+        traceLinkRepository: traceLinks
       },
       threadId: "thread_1",
       callerRole: "analyst",
@@ -128,5 +144,24 @@ describe("assistant RoleCall output processor", () => {
         status: "accepted"
       })
     ]);
+    await expect(traceLinks.listByPlanGraphId("plan_graph_1")).resolves.toEqual(
+      expect.objectContaining({
+        nodes: [
+          expect.objectContaining({
+            kind: "role_call",
+            sourceType: "role_call",
+            sourceId: expect.any(String)
+          })
+        ],
+        roleCallToolEvents: [
+          expect.objectContaining({
+            sourcePlanNodeId: "plan_node_implement",
+            sourceRunId: "run_source",
+            targetRole: "researcher",
+            status: "accepted"
+          })
+        ]
+      })
+    );
   });
 });

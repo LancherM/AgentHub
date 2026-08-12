@@ -7,10 +7,13 @@ import {
   type RoleCallContext,
   type RoleCallEvent,
   type RoleCallEventRepository,
+  type RoleCallPlanTraceContext,
   type RoleCallRepository,
   type RoleTodoRepository,
   type RoleDefinition,
   type RoleResult,
+  type TraceLinkRepository,
+  type TraceNode,
   type WorkgroupRoleRunMetadata
 } from "@agent-hub/core";
 import { TaskRunner, type RunTaskInput, type TaskRunResult } from "./task-runner";
@@ -19,6 +22,7 @@ export interface RoleCallExecutionRepositories {
   roleCallRepository: RoleCallRepository;
   roleCallEventRepository: RoleCallEventRepository;
   roleTodoRepository?: RoleTodoRepository;
+  traceLinkRepository?: TraceLinkRepository;
 }
 
 export interface RoleCallTaskRunnerExecutorOptions {
@@ -157,6 +161,9 @@ export class RoleCallTaskRunnerExecutor {
       roleSkillReferences:
         input.taskRunnerOptions?.roleSkillReferences ??
         calleeRoleMetadata.defaultSkillReferences,
+      ...(roleCall.context.planTrace
+        ? { planGraphBinding: planGraphBindingFromRoleCall(roleCall.context.planTrace) }
+        : {}),
       dryRun: input.taskRunnerOptions?.dryRun,
       onEvent: input.taskRunnerOptions?.onEvent,
       signal: input.taskRunnerOptions?.signal,
@@ -175,6 +182,7 @@ export class RoleCallTaskRunnerExecutor {
       roleCall.id,
       run.run.id
     );
+    await this.recordCalleeTaskRunTrace(roleCall, run);
 
     if (!run.ok || run.status === "failed" || run.status === "cancelled") {
       const status = run.status === "cancelled" ? "cancelled" : "failed";
@@ -266,6 +274,48 @@ export class RoleCallTaskRunnerExecutor {
       actorRole: roleCall.calleeRole,
       message: `Updated linked todo ${roleCall.todoId} to ${status}.`,
       metadata: { todoId: roleCall.todoId, todoStatus: status },
+      createdAt: this.now()
+    });
+  }
+
+  private async recordCalleeTaskRunTrace(
+    roleCall: RoleCall,
+    run: TaskRunResult
+  ): Promise<void> {
+    const traceLinks = this.repositories.traceLinkRepository;
+    const planTrace = roleCall.context.planTrace;
+    if (!traceLinks || !planTrace) {
+      return;
+    }
+    const taskRunTraceNodeId = this.idFactory("trace_node");
+    await traceLinks.createNode({
+      id: taskRunTraceNodeId,
+      planGraphId: planTrace.planGraphId,
+      kind: "task_run",
+      title: `TaskRun ${run.run.id} for @${roleCall.calleeRole}`,
+      status: traceNodeStatusForRun(run.status),
+      sourcePlanNodeId: planTrace.sourcePlanNodeId,
+      role: roleCall.calleeRole,
+      sourceType: "task_run",
+      sourceId: run.run.id,
+      createdAt: this.now()
+    });
+    await traceLinks.createEdge({
+      id: this.idFactory("trace_edge"),
+      planGraphId: planTrace.planGraphId,
+      from: planTrace.traceNodeId ?? planTrace.sourcePlanNodeId,
+      to: taskRunTraceNodeId,
+      type: "runtime",
+      label: `TaskRunner ${run.status}`
+    });
+    await traceLinks.linkEvidence({
+      id: this.idFactory("trace_evidence"),
+      planGraphId: planTrace.planGraphId,
+      sourceType: "task_run",
+      sourceId: run.run.id,
+      planNodeId: planTrace.sourcePlanNodeId,
+      traceNodeId: taskRunTraceNodeId,
+      summary: `RoleCall ${roleCall.id} executed by run ${run.run.id}: ${run.status}`,
       createdAt: this.now()
     });
   }
@@ -457,6 +507,31 @@ function roleResultSchemaExample(): RoleResult {
     risks: ["risk or none"],
     nextSteps: ["next action or none"]
   };
+}
+
+function planGraphBindingFromRoleCall(planTrace: RoleCallPlanTraceContext) {
+  return {
+    planGraphId: planTrace.planGraphId,
+    planGraphVersion: planTrace.planGraphVersion,
+    planNodeId: planTrace.sourcePlanNodeId,
+    ...(planTrace.traceNodeId ? { traceNodeId: planTrace.traceNodeId } : {}),
+    ...(planTrace.allowedNextPlanNodeIds
+      ? { allowedNextPlanNodeIds: [...planTrace.allowedNextPlanNodeIds] }
+      : {})
+  };
+}
+
+function traceNodeStatusForRun(status: TaskRunResult["status"]): TraceNode["status"] {
+  if (status === "succeeded") {
+    return "completed";
+  }
+  if (status === "cancelled") {
+    return "blocked";
+  }
+  if (status === "running" || status === "queued") {
+    return status;
+  }
+  return "failed";
 }
 
 function cryptoRandom(): string {

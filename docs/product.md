@@ -44,9 +44,13 @@ signals, and the next action without exposing raw logs or full patches. Compact
 run stage/latest summaries use the same TUI presentation filter as active-run
 boxes, so internal setup or Codex diagnostic lines remain in raw evidence rather
 than the operator-facing summary.
-The RoleCall graph shows bounded loop state, including iteration count,
-pending/waiting/active counts, convergence reason, max-iteration stops,
-blocking-risk stops, and waiting-for-approval or waiting-for-context stops.
+The Execution Trace focus currently shows the legacy RoleCall evidence path:
+bounded loop state, including iteration count, pending/waiting/active counts,
+convergence reason, max-iteration stops, blocking-risk stops, and
+waiting-for-approval or waiting-for-context stops. Tasks that predate
+PlanGraph evidence, or tasks that have not yet emitted RoleCalls, remain
+inspectable through this compatibility trace instead of showing an empty future
+graph.
 Continuation helpers prepare an explicit composer prompt; they do not continue
 work in the background.
 Review decisions can be recorded with `agent-hub reviews accept|reject` or the
@@ -116,12 +120,12 @@ agent output does not push earlier visible rows under the header. Conversation c
 keeps file paths underlined and blue with safe OSC 8 file links when the
 terminal supports them, shell-command lines bold, and fenced code blocks lightly
 highlighted for keywords, strings, and comments. Agent output content is not
-truncated; long lines wrap in the terminal surface using display-width-aware
-breaks so CJK/full-width text, Markdown links, paths, and inline code keep
-their visible tail instead of relying on Ink truncation. Conversation entries
-are separated by terminal divider lines, and gaps of five minutes or more add a
-compact timeline anchor so long Work histories remain scannable without
-collapsing agent output.
+truncated before it reaches the Work block renderer; long lines wrap in the
+terminal surface using display-width-aware breaks so CJK/full-width text,
+Markdown links, paths, and inline code keep their visible tail instead of
+relying on Ink truncation. Conversation entries are separated by terminal
+divider lines, and gaps of five minutes or more add a compact timeline anchor
+so long Work histories remain scannable without collapsing agent output.
 Active run boxes use rounded frames that grow to fit wrapped visible output.
 Titles show the compact run identity, role/agent handle, a static running
 marker, running status, elapsed time, and live token usage when the run emits
@@ -179,7 +183,7 @@ alter run behavior, or invoke external services. Startup splash is explicit:
 `--splash` prints a short prelude before the interactive Ink frame, so the live
 frame does not need a delayed splash-removal repaint; `--no-splash` suppresses
 it.
-The persistent side navigation keeps Work, Graph, Runs, Review, Tasks, Memory,
+The persistent side navigation keeps Work, Trace, Runs, Review, Tasks, Memory,
 Team, and Help one key away at normal and wide widths. Tab and Shift+Tab follow
 that same visible order, so keyboard focus matches the side navigation. The
 framed Workbench columns keep a terminal-derived height across focus switches.
@@ -223,11 +227,12 @@ stream now uses a dedicated block-list renderer rather than the older
 ConversationFlow lines. It shows a `Work - Conversation` title row, time
 gutter, speaker column, block body, status token column, selected-block frame,
 inline folded affordances for metadata/tools/files/commands/evidence/diffs, and
-bounded active-run output tails while keeping completed agent output
-scrollable. Quick replies and dense pending-review collapse remain part of the
-Work surface. The detail pane shows message text, inferred tools, commands,
-file refs, evidence, inline diff summaries, and fix snippets only when those
-fields come from persisted read-model evidence. The right detail panel now uses
+bounded active-run output tails while keeping active and completed agent output
+available for renderer wrapping instead of read-model ellipsis. Quick replies
+and dense pending-review collapse remain part of the Work surface. The detail
+pane shows message text, inferred tools, commands, file refs, evidence, inline
+diff summaries, and fix snippets only when those fields come from persisted
+read-model evidence. The right detail panel now uses
 view-specific titles (`Block Detail`, `Live Block Detail`, `Final Report
 Detail`, `Proposal Detail`, and `Role Profile`), section dividers, stable
 section ordering, a renderer-owned PageUp/PageDown scroll window, and a
@@ -250,7 +255,7 @@ status or structured tool durations; those remain unavailable until adapters
 persist them as structured evidence.
 The TUI composer is prompt-first while editing: printable lowercase keys append
 to the prompt from any focus, uppercase tab shortcuts switch
-Work/Graph/Runs/Review/Tasks/Memory/Team, `/team` opens the Team roles view
+Work/Trace/Runs/Review/Tasks/Memory/Team, `/team` opens the Team roles view
 without submitting a prompt, `Enter` submits non-command prompts when a
 submission callback is available, `Esc` clears the in-progress prompt, and
 empty-composer `Enter` does not switch panes. `Tab` remains available for focus
@@ -326,10 +331,10 @@ TaskRunner persists run events as they are produced, so running boxes can show
 live progress from the local evidence store instead of waiting for final run
 completion. The conversation can scroll back by
 rendered line from Work focus, Runs and Tasks panes expand on taller terminals,
-uppercase focus keys switch Work/Graph/Runs/Review/Tasks/Memory/Team when the
+uppercase focus keys switch Work/Trace/Runs/Review/Tasks/Memory/Team when the
 composer is empty, and the Review reject shortcut is uppercase `R` so
 vim-style `j` remains navigation rather than an audit write.
-When the graph has no selected RoleCall, the TUI command hint and command
+When the trace has no selected RoleCall, the TUI command hint and command
 palette surface `agent-hub team roles list --project-id <project-id>` as the
 next useful role command; `/team` is the in-TUI shortcut for viewing that list
 directly.
@@ -495,6 +500,99 @@ The injected `available_role_calls` directory advertises only targets that the
 caller can reach through that line-start `delegate` protocol, so custom roles
 with other intent types are not shown as shorthand-callable.
 
+PlanGraph and ExecutionTraceGraph are the current product layer for the
+Execution Trace surface, with legacy RoleCall evidence retained as the
+compatibility path for older tasks. The graph model adds a planner node that
+turns the TaskBrief into a `PlanGraph`, binds primary TaskRuns to planned
+executable nodes, treats RoleCall as a runtime tool event that can create
+dynamic trace nodes, and derives `ExecutionTraceGraph` deterministically as an
+overlay of the original plan plus persisted runtime evidence. This keeps the
+expected workflow separate from actual execution while preserving RoleCalls as
+the dynamic delegation mechanism. The full product contract is tracked in
+`docs/plan-graph-execution-trace-product.md`; the remaining implementation
+diffs and phase prompts are tracked in
+`docs/plan-graph-execution-trace-followup-roadmap.md`.
+The shared domain contract and core validators for `PlanGraph`,
+`PlanNode`, `PlanEdge`, trace nodes, evidence links, deviations, and
+`ExecutionTraceGraph` are implemented. SQLite and in-memory repositories can
+persist PlanGraph versions, active graph lookup, dynamic trace nodes and edges,
+trace evidence links, and RoleCall tool events. TaskRunner now creates and
+persists a deterministic planner-owned `PlanGraph` before primary adapter
+execution by default, with a run-input switch to disable graph creation for
+legacy compatibility. The current primary adapter run is bound to the first
+planned `primary_run` node when one exists, records that binding in run
+metadata, and receives a runtime-injected PlanGraph/current-node block with
+allowed next node ids. Role-backed assistant output that creates a RoleCall now
+links back to the source run's plan binding when one exists: Agent Hub records a
+RoleCall tool event, stores plan trace context on the RoleCall, creates a
+dynamic `role_call` trace node for accepted RoleCalls, and records a dynamic
+`task_run` trace node when the accepted executable RoleCall runs through
+TaskRunner. The callee run inherits the same PlanGraph and receives the source
+plan node plus dynamic trace node id in runtime context. A local
+`ExecutionTraceGraph` read model now projects the active PlanGraph for task
+lookups, the run-bound PlanGraph from `runMetadata.planBinding` for run
+inspectors, persisted trace nodes/edges/evidence, primary run bindings,
+RoleCall tool events, simple deterministic deviations, generated
+verification/risk/diff evidence from run metadata, bounded run artifact and
+review-decision evidence, comparison-report evidence for same-task run
+comparisons, and legacy no-plan run evidence. Deviations include failed
+required nodes, missing verification evidence, unplanned RoleCall trace nodes,
+and superseded plan versions; pending or manual-blocked scheduler nodes are not
+mislabeled as skipped. The read-only
+`execution-trace show` CLI command exposes that projection by task id or
+PlanGraph id. The terminal workbench Graph focus now presents this projection
+as `Graph - Workflow DAG`: Overlay, Plan, and Trace modes render bounded
+terminal node boxes, visible edge labels, selected-node highlighting, toolbar
+state for mode/labels/fold/zoom, a mini-map, a legend, and a compact fallback
+for narrow terminals while falling back to legacy RoleCall evidence for older
+tasks. Selected graph-node details synchronize with the same read model and
+show incoming links, outgoing links, evidence, deviations, and inspection
+commands. Remaining terminal graph fidelity work, including spatial rank
+layout, viewport/focus commands, subgraph containers, node actions, and visual
+QA fixtures, is tracked in `docs/plan-graph-tui-workflow-dag-roadmap.md`. The
+desktop Workgroup Inspector exposes the same projection through a
+read-only Trace tab backed by Electron main-process IPC; the renderer displays
+plan nodes, runtime trace nodes, evidence counts, and deviations without
+reading SQLite or rebuilding orchestration state.
+
+TaskRunner also supports the first opt-in planner alternatives. The default
+planner mode remains deterministic. `agent_adapter` planner mode runs the
+special local `@planner` role through a configured local adapter inside its own
+isolated planner worktree, requires structured PlanGraph JSON, validates it
+against the current task/version before activation, and fails before the
+primary adapter starts when output is invalid. `manual` planner mode accepts a
+caller-supplied PlanGraph only after the same validation. The core amendment
+contract supports durable `proposed` graph versions in memory and SQLite.
+Creating a proposed graph does not replace the current active graph; activation
+supersedes the old active graph only after validation, and changes to required
+execution nodes require an explicit approval flag. Additional primary PlanNodes
+can be scheduled explicitly through `RunTaskInput.planGraphBinding`, and the
+bounded `TaskRunner.runPlanGraph()` scheduler can now walk an active PlanGraph
+locally: it treats system nodes as satisfied, blocks behind required manual
+nodes, runs eligible `primary_run` nodes through the existing isolated
+TaskRunner path, honors fallback edges only after failed or blocked sources,
+limits scheduled runs when requested, and requires an explicit rerun request
+before repeating successful plan nodes. A dedicated desktop graph canvas remains
+follow-on UI work beyond the current read-only Trace tab.
+
+The PlanGraph lifecycle now has deterministic local acceptance coverage: a
+fake-adapter fixture creates a task brief, uses an active planner-owned graph to
+schedule primary runs, records runtime RoleCall expansion, attaches
+verification, risk, diff, artifact, review, and comparison evidence, and proves
+the resulting `ExecutionTraceGraph` is inspectable through the core projection,
+CLI JSON, and TUI read model.
+
+Plan and trace evidence now feeds review governance without creating an
+automatic acceptance path. Risk reports can include plan-aware findings for
+proposed graphs, missing required verification nodes on changed-file runs,
+runs bound to nodes outside the active graph, required PlanNodes with failed
+verification evidence, non-primary nodes that produce changed files, and
+deviations projected by `ExecutionTraceGraph`. Successful plan-bound runs that
+generate memory proposals link those proposals back to the current PlanNode as
+trace evidence. `reviews show` remains read-only and now includes the active
+plan graph id plus a deviation summary so reviewers can inspect plan/trace
+exceptions before accepting or rejecting a run.
+
 ## CLI Surface
 
 The current CLI exposes these command groups:
@@ -503,6 +601,13 @@ The current CLI exposes these command groups:
   `task list`, `task history`.
 - Context and skills: `context init`, `context show`, `context build`,
   `context export`, `skills global create`, `skills global list`.
+- Plan inspection: `plan-graphs list --task-id <task-id>`,
+  `plan-graphs show <plan-graph-id> [--json]`, and
+  `plan-graphs validate <plan-graph-id>` expose deterministic planner output
+  without scheduling or mutating runs.
+- Execution trace inspection: `execution-trace show --task-id <task-id>
+  [--json]` and `execution-trace show --plan-graph-id <plan-graph-id> [--json]`
+  expose the deterministic local trace projection without calling an agent.
 - Agent execution: `run --task ...`, ad-hoc `run "@codex ..."`,
   `run "@claude-code ..."`, `run event add`, and explicit continuation with
   `--continue-from-run` or `--continue-from-message`. Runs can select explicit
@@ -511,8 +616,11 @@ The current CLI exposes these command groups:
   `threads list`, `threads show`, `rooms list`, `rooms create`, `rooms use`,
   `rooms send`, and `rooms timeline`.
 - Terminal workbench: `tui` opens a keyboard-first read-only view over the
-  current thread or room context, with focus modes for work, RoleCalls, runs,
-  review, tasks, memory, and help.
+  current thread or room context, with focus modes for work, graph, runs,
+  review, tasks, memory, and help. The Graph focus uses existing RoleCall
+  evidence as the legacy compatibility path when no PlanGraph-backed trace
+  projection is available, and shows a bounded Workflow DAG workbench with
+  Overlay/Plan/Trace modes for current graph-backed tasks.
 - Team roles: `team roles list`, `team roles show`, `team roles save`, and
   `team roles executor`. Saved roles can reference default skills with
   `--skill [scope:]id`, and custom RoleCall fan-out is configured with
@@ -741,11 +849,14 @@ Roadmaps for future work live in `docs/local-ai-workgroup-roadmap.md`,
 `docs/interaction-optimization-roadmap.md`, `docs/tui-roadmap.md`,
 `docs/tui-conversation-terminal-roadmap.md`,
 `docs/tui-optimization-roadmap.md`, `docs/tui-v3-roadmap.md`,
-`docs/tui-v3-reference-gap-roadmap.md`, `docs/memory-automation-roadmap.md`,
-and the Adaptive Role Calls specification documents. Those files describe
-direction; this document describes the current product state. The
+`docs/tui-v3-reference-gap-roadmap.md`,
+`docs/plan-graph-execution-trace-followup-roadmap.md`,
+`docs/plan-graph-tui-workflow-dag-roadmap.md`,
+`docs/memory-automation-roadmap.md`, and the Adaptive Role Calls specification
+documents. Those files describe direction; this document describes the current
+product state. The
 conversation-terminal TUI roadmap now records the
 implemented Work-view direction and remaining hardening guidance: the current
 TUI keeps the Ink/local read-model boundary while presenting a
-conversation-first Work surface, moving Runs, Review, Graph, Tasks, and Memory
+conversation-first Work surface, moving Runs, Review, Trace, Tasks, and Memory
 into explicit auxiliary tabs, and keeping Team behind slash-command access.

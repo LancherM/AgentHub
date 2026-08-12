@@ -9,12 +9,14 @@ import {
 import { createGlobalSkill } from "@agent-hub/context-compiler";
 import {
   conservativePermissionSet,
+  InMemoryPlanGraphRepository,
   InMemoryRoleCallEventRepository,
   InMemoryRoleCallRepository,
   InMemoryRoleTodoRepository,
   InMemoryRunArtifactRepository,
   InMemoryRunMetadataRepository,
   InMemoryTaskRunRepository,
+  InMemoryTraceLinkRepository,
   type RoleCall,
   type RoleDefinition,
   type RoleTodo,
@@ -144,6 +146,65 @@ function roleTodo(overrides: Partial<RoleTodo> = {}): RoleTodo {
   };
 }
 
+function testPlanGraph() {
+  return {
+    id: "plan_graph_1",
+    taskId: "task_1",
+    version: 1,
+    status: "active" as const,
+    plannerNodeId: "plan_graph_1:planner",
+    createdByRole: "planner" as const,
+    createdAt,
+    nodes: [
+      {
+        id: "plan_graph_1:planner",
+        kind: "planner" as const,
+        role: "planner" as const,
+        title: "Create execution graph",
+        instructions: "Create the graph.",
+        acceptanceCriteria: ["Graph is valid."],
+        riskLevel: "low" as const,
+        required: true,
+        execution: { mode: "system" as const },
+        outputPlanGraphId: "plan_graph_1"
+      },
+      {
+        id: "plan_node_implement",
+        kind: "implement" as const,
+        role: "operator",
+        title: "Implement delegated work",
+        instructions: "Complete the delegated RoleCall task.",
+        acceptanceCriteria: ["TaskRunner run finishes."],
+        riskLevel: "low" as const,
+        required: true,
+        execution: {
+          mode: "primary_run" as const,
+          expectedAdapter: "fake",
+          worktreePolicy: "isolated" as const
+        }
+      },
+      {
+        id: "plan_node_verify",
+        kind: "verify" as const,
+        role: "operator",
+        title: "Verify delegated work",
+        instructions: "Inspect delegated run evidence.",
+        acceptanceCriteria: ["Evidence is linked."],
+        riskLevel: "low" as const,
+        required: true,
+        execution: { mode: "manual" as const }
+      }
+    ],
+    edges: [
+      {
+        from: "plan_node_implement",
+        to: "plan_node_verify",
+        type: "primary" as const
+      }
+    ]
+  };
+}
+
 describe("role call TaskRunner executor", () => {
   it("executes accepted fake role calls through TaskRunner and links run evidence", async () => {
     const projectRoot = await createTestDirectory("role-call-project");
@@ -225,6 +286,101 @@ describe("role call TaskRunner executor", () => {
     );
     const outputPath = path.join(result.run?.worktreePath ?? "", "fake-agent-output.md");
     await expect(fs.readFile(outputPath, "utf8")).resolves.toContain("RoleCallContext");
+  });
+
+  it("inherits PlanGraph binding for traced RoleCalls and records callee run trace nodes", async () => {
+    const projectRoot = await createTestDirectory("role-call-trace-project");
+    const runRoot = await createTestDirectory("role-call-trace-runs");
+    await fs.writeFile(path.join(projectRoot, "README.md"), "original\n", "utf8");
+    const roleCallRepository = new InMemoryRoleCallRepository();
+    const roleCallEventRepository = new InMemoryRoleCallEventRepository();
+    const runMetadataRepository = new InMemoryRunMetadataRepository();
+    const planGraphRepository = new InMemoryPlanGraphRepository();
+    const traceLinkRepository = new InMemoryTraceLinkRepository();
+    await planGraphRepository.create(testPlanGraph());
+    await roleCallRepository.create(
+      acceptedCall({
+        context: {
+          userGoal: "Fix failed run.",
+          constraints: ["Stay local-first"],
+          planTrace: {
+            planGraphId: "plan_graph_1",
+            planGraphVersion: 1,
+            sourcePlanNodeId: "plan_node_implement",
+            sourceRunId: "run_source",
+            traceNodeId: "trace_role_call",
+            allowedNextPlanNodeIds: ["plan_node_verify"]
+          }
+        }
+      })
+    );
+    const runner = new TaskRunner({
+      defaultRunRoot: runRoot,
+      workspaceManager: new TestWorkspaceManager(runRoot),
+      diffCollector: new StaticDiffCollector(),
+      verificationRunner: new VerificationRunner(new MockShellExecutor()),
+      runMetadataRepository,
+      planGraphRepository,
+      idGenerator: new SequenceIdGenerator(),
+      clock: new FixedClock(createdAt)
+    });
+    const executor = new RoleCallTaskRunnerExecutor({
+      taskRunner: runner,
+      repositories: {
+        roleCallRepository,
+        roleCallEventRepository,
+        traceLinkRepository
+      },
+      roles: [role({})],
+      idFactory: createIdFactory(),
+      now: () => createdAt
+    });
+
+    const result = await executor.execute({
+      roleCallId: "role_call_1",
+      projectRoot,
+      taskRunnerOptions: { workspaceBasePath: runRoot }
+    });
+
+    expect(result.ok).toBe(true);
+    await expect(runMetadataRepository.get(result.run?.run.id ?? "")).resolves.toEqual(
+      expect.objectContaining({
+        planBinding: expect.objectContaining({
+          planGraphId: "plan_graph_1",
+          planGraphVersion: 1,
+          planNodeId: "plan_node_implement",
+          traceNodeId: "trace_role_call",
+          allowedNextPlanNodeIds: ["plan_node_verify"]
+        })
+      })
+    );
+    await expect(
+      traceLinkRepository.listByPlanGraphId("plan_graph_1")
+    ).resolves.toEqual({
+      nodes: [
+        expect.objectContaining({
+          kind: "task_run",
+          status: "completed",
+          sourcePlanNodeId: "plan_node_implement",
+          sourceType: "task_run",
+          sourceId: result.run?.run.id
+        })
+      ],
+      edges: [
+        expect.objectContaining({
+          from: "trace_role_call",
+          type: "runtime"
+        })
+      ],
+      evidence: [
+        expect.objectContaining({
+          sourceType: "task_run",
+          sourceId: result.run?.run.id,
+          planNodeId: "plan_node_implement"
+        })
+      ],
+      roleCallToolEvents: []
+    });
   });
 
   it("injects callee role default skills into delegated TaskRunner runs", async () => {

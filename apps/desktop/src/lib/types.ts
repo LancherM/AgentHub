@@ -1,4 +1,5 @@
 import type {
+  ExecutionTraceGraph,
   JsonObject,
   RoleCallDisposition,
   RoleCallEventType,
@@ -71,6 +72,7 @@ export type WorkgroupInspectorTab =
   | "checks"
   | "risks"
   | "lifecycle"
+  | "trace"
   | "memory"
   | "audit";
 export type LegacyRunInspectorTab =
@@ -985,6 +987,7 @@ export interface AgentHubApi {
     getDiff(runId: string): Promise<DiffSummary>;
     getRisk(runId: string): Promise<RiskReport>;
     getVerification(runId: string): Promise<VerificationReport>;
+    getExecutionTrace(runId: string): Promise<ExecutionTraceGraph>;
     getLogs(runId: string): Promise<RunLog[]>;
     accept(runId: string): Promise<ReviewSummary>;
     reject(runId: string, reason?: string): Promise<ReviewSummary>;

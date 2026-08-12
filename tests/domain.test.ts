@@ -11,11 +11,16 @@ import {
   InMemoryConversationMessageRepository,
   InMemoryConversationThreadSummaryRepository,
   InMemoryConversationThreadRepository,
+  InMemoryPlanGraphRepository,
   InMemorySettingsRepository,
+  InMemoryTraceLinkRepository,
   InMemoryTaskRunRepository,
   createDefaultMemoryAutomationPolicy,
   nowIso,
   isAgentKindEnabled,
+  planGraphIdForTaskVersion,
+  plannerNodeIdForPlanGraph,
+  planNodeIdForPlanGraph,
   parseMemoryAutomationPolicySettingValue,
   parseAgentKind,
   presetWorkgroupRoles,
@@ -35,6 +40,9 @@ import {
   validateMemoryAutomationDecision,
   validateMemoryAutomationEvaluation,
   validateMemoryAutomationPolicy,
+  validateExecutionTraceGraph,
+  validatePlanGraph,
+  validatePlanGraphStatusTransition,
   validateRiskReport,
   validateRunArtifact,
   validateRunEvent,
@@ -49,11 +57,162 @@ import {
   validateTaskRunStatusTransition,
   validateTaskStatusTransition,
   validateVerificationResult,
-  validateWorkgroupRole
+  validateWorkgroupRole,
+  type ExecutionTraceGraph,
+  type PlanGraph
 } from "@agent-hub/core";
 
 const createdAt = "2026-01-01T00:00:00.000Z";
 const updatedAt = "2026-01-01T00:00:01.000Z";
+
+function planGraphFixture(): PlanGraph {
+  const graphId = planGraphIdForTaskVersion("task_1", 1);
+  const plannerId = plannerNodeIdForPlanGraph(graphId);
+  const researchId = planNodeIdForPlanGraph(graphId, "research", 1);
+  const implementId = planNodeIdForPlanGraph(graphId, "implement", 2);
+  const verifyId = planNodeIdForPlanGraph(graphId, "verify", 3);
+  return {
+    id: graphId,
+    taskId: "task_1",
+    taskBriefArtifactId: "artifact_brief",
+    version: 1,
+    status: "active",
+    plannerNodeId: plannerId,
+    createdByRole: "planner",
+    createdAt,
+    nodes: [
+      {
+        id: plannerId,
+        kind: "planner",
+        title: "Create execution plan",
+        role: "planner",
+        instructions: "Create a bounded local plan.",
+        acceptanceCriteria: ["Plan is valid and local-first."],
+        riskLevel: "low",
+        required: true,
+        execution: { mode: "system" },
+        outputPlanGraphId: graphId
+      },
+      {
+        id: researchId,
+        kind: "research",
+        title: "Inspect current code",
+        role: "engineer",
+        instructions: "Inspect the relevant local files and summarize constraints.",
+        acceptanceCriteria: ["Relevant files are identified."],
+        riskLevel: "low",
+        required: true,
+        execution: {
+          mode: "primary_run",
+          expectedAdapter: "codex",
+          worktreePolicy: "isolated"
+        }
+      },
+      {
+        id: implementId,
+        kind: "implement",
+        title: "Implement the change",
+        role: "engineer",
+        instructions: "Make the smallest local code change.",
+        acceptanceCriteria: ["The requested behavior is implemented."],
+        riskLevel: "medium",
+        required: true,
+        execution: {
+          mode: "primary_run",
+          expectedAdapter: "codex",
+          worktreePolicy: "isolated"
+        }
+      },
+      {
+        id: verifyId,
+        kind: "verify",
+        title: "Run focused verification",
+        role: "reviewer",
+        instructions: "Run or inspect the focused verification evidence.",
+        acceptanceCriteria: ["Verification evidence is recorded."],
+        riskLevel: "low",
+        required: true,
+        execution: { mode: "manual" }
+      }
+    ],
+    edges: [
+      { from: plannerId, to: researchId, type: "primary" },
+      { from: researchId, to: implementId, type: "primary" },
+      { from: implementId, to: verifyId, type: "primary" }
+    ]
+  };
+}
+
+function executionTraceFixture(): ExecutionTraceGraph {
+  const graph = planGraphFixture();
+  const implementNode = graph.nodes.find((node) => node.kind === "implement");
+  if (!implementNode) {
+    throw new Error("missing implement node");
+  }
+  return {
+    taskId: graph.taskId,
+    planGraphId: graph.id,
+    planGraphVersion: graph.version,
+    baseNodes: graph.nodes,
+    baseEdges: graph.edges,
+    dynamicNodes: [
+      {
+        id: "trace_run_1",
+        planGraphId: graph.id,
+        kind: "task_run",
+        title: "Implement run",
+        status: "completed",
+        sourcePlanNodeId: implementNode.id,
+        role: "engineer",
+        sourceType: "task_run",
+        sourceId: "run_1",
+        createdAt
+      }
+    ],
+    dynamicEdges: [
+      {
+        id: "trace_edge_1",
+        planGraphId: graph.id,
+        from: implementNode.id,
+        to: "trace_run_1",
+        type: "runtime"
+      }
+    ],
+    evidence: [
+      {
+        id: "evidence_run_1",
+        planGraphId: graph.id,
+        sourceType: "task_run",
+        sourceId: "run_1",
+        planNodeId: implementNode.id,
+        traceNodeId: "trace_run_1",
+        summary: "Run completed.",
+        createdAt
+      },
+      {
+        id: "evidence_comparison_1",
+        planGraphId: graph.id,
+        sourceType: "comparison_report",
+        sourceId: "comparison_1",
+        summary: "Comparison report is linked as bounded trace evidence.",
+        createdAt
+      }
+    ],
+    deviations: [
+      {
+        id: "deviation_1",
+        planGraphId: graph.id,
+        type: "missing_verification",
+        severity: "low",
+        description: "Verification is pending in the projection.",
+        planNodeId: implementNode.id,
+        traceNodeId: "trace_run_1",
+        evidenceId: "evidence_run_1",
+        createdAt
+      }
+    ]
+  };
+}
 
 describe("domain model validation", () => {
   it("preserves valid project input", () => {
@@ -128,6 +287,179 @@ describe("domain model validation", () => {
         updatedAt: now
       })
     ).toThrow(DomainValidationError);
+  });
+
+  it("validates planner-rooted PlanGraph contracts", () => {
+    const graph = planGraphFixture();
+
+    expect(validatePlanGraph(graph)).toBe(graph);
+    expect(graph.plannerNodeId).toBe(plannerNodeIdForPlanGraph(graph.id));
+    expect(graph.nodes.map((node) => node.id)).toContain(
+      planNodeIdForPlanGraph(graph.id, "implement", 2)
+    );
+  });
+
+  it("rejects invalid PlanGraph topology and planner metadata", () => {
+    const missingPlanner = {
+      ...planGraphFixture(),
+      plannerNodeId: "missing_planner",
+      nodes: planGraphFixture().nodes.filter((node) => node.kind !== "planner")
+    };
+    expect(() => validatePlanGraph(missingPlanner)).toThrow(DomainValidationError);
+
+    const invalidEdge = {
+      ...planGraphFixture(),
+      edges: [{ from: "missing", to: planGraphFixture().nodes[1].id, type: "primary" }]
+    } as PlanGraph;
+    expect(() => validatePlanGraph(invalidEdge)).toThrow(DomainValidationError);
+
+    const cyclic = planGraphFixture();
+    cyclic.edges = [
+      ...cyclic.edges,
+      { from: cyclic.nodes[3].id, to: cyclic.nodes[1].id, type: "fallback" }
+    ];
+    expect(() => validatePlanGraph(cyclic)).toThrow(DomainValidationError);
+  });
+
+  it("rejects unsafe PlanGraph instructions and unsupported execution modes", () => {
+    const unsafe = planGraphFixture();
+    unsafe.nodes[2] = {
+      ...unsafe.nodes[2],
+      instructions: "Implement the change and then automatically push the branch."
+    };
+    expect(() => validatePlanGraph(unsafe)).toThrow(DomainValidationError);
+
+    const explicitNonGoal = planGraphFixture();
+    explicitNonGoal.nodes[2] = {
+      ...explicitNonGoal.nodes[2],
+      instructions: "Implement the change. Do not push the branch."
+    };
+    expect(validatePlanGraph(explicitNonGoal)).toBe(explicitNonGoal);
+
+    const unsupportedMode = planGraphFixture();
+    unsupportedMode.nodes[1] = {
+      ...unsupportedMode.nodes[1],
+      execution: { mode: "remote_job" as never }
+    };
+    expect(() => validatePlanGraph(unsupportedMode)).toThrow(DomainValidationError);
+  });
+
+  it("validates ExecutionTraceGraph projections without storing trace snapshots", () => {
+    const trace = executionTraceFixture();
+
+    expect(validateExecutionTraceGraph(trace)).toBe(trace);
+    expect(trace.baseNodes.some((node) => node.kind === "implement")).toBe(true);
+    expect(trace.dynamicNodes[0]).toMatchObject({
+      kind: "task_run",
+      sourcePlanNodeId: planNodeIdForPlanGraph(trace.planGraphId, "implement", 2)
+    });
+
+    const invalid = {
+      ...executionTraceFixture(),
+      dynamicEdges: [
+        {
+          id: "bad_edge",
+          planGraphId: executionTraceFixture().planGraphId,
+          from: "missing_node",
+          to: "trace_run_1",
+          type: "runtime"
+        }
+      ]
+    } as ExecutionTraceGraph;
+    expect(() => validateExecutionTraceGraph(invalid)).toThrow(DomainValidationError);
+  });
+
+  it("round-trips PlanGraph and ExecutionTraceGraph DTOs through JSON", () => {
+    const graph = planGraphFixture();
+    const trace = executionTraceFixture();
+
+    expect(validatePlanGraph(JSON.parse(JSON.stringify(graph)))).toEqual(graph);
+    expect(validateExecutionTraceGraph(JSON.parse(JSON.stringify(trace)))).toEqual(trace);
+  });
+
+  it("stores PlanGraphs and trace links in memory repositories", async () => {
+    const graphs = new InMemoryPlanGraphRepository();
+    const traceLinks = new InMemoryTraceLinkRepository();
+    const first = planGraphFixture();
+    const second = {
+      ...planGraphFixture(),
+      id: planGraphIdForTaskVersion("task_1", 2),
+      version: 2
+    };
+    second.plannerNodeId = plannerNodeIdForPlanGraph(second.id);
+    second.nodes = second.nodes.map((node, index) => ({
+      ...node,
+      id: index === 0 ? second.plannerNodeId : planNodeIdForPlanGraph(second.id, node.kind, index),
+      ...(node.kind === "planner" ? { outputPlanGraphId: second.id } : {})
+    }));
+    second.edges = [
+      { from: second.nodes[0].id, to: second.nodes[1].id, type: "primary" },
+      { from: second.nodes[1].id, to: second.nodes[2].id, type: "primary" },
+      { from: second.nodes[2].id, to: second.nodes[3].id, type: "primary" }
+    ];
+
+    await graphs.create(first);
+    await graphs.create(second);
+
+    await expect(graphs.getActiveByTaskId("task_1")).resolves.toMatchObject({
+      id: second.id,
+      status: "active"
+    });
+    await expect(graphs.listByTaskId("task_1")).resolves.toMatchObject([
+      { id: first.id, status: "superseded" },
+      { id: second.id, status: "active" }
+    ]);
+
+    const implementNode = second.nodes.find((node) => node.kind === "implement");
+    if (!implementNode) {
+      throw new Error("missing implement node");
+    }
+    await traceLinks.createNode({
+      id: "trace_run_memory",
+      planGraphId: second.id,
+      kind: "task_run",
+      title: "Memory run",
+      status: "completed",
+      sourcePlanNodeId: implementNode.id,
+      sourceType: "task_run",
+      sourceId: "run_memory",
+      createdAt
+    });
+    await traceLinks.createEdge({
+      id: "trace_edge_memory",
+      planGraphId: second.id,
+      from: implementNode.id,
+      to: "trace_run_memory",
+      type: "runtime"
+    });
+    await traceLinks.linkEvidence({
+      id: "trace_evidence_memory",
+      planGraphId: second.id,
+      sourceType: "task_run",
+      sourceId: "run_memory",
+      planNodeId: implementNode.id,
+      traceNodeId: "trace_run_memory",
+      summary: "Memory trace evidence.",
+      createdAt
+    });
+    await traceLinks.createRoleCallToolEvent({
+      id: "role_call_tool_memory",
+      planGraphId: second.id,
+      sourcePlanNodeId: implementNode.id,
+      sourceRunId: "run_memory",
+      targetRole: "reviewer",
+      task: "Review memory trace.",
+      status: "accepted",
+      createdTraceNodeIds: ["trace_run_memory"],
+      createdAt
+    });
+
+    await expect(traceLinks.listByPlanGraphId(second.id)).resolves.toMatchObject({
+      nodes: [{ id: "trace_run_memory" }],
+      edges: [{ id: "trace_edge_memory", planGraphId: second.id }],
+      evidence: [{ id: "trace_evidence_memory" }],
+      roleCallToolEvents: [{ id: "role_call_tool_memory" }]
+    });
   });
 
   it("validates preset and custom workgroup role contracts", () => {
@@ -1075,6 +1407,10 @@ describe("domain model validation", () => {
 
     expect(() => validateTaskRunStatusTransition("queued", "running")).not.toThrow();
     expect(() => validateTaskRunStatusTransition("queued", "failed"))
+      .toThrow(DomainStateTransitionError);
+
+    expect(() => validatePlanGraphStatusTransition("active", "superseded")).not.toThrow();
+    expect(() => validatePlanGraphStatusTransition("superseded", "active"))
       .toThrow(DomainStateTransitionError);
 
     expect(() => validateMemoryStatusTransition("proposed", "approved")).not.toThrow();

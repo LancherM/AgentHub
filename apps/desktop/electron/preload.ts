@@ -72,6 +72,8 @@ const api: AgentHubApi = {
       ipcRenderer.invoke(IPC_CHANNELS.reviewRisk, runId),
     getVerification: (runId: string) =>
       ipcRenderer.invoke(IPC_CHANNELS.reviewVerification, runId),
+    getExecutionTrace: (runId: string) =>
+      ipcRenderer.invoke(IPC_CHANNELS.reviewExecutionTrace, runId),
     getLogs: (runId: string) =>
       ipcRenderer.invoke(IPC_CHANNELS.reviewLogs, runId),
     getHandoff: (runId: string) =>

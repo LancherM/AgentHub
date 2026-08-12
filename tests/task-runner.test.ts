@@ -42,12 +42,20 @@ import {
   InMemoryContextIndexRepository,
   InMemoryContextEvalEventRepository,
   InMemoryMemoryItemRepository,
+  InMemoryPlanGraphRepository,
+  InMemoryTraceLinkRepository,
+  buildExecutionTraceGraph,
+  planGraphIdForTaskVersion,
+  plannerNodeIdForPlanGraph,
+  planNodeIdForPlanGraph,
   extractAgentFacingOutput,
+  type PlanGraph,
   type RunEvent,
   type RunMetadata,
   type WorkgroupRoleRunMetadata,
   validateContextIndexEntry,
   validateTask,
+  validatePlanGraph,
   validateRunEvent
 } from "@agent-hub/core";
 import {
@@ -122,6 +130,674 @@ describe("task runner", () => {
     ).resolves.toContain("Create a deterministic fake output");
     await expect(fs.readFile(projectMarker, "utf8")).resolves.toBe("original\n");
     await expect(fs.readdir(projectRoot)).resolves.toEqual(before);
+  });
+
+  it("creates an active PlanGraph before adapter execution when enabled", async () => {
+    const projectRoot = await createTestDirectory("agent-hub-plan-project");
+    const runRoot = await createTestDirectory("agent-hub-plan-runs");
+    const planGraphRepository = new InMemoryPlanGraphRepository();
+    let activeGraphSeenByAdapter: PlanGraph | undefined;
+    const adapter: AgentAdapter = {
+      kind: "fake",
+      displayName: "Plan-aware Fake",
+      async detect() {
+        return { available: true, version: "plan-aware" };
+      },
+      async *run(): AsyncIterable<AgentRunEvent> {
+        activeGraphSeenByAdapter =
+          await planGraphRepository.getActiveByTaskId("task_plan_first");
+        yield {
+          type: "status",
+          message: `adapter saw ${activeGraphSeenByAdapter?.id ?? "no plan"}`
+        };
+        yield { type: "exit", message: "plan-aware fake completed", exitCode: 0 };
+      }
+    };
+    const runner = new TaskRunner({
+      defaultRunRoot: runRoot,
+      workspaceManager: new TestWorkspaceManager(runRoot),
+      diffCollector: new StaticDiffCollector(),
+      verificationRunner: new VerificationRunner(new MockShellExecutor()),
+      planGraphRepository,
+      agentRegistry: new DefaultAgentRegistry([adapter]),
+      idGenerator: new SequenceIdGenerator(),
+      clock: new FixedClock("2026-01-01T00:00:00.000Z")
+    });
+
+    const result = await runner.run({
+      projectRoot,
+      taskPrompt: "Implement a parser fix",
+      agentKind: "fake",
+      taskId: "task_plan_first"
+    });
+
+    expect(result.status).toBe("succeeded");
+    expect(result.planGraph?.id).toBe("plan_graph:task_plan_first:v1");
+    expect(activeGraphSeenByAdapter?.id).toBe(result.planGraph?.id);
+    expect(result.planGraph?.nodes.map((node) => node.kind)).toEqual([
+      "planner",
+      "research",
+      "implement",
+      "verify",
+      "review",
+      "handoff"
+    ]);
+    const planEventIndex = result.events.findIndex((event) =>
+      event.metadata?.desktopEventType === "plan_graph_created"
+    );
+    const adapterEventIndex = result.events.findIndex((event) =>
+      event.message.startsWith("adapter saw")
+    );
+    expect(planEventIndex).toBeGreaterThanOrEqual(0);
+    expect(adapterEventIndex).toBeGreaterThan(planEventIndex);
+  });
+
+  it("can run with PlanGraph creation disabled", async () => {
+    const projectRoot = await createTestDirectory("agent-hub-plan-disabled-project");
+    const runRoot = await createTestDirectory("agent-hub-plan-disabled-runs");
+    const planGraphRepository = new InMemoryPlanGraphRepository();
+    const runner = new TaskRunner({
+      defaultRunRoot: runRoot,
+      workspaceManager: new TestWorkspaceManager(runRoot),
+      diffCollector: new StaticDiffCollector(),
+      verificationRunner: new VerificationRunner(new MockShellExecutor()),
+      planGraphRepository,
+      idGenerator: new SequenceIdGenerator(),
+      clock: new FixedClock("2026-01-01T00:00:00.000Z")
+    });
+
+    const result = await runner.run({
+      projectRoot,
+      taskPrompt: "Create output without plan binding",
+      agentKind: "fake",
+      taskId: "task_plan_disabled",
+      planGraphMode: "disabled"
+    });
+
+    expect(result.status).toBe("succeeded");
+    expect(result.planGraph).toBeUndefined();
+    await expect(planGraphRepository.listByTaskId("task_plan_disabled"))
+      .resolves.toEqual([]);
+    expect(result.events.some((event) =>
+      event.metadata?.desktopEventType === "plan_graph_created"
+    )).toBe(false);
+  });
+
+  it("fails inspectably before adapter execution when planner output is invalid", async () => {
+    const projectRoot = await createTestDirectory("agent-hub-plan-invalid-project");
+    const runRoot = await createTestDirectory("agent-hub-plan-invalid-runs");
+    let adapterStarted = false;
+    const adapter: AgentAdapter = {
+      kind: "fake",
+      displayName: "Should Not Start",
+      async detect() {
+        return { available: true, version: "unused" };
+      },
+      async *run(): AsyncIterable<AgentRunEvent> {
+        adapterStarted = true;
+        yield { type: "exit", message: "unexpected adapter start", exitCode: 0 };
+      }
+    };
+    const runner = new TaskRunner({
+      defaultRunRoot: runRoot,
+      workspaceManager: new TestWorkspaceManager(runRoot),
+      diffCollector: new StaticDiffCollector(),
+      verificationRunner: new VerificationRunner(new MockShellExecutor()),
+      agentRegistry: new DefaultAgentRegistry([adapter]),
+      planGraphPlanner: (input) => ({
+        id: `invalid:${input.task.id}`,
+        taskId: input.task.id,
+        version: input.version,
+        status: "active",
+        plannerNodeId: "missing_planner",
+        createdByRole: "planner",
+        createdAt: input.createdAt,
+        nodes: [],
+        edges: []
+      }),
+      idGenerator: new SequenceIdGenerator(),
+      clock: new FixedClock("2026-01-01T00:00:00.000Z")
+    });
+
+    const result = await runner.run({
+      projectRoot,
+      taskPrompt: "Implement with invalid planner output",
+      agentKind: "fake",
+      taskId: "task_plan_invalid"
+    });
+
+    expect(result.status).toBe("failed");
+    expect(result.error).toContain("plan graph creation failed");
+    expect(adapterStarted).toBe(false);
+    expect(result.events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "error",
+          message: expect.stringContaining("plan graph creation failed")
+        }),
+        expect.objectContaining({
+          metadata: expect.objectContaining({ desktopEventType: "run_failed" })
+        })
+      ])
+    );
+  });
+
+  it("can create a PlanGraph through an opt-in local planner adapter", async () => {
+    const projectRoot = await createTestDirectory("agent-hub-agent-planner-project");
+    const runRoot = await createTestDirectory("agent-hub-agent-planner-runs");
+    const planGraphRepository = new InMemoryPlanGraphRepository();
+    const adapterInputs: AgentRunInput[] = [];
+    const adapter: AgentAdapter = {
+      kind: "fake",
+      displayName: "Planner Fake",
+      async detect() {
+        return { available: true, version: "planner-fake" };
+      },
+      async *run(input: AgentRunInput): AsyncIterable<AgentRunEvent> {
+        adapterInputs.push(input);
+        if (input.role?.roleHandle === "planner") {
+          yield {
+            type: "message",
+            message: JSON.stringify({
+              planGraph: testPlannerGraph(input.taskId, 1, input.taskTitle)
+            }),
+            metadata: { assistantOutput: true }
+          };
+          yield { type: "exit", message: "@planner completed", exitCode: 0 };
+          return;
+        }
+        yield { type: "status", message: "primary adapter started" };
+        yield { type: "exit", message: "primary completed", exitCode: 0 };
+      }
+    };
+    const runner = new TaskRunner({
+      defaultRunRoot: runRoot,
+      workspaceManager: new TestWorkspaceManager(runRoot),
+      diffCollector: new StaticDiffCollector(),
+      verificationRunner: new VerificationRunner(new MockShellExecutor()),
+      planGraphRepository,
+      agentRegistry: new DefaultAgentRegistry([adapter]),
+      idGenerator: new SequenceIdGenerator(),
+      clock: new FixedClock("2026-01-01T00:00:00.000Z")
+    });
+
+    const result = await runner.run({
+      projectRoot,
+      taskPrompt: "Implement a planner-backed parser fix",
+      agentKind: "fake",
+      taskId: "task_agent_planner",
+      planGraphMode: "agent_adapter",
+      plannerAgentKind: "fake"
+    });
+
+    expect(result.status).toBe("succeeded");
+    expect(result.planGraph?.id).toBe("plan_graph:task_agent_planner:v1");
+    expect(result.planGraph?.nodes.map((node) => node.kind)).toEqual([
+      "planner",
+      "implement",
+      "verify"
+    ]);
+    expect(adapterInputs).toHaveLength(2);
+    expect(adapterInputs[0].role?.roleHandle).toBe("planner");
+    expect(adapterInputs[0].worktreePath).not.toBe(projectRoot);
+    expect(adapterInputs[1].currentPlanNode?.id).toBe(
+      planNodeIdForPlanGraph(result.planGraph?.id ?? "", "implement", 1)
+    );
+    expect(result.events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          metadata: expect.objectContaining({
+            desktopEventType: "planner_started",
+            plannerMode: "agent_adapter"
+          })
+        }),
+        expect.objectContaining({
+          metadata: expect.objectContaining({
+            desktopEventType: "plan_graph_created",
+            plannerMode: "agent_adapter"
+          })
+        })
+      ])
+    );
+    await expect(planGraphRepository.getActiveByTaskId("task_agent_planner"))
+      .resolves.toMatchObject({ id: result.planGraph?.id, status: "active" });
+  });
+
+  it("rejects invalid planner adapter JSON before the primary adapter starts", async () => {
+    const projectRoot = await createTestDirectory("agent-hub-agent-planner-invalid-project");
+    const runRoot = await createTestDirectory("agent-hub-agent-planner-invalid-runs");
+    let primaryStarted = false;
+    const adapter: AgentAdapter = {
+      kind: "fake",
+      displayName: "Invalid Planner Fake",
+      async detect() {
+        return { available: true, version: "invalid-planner" };
+      },
+      async *run(input: AgentRunInput): AsyncIterable<AgentRunEvent> {
+        if (input.role?.roleHandle === "planner") {
+          yield { type: "stdout", message: "not json" };
+          yield { type: "exit", message: "@planner completed", exitCode: 0 };
+          return;
+        }
+        primaryStarted = true;
+        yield { type: "exit", message: "unexpected primary start", exitCode: 0 };
+      }
+    };
+    const runner = new TaskRunner({
+      defaultRunRoot: runRoot,
+      workspaceManager: new TestWorkspaceManager(runRoot),
+      diffCollector: new StaticDiffCollector(),
+      verificationRunner: new VerificationRunner(new MockShellExecutor()),
+      agentRegistry: new DefaultAgentRegistry([adapter]),
+      idGenerator: new SequenceIdGenerator(),
+      clock: new FixedClock("2026-01-01T00:00:00.000Z")
+    });
+
+    const result = await runner.run({
+      projectRoot,
+      taskPrompt: "Implement with invalid planner JSON",
+      agentKind: "fake",
+      taskId: "task_agent_planner_invalid",
+      planGraphMode: "agent_adapter",
+      plannerAgentKind: "fake"
+    });
+
+    expect(result.status).toBe("failed");
+    expect(result.error).toContain("planner output was not valid JSON");
+    expect(primaryStarted).toBe(false);
+  });
+
+  it("fails clearly when adapter-backed planner policy has no planner adapter configured", async () => {
+    const projectRoot = await createTestDirectory("agent-hub-agent-planner-missing-project");
+    const runRoot = await createTestDirectory("agent-hub-agent-planner-missing-runs");
+    let primaryStarted = false;
+    const adapter: AgentAdapter = {
+      kind: "fake",
+      displayName: "Primary Fake",
+      async detect() {
+        return { available: true, version: "primary" };
+      },
+      async *run(): AsyncIterable<AgentRunEvent> {
+        primaryStarted = true;
+        yield { type: "exit", message: "unexpected primary start", exitCode: 0 };
+      }
+    };
+    const runner = new TaskRunner({
+      defaultRunRoot: runRoot,
+      workspaceManager: new TestWorkspaceManager(runRoot),
+      diffCollector: new StaticDiffCollector(),
+      verificationRunner: new VerificationRunner(new MockShellExecutor()),
+      agentRegistry: new DefaultAgentRegistry([adapter]),
+      idGenerator: new SequenceIdGenerator(),
+      clock: new FixedClock("2026-01-01T00:00:00.000Z")
+    });
+
+    const result = await runner.run({
+      projectRoot,
+      taskPrompt: "Require adapter-backed planning without a planner adapter.",
+      agentKind: "fake",
+      taskId: "task_agent_planner_missing",
+      planGraphMode: "agent_adapter"
+    });
+
+    expect(result.status).toBe("failed");
+    expect(result.error).toContain(
+      "agent_adapter PlanGraph mode requires plannerAgentKind"
+    );
+    expect(primaryStarted).toBe(false);
+    expect(result.events).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        metadata: expect.objectContaining({
+          desktopEventType: "run_failed",
+          phase: "planner"
+        })
+      })
+    ]));
+  });
+
+  it("can activate a manually supplied PlanGraph after validation", async () => {
+    const projectRoot = await createTestDirectory("agent-hub-manual-plan-project");
+    const runRoot = await createTestDirectory("agent-hub-manual-plan-runs");
+    const manualGraph = testPlannerGraph("task_manual_plan", 1, "Manual plan task");
+    const adapter: AgentAdapter = {
+      kind: "fake",
+      displayName: "Manual Plan Fake",
+      async detect() {
+        return { available: true, version: "manual-plan" };
+      },
+      async *run(input: AgentRunInput): AsyncIterable<AgentRunEvent> {
+        yield {
+          type: "status",
+          message: `manual node ${input.currentPlanNode?.id ?? "none"}`
+        };
+        yield { type: "exit", message: "manual plan completed", exitCode: 0 };
+      }
+    };
+    const runner = new TaskRunner({
+      defaultRunRoot: runRoot,
+      workspaceManager: new TestWorkspaceManager(runRoot),
+      diffCollector: new StaticDiffCollector(),
+      verificationRunner: new VerificationRunner(new MockShellExecutor()),
+      agentRegistry: new DefaultAgentRegistry([adapter]),
+      idGenerator: new SequenceIdGenerator(),
+      clock: new FixedClock("2026-01-01T00:00:00.000Z")
+    });
+
+    const result = await runner.run({
+      projectRoot,
+      taskPrompt: "Run an imported manual plan",
+      title: "Manual plan task",
+      agentKind: "fake",
+      taskId: "task_manual_plan",
+      planGraphMode: "manual",
+      manualPlanGraph: manualGraph
+    });
+
+    expect(result.status).toBe("succeeded");
+    expect(result.planGraph).toEqual(manualGraph);
+    expect(result.events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          message: expect.stringContaining(
+            planNodeIdForPlanGraph(manualGraph.id, "implement", 1)
+          )
+        })
+      ])
+    );
+  });
+
+  it("schedules a primary-run PlanGraph chain through isolated TaskRunner runs", async () => {
+    const adapter = new CapturingAgentAdapter();
+    const fixture = await createSchedulerFixture(
+      "scheduler_chain",
+      (taskId) => schedulerGraph({
+        taskId,
+        nodes: [
+          { key: "implement", kind: "implement", mode: "primary_run" },
+          { key: "verify", kind: "verify", mode: "primary_run" },
+          { key: "review", kind: "review", mode: "primary_run" }
+        ],
+        edges: [
+          { from: "planner", to: "implement" },
+          { from: "implement", to: "verify" },
+          { from: "verify", to: "review" }
+        ]
+      }),
+      adapter
+    );
+    const projectMarker = path.join(fixture.projectRoot, "README.md");
+    await fs.writeFile(projectMarker, "original\n", "utf8");
+
+    const result = await fixture.runner.runPlanGraph({
+      projectRoot: fixture.projectRoot,
+      projectId: fixture.task.projectId,
+      taskId: fixture.task.id,
+      taskPrompt: "Run the scheduled chain.",
+      agentKind: "fake"
+    });
+
+    const scheduledNodeIds = fixture.graph.nodes
+      .filter((node) => node.execution.mode === "primary_run")
+      .map((node) => node.id);
+    expect(result.status).toBe("completed");
+    expect(result.scheduledRuns).toHaveLength(3);
+    expect(adapter.inputs.map((input) => input.currentPlanNode?.id))
+      .toEqual(scheduledNodeIds);
+    for (const [index, run] of result.scheduledRuns.entries()) {
+      await expect(fixture.runMetadataRepository.get(run.run.id))
+        .resolves.toMatchObject({
+          planBinding: {
+            planGraphId: fixture.graph.id,
+            planGraphVersion: fixture.graph.version,
+            planNodeId: scheduledNodeIds[index]
+          }
+        });
+      expect(run.worktreePath).toContain(fixture.task.id);
+      expect(run.worktreePath).not.toBe(fixture.projectRoot);
+    }
+    const trace = await buildExecutionTraceGraph({
+      planGraphRepository: fixture.planGraphRepository,
+      traceLinkRepository: fixture.traceLinkRepository,
+      taskRunRepository: fixture.taskRunRepository,
+      runMetadataRepository: fixture.runMetadataRepository
+    }, {
+      planGraphId: fixture.graph.id,
+      now: "2026-01-01T00:00:00.000Z"
+    });
+    expect(trace.dynamicNodes.filter((node) => node.kind === "task_run"))
+      .toHaveLength(3);
+    await expect(fs.readFile(projectMarker, "utf8")).resolves.toBe("original\n");
+  });
+
+  it("bounds parallel PlanGraph scheduling with maxScheduledRuns", async () => {
+    const adapter = new CapturingAgentAdapter();
+    const fixture = await createSchedulerFixture(
+      "scheduler_parallel",
+      (taskId) => schedulerGraph({
+        taskId,
+        nodes: [
+          { key: "docs", kind: "documentation", mode: "primary_run" },
+          { key: "tests", kind: "verify", mode: "primary_run" }
+        ],
+        edges: [
+          { from: "planner", to: "docs", type: "parallel" },
+          { from: "planner", to: "tests", type: "parallel" }
+        ]
+      }),
+      adapter
+    );
+
+    const first = await fixture.runner.runPlanGraph({
+      projectRoot: fixture.projectRoot,
+      projectId: fixture.task.projectId,
+      taskId: fixture.task.id,
+      taskPrompt: "Run one parallel branch.",
+      agentKind: "fake",
+      maxScheduledRuns: 1
+    });
+    expect(first.status).toBe("limited");
+    expect(first.scheduledRuns).toHaveLength(1);
+
+    const second = await fixture.runner.runPlanGraph({
+      projectRoot: fixture.projectRoot,
+      projectId: fixture.task.projectId,
+      taskId: fixture.task.id,
+      taskPrompt: "Run remaining parallel branch.",
+      agentKind: "fake",
+      maxScheduledRuns: 2
+    });
+
+    expect(second.status).toBe("completed");
+    expect(second.scheduledRuns).toHaveLength(1);
+    expect(adapter.inputs).toHaveLength(2);
+    expect(new Set(adapter.inputs.map((input) => input.currentPlanNode?.id)).size)
+      .toBe(2);
+  });
+
+  it("activates fallback edges after a failed required PlanNode", async () => {
+    const graphHolder: { graph?: PlanGraph } = {};
+    const adapter: AgentAdapter = {
+      kind: "fake",
+      displayName: "Fallback Fake",
+      async detect() {
+        return { available: true, version: "fallback" };
+      },
+      async *run(input: AgentRunInput): AsyncIterable<AgentRunEvent> {
+        const implementId = graphHolder.graph?.nodes.find((node) =>
+          node.kind === "implement"
+        )?.id;
+        if (input.currentPlanNode?.id === implementId) {
+          yield { type: "exit", message: "implementation failed", exitCode: 1 };
+          return;
+        }
+        yield { type: "exit", message: "fallback completed", exitCode: 0 };
+      }
+    };
+    const fixture = await createSchedulerFixture(
+      "scheduler_fallback",
+      (taskId) => schedulerGraph({
+        taskId,
+        nodes: [
+          { key: "implement", kind: "implement", mode: "primary_run" },
+          { key: "fallback", kind: "review", mode: "primary_run" }
+        ],
+        edges: [
+          { from: "planner", to: "implement" },
+          { from: "implement", to: "fallback", type: "fallback" }
+        ]
+      }),
+      adapter
+    );
+    graphHolder.graph = fixture.graph;
+
+    const result = await fixture.runner.runPlanGraph({
+      projectRoot: fixture.projectRoot,
+      projectId: fixture.task.projectId,
+      taskId: fixture.task.id,
+      taskPrompt: "Run fallback after failure.",
+      agentKind: "fake"
+    });
+
+    expect(result.status).toBe("failed");
+    expect(result.scheduledRuns.map((run) => run.status)).toEqual([
+      "failed",
+      "succeeded"
+    ]);
+    const fallbackNode = fixture.graph.nodes.find((node) => node.kind === "review");
+    await expect(fixture.runMetadataRepository.get(result.scheduledRuns[1].run.id))
+      .resolves.toMatchObject({
+        planBinding: {
+          planGraphId: fixture.graph.id,
+          planNodeId: fallbackNode?.id
+        }
+      });
+  });
+
+  it("blocks downstream scheduling behind required manual PlanNodes", async () => {
+    const fixture = await createSchedulerFixture(
+      "scheduler_manual",
+      (taskId) => schedulerGraph({
+        taskId,
+        nodes: [
+          { key: "approval", kind: "review", mode: "manual" },
+          { key: "implement", kind: "implement", mode: "primary_run" }
+        ],
+        edges: [
+          { from: "planner", to: "approval" },
+          { from: "approval", to: "implement" }
+        ]
+      })
+    );
+
+    const result = await fixture.runner.runPlanGraph({
+      projectRoot: fixture.projectRoot,
+      projectId: fixture.task.projectId,
+      taskId: fixture.task.id,
+      taskPrompt: "Do not bypass manual approval.",
+      agentKind: "fake"
+    });
+
+    expect(result.status).toBe("blocked");
+    expect(result.scheduledRuns).toEqual([]);
+    expect(result.schedule.runnable).toEqual([]);
+  });
+
+  it("requires explicit rerun for successful PlanNodes", async () => {
+    const adapter = new CapturingAgentAdapter();
+    const fixture = await createSchedulerFixture(
+      "scheduler_rerun",
+      (taskId) => schedulerGraph({
+        taskId,
+        nodes: [
+          { key: "implement", kind: "implement", mode: "primary_run" }
+        ],
+        edges: [
+          { from: "planner", to: "implement" }
+        ]
+      }),
+      adapter
+    );
+    const implementNode = fixture.graph.nodes.find((node) =>
+      node.execution.mode === "primary_run"
+    );
+    if (!implementNode) {
+      throw new Error("expected primary plan node");
+    }
+
+    const first = await fixture.runner.runPlanGraph({
+      projectRoot: fixture.projectRoot,
+      projectId: fixture.task.projectId,
+      taskId: fixture.task.id,
+      taskPrompt: "Run once.",
+      agentKind: "fake"
+    });
+    const second = await fixture.runner.runPlanGraph({
+      projectRoot: fixture.projectRoot,
+      projectId: fixture.task.projectId,
+      taskId: fixture.task.id,
+      taskPrompt: "Do not rerun automatically.",
+      agentKind: "fake"
+    });
+    const third = await fixture.runner.runPlanGraph({
+      projectRoot: fixture.projectRoot,
+      projectId: fixture.task.projectId,
+      taskId: fixture.task.id,
+      taskPrompt: "Rerun explicitly.",
+      agentKind: "fake",
+      rerunPlanNodeIds: [implementNode.id]
+    });
+
+    expect(first.scheduledRuns).toHaveLength(1);
+    expect(second.scheduledRuns).toHaveLength(0);
+    expect(third.scheduledRuns).toHaveLength(1);
+    expect(adapter.inputs.map((input) => input.currentPlanNode?.id))
+      .toEqual([implementNode.id, implementNode.id]);
+  });
+
+  it("links generated memory proposals back to the current PlanGraph node", async () => {
+    const projectRoot = await createTestDirectory("agent-hub-plan-memory-project");
+    const runRoot = await createTestDirectory("agent-hub-plan-memory-runs");
+    const traceLinkRepository = new InMemoryTraceLinkRepository();
+    const runner = new TaskRunner({
+      defaultRunRoot: runRoot,
+      workspaceManager: new TestWorkspaceManager(runRoot),
+      diffCollector: new StaticDiffCollector(),
+      verificationRunner: new VerificationRunner(new MockShellExecutor()),
+      traceLinkRepository,
+      idGenerator: new SequenceIdGenerator(),
+      clock: new FixedClock("2026-01-01T00:00:00.000Z")
+    });
+
+    const result = await runner.run({
+      projectRoot,
+      taskPrompt: "Implement memory-linked plan trace evidence",
+      agentKind: "fake",
+      taskId: "task_plan_memory",
+      verificationCommands: [
+        {
+          id: "unit",
+          label: "unit",
+          command: "pnpm",
+          args: ["test"]
+        }
+      ]
+    });
+
+    expect(result.status).toBe("succeeded");
+    const primaryNodeId = result.planGraph?.nodes.find((node) =>
+      node.execution.mode === "primary_run"
+    )?.id;
+    const rows = await traceLinkRepository.listByPlanGraphId(
+      result.planGraph?.id ?? ""
+    );
+    expect(rows.evidence).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          sourceType: "memory_proposal",
+          planNodeId: primaryNodeId
+        })
+      ])
+    );
   });
 
   it("injects and persists conversation briefs for task runs", async () => {
@@ -3228,6 +3904,16 @@ describe("task runner", () => {
 
     expect(result.status).toBe("succeeded");
     expect(adapter.inputs[0]).toMatchObject({
+      planGraph: expect.objectContaining({
+        id: "plan_graph:task_0001:v1",
+        version: 1
+      }),
+      currentPlanNode: expect.objectContaining({
+        kind: "implement",
+        role: "engineer",
+        execution: expect.objectContaining({ mode: "primary_run" })
+      }),
+      allowedNextPlanNodeIds: ["plan_graph:task_0001:v1:verify:3"],
       role: expect.objectContaining({
         roleHandle: "engineer",
         displayName: "Engineer",
@@ -3244,6 +3930,12 @@ describe("task runner", () => {
           roleHandle: "engineer",
           displayName: "Engineer",
           adapterKind: "fake"
+        }),
+        planBinding: expect.objectContaining({
+          planGraphId: "plan_graph:task_0001:v1",
+          planGraphVersion: 1,
+          planNodeId: "plan_graph:task_0001:v1:implement:2",
+          allowedNextPlanNodeIds: ["plan_graph:task_0001:v1:verify:3"]
         })
       })
     );
@@ -3307,6 +3999,60 @@ function createTestRunner(runRoot: string): TaskRunner {
     idGenerator: new SequenceIdGenerator(),
     clock: new FixedClock("2026-01-01T00:00:00.000Z")
   });
+}
+
+async function createSchedulerFixture(
+  name: string,
+  graphFactory: (taskId: string) => PlanGraph,
+  adapter: AgentAdapter = new CapturingAgentAdapter()
+) {
+  const projectRoot = await createTestDirectory(`${name}-project`);
+  const runRoot = await createTestDirectory(`${name}-runs`);
+  const taskRepository = new InMemoryTaskRepository();
+  const taskRunRepository = new InMemoryTaskRunRepository();
+  const runMetadataRepository = new InMemoryRunMetadataRepository();
+  const planGraphRepository = new InMemoryPlanGraphRepository();
+  const traceLinkRepository = new InMemoryTraceLinkRepository();
+  const task = await taskRepository.create(
+    validateTask({
+      id: `task_${name}`,
+      projectId: `project_${name}`,
+      title: `Scheduler ${name}`,
+      description: `Run scheduler fixture ${name}.`,
+      status: "open",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z"
+    })
+  );
+  const graph = graphFactory(task.id);
+  await planGraphRepository.create(graph);
+  const runner = new TaskRunner({
+    taskRepository,
+    taskRunRepository,
+    runMetadataRepository,
+    planGraphRepository,
+    traceLinkRepository,
+    defaultRunRoot: runRoot,
+    workspaceManager: new TestWorkspaceManager(runRoot),
+    diffCollector: new StaticDiffCollector(),
+    verificationRunner: new VerificationRunner(new MockShellExecutor()),
+    agentRegistry: new DefaultAgentRegistry([adapter]),
+    idGenerator: new SequenceIdGenerator(),
+    clock: new FixedClock("2026-01-01T00:00:00.000Z")
+  });
+
+  return {
+    projectRoot,
+    runRoot,
+    task,
+    graph,
+    runner,
+    adapter,
+    taskRunRepository,
+    runMetadataRepository,
+    planGraphRepository,
+    traceLinkRepository
+  };
 }
 
 interface TestWorkspaceManagerOptions {
@@ -3455,6 +4201,142 @@ function roleRunMetadata(
       summary: "No external side effects."
     }
   };
+}
+
+function testPlannerGraph(
+  taskId: string,
+  version: number,
+  title = "Planner task"
+): PlanGraph {
+  const graphId = planGraphIdForTaskVersion(taskId, version);
+  const plannerId = plannerNodeIdForPlanGraph(graphId);
+  const implementId = planNodeIdForPlanGraph(graphId, "implement", 1);
+  const verifyId = planNodeIdForPlanGraph(graphId, "verify", 2);
+  return validatePlanGraph({
+    id: graphId,
+    taskId,
+    version,
+    status: "active",
+    plannerNodeId: plannerId,
+    createdByRole: "planner",
+    createdAt: "2026-01-01T00:00:00.000Z",
+    nodes: [
+      {
+        id: plannerId,
+        kind: "planner",
+        role: "planner",
+        title: "Create execution plan",
+        instructions: `Create a structured execution plan for ${title}.`,
+        acceptanceCriteria: ["PlanGraph JSON is valid and local-only."],
+        riskLevel: "low",
+        required: true,
+        execution: { mode: "system" },
+        outputPlanGraphId: graphId
+      },
+      {
+        id: implementId,
+        kind: "implement",
+        role: "engineer",
+        title: "Implement scoped change",
+        instructions: "Make the requested local change in the isolated worktree.",
+        acceptanceCriteria: ["The requested behavior is implemented."],
+        riskLevel: "low",
+        required: true,
+        execution: {
+          mode: "primary_run",
+          expectedAdapter: "fake",
+          worktreePolicy: "isolated"
+        }
+      },
+      {
+        id: verifyId,
+        kind: "verify",
+        role: "reviewer",
+        title: "Verify evidence",
+        instructions: "Run or inspect relevant evidence before handoff.",
+        acceptanceCriteria: ["Verification evidence is recorded."],
+        riskLevel: "low",
+        required: true,
+        execution: { mode: "manual" }
+      }
+    ],
+    edges: [
+      { from: plannerId, to: implementId, type: "primary" },
+      { from: implementId, to: verifyId, type: "primary" }
+    ]
+  });
+}
+
+function schedulerGraph(input: {
+  taskId: string;
+  nodes: Array<{
+    key: string;
+    kind: PlanGraph["nodes"][number]["kind"];
+    mode: PlanGraph["nodes"][number]["execution"]["mode"];
+    required?: boolean;
+  }>;
+  edges: Array<{
+    from: "planner" | string;
+    to: string;
+    type?: PlanGraph["edges"][number]["type"];
+  }>;
+}): PlanGraph {
+  const graphId = planGraphIdForTaskVersion(input.taskId, 1);
+  const plannerId = plannerNodeIdForPlanGraph(graphId);
+  const nodeIds = new Map<string, string>([["planner", plannerId]]);
+  const nodes: PlanGraph["nodes"] = [
+    {
+      id: plannerId,
+      kind: "planner",
+      role: "planner",
+      title: "Create execution plan",
+      instructions: "Create a local execution plan.",
+      acceptanceCriteria: ["PlanGraph is valid."],
+      riskLevel: "low",
+      required: true,
+      execution: { mode: "system" },
+      outputPlanGraphId: graphId
+    }
+  ];
+  input.nodes.forEach((node, index) => {
+    const nodeId = planNodeIdForPlanGraph(graphId, node.kind, index + 1);
+    nodeIds.set(node.key, nodeId);
+    nodes.push({
+      id: nodeId,
+      kind: node.kind,
+      role: node.mode === "manual" ? "operator" : "engineer",
+      title: `${node.kind} ${node.key}`,
+      instructions: `Execute scheduler node ${node.key}.`,
+      acceptanceCriteria: [`${node.key} evidence is recorded.`],
+      riskLevel: "low",
+      required: node.required ?? true,
+      execution: node.mode === "primary_run"
+        ? { mode: "primary_run", expectedAdapter: "fake", worktreePolicy: "isolated" }
+        : { mode: node.mode }
+    });
+  });
+  return validatePlanGraph({
+    id: graphId,
+    taskId: input.taskId,
+    version: 1,
+    status: "active",
+    plannerNodeId: plannerId,
+    createdByRole: "planner",
+    createdAt: "2026-01-01T00:00:00.000Z",
+    nodes,
+    edges: input.edges.map((edge) => {
+      const from = nodeIds.get(edge.from);
+      const to = nodeIds.get(edge.to);
+      if (!from || !to) {
+        throw new Error(`unknown scheduler graph edge ${edge.from} -> ${edge.to}`);
+      }
+      return {
+        from,
+        to,
+        type: edge.type ?? "primary"
+      };
+    })
+  });
 }
 
 function deferred(): {

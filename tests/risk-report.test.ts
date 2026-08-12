@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
 import type { DiffCollectionResult } from "@agent-hub/task-runner";
+import {
+  planGraphIdForTaskVersion,
+  plannerNodeIdForPlanGraph,
+  planNodeIdForPlanGraph,
+  validatePlanGraph,
+  type PlanGraph
+} from "@agent-hub/core";
 import { RiskReportGenerator } from "@agent-hub/safety";
 import type { VerificationCommandResult, VerificationSuiteResult } from "@agent-hub/task-runner";
 
@@ -93,6 +100,32 @@ describe("RiskReportGenerator", () => {
     expect(report.riskFactors.join("\n")).toContain("run_event_1:message");
     expect(report.riskFactors.join("\n")).toContain("Privileged command");
   });
+
+  it("adds plan-aware findings for missing verification and failed required nodes", () => {
+    const graph = planGraphWithoutVerify();
+    const report = new RiskReportGenerator().generate({
+      id: "risk_1",
+      taskRunId: "run_1",
+      diff: diff({ changedFiles: ["src/app.ts"] }),
+      verification: verification({
+        status: "failed",
+        summary: "0 passed, 1 failed, 0 skipped",
+        failedCommands: [commandResult("test", "failed")],
+        results: [commandResult("test", "failed")]
+      }),
+      planGraph: graph,
+      currentPlanNode: graph.nodes.find((node) => node.kind === "implement"),
+      createdAt: "2026-01-01T00:00:00.000Z"
+    });
+
+    expect(report.level).toBe("high");
+    expect(report.riskFactors.join("\n")).toContain(
+      "PlanGraph is missing a required verification node"
+    );
+    expect(report.riskFactors.join("\n")).toContain(
+      "Required PlanNode has failed verification evidence"
+    );
+  });
 });
 
 function generate(input: {
@@ -167,4 +200,49 @@ function commandResult(
     timedOut: false,
     dryRun: false
   };
+}
+
+function planGraphWithoutVerify(): PlanGraph {
+  const graphId = planGraphIdForTaskVersion("task_plan_risk", 1);
+  const plannerId = plannerNodeIdForPlanGraph(graphId);
+  const implementId = planNodeIdForPlanGraph(graphId, "implement", 1);
+  return validatePlanGraph({
+    id: graphId,
+    taskId: "task_plan_risk",
+    version: 1,
+    status: "active",
+    plannerNodeId: plannerId,
+    createdByRole: "planner",
+    createdAt: "2026-01-01T00:00:00.000Z",
+    nodes: [
+      {
+        id: plannerId,
+        kind: "planner",
+        role: "planner",
+        title: "Create execution plan",
+        instructions: "Create a local plan.",
+        acceptanceCriteria: ["Plan is valid."],
+        riskLevel: "low",
+        required: true,
+        execution: { mode: "system" },
+        outputPlanGraphId: graphId
+      },
+      {
+        id: implementId,
+        kind: "implement",
+        role: "engineer",
+        title: "Implement change",
+        instructions: "Implement the change.",
+        acceptanceCriteria: ["Change is implemented."],
+        riskLevel: "medium",
+        required: true,
+        execution: {
+          mode: "primary_run",
+          expectedAdapter: "fake",
+          worktreePolicy: "isolated"
+        }
+      }
+    ],
+    edges: [{ from: plannerId, to: implementId, type: "primary" }]
+  });
 }

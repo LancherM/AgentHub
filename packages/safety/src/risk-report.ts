@@ -5,6 +5,9 @@ import {
   formatShellCommand,
   type JsonObject,
   type DiffCollectionResult,
+  type AnyPlanNode,
+  type ExecutionTraceGraph,
+  type PlanGraph,
   type RiskFinding,
   type RiskLevel,
   type RiskReport,
@@ -19,6 +22,9 @@ export interface RiskReportInput {
   verification: VerificationSuiteResult;
   runEvents?: RiskReportRunEventInput[];
   manualReviewNotes?: string[];
+  planGraph?: PlanGraph;
+  currentPlanNode?: AnyPlanNode;
+  executionTrace?: ExecutionTraceGraph;
   createdAt: string;
 }
 
@@ -90,6 +96,14 @@ export class RiskReportGenerator {
       );
     }
 
+    addPlanAwareFindings(findings, riskFactors, {
+      planGraph: input.planGraph,
+      currentPlanNode: input.currentPlanNode,
+      executionTrace: input.executionTrace,
+      verification: input.verification,
+      changedFileCount: changedFiles.length
+    });
+
     for (const note of input.manualReviewNotes ?? []) {
       addFinding(findings, riskFactors, "medium", "Manual review note.", note);
     }
@@ -148,6 +162,96 @@ function addFinding(
 ): void {
   findings.push({ level, summary, details });
   riskFactors.push(details ? `${summary} ${details}` : summary);
+}
+
+function addPlanAwareFindings(
+  findings: RiskFinding[],
+  riskFactors: string[],
+  input: {
+    planGraph?: PlanGraph;
+    currentPlanNode?: AnyPlanNode;
+    executionTrace?: ExecutionTraceGraph;
+    verification: VerificationSuiteResult;
+    changedFileCount: number;
+  }
+): void {
+  if (input.planGraph) {
+    if (input.planGraph.status === "proposed") {
+      addFinding(
+        findings,
+        riskFactors,
+        "high",
+        "PlanGraph is proposed, not active.",
+        `PlanGraph ${input.planGraph.id} must be explicitly activated before acceptance.`
+      );
+    }
+    if (input.changedFileCount > 0 && !hasRequiredVerificationNode(input.planGraph)) {
+      addFinding(
+        findings,
+        riskFactors,
+        "medium",
+        "PlanGraph is missing a required verification node.",
+        `PlanGraph ${input.planGraph.id} changed files without a required verify node.`
+      );
+    }
+    if (
+      input.currentPlanNode &&
+      !input.planGraph.nodes.some((node) => node.id === input.currentPlanNode?.id)
+    ) {
+      addFinding(
+        findings,
+        riskFactors,
+        "high",
+        "Run is bound to a PlanNode outside the active PlanGraph.",
+        `PlanNode ${input.currentPlanNode.id} is not part of ${input.planGraph.id}.`
+      );
+    }
+  }
+
+  if (input.currentPlanNode) {
+    if (
+      input.currentPlanNode.required &&
+      input.verification.status === "failed"
+    ) {
+      addFinding(
+        findings,
+        riskFactors,
+        "high",
+        "Required PlanNode has failed verification evidence.",
+        `${input.currentPlanNode.id}: ${input.verification.summary}`
+      );
+    }
+    if (
+      input.currentPlanNode.execution.mode !== "primary_run" &&
+      input.changedFileCount > 0
+    ) {
+      addFinding(
+        findings,
+        riskFactors,
+        "high",
+        "Non-primary PlanNode produced changed files.",
+        `${input.currentPlanNode.id} uses ${input.currentPlanNode.execution.mode}.`
+      );
+    }
+  }
+
+  for (const deviation of input.executionTrace?.deviations ?? []) {
+    addFinding(
+      findings,
+      riskFactors,
+      riskLevelForPlanSeverity(deviation.severity),
+      `Plan deviation: ${deviation.type}.`,
+      deviation.description
+    );
+  }
+}
+
+function hasRequiredVerificationNode(graph: PlanGraph): boolean {
+  return graph.nodes.some((node) => node.kind === "verify" && node.required);
+}
+
+function riskLevelForPlanSeverity(severity: "low" | "medium" | "high"): RiskLevel {
+  return severity;
 }
 
 function classifyRisk(findings: RiskFinding[]): RiskLevel {

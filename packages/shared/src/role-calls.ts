@@ -168,6 +168,16 @@ export interface RoleCallContext {
     testStatus?: string;
   };
   tokenBudget?: number;
+  planTrace?: RoleCallPlanTraceContext;
+}
+
+export interface RoleCallPlanTraceContext {
+  planGraphId: string;
+  planGraphVersion: number;
+  sourcePlanNodeId: string;
+  sourceRunId: string;
+  traceNodeId?: string;
+  allowedNextPlanNodeIds?: string[];
 }
 
 export interface RoleDecisionTodoDraft {

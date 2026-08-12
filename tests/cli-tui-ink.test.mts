@@ -376,6 +376,11 @@ const baseModel = {
       }
     ],
     roleCalls: [],
+    graph: {
+      overlay: [],
+      plan: [],
+      trace: []
+    },
     tasks: [],
     memoryRows: [
       {
@@ -644,6 +649,343 @@ describe("Ink TUI renderer", () => {
     });
 
     expect(new Set(lineCounts).size).toBe(1);
+  });
+
+  it("labels the current RoleCall graph as Workflow DAG compatibility evidence", () => {
+    const model = {
+      ...baseModel,
+      roleCalls: {
+        ...baseModel.roleCalls,
+        nodes: [
+          {
+            id: "call_trace",
+            threadId: "thread_1",
+            callerRole: "engineer",
+            calleeRole: "reviewer",
+            task: "Review execution trace copy.",
+            status: "running",
+            statusLabel: "running",
+            priority: "normal",
+            depth: 0,
+            linkedRunId: "run_27984312-fc9a-46bf-9ccf-c06997187091",
+            createdAt: "2026-05-29T12:00:00.000Z",
+            hidden: false,
+            evidence: {}
+          }
+        ],
+        counts: {
+          ...baseModel.roleCalls.counts,
+          total: 1,
+          visible: 1,
+          active: 1
+        },
+        loop: {
+          ...baseModel.roleCalls.loop,
+          stopReason: "pending_role_calls",
+          pendingRoleCallIds: ["call_trace"]
+        }
+      }
+    };
+    const output = renderToString(
+      React.createElement(TuiInkFrame, {
+        model,
+        state: { ...createInitialInkState(), focus: "graph" },
+        terminal: { columns: 120, rows: 28 }
+      }),
+      { columns: 120 }
+    );
+
+    expect(output).toContain("Graph - Workflow DAG");
+    expect(output).toContain("legacy RoleCall evidence");
+    expect(output).toContain("@engineer -> @reviewer");
+    expect(output).toContain("Review execution trace");
+  });
+
+  it("renders Plan/Trace/Overlay Workflow DAG modes", () => {
+    const model = {
+      ...baseModel,
+      executionTrace: {
+        taskId: "task_1",
+        planGraphId: "plan_graph:task_1:v1",
+        planGraphVersion: 1,
+        baseNodes: [
+          {
+            id: "plan_node_implement",
+            kind: "implement",
+            role: "engineer",
+            title: "Implement graph view",
+            instructions: "Implement the graph view.",
+            acceptanceCriteria: ["Graph renders."],
+            riskLevel: "low",
+            required: true,
+            execution: {
+              mode: "primary_run",
+              expectedAdapter: "fake",
+              worktreePolicy: "isolated"
+            }
+          },
+          {
+            id: "plan_node_verify",
+            kind: "verify",
+            role: "reviewer",
+            title: "Verify graph view",
+            instructions: "Verify the graph view.",
+            acceptanceCriteria: ["Graph is inspectable."],
+            riskLevel: "medium",
+            required: true,
+            execution: {
+              mode: "manual"
+            }
+          }
+        ],
+        baseEdges: [
+          {
+            from: "plan_node_implement",
+            to: "plan_node_verify",
+            type: "primary",
+            label: "then"
+          }
+        ],
+        dynamicNodes: [
+          {
+            id: "trace_node:run:run_1",
+            planGraphId: "plan_graph:task_1:v1",
+            kind: "task_run",
+            title: "TaskRun run_1",
+            status: "completed",
+            sourcePlanNodeId: "plan_node_implement",
+            sourceType: "task_run",
+            sourceId: "run_1",
+            createdAt: "2026-05-29T12:05:00.000Z"
+          },
+          {
+            id: "trace_node:comparison:comparison_1",
+            planGraphId: "plan_graph:task_1:v1",
+            kind: "review",
+            title: "Comparison comparison_1",
+            status: "completed",
+            sourcePlanNodeId: "plan_node_verify",
+            sourceType: "comparison_report",
+            sourceId: "comparison_1",
+            createdAt: "2026-05-29T12:06:00.000Z"
+          }
+        ],
+        dynamicEdges: [
+          {
+            id: "trace_edge:comparison:comparison_1:candidate",
+            planGraphId: "plan_graph:task_1:v1",
+            from: "trace_node:run:run_1",
+            to: "trace_node:comparison:comparison_1",
+            type: "evidence",
+            label: "candidate"
+          }
+        ],
+        evidence: [
+          {
+            id: "trace_evidence:run:run_1",
+            planGraphId: "plan_graph:task_1:v1",
+            sourceType: "task_run",
+            sourceId: "run_1",
+            planNodeId: "plan_node_implement",
+            traceNodeId: "trace_node:run:run_1"
+          },
+          {
+            id: "trace_evidence:comparison:comparison_1",
+            planGraphId: "plan_graph:task_1:v1",
+            sourceType: "comparison_report",
+            sourceId: "comparison_1",
+            planNodeId: "plan_node_verify",
+            traceNodeId: "trace_node:comparison:comparison_1",
+            summary: "Candidate won."
+          }
+        ],
+        deviations: []
+      },
+      selectionDetails: {
+        ...baseModel.selectionDetails,
+        graph: {
+          overlay: [
+            {
+              id: "plan_node_implement",
+              kind: "graph_node",
+              title: "Implement graph view",
+              subtitle: "implement @engineer primary_run",
+              sections: [
+                {
+                  id: "plan-node",
+                  title: "Plan Node",
+                  lines: ["id: plan_node_implement"]
+                },
+                {
+                  id: "outgoing",
+                  title: "Outgoing",
+                  lines: ["plan plan_node_implement -> plan_node_verify primary then"]
+                }
+              ],
+              commands: ["agent-hub execution-trace show --plan-graph-id plan_graph:task_1:v1"],
+              actions: []
+            },
+            {
+              id: "trace_node:run:run_1",
+              kind: "graph_node",
+              title: "TaskRun run_1",
+              subtitle: "task_run completed",
+              sections: [
+                {
+                  id: "trace-node",
+                  title: "Trace Node",
+                  lines: ["id: trace_node:run:run_1", "status: completed"]
+                },
+                {
+                  id: "outgoing",
+                  title: "Outgoing",
+                  lines: ["trace trace_node:run:run_1 -> trace_node:comparison:comparison_1 evidence candidate"]
+                }
+              ],
+              commands: ["agent-hub execution-trace show --plan-graph-id plan_graph:task_1:v1"],
+              actions: []
+            },
+            {
+              id: "trace_node:comparison:comparison_1",
+              kind: "graph_node",
+              title: "Comparison comparison_1",
+              subtitle: "review completed",
+              sections: [
+                {
+                  id: "trace-node",
+                  title: "Trace Node",
+                  lines: ["id: trace_node:comparison:comparison_1", "status: completed"]
+                },
+                {
+                  id: "evidence",
+                  title: "Evidence",
+                  lines: ["comparison_report:comparison_1 Candidate won."]
+                }
+              ],
+              commands: ["agent-hub execution-trace show --plan-graph-id plan_graph:task_1:v1"],
+              actions: []
+            }
+          ],
+          plan: [
+            {
+              id: "plan_node_implement",
+              kind: "graph_node",
+              title: "Implement graph view",
+              subtitle: "implement @engineer primary_run",
+              sections: [
+                {
+                  id: "plan-node",
+                  title: "Plan Node",
+                  lines: ["id: plan_node_implement"]
+                }
+              ],
+              commands: ["agent-hub execution-trace show --plan-graph-id plan_graph:task_1:v1"],
+              actions: []
+            }
+          ],
+          trace: [
+            {
+              id: "trace_node:run:run_1",
+              kind: "graph_node",
+              title: "TaskRun run_1",
+              subtitle: "task_run completed",
+              sections: [
+                {
+                  id: "trace-node",
+                  title: "Trace Node",
+                  lines: ["id: trace_node:run:run_1", "status: completed"]
+                }
+              ],
+              commands: ["agent-hub execution-trace show --plan-graph-id plan_graph:task_1:v1"],
+              actions: []
+            }
+          ]
+        }
+      }
+    };
+    const overlay = renderToString(
+      React.createElement(TuiInkFrame, {
+        model,
+        state: { ...createInitialInkState(), focus: "graph", graphLabels: "full" },
+        terminal: { columns: 180, rows: 30 }
+      }),
+      { columns: 180 }
+    );
+    const plan = renderToString(
+      React.createElement(TuiInkFrame, {
+        model,
+        state: { ...createInitialInkState(), focus: "graph", graphMode: "plan" },
+        terminal: { columns: 120, rows: 28 }
+      }),
+      { columns: 120 }
+    );
+    const trace = renderToString(
+      React.createElement(TuiInkFrame, {
+        model,
+        state: { ...createInitialInkState(), focus: "graph", graphMode: "trace" },
+        terminal: { columns: 120, rows: 28 }
+      }),
+      { columns: 120 }
+    );
+    const compact = renderToString(
+      React.createElement(TuiInkFrame, {
+        model,
+        state: { ...createInitialInkState(), focus: "graph" },
+        terminal: { columns: 82, rows: 22 }
+      }),
+      { columns: 82 }
+    );
+
+    expect(overlay).toContain("Graph - Workflow DAG");
+    expect(overlay).toContain("mode overlay");
+    expect(overlay).toContain("mini-map 1/4");
+    expect(overlay).toContain("P");
+    expect(overlay).toContain("plan_node_imple");
+    expect(overlay).toContain("--> then plan_node_verify");
+    expect(overlay).toContain("T");
+    expect(overlay).toContain("trace_node:run:");
+    expect(overlay).toContain("legend: [P] plan");
+    expect(overlay).toContain("TaskRun run_1");
+    expect(plan).toContain("mode plan");
+    expect(plan).toContain("plan_node_imple");
+    expect(plan).not.toContain("TaskRun run_1");
+    expect(trace).toContain("mode trace");
+    expect(trace).toContain("TaskRun run_1");
+    expect(trace).not.toContain("plan_node_imple");
+    expect(compact).toContain("Graph - Workflow DAG");
+    expect(compact).toContain("<=");
+
+    const traceDetail = renderToString(
+      React.createElement(TuiInkFrame, {
+        model,
+        state: {
+          ...createInitialInkState(),
+          focus: "graph",
+          graphMode: "trace",
+          detailVisible: true
+        },
+        terminal: { columns: 120, rows: 28 }
+      }),
+      { columns: 120 }
+    );
+    expect(traceDetail).toContain("Graph Node Detail");
+    expect(traceDetail).toContain("Trace Node");
+    expect(traceDetail).toContain("status: completed");
+    expect(traceDetail).not.toContain("Empty Slot");
+  });
+
+  it("cycles graph mode only from the graph focus", () => {
+    let state = { ...createInitialInkState(), focus: "graph" };
+    state = reduceInkState(state, "cycle_graph_mode", baseModel);
+    expect(state.graphMode).toBe("plan");
+    state = reduceInkState(state, "cycle_graph_mode", baseModel);
+    expect(state.graphMode).toBe("trace");
+    state = reduceInkState(state, "toggle_graph_labels", baseModel);
+    expect(state.graphLabels).toBe("full");
+    state = reduceInkState(state, "toggle_graph_fold", baseModel);
+    expect(state.graphFold).toBe("grouped");
+    state = reduceInkState(state, "toggle_graph_zoom", baseModel);
+    expect(state.graphZoom).toBe("detail");
   });
 
   it("keeps slash completion suggestions inside the terminal row budget", () => {

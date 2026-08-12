@@ -132,6 +132,7 @@ function isInspectorTab(value: unknown): value is RunInspectorTab {
     value === "checks" ||
     value === "risk" ||
     value === "risks" ||
+    value === "trace" ||
     value === "handoff" ||
     value === "lifecycle" ||
     value === "memory" ||

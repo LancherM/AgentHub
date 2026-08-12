@@ -25,6 +25,11 @@ export type TuiInkFocus =
 
 export interface TuiInkState {
   focus: TuiInkFocus;
+  graphMode: "overlay" | "plan" | "trace";
+  graphLayout: "ranked";
+  graphLabels: "compact" | "full";
+  graphFold: "expanded" | "grouped";
+  graphZoom: "fit" | "detail";
   selectedRunIndex: number;
   selectedRunId?: string;
   selectedRoleCallIndex: number;
@@ -101,6 +106,10 @@ export type TuiInkKey =
   | "toggle_compare"
   | "toggle_notify"
   | "toggle_timeline"
+  | "cycle_graph_mode"
+  | "toggle_graph_labels"
+  | "toggle_graph_fold"
+  | "toggle_graph_zoom"
   | "cancel"
   | "accept_review"
   | "reject_review"
@@ -128,6 +137,11 @@ export const focusModes: TuiInkFocus[] = [
 export function createInitialInkState(composer = ""): TuiInkState {
   return {
     focus: "work",
+    graphMode: "overlay",
+    graphLayout: "ranked",
+    graphLabels: "compact",
+    graphFold: "expanded",
+    graphZoom: "fit",
     selectedRunIndex: 0,
     selectedRoleCallIndex: 0,
     selectedTaskIndex: 0,
@@ -176,6 +190,10 @@ export function reduceInkState(
 ): TuiInkState {
   const next: TuiInkState = {
     ...state,
+    graphLayout: state.graphLayout ?? "ranked",
+    graphLabels: state.graphLabels ?? "compact",
+    graphFold: state.graphFold ?? "expanded",
+    graphZoom: state.graphZoom ?? "fit",
     selectedWorkBlockIndex: state.selectedWorkBlockIndex ?? 0,
     workSelectionAnchor: state.workSelectionAnchor ?? false,
     selectedMemoryItemIndex: state.selectedMemoryItemIndex ?? 0,
@@ -277,6 +295,27 @@ export function reduceInkState(
     next.commandPaletteOpen = false;
     next.searchOpen = false;
     next.statusMessage = next.timelineOpen ? "Timeline shown." : "Timeline hidden.";
+    return next;
+  }
+  if (key === "cycle_graph_mode") {
+    next.graphMode = nextGraphMode(next.graphMode ?? "overlay");
+    next.statusMessage = `Workflow DAG mode: ${next.graphMode}.`;
+    resetDetailScroll(next);
+    return next;
+  }
+  if (key === "toggle_graph_labels") {
+    next.graphLabels = next.graphLabels === "full" ? "compact" : "full";
+    next.statusMessage = `Workflow DAG labels: ${next.graphLabels}.`;
+    return next;
+  }
+  if (key === "toggle_graph_fold") {
+    next.graphFold = next.graphFold === "grouped" ? "expanded" : "grouped";
+    next.statusMessage = `Workflow DAG fold: ${next.graphFold}.`;
+    return next;
+  }
+  if (key === "toggle_graph_zoom") {
+    next.graphZoom = next.graphZoom === "detail" ? "fit" : "detail";
+    next.statusMessage = `Workflow DAG zoom: ${next.graphZoom}.`;
     return next;
   }
   if (key === "cancel") {
@@ -544,6 +583,9 @@ export function commandHintForFocus(
       : undefined;
     return command ?? "No task recovery command is available.";
   }
+  if (state.focus === "graph" && model.executionTrace) {
+    return `agent-hub execution-trace show --task-id ${model.executionTrace.taskId}`;
+  }
   const node = selectedRoleCall(model, state);
   return node ? `agent-hub role-calls show ${node.id}` : roleListCommand(model) ?? "No RoleCall command is available.";
 }
@@ -647,10 +689,11 @@ function moveSelection(
     return;
   }
   const nodes = visibleRoleCalls(model, state);
-  const nextIndex = nextSelectionIndex(selectedRoleCallIndex(model, state), delta, nodes.length);
+  const itemCount = state.focus === "graph" ? graphSelectionCount(model, state) : nodes.length;
+  const nextIndex = nextSelectionIndex(selectedRoleCallIndex(model, state), delta, itemCount);
   state.selectedRoleCallIndex = clampIndex(
     nextIndex,
-    nodes.length
+    itemCount
   );
   state.selectedRoleCallId = nodes[state.selectedRoleCallIndex]?.id;
   resetDetailScroll(state);
@@ -658,8 +701,24 @@ function moveSelection(
     state.scrollOffsets.roleCalls,
     state.selectedRoleCallIndex,
     defaultListWindowSize,
-    nodes.length
+    itemCount
   );
+}
+
+function graphSelectionCount(
+  model: TuiCurrentContextModel,
+  state: TuiInkState
+): number {
+  if (!model.executionTrace) {
+    return visibleRoleCalls(model, state).length;
+  }
+  if (state.graphMode === "plan") {
+    return model.executionTrace.baseNodes.length;
+  }
+  if (state.graphMode === "trace") {
+    return model.executionTrace.dynamicNodes.length;
+  }
+  return model.executionTrace.baseNodes.length + model.executionTrace.dynamicNodes.length;
 }
 
 function moveDetailScroll(
@@ -977,6 +1036,13 @@ function selectedDetail(
     return undefined;
   }
   if (state.focus === "graph") {
+    if (model.executionTrace) {
+      const mode = state.graphMode ?? "overlay";
+      const graphDetails = details.graph[mode];
+      return graphDetails[
+        selectedIndexById(graphDetails, undefined, state.selectedRoleCallIndex)
+      ];
+    }
     const call = selectedRoleCall(model, state);
     return call ? details.roleCalls.find((detail) => detail.id === call.id) : undefined;
   }
@@ -1113,6 +1179,18 @@ function selectionDelta(
     return Number.POSITIVE_INFINITY;
   }
   return key === "down" ? 1 : -1;
+}
+
+function nextGraphMode(
+  mode: TuiInkState["graphMode"]
+): TuiInkState["graphMode"] {
+  if (mode === "overlay") {
+    return "plan";
+  }
+  if (mode === "plan") {
+    return "trace";
+  }
+  return "overlay";
 }
 
 function transcriptScrollDelta(

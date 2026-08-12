@@ -90,6 +90,160 @@ describe("TUI current-context read model", () => {
       );
   });
 
+  it("includes ExecutionTraceGraph projection for the current task", async () => {
+    const runtime = createCliRuntime({ storageMode: "memory" });
+    await runtime.projectRepository.create({
+      id: "project_trace",
+      name: "Trace Project",
+      rootPath: "/tmp/trace-project",
+      createdAt: now,
+      updatedAt: now
+    });
+    await runtime.conversationThreadRepository.create({
+      id: "thread_trace",
+      projectId: "project_trace",
+      title: "Trace",
+      createdAt: now,
+      updatedAt: now
+    });
+    await runtime.taskRepository.create({
+      id: "task_trace",
+      projectId: "project_trace",
+      title: "Trace the graph",
+      metadata: { threadId: "thread_trace" },
+      status: "running",
+      createdAt: now,
+      updatedAt: now
+    });
+    await runtime.planGraphRepository.create({
+      id: "plan_graph_trace",
+      taskId: "task_trace",
+      version: 1,
+      status: "active",
+      plannerNodeId: "plan_graph_trace:planner",
+      createdByRole: "planner",
+      createdAt: now,
+      nodes: [
+        {
+          id: "plan_graph_trace:planner",
+          kind: "planner",
+          role: "planner",
+          title: "Create plan",
+          instructions: "Create a plan.",
+          acceptanceCriteria: ["Plan is valid."],
+          riskLevel: "low",
+          required: true,
+          execution: { mode: "system" },
+          outputPlanGraphId: "plan_graph_trace"
+        },
+        {
+          id: "plan_node_trace",
+          kind: "implement",
+          role: "engineer",
+          title: "Implement trace",
+          instructions: "Implement trace projection.",
+          acceptanceCriteria: ["Run is linked."],
+          riskLevel: "low",
+          required: true,
+          execution: {
+            mode: "primary_run",
+            expectedAdapter: "fake",
+            worktreePolicy: "isolated"
+          }
+        }
+      ],
+      edges: [
+        { from: "plan_graph_trace:planner", to: "plan_node_trace", type: "primary" }
+      ]
+    });
+    await runtime.taskRunRepository.create({
+      id: "run_trace",
+      taskId: "task_trace",
+      agentKind: "fake",
+      status: "succeeded",
+      createdAt: now,
+      updatedAt: now
+    });
+    await runtime.runMetadataRepository.save({
+      runId: "run_trace",
+      planBinding: {
+        planGraphId: "plan_graph_trace",
+        planGraphVersion: 1,
+        planNodeId: "plan_node_trace",
+        allowedNextPlanNodeIds: []
+      }
+    });
+
+    const model = await buildTuiCurrentContextModel(runtime, {
+      projectId: "project_trace",
+      threadId: "thread_trace"
+    });
+
+    expect(model.executionTrace).toEqual(
+      expect.objectContaining({
+        planGraphId: "plan_graph_trace",
+        dynamicNodes: [
+          expect.objectContaining({
+            kind: "task_run",
+            sourceId: "run_trace"
+          })
+        ]
+      })
+    );
+    expect(model.selectionDetails.graph.overlay).toEqual([
+      expect.objectContaining({
+        kind: "graph_node",
+        title: "Create plan"
+      }),
+      expect.objectContaining({
+        kind: "graph_node",
+        title: "Implement trace"
+      }),
+      expect.objectContaining({
+        kind: "graph_node",
+        title: "TaskRun run_trace"
+      })
+    ]);
+    const implementDetail = model.selectionDetails.graph.overlay.find(
+      (detail) => detail.id === "plan_node_trace"
+    );
+    expect(implementDetail?.sections).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: "incoming",
+        lines: ["plan plan_graph_trace:planner -> plan_node_trace primary"]
+      }),
+      expect.objectContaining({
+        id: "outgoing",
+        lines: expect.arrayContaining([
+          "runtime plan_node_trace -> trace_node:run:run_trace task_run completed"
+        ])
+      }),
+      expect.objectContaining({
+        id: "evidence",
+        lines: expect.arrayContaining([
+          expect.stringContaining("task_run:run_trace")
+        ])
+      })
+    ]));
+    const runDetail = model.selectionDetails.graph.overlay.find(
+      (detail) => detail.id === "trace_node:run:run_trace"
+    );
+    expect(runDetail?.sections).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: "incoming",
+        lines: expect.arrayContaining([
+          "runtime plan_node_trace -> trace_node:run:run_trace task_run"
+        ])
+      }),
+      expect.objectContaining({
+        id: "evidence",
+        lines: expect.arrayContaining([
+          expect.stringContaining("task_run:run_trace")
+        ])
+      })
+    ]));
+  });
+
   it("summarizes transcript, runs, RoleCalls, tasks, team, memory, and skills in stable order", async () => {
     const runtime = createCliRuntime({ storageMode: "memory" });
     await seedCurrentContext(runtime);
@@ -649,6 +803,13 @@ describe("TUI current-context read model", () => {
       "pnpm test tests/auth.test.ts"
     ]);
     expect(model.activeRuns[0]?.outputLines.join("\n")).not.toContain("...");
+    expect(model.workBlocks.find((block) => block.id === "active-run:run_long_output")?.messageLines).toEqual([
+      "first line",
+      `  ${longLine}`,
+      "pnpm test tests/auth.test.ts"
+    ]);
+    expect(model.workBlocks.find((block) => block.id === "active-run:run_long_output")?.messageLines.join("\n"))
+      .not.toContain("...");
     expect(model.workBlocks.find((block) => block.id === "active-run:run_long_output")).toMatchObject({
       commandLines: ["pnpm test tests/auth.test.ts"],
       toolSummaryLines: expect.arrayContaining([
@@ -667,6 +828,99 @@ describe("TUI current-context read model", () => {
           })
         ])
       });
+  });
+
+  it("keeps full completed agent Work block lines for renderer wrapping", async () => {
+    const runtime = createCliRuntime({ storageMode: "memory" });
+    const longLine = `completed output ${"y".repeat(190)} handoff`;
+    await runtime.projectRepository.create({
+      id: "project_completed_output",
+      name: "Completed Output",
+      rootPath: "/tmp/completed-output",
+      createdAt: now,
+      updatedAt: now
+    });
+    await runtime.conversationThreadRepository.create({
+      id: "thread_completed_output",
+      projectId: "project_completed_output",
+      title: "Completed Output",
+      createdAt: now,
+      updatedAt: now
+    });
+    await runtime.taskRepository.create({
+      id: "task_completed_output",
+      projectId: "project_completed_output",
+      title: "Keep completed output",
+      metadata: { threadId: "thread_completed_output" },
+      status: "completed",
+      createdAt: now,
+      updatedAt: now
+    });
+    await runtime.taskRunRepository.create({
+      id: "run_completed_output",
+      taskId: "task_completed_output",
+      agentKind: "codex",
+      status: "succeeded",
+      startedAt: now,
+      completedAt: now,
+      createdAt: now,
+      updatedAt: now
+    });
+    await runtime.runEventRepository.createMany([
+      event(
+        "event_completed_output",
+        "run_completed_output",
+        0,
+        "message",
+        `summary\n  ${longLine}\nfinal line`,
+        { assistantOutput: true }
+      )
+    ]);
+
+    const model = await buildTuiCurrentContextModel(runtime, {
+      projectId: "project_completed_output",
+      threadId: "thread_completed_output"
+    });
+
+    expect(model.conversation.find((entry) => entry.id === "run:run_completed_output")?.outputLines)
+      .toEqual(["summary", `  ${longLine}`, "final line"]);
+    expect(model.workBlocks.find((block) => block.id === "run:run_completed_output")?.messageLines)
+      .toEqual(["summary", `  ${longLine}`, "final line"]);
+    expect(model.workBlocks.find((block) => block.id === "run:run_completed_output")?.messageLines.join("\n"))
+      .not.toContain("...");
+  });
+
+  it("keeps full user Work block lines for renderer wrapping", async () => {
+    const runtime = createCliRuntime({ storageMode: "memory" });
+    const longLine = `user prompt ${"z".repeat(190)} wrap me`;
+    await runtime.projectRepository.create({
+      id: "project_1",
+      name: "User Output",
+      rootPath: "/tmp/user-output",
+      createdAt: now,
+      updatedAt: now
+    });
+    await runtime.conversationThreadRepository.create({
+      id: "thread_1",
+      projectId: "project_1",
+      title: "User Output",
+      createdAt: now,
+      updatedAt: now
+    });
+    await runtime.conversationMessageRepository.createMany([
+      message("message_long_user", 0, "user", `first line\n  ${longLine}\nlast line`)
+    ]);
+
+    const model = await buildTuiCurrentContextModel(runtime, {
+      projectId: "project_1",
+      threadId: "thread_1"
+    });
+
+    expect(model.transcript[0]?.content).toContain("...");
+    expect(model.workBlocks.find((block) => block.id === "message:message_long_user")?.messageLines)
+      .toEqual(["first line", `  ${longLine}`, "last line"]);
+    expect(model.workBlocks.find((block) => block.id === "message:message_long_user")?.messageLines.join("\n"))
+      .not.toContain("...");
   });
 
   it("adds elapsed and usage labels for terminal run conversation entries", async () => {

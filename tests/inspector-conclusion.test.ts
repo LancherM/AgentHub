@@ -15,6 +15,7 @@ describe("normalizeReviewInspectorTab", () => {
     expect(normalizeReviewInspectorTab("compare")).toBe("artifacts");
     expect(normalizeReviewInspectorTab("logs")).toBe("audit");
     expect(normalizeReviewInspectorTab("risk")).toBe("risks");
+    expect(normalizeReviewInspectorTab("trace")).toBe("trace");
   });
 });
 

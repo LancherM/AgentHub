@@ -42,6 +42,7 @@ import {
   type TuiInkKey,
   type TuiInkState
 } from "./state.mjs";
+import { renderGraphWorkbench, type GraphWorkbenchRow } from "./graph-layout.mjs";
 
 const h = React.createElement;
 const defaultTuiOperationTimeoutMs = 10 * 60 * 1000;
@@ -1036,7 +1037,7 @@ function HeaderBar({
 
 function focusDisplayLabel(focus: TuiInkFocus): string {
   if (focus === "graph") {
-    return "Graph";
+    return "Graph - Workflow DAG";
   }
   return `${focus.slice(0, 1).toUpperCase()}${focus.slice(1)}`;
 }
@@ -1483,7 +1484,11 @@ function sideNavItems(model: TuiCurrentContextModel): SideNavItem[] {
     {
       focus: "graph",
       label: "Graph",
-      count: String(model.roleCalls.counts.visible ?? model.roleCalls.counts.total)
+      count: String(
+        model.executionTrace
+          ? model.executionTrace.baseNodes.length + model.executionTrace.dynamicNodes.length
+          : model.roleCalls.counts.visible ?? model.roleCalls.counts.total
+      )
     },
     {
       focus: "runs",
@@ -1669,6 +1674,9 @@ function detailPaneTitle(
   if (state.focus === "review" || detail?.kind === "run") {
     return "Final Report Detail";
   }
+  if (state.focus === "graph" || detail?.kind === "graph_node") {
+    return "Graph Node Detail";
+  }
   if (detail?.kind === "work_block" && detailIsLiveWorkBlock(model, state, detail)) {
     return "Live Block Detail";
   }
@@ -1721,9 +1729,9 @@ function detailSectionOrder(kind: TuiSelectionDetail["kind"]): Map<string, numbe
         ? ["run", "evidence", "review"]
         : kind === "role_call"
           ? ["role-call", "evidence"]
-          : kind === "work_block"
-            ? [
-                "live-run",
+        : kind === "work_block"
+          ? [
+              "live-run",
                 "message",
                 "streaming-output",
                 "tool-calls",
@@ -1734,8 +1742,19 @@ function detailSectionOrder(kind: TuiSelectionDetail["kind"]): Map<string, numbe
                 "inline-diff",
                 "fix-snippet",
                 "artifacts",
-                "pending-artifacts"
-              ]
+              "pending-artifacts"
+            ]
+            : kind === "graph_node"
+              ? [
+                  "plan-node",
+                  "trace-node",
+                  "incoming",
+                  "outgoing",
+                  "evidence",
+                  "deviations",
+                  "instructions",
+                  "acceptance"
+                ]
             : ["task", "context", "verification", "commands"];
   return new Map(ids.map((id, index) => [id, index]));
 }
@@ -1800,6 +1819,16 @@ function selectedDetail(
     return undefined;
   }
   if (state.focus === "graph") {
+    if (model.executionTrace) {
+      const mode = state.graphMode ?? "overlay";
+      const graphDetails = details.graph[mode];
+      const index = selectedDetailIndexById(
+        graphDetails,
+        undefined,
+        state.selectedRoleCallIndex
+      );
+      return graphDetails[index];
+    }
     const roleCall = visibleRoleCalls(model, state)[selectedRoleCallIndex(model, state)];
     return roleCall ? details.roleCalls.find((detail) => detail.id === roleCall.id) : undefined;
   }
@@ -2792,11 +2821,56 @@ function RoleCallsPane({
   terminal: TuiInkTerminalSize;
   detail?: boolean;
 }): React.ReactElement {
+  const trace = model.executionTrace;
+  if (trace) {
+    const selectedIndex = Math.min(
+      Math.max(state.selectedRoleCallIndex ?? 0, 0),
+      Math.max(0, graphSelectionCountForTrace(model, state) - 1)
+    );
+    const workbench = renderGraphWorkbench(trace, {
+      mode: state.graphMode ?? "overlay",
+      columns: terminal.columns,
+      selectedIndex,
+      layout: state.graphLayout ?? "ranked",
+      labels: state.graphLabels ?? "compact",
+      fold: state.graphFold ?? "expanded",
+      zoom: state.graphZoom ?? "fit"
+    });
+    const windowSize = roleCallWindowSize(terminal, detail);
+    const offset = Math.min(state.scrollOffsets.roleCalls, Math.max(0, workbench.rows.length - windowSize));
+    const visibleRows = workbench.rows.slice(offset, offset + windowSize);
+    return block(
+      line(workbench.title, { color: "cyan", bold: true }),
+      line(truncateText(workbench.toolbar, terminal.columns), { dimColor: true }),
+      line(truncateText(workbench.miniMap, terminal.columns), { dimColor: true }),
+      ...visibleRows.map((row) => {
+        return line(`${row.selected ? "▌" : " "} ${row.text}`, {
+          color: row.selected ? "green" : graphRowColor(row),
+          inverse: row.selected
+        });
+      }),
+      ...(detail || terminal.rows >= 24
+        ? workbench.legend.map((value) => line(truncateText(value, terminal.columns), { dimColor: true }))
+        : []),
+      ...(trace.deviations.length > 0
+        ? [
+            line("deviations:", { color: "yellow" }),
+            ...trace.deviations.slice(0, 3).map((deviation) =>
+              line(`! ${deviation.type} ${deviation.severity} ${truncateText(deviation.description, 74)}`, { color: "yellow" })
+            )
+          ]
+        : []),
+      ...(model.roleCalls.counts.total > 0
+        ? [line(`RoleCall compatibility evidence: ${model.roleCalls.counts.visible} visible`, { dimColor: true })]
+        : [])
+    );
+  }
   const nodes = visibleRoleCalls(model, state);
   if (nodes.length === 0) {
     return block(
+      line("Graph - Workflow DAG", { color: "cyan", bold: true }),
       line(
-        `none | loop stop ${model.roleCalls.loop.stopReason} | pending ${model.roleCalls.loop.pendingRoleCallIds.length}`
+        `no RoleCall evidence yet | loop stop ${model.roleCalls.loop.stopReason} | pending ${model.roleCalls.loop.pendingRoleCallIds.length}`
       )
     );
   }
@@ -2805,8 +2879,9 @@ function RoleCallsPane({
   const offset = Math.min(state.scrollOffsets.roleCalls, Math.max(0, nodes.length - windowSize));
   const visibleNodes = nodes.slice(offset, offset + windowSize);
   return block(
+    line("Graph - Workflow DAG", { color: "cyan", bold: true }),
     line(
-      `active ${model.roleCalls.counts.active} waiting ${model.roleCalls.counts.waiting} pending ${model.roleCalls.counts.pending} stop ${model.roleCalls.loop.stopReason}`,
+      `legacy RoleCall evidence | active ${model.roleCalls.counts.active} waiting ${model.roleCalls.counts.waiting} pending ${model.roleCalls.counts.pending} stop ${model.roleCalls.loop.stopReason}`,
       { dimColor: true }
     ),
     ...visibleNodes.map((node, index) => {
@@ -2820,6 +2895,38 @@ function RoleCallsPane({
       );
     })
   );
+}
+
+function graphSelectionCountForTrace(
+  model: TuiCurrentContextModel,
+  state: TuiInkState
+): number {
+  if (!model.executionTrace) {
+    return 0;
+  }
+  if (state.graphMode === "plan") {
+    return model.executionTrace.baseNodes.length;
+  }
+  if (state.graphMode === "trace") {
+    return model.executionTrace.dynamicNodes.length;
+  }
+  return model.executionTrace.baseNodes.length + model.executionTrace.dynamicNodes.length;
+}
+
+function graphRowColor(row: GraphWorkbenchRow): string | undefined {
+  if (row.tone === "success") {
+    return "green";
+  }
+  if (row.tone === "warning") {
+    return "yellow";
+  }
+  if (row.tone === "danger") {
+    return "red";
+  }
+  if (row.tone === "info") {
+    return "cyan";
+  }
+  return undefined;
 }
 
 function TasksPane({
@@ -3349,6 +3456,7 @@ function HelpPane(): React.ReactElement {
     { title: "Help" },
     line("tabs: Tab focus  W work  G graph  R runs  V review  T tasks  M memory  E team"),
     line("move: Up/Down or j/k  detail: Enter/o  folds: Space/> toggle  < close  za toggle  O open"),
+    line("graph: m mode  l labels  f fold  Z zoom"),
     line("commands: : palette  / palette  /use <target>  /clear session"),
     line("/search [text]  /timeline or L  /notify on|off  /team  /runs  /review"),
     line("/memory auto status|on|off|safe  /context  /room <handle>"),
@@ -3375,6 +3483,7 @@ function paletteItems(model: TuiCurrentContextModel, state: TuiInkState): Palett
   );
   return [
     { kind: "focus", label: "Open Work", focus: "work" },
+    { kind: "focus", label: "Open Graph - Workflow DAG", focus: "graph" },
     { kind: "focus", label: "Open Runs", focus: "runs" },
     { kind: "focus", label: "Open Review", focus: "review" },
     { kind: "focus", label: "Open Team", focus: "team" },
@@ -3687,7 +3796,7 @@ function slashFocus(command: string): TuiInkFocus {
 
 function focusLabelForSlash(command: string): string {
   const focus = slashFocus(command);
-  return `${focus[0]?.toUpperCase() ?? ""}${focus.slice(1)}`;
+  return focusDisplayLabel(focus);
 }
 
 interface SlashCompletion {
@@ -4424,6 +4533,18 @@ function keyToAction(input: string, key: Key, focus: string): TuiInkKey | undefi
   if (input === "h") {
     return "hide_done";
   }
+  if (focus === "graph" && input === "m") {
+    return "cycle_graph_mode";
+  }
+  if (focus === "graph" && input === "l") {
+    return "toggle_graph_labels";
+  }
+  if (focus === "graph" && input === "f") {
+    return "toggle_graph_fold";
+  }
+  if (focus === "graph" && input === "Z") {
+    return "toggle_graph_zoom";
+  }
   if (input === "C") {
     return "continue_loop";
   }
@@ -4468,6 +4589,16 @@ function isImmediateEmptyComposerAction(action: TuiInkKey, focus: TuiInkFocus): 
     return focus !== "work";
   }
   if (action === "hide_done") {
+    return focus === "graph";
+  }
+  if (action === "cycle_graph_mode") {
+    return focus === "graph";
+  }
+  if (
+    action === "toggle_graph_labels" ||
+    action === "toggle_graph_fold" ||
+    action === "toggle_graph_zoom"
+  ) {
     return focus === "graph";
   }
   if (action === "skills") {

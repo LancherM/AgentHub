@@ -14,11 +14,13 @@ import {
   validateConversationThreadSummary,
   validateContextEvalEvent,
   validateContextIndexEntry,
+  validatePlanGraph,
   validateMemoryItem,
   validateProject,
   validateRiskReport,
   validateRoleCall,
   validateRoleCallEvent,
+  validateRoleCallToolEvent,
   validateRoleCallStatusTransition,
   validateRoleTodo,
   validateRoleTodoStatusTransition,
@@ -47,11 +49,13 @@ import {
   type ContextIndexSearchInput,
   type ContextIndexSearchResult,
   type MemoryItem,
+  type PlanGraph,
   type Project,
   type RiskReport,
   type RoleCall,
   type RoleCallEvent,
   type RoleCallStatus,
+  type RoleCallToolEvent,
   type RoleTodo,
   type RoleTodoStatus,
   type RunArtifact,
@@ -62,6 +66,9 @@ import {
   type TaskRun,
   type TaskRunStatus,
   type TaskStatus,
+  type TraceEdge,
+  type TraceEvidence,
+  type TraceNode,
   type VerificationResult
 } from "./domain";
 
@@ -116,6 +123,15 @@ export interface RunMetadata {
   verification?: VerificationSuiteResult;
   riskReport?: RiskReport;
   role?: WorkgroupRoleRunMetadata;
+  planBinding?: RunPlanBindingMetadata;
+}
+
+export interface RunPlanBindingMetadata {
+  planGraphId: string;
+  planGraphVersion: number;
+  planNodeId: string;
+  traceNodeId?: string;
+  allowedNextPlanNodeIds: string[];
 }
 
 export interface RunMetadataRepository {
@@ -275,6 +291,29 @@ export interface RoleTodoRepository {
   ): Promise<RoleTodo>;
   get(todoId: string): Promise<RoleTodo | undefined>;
   list(filter?: RoleTodoListFilter): Promise<RoleTodo[]>;
+}
+
+export interface PlanGraphRepository {
+  create(graph: PlanGraph): Promise<PlanGraph>;
+  get(id: string): Promise<PlanGraph | undefined>;
+  getActiveByTaskId(taskId: string): Promise<PlanGraph | undefined>;
+  listByTaskId(taskId: string): Promise<PlanGraph[]>;
+  supersede(id: string, nextGraphId: string): Promise<PlanGraph>;
+}
+
+export interface TraceProjectionRows {
+  nodes: TraceNode[];
+  edges: TraceEdge[];
+  evidence: TraceEvidence[];
+  roleCallToolEvents: RoleCallToolEvent[];
+}
+
+export interface TraceLinkRepository {
+  createNode(node: TraceNode): Promise<TraceNode>;
+  createEdge(edge: TraceEdge): Promise<TraceEdge>;
+  linkEvidence(link: TraceEvidence): Promise<TraceEvidence>;
+  createRoleCallToolEvent(event: RoleCallToolEvent): Promise<RoleCallToolEvent>;
+  listByPlanGraphId(planGraphId: string): Promise<TraceProjectionRows>;
 }
 
 export class InMemoryProjectRepository implements ProjectRepository {
@@ -1281,6 +1320,125 @@ export class InMemoryRoleTodoRepository implements RoleTodoRepository {
   }
 }
 
+export class InMemoryPlanGraphRepository implements PlanGraphRepository {
+  private readonly graphs = new Map<string, PlanGraph>();
+
+  async create(graph: PlanGraph): Promise<PlanGraph> {
+    const validGraph = validatePlanGraph(graph);
+    if (validGraph.status === "active") {
+      this.supersedeActiveGraphsForTask(validGraph.taskId, validGraph.id);
+    }
+    this.graphs.set(validGraph.id, clonePlanGraph(validGraph));
+    return clonePlanGraph(validGraph);
+  }
+
+  async get(id: string): Promise<PlanGraph | undefined> {
+    const graph = this.graphs.get(id);
+    return graph ? clonePlanGraph(graph) : undefined;
+  }
+
+  async getActiveByTaskId(taskId: string): Promise<PlanGraph | undefined> {
+    const graph = [...this.graphs.values()].find(
+      (candidate) => candidate.taskId === taskId && candidate.status === "active"
+    );
+    return graph ? clonePlanGraph(graph) : undefined;
+  }
+
+  async listByTaskId(taskId: string): Promise<PlanGraph[]> {
+    return [...this.graphs.values()]
+      .filter((graph) => graph.taskId === taskId)
+      .sort((left, right) =>
+        left.version === right.version
+          ? left.createdAt.localeCompare(right.createdAt)
+          : left.version - right.version
+      )
+      .map(clonePlanGraph);
+  }
+
+  async supersede(id: string, nextGraphId: string): Promise<PlanGraph> {
+    const graph = this.graphs.get(id);
+    if (!graph) {
+      throw new Error(`plan graph ${id} not found`);
+    }
+    const nextGraph = this.graphs.get(nextGraphId);
+    const superseded = validatePlanGraph({
+      ...graph,
+      status: "superseded"
+    });
+    this.graphs.set(id, clonePlanGraph(superseded));
+    if (nextGraph) {
+      this.supersedeActiveGraphsForTask(nextGraph.taskId, nextGraph.id);
+      const activated = validatePlanGraph({
+        ...nextGraph,
+        status: "active"
+      });
+      this.graphs.set(nextGraph.id, clonePlanGraph(activated));
+    }
+    return clonePlanGraph(superseded);
+  }
+
+  private supersedeActiveGraphsForTask(taskId: string, exceptId: string): void {
+    for (const [id, graph] of this.graphs.entries()) {
+      if (id !== exceptId && graph.taskId === taskId && graph.status === "active") {
+        this.graphs.set(id, clonePlanGraph({ ...graph, status: "superseded" }));
+      }
+    }
+  }
+}
+
+export class InMemoryTraceLinkRepository implements TraceLinkRepository {
+  private readonly nodes = new Map<string, TraceNode>();
+  private readonly edges = new Map<string, TraceEdge>();
+  private readonly evidence = new Map<string, TraceEvidence>();
+  private readonly roleCallToolEvents = new Map<string, RoleCallToolEvent>();
+
+  async createNode(node: TraceNode): Promise<TraceNode> {
+    this.nodes.set(node.id, cloneTraceNode(node));
+    return cloneTraceNode(node);
+  }
+
+  async createEdge(edge: TraceEdge): Promise<TraceEdge> {
+    this.edges.set(edge.id, cloneTraceEdge(edge));
+    return cloneTraceEdge(edge);
+  }
+
+  async linkEvidence(link: TraceEvidence): Promise<TraceEvidence> {
+    this.evidence.set(link.id, cloneTraceEvidence(link));
+    return cloneTraceEvidence(link);
+  }
+
+  async createRoleCallToolEvent(
+    event: RoleCallToolEvent
+  ): Promise<RoleCallToolEvent> {
+    const validEvent = validateRoleCallToolEvent(event);
+    this.roleCallToolEvents.set(validEvent.id, cloneRoleCallToolEvent(validEvent));
+    return cloneRoleCallToolEvent(validEvent);
+  }
+
+  async listByPlanGraphId(planGraphId: string): Promise<TraceProjectionRows> {
+    return {
+      nodes: [...this.nodes.values()]
+        .filter((node) => node.planGraphId === planGraphId)
+        .sort((left, right) => left.id.localeCompare(right.id))
+        .map(cloneTraceNode),
+      edges: [...this.edges.values()]
+        .filter((edge) => traceEdgeBelongsToPlanGraph(edge, this.nodes, planGraphId))
+        .sort((left, right) => left.id.localeCompare(right.id))
+        .map(cloneTraceEdge),
+      evidence: [...this.evidence.values()]
+        .filter((link) => link.planGraphId === planGraphId)
+        .sort((left, right) => left.id.localeCompare(right.id))
+        .map(cloneTraceEvidence),
+      roleCallToolEvents: [...this.roleCallToolEvents.values()]
+        .filter((event) => event.planGraphId === planGraphId)
+        .sort((left, right) => left.createdAt === right.createdAt
+          ? left.id.localeCompare(right.id)
+          : left.createdAt.localeCompare(right.createdAt))
+        .map(cloneRoleCallToolEvent)
+    };
+  }
+}
+
 function isTerminalRunStatus(status: RunStatus): boolean {
   return status === "succeeded" || status === "failed" || status === "cancelled";
 }
@@ -1348,6 +1506,12 @@ export function cloneRunMetadata(metadata: RunMetadata): RunMetadata {
             ...metadata.role.approvalPolicy,
             requiredFor: [...metadata.role.approvalPolicy.requiredFor]
           }
+        }
+      : undefined,
+    planBinding: metadata.planBinding
+      ? {
+          ...metadata.planBinding,
+          allowedNextPlanNodeIds: [...metadata.planBinding.allowedNextPlanNodeIds]
         }
       : undefined
   };
@@ -1584,6 +1748,39 @@ function cloneRoleCallEvent(event: RoleCallEvent): RoleCallEvent {
 
 function cloneRoleTodo(todo: RoleTodo): RoleTodo {
   return cloneJsonValue(todo) as RoleTodo;
+}
+
+function clonePlanGraph(graph: PlanGraph): PlanGraph {
+  return cloneJsonValue(graph) as PlanGraph;
+}
+
+function cloneTraceNode(node: TraceNode): TraceNode {
+  return cloneJsonValue(node) as TraceNode;
+}
+
+function cloneTraceEdge(edge: TraceEdge): TraceEdge {
+  return cloneJsonValue(edge) as TraceEdge;
+}
+
+function cloneTraceEvidence(evidence: TraceEvidence): TraceEvidence {
+  return cloneJsonValue(evidence) as TraceEvidence;
+}
+
+function cloneRoleCallToolEvent(event: RoleCallToolEvent): RoleCallToolEvent {
+  return cloneJsonValue(event) as RoleCallToolEvent;
+}
+
+function traceEdgeBelongsToPlanGraph(
+  edge: TraceEdge,
+  nodes: Map<string, TraceNode>,
+  planGraphId: string
+): boolean {
+  if (edge.planGraphId === planGraphId) {
+    return true;
+  }
+  const fromNode = nodes.get(edge.from);
+  const toNode = nodes.get(edge.to);
+  return fromNode?.planGraphId === planGraphId || toNode?.planGraphId === planGraphId;
 }
 
 function roleCallMatchesFilter(

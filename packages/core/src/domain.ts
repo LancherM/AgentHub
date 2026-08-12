@@ -13,17 +13,25 @@ import {
   contextPolicyDecisions,
   contextScopes,
   compressionModes,
+  deviationTypes,
   memoryCategories,
   memoryAutomationDecisionStatuses,
   memoryAutomationPolicyModes,
   memoryAutomationReasonCodes,
   memoryStatuses,
   normalizeWorkgroupRoleHandle,
+  planEdgeTypes,
+  planGraphStatuses,
+  planNodeExecutionModes,
+  planNodeKinds,
+  planNodeRiskLevels,
+  planNodeWorktreePolicies,
   retrievalRoutes,
   riskLevels,
   roleCallDispositions,
   roleCallEventTypes,
   roleCallStatuses,
+  roleCallToolEventStatuses,
   roleExecutorKinds,
   roleIntentTypes,
   rolePriorities,
@@ -34,6 +42,10 @@ import {
   taskTypes,
   taskRunStatuses,
   taskStatuses,
+  traceEdgeTypes,
+  traceEvidenceSourceTypes,
+  traceNodeKinds,
+  traceNodeStatuses,
   trustLevels,
   verificationStatuses,
   workgroupExecutorKinds,
@@ -51,18 +63,24 @@ import {
   type ContextPack,
   type ContextPlan,
   type ContextRetrievalResult,
+  type Deviation,
+  type ExecutionTraceGraph,
   type RuntimeContextPack,
   type MemoryItem,
   type MemoryAutomationDecision,
   type MemoryAutomationEvaluation,
   type MemoryAutomationPolicy,
   type MemoryStatus,
+  type PlanGraph,
+  type PlanGraphStatus,
+  type PlanNode,
   type Project,
   type RiskReport,
   type RoleCall,
   type RoleCallDecision,
   type RoleCallEvent,
   type RoleCallStatus,
+  type RoleCallToolEvent,
   type RoleDefinition,
   type RoleIntent,
   type RoleResult,
@@ -77,6 +95,8 @@ import {
   type TaskRun,
   type TaskRunStatus,
   type TaskStatus,
+  type TraceEvidence,
+  type TraceNode,
   type VerificationResult,
   type WorkgroupRole
 } from "@agent-hub/shared";
@@ -123,6 +143,124 @@ export function validateRoleTodoStatusTransition(
   to: RoleTodoStatus
 ): void {
   validateStatusTransition(from, to, roleTodoStatusTransitions, "role todo");
+}
+
+export function validatePlanGraphStatusTransition(
+  from: PlanGraphStatus,
+  to: PlanGraphStatus
+): void {
+  validateStatusTransition(from, to, planGraphStatusTransitions, "plan graph");
+}
+
+export function validatePlanGraph(input: PlanGraph): PlanGraph {
+  const issues: string[] = [];
+  required(input.id, "planGraph.id", issues);
+  required(input.taskId, "planGraph.taskId", issues);
+  optionalString(input.taskBriefArtifactId, "planGraph.taskBriefArtifactId", issues);
+  if (!Number.isInteger(input.version) || input.version < 1) {
+    issues.push("planGraph.version must be a positive integer");
+  }
+  enumValue(input.status, planGraphStatuses, "planGraph.status", issues);
+  required(input.plannerNodeId, "planGraph.plannerNodeId", issues);
+  if (input.createdByRole !== "planner") {
+    issues.push("planGraph.createdByRole must be planner");
+  }
+  timestamp(input.createdAt, "planGraph.createdAt", issues);
+
+  const nodeIds = validatePlanNodeArray(input.nodes, "planGraph.nodes", issues);
+  const plannerNodes = Array.isArray(input.nodes)
+    ? input.nodes.filter((node) => node.kind === "planner")
+    : [];
+  if (plannerNodes.length !== 1) {
+    issues.push("planGraph.nodes must contain exactly one planner node");
+  }
+  const plannerNode = plannerNodes[0];
+  if (plannerNode) {
+    if (input.plannerNodeId !== plannerNode.id) {
+      issues.push("planGraph.plannerNodeId must reference the planner node");
+    }
+    if ((plannerNode as { outputPlanGraphId?: string }).outputPlanGraphId !== input.id) {
+      issues.push("planGraph planner node outputPlanGraphId must reference planGraph.id");
+    }
+  }
+
+  validatePlanEdges(input.edges, "planGraph.edges", nodeIds, issues);
+  validatePlanGraphDag(input.nodes, input.edges, issues);
+  return finish(input, issues);
+}
+
+export function validateExecutionTraceGraph(
+  input: ExecutionTraceGraph
+): ExecutionTraceGraph {
+  const issues: string[] = [];
+  required(input.taskId, "executionTraceGraph.taskId", issues);
+  required(input.planGraphId, "executionTraceGraph.planGraphId", issues);
+  if (!Number.isInteger(input.planGraphVersion) || input.planGraphVersion < 1) {
+    issues.push("executionTraceGraph.planGraphVersion must be a positive integer");
+  }
+
+  const baseNodeIds = validatePlanNodeArray(
+    input.baseNodes,
+    "executionTraceGraph.baseNodes",
+    issues
+  );
+  validatePlanEdges(
+    input.baseEdges,
+    "executionTraceGraph.baseEdges",
+    baseNodeIds,
+    issues
+  );
+  validatePlanGraphDag(input.baseNodes, input.baseEdges, issues);
+
+  const traceNodeIds = validateTraceNodeArray(
+    input.dynamicNodes,
+    "executionTraceGraph.dynamicNodes",
+    input.planGraphId,
+    baseNodeIds,
+    issues
+  );
+  validateTraceEdges(
+    input.dynamicEdges,
+    "executionTraceGraph.dynamicEdges",
+    input.planGraphId,
+    new Set([...baseNodeIds, ...traceNodeIds]),
+    issues
+  );
+  validateTraceEvidenceArray(
+    input.evidence,
+    "executionTraceGraph.evidence",
+    input.planGraphId,
+    baseNodeIds,
+    new Set([...baseNodeIds, ...traceNodeIds]),
+    issues
+  );
+  validateDeviationArray(
+    input.deviations,
+    "executionTraceGraph.deviations",
+    input.planGraphId,
+    baseNodeIds,
+    new Set([...baseNodeIds, ...traceNodeIds]),
+    issues
+  );
+
+  return finish(input, issues);
+}
+
+export function validateRoleCallToolEvent(
+  input: RoleCallToolEvent
+): RoleCallToolEvent {
+  const issues: string[] = [];
+  required(input.id, "roleCallToolEvent.id", issues);
+  required(input.planGraphId, "roleCallToolEvent.planGraphId", issues);
+  required(input.sourcePlanNodeId, "roleCallToolEvent.sourcePlanNodeId", issues);
+  required(input.sourceRunId, "roleCallToolEvent.sourceRunId", issues);
+  required(input.targetRole, "roleCallToolEvent.targetRole", issues);
+  required(input.task, "roleCallToolEvent.task", issues);
+  enumValue(input.status, roleCallToolEventStatuses, "roleCallToolEvent.status", issues);
+  stringArray(input.createdTraceNodeIds, "roleCallToolEvent.createdTraceNodeIds", issues);
+  timestamp(input.createdAt, "roleCallToolEvent.createdAt", issues);
+  optionalTimestamp(input.updatedAt, "roleCallToolEvent.updatedAt", issues);
+  return finish(input, issues);
 }
 
 export function validateProject(input: Project): Project {
@@ -1188,6 +1326,400 @@ function rejectUnknownContextLayerKeys(
   }
 }
 
+function validatePlanNodeArray(
+  value: unknown,
+  field: string,
+  issues: string[]
+): Set<string> {
+  const nodeIds = new Set<string>();
+  if (!Array.isArray(value) || value.length === 0) {
+    issues.push(`${field} must be a non-empty array`);
+    return nodeIds;
+  }
+  value.forEach((node, index) => {
+    validatePlanNode(node as PlanNode, `${field}.${index}`, issues);
+    const id = plainObject(node) && typeof node.id === "string" ? node.id : undefined;
+    if (!id) {
+      return;
+    }
+    if (nodeIds.has(id)) {
+      issues.push(`${field}.${index}.id must be unique`);
+    }
+    nodeIds.add(id);
+  });
+  return nodeIds;
+}
+
+function validatePlanNode(
+  value: PlanNode,
+  field: string,
+  issues: string[]
+): void {
+  objectValue(value, field, issues);
+  if (!plainObject(value)) {
+    return;
+  }
+  required(value.id, `${field}.id`, issues);
+  enumValue(value.kind, planNodeKinds, `${field}.kind`, issues);
+  required(value.title, `${field}.title`, issues);
+  required(value.role, `${field}.role`, issues);
+  required(value.instructions, `${field}.instructions`, issues);
+  stringArray(value.acceptanceCriteria, `${field}.acceptanceCriteria`, issues);
+  enumValue(value.riskLevel, planNodeRiskLevels, `${field}.riskLevel`, issues);
+  booleanValue(value.required, `${field}.required`, issues);
+  validatePlanNodeExecution(value.execution, `${field}.execution`, issues);
+
+  if (value.kind === "planner") {
+    if (value.role !== "planner") {
+      issues.push(`${field}.role must be planner for planner nodes`);
+    }
+    required(
+      (value as { outputPlanGraphId?: string }).outputPlanGraphId,
+      `${field}.outputPlanGraphId`,
+      issues
+    );
+  }
+
+  if (plainObject(value.execution) && value.execution.mode === "primary_run") {
+    if (typeof value.role !== "string" || value.role.trim().length === 0) {
+      issues.push(`${field}.role is required for primary_run nodes`);
+    }
+    if (!Array.isArray(value.acceptanceCriteria) || value.acceptanceCriteria.length === 0) {
+      issues.push(`${field}.acceptanceCriteria must be non-empty for primary_run nodes`);
+    }
+  }
+
+  validatePlanNodeInstructionsAreSafe(value, field, issues);
+}
+
+function validatePlanNodeExecution(
+  value: unknown,
+  field: string,
+  issues: string[]
+): void {
+  objectValue(value, field, issues);
+  if (!plainObject(value)) {
+    return;
+  }
+  enumValue(value.mode, planNodeExecutionModes, `${field}.mode`, issues);
+  if (value.expectedAdapter !== undefined) {
+    enumValue(value.expectedAdapter, agentKinds, `${field}.expectedAdapter`, issues);
+  }
+  if (value.worktreePolicy !== undefined) {
+    enumValue(value.worktreePolicy, planNodeWorktreePolicies, `${field}.worktreePolicy`, issues);
+  }
+}
+
+function validatePlanEdges(
+  value: unknown,
+  field: string,
+  nodeIds: Set<string>,
+  issues: string[]
+): void {
+  if (!Array.isArray(value)) {
+    issues.push(`${field} must be an array`);
+    return;
+  }
+  value.forEach((edge, index) => {
+    objectValue(edge, `${field}.${index}`, issues);
+    if (!plainObject(edge)) {
+      return;
+    }
+    required(edge.from, `${field}.${index}.from`, issues);
+    required(edge.to, `${field}.${index}.to`, issues);
+    enumValue(edge.type, planEdgeTypes, `${field}.${index}.type`, issues);
+    optionalString(edge.label, `${field}.${index}.label`, issues);
+    if (typeof edge.from === "string" && !nodeIds.has(edge.from)) {
+      issues.push(`${field}.${index}.from must reference an existing node`);
+    }
+    if (typeof edge.to === "string" && !nodeIds.has(edge.to)) {
+      issues.push(`${field}.${index}.to must reference an existing node`);
+    }
+  });
+}
+
+function validatePlanGraphDag(
+  nodes: unknown,
+  edges: unknown,
+  issues: string[]
+): void {
+  if (!Array.isArray(nodes) || !Array.isArray(edges)) {
+    return;
+  }
+  const nodeIds = nodes
+    .filter((node): node is { id: string } => plainObject(node) && typeof node.id === "string")
+    .map((node) => node.id);
+  const adjacency = new Map<string, string[]>();
+  for (const id of nodeIds) {
+    adjacency.set(id, []);
+  }
+  for (const edge of edges) {
+    if (!plainObject(edge) || typeof edge.from !== "string" || typeof edge.to !== "string") {
+      continue;
+    }
+    if (adjacency.has(edge.from) && adjacency.has(edge.to)) {
+      adjacency.get(edge.from)?.push(edge.to);
+    }
+  }
+
+  const visiting = new Set<string>();
+  const visited = new Set<string>();
+  const visit = (id: string): boolean => {
+    if (visiting.has(id)) {
+      return true;
+    }
+    if (visited.has(id)) {
+      return false;
+    }
+    visiting.add(id);
+    for (const next of adjacency.get(id) ?? []) {
+      if (visit(next)) {
+        return true;
+      }
+    }
+    visiting.delete(id);
+    visited.add(id);
+    return false;
+  };
+
+  if (nodeIds.some((id) => visit(id))) {
+    issues.push("planGraph.edges must form a DAG");
+  }
+}
+
+function validateTraceNodeArray(
+  value: unknown,
+  field: string,
+  planGraphId: string,
+  planNodeIds: Set<string>,
+  issues: string[]
+): Set<string> {
+  const nodeIds = new Set<string>();
+  if (!Array.isArray(value)) {
+    issues.push(`${field} must be an array`);
+    return nodeIds;
+  }
+  value.forEach((node, index) => {
+    validateTraceNode(node as TraceNode, `${field}.${index}`, planGraphId, planNodeIds, issues);
+    const id = plainObject(node) && typeof node.id === "string" ? node.id : undefined;
+    if (!id) {
+      return;
+    }
+    if (nodeIds.has(id) || planNodeIds.has(id)) {
+      issues.push(`${field}.${index}.id must be unique across trace and plan nodes`);
+    }
+    nodeIds.add(id);
+  });
+  return nodeIds;
+}
+
+function validateTraceNode(
+  value: TraceNode,
+  field: string,
+  planGraphId: string,
+  planNodeIds: Set<string>,
+  issues: string[]
+): void {
+  objectValue(value, field, issues);
+  if (!plainObject(value)) {
+    return;
+  }
+  required(value.id, `${field}.id`, issues);
+  required(value.planGraphId, `${field}.planGraphId`, issues);
+  if (value.planGraphId !== planGraphId) {
+    issues.push(`${field}.planGraphId must match executionTraceGraph.planGraphId`);
+  }
+  enumValue(value.kind, traceNodeKinds, `${field}.kind`, issues);
+  required(value.title, `${field}.title`, issues);
+  enumValue(value.status, traceNodeStatuses, `${field}.status`, issues);
+  optionalString(value.sourcePlanNodeId, `${field}.sourcePlanNodeId`, issues);
+  optionalString(value.role, `${field}.role`, issues);
+  if (value.sourceType !== undefined) {
+    enumValue(value.sourceType, traceEvidenceSourceTypes, `${field}.sourceType`, issues);
+  }
+  optionalString(value.sourceId, `${field}.sourceId`, issues);
+  optionalTimestamp(value.createdAt, `${field}.createdAt`, issues);
+  if (value.sourcePlanNodeId !== undefined && !planNodeIds.has(value.sourcePlanNodeId)) {
+    issues.push(`${field}.sourcePlanNodeId must reference a base plan node`);
+  }
+}
+
+function validateTraceEdges(
+  value: unknown,
+  field: string,
+  planGraphId: string,
+  nodeIds: Set<string>,
+  issues: string[]
+): void {
+  if (!Array.isArray(value)) {
+    issues.push(`${field} must be an array`);
+    return;
+  }
+  value.forEach((edge, index) => {
+    objectValue(edge, `${field}.${index}`, issues);
+    if (!plainObject(edge)) {
+      return;
+    }
+    required(edge.id, `${field}.${index}.id`, issues);
+    required(edge.planGraphId, `${field}.${index}.planGraphId`, issues);
+    if (edge.planGraphId !== planGraphId) {
+      issues.push(`${field}.${index}.planGraphId must match executionTraceGraph.planGraphId`);
+    }
+    required(edge.from, `${field}.${index}.from`, issues);
+    required(edge.to, `${field}.${index}.to`, issues);
+    enumValue(edge.type, traceEdgeTypes, `${field}.${index}.type`, issues);
+    optionalString(edge.label, `${field}.${index}.label`, issues);
+    if (typeof edge.from === "string" && !nodeIds.has(edge.from)) {
+      issues.push(`${field}.${index}.from must reference an existing trace or plan node`);
+    }
+    if (typeof edge.to === "string" && !nodeIds.has(edge.to)) {
+      issues.push(`${field}.${index}.to must reference an existing trace or plan node`);
+    }
+  });
+}
+
+function validateTraceEvidenceArray(
+  value: unknown,
+  field: string,
+  planGraphId: string,
+  planNodeIds: Set<string>,
+  nodeIds: Set<string>,
+  issues: string[]
+): void {
+  if (!Array.isArray(value)) {
+    issues.push(`${field} must be an array`);
+    return;
+  }
+  value.forEach((evidence, index) => {
+    validateTraceEvidence(
+      evidence as TraceEvidence,
+      `${field}.${index}`,
+      planGraphId,
+      planNodeIds,
+      nodeIds,
+      issues
+    );
+  });
+}
+
+function validateTraceEvidence(
+  value: TraceEvidence,
+  field: string,
+  planGraphId: string,
+  planNodeIds: Set<string>,
+  nodeIds: Set<string>,
+  issues: string[]
+): void {
+  objectValue(value, field, issues);
+  if (!plainObject(value)) {
+    return;
+  }
+  required(value.id, `${field}.id`, issues);
+  required(value.planGraphId, `${field}.planGraphId`, issues);
+  if (value.planGraphId !== planGraphId) {
+    issues.push(`${field}.planGraphId must match executionTraceGraph.planGraphId`);
+  }
+  enumValue(value.sourceType, traceEvidenceSourceTypes, `${field}.sourceType`, issues);
+  required(value.sourceId, `${field}.sourceId`, issues);
+  optionalString(value.planNodeId, `${field}.planNodeId`, issues);
+  optionalString(value.traceNodeId, `${field}.traceNodeId`, issues);
+  optionalString(value.summary, `${field}.summary`, issues);
+  optionalTimestamp(value.createdAt, `${field}.createdAt`, issues);
+  if (value.planNodeId !== undefined && !planNodeIds.has(value.planNodeId)) {
+    issues.push(`${field}.planNodeId must reference an existing base plan node`);
+  }
+  if (value.traceNodeId !== undefined && !nodeIds.has(value.traceNodeId)) {
+    issues.push(`${field}.traceNodeId must reference an existing node`);
+  }
+}
+
+function validateDeviationArray(
+  value: unknown,
+  field: string,
+  planGraphId: string,
+  planNodeIds: Set<string>,
+  nodeIds: Set<string>,
+  issues: string[]
+): void {
+  if (!Array.isArray(value)) {
+    issues.push(`${field} must be an array`);
+    return;
+  }
+  value.forEach((deviation, index) => {
+    validateDeviation(
+      deviation as Deviation,
+      `${field}.${index}`,
+      planGraphId,
+      planNodeIds,
+      nodeIds,
+      issues
+    );
+  });
+}
+
+function validateDeviation(
+  value: Deviation,
+  field: string,
+  planGraphId: string,
+  planNodeIds: Set<string>,
+  nodeIds: Set<string>,
+  issues: string[]
+): void {
+  objectValue(value, field, issues);
+  if (!plainObject(value)) {
+    return;
+  }
+  required(value.id, `${field}.id`, issues);
+  required(value.planGraphId, `${field}.planGraphId`, issues);
+  if (value.planGraphId !== planGraphId) {
+    issues.push(`${field}.planGraphId must match executionTraceGraph.planGraphId`);
+  }
+  enumValue(value.type, deviationTypes, `${field}.type`, issues);
+  enumValue(value.severity, planNodeRiskLevels, `${field}.severity`, issues);
+  required(value.description, `${field}.description`, issues);
+  optionalString(value.planNodeId, `${field}.planNodeId`, issues);
+  optionalString(value.traceNodeId, `${field}.traceNodeId`, issues);
+  optionalString(value.evidenceId, `${field}.evidenceId`, issues);
+  timestamp(value.createdAt, `${field}.createdAt`, issues);
+  if (value.planNodeId !== undefined && !planNodeIds.has(value.planNodeId)) {
+    issues.push(`${field}.planNodeId must reference an existing base plan node`);
+  }
+  if (value.traceNodeId !== undefined && !nodeIds.has(value.traceNodeId)) {
+    issues.push(`${field}.traceNodeId must reference an existing node`);
+  }
+}
+
+function validatePlanNodeInstructionsAreSafe(
+  value: PlanNode,
+  field: string,
+  issues: string[]
+): void {
+  const text = [
+    value.title,
+    value.instructions,
+    ...(Array.isArray(value.acceptanceCriteria) ? value.acceptanceCriteria : [])
+  ]
+    .filter((entry): entry is string => typeof entry === "string")
+    .join("\n");
+  const prohibited = prohibitedPlanInstructionPatterns.find((entry) =>
+    containsProhibitedAction(text, entry.pattern)
+  );
+  if (prohibited) {
+    issues.push(`${field}.instructions must not request ${prohibited.reason}`);
+  }
+}
+
+function containsProhibitedAction(text: string, pattern: RegExp): boolean {
+  for (const match of text.matchAll(pattern)) {
+    const before = text.slice(Math.max(0, match.index - 32), match.index).toLowerCase();
+    if (/\b(do not|don't|must not|never|avoid|without|no)\b/.test(before)) {
+      continue;
+    }
+    return true;
+  }
+  return false;
+}
+
 function required(value: unknown, field: string, issues: string[]): void {
   if (typeof value !== "string" || value.trim().length === 0) {
     issues.push(`${field} is required`);
@@ -1607,6 +2139,32 @@ function validateRoleCallContext(
   ) {
     issues.push(`${field}.tokenBudget must be a positive integer when provided`);
   }
+  if (value.planTrace !== undefined) {
+    objectValue(value.planTrace, `${field}.planTrace`, issues);
+    if (plainObject(value.planTrace)) {
+      required(value.planTrace.planGraphId, `${field}.planTrace.planGraphId`, issues);
+      const planGraphVersion = value.planTrace.planGraphVersion;
+      if (
+        typeof planGraphVersion !== "number" ||
+        !Number.isInteger(planGraphVersion) ||
+        planGraphVersion <= 0
+      ) {
+        issues.push(`${field}.planTrace.planGraphVersion must be a positive integer`);
+      }
+      required(
+        value.planTrace.sourcePlanNodeId,
+        `${field}.planTrace.sourcePlanNodeId`,
+        issues
+      );
+      required(value.planTrace.sourceRunId, `${field}.planTrace.sourceRunId`, issues);
+      optionalString(value.planTrace.traceNodeId, `${field}.planTrace.traceNodeId`, issues);
+      optionalStringArray(
+        value.planTrace.allowedNextPlanNodeIds,
+        `${field}.planTrace.allowedNextPlanNodeIds`,
+        issues
+      );
+    }
+  }
 }
 
 function validateRoleCallDecisionFields(
@@ -1948,6 +2506,40 @@ const roleTodoStatusTransitions: Record<RoleTodoStatus, readonly RoleTodoStatus[
   rejected: [],
   cancelled: []
 };
+
+const planGraphStatusTransitions: Record<PlanGraphStatus, readonly PlanGraphStatus[]> = {
+  proposed: ["active", "failed"],
+  active: ["superseded", "failed"],
+  superseded: [],
+  failed: []
+};
+
+const prohibitedPlanInstructionPatterns: Array<{ pattern: RegExp; reason: string }> = [
+  {
+    pattern: /\b(?:git\s+push|push\s+(?:the\s+)?(?:branch|changes|code)|automatically\s+push|auto-?push)\b/gi,
+    reason: "automatic git push"
+  },
+  {
+    pattern: /\b(?:git\s+merge|merge\s+(?:the\s+)?(?:branch|changes|pull request)|automatically\s+merge|auto-?merge)\b/gi,
+    reason: "automatic merge"
+  },
+  {
+    pattern: /\b(?:(?:create|open|submit)\s+(?:a\s+)?(?:pull request|pr)|automatic\s+(?:pull request|pr))\b/gi,
+    reason: "automatic pull request creation"
+  },
+  {
+    pattern: /\b(?:approve\s+memory|memory\s+approval|automatically\s+approve\s+memory)\b/gi,
+    reason: "memory approval"
+  },
+  {
+    pattern: /\b(?:repo(?:sitory)?\s+export|export\s+(?:AGENTS\.md|CLAUDE\.md|\.claude\/skills|\.agents\/skills))\b/gi,
+    reason: "repository export"
+  },
+  {
+    pattern: /\b(?:write|create|update)\s+(?:AGENTS\.md|CLAUDE\.md|\.claude\/skills|\.agents\/skills).*\b(?:repo(?:sitory)?\s+root|checkout\s+root|project\s+root)\b/gi,
+    reason: "repository-root context file writes"
+  }
+];
 
 const expectedOutputFormats = ["summary", "json", "patch", "risk_report"] as const;
 
