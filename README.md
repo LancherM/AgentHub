@@ -231,6 +231,13 @@ agent-hub-dev risks show <run-id>
 Run the same task with two agents, then compare their persisted results:
 
 ```sh
+agent-hub-dev task create \
+  --project-id <project-id> \
+  --title "Compare two agent implementations"
+
+agent-hub-dev run --task <task-id> --agent codex
+agent-hub-dev run --task <task-id> --agent claude-code
+
 agent-hub-dev compare \
   --task-id <task-id> \
   --baseline <codex-run-id> \
