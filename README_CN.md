@@ -217,6 +217,13 @@ agent-hub-dev risks show <run-id>
 使用两个 Agent 运行同一个任务后，可以比较持久化结果：
 
 ```sh
+agent-hub-dev task create \
+  --project-id <project-id> \
+  --title "Compare two agent implementations"
+
+agent-hub-dev run --task <task-id> --agent codex
+agent-hub-dev run --task <task-id> --agent claude-code
+
 agent-hub-dev compare \
   --task-id <task-id> \
   --baseline <codex-run-id> \
